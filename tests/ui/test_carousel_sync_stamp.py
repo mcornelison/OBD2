@@ -125,7 +125,8 @@ def _sync(**overrides):
 def _sysState(**overrides):
     """A whole-system payload whose four sources are all healthy by default."""
     state = {
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 2},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": _sync(),
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "recording", "driveId": 41, "lastDriveTs": None},

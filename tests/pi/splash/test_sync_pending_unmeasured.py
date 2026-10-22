@@ -36,7 +36,7 @@ def _state(**overrides):
     kwargs = {
         "obdLinkState": "linked",
         "obdRetries": 0,
-        "obdLastSeenS": 1,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": "2026-08-21T11:00:00Z",
         "syncRows": 120,
         "syncPending": None,

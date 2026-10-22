@@ -142,7 +142,8 @@ def _now() -> str:
 def _sysState(obdAvailable: bool = False) -> dict:
     """A system-status payload (US-400 / Atlas A-3 schema) + the US-496 gate."""
     return {
-        "obdLink": {"state": "linked" if obdAvailable else "down", "retries": 0, "lastSeenS": 2},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked" if obdAvailable else "down", "retries": 0},
         "sync": {"lastOkTs": _now(), "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "idle", "driveId": None},

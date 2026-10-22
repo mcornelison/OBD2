@@ -119,7 +119,7 @@ def _sysState(obdAvailable: bool) -> dict[str, Any]:
         "obdLink": {
             "state": "linked" if obdAvailable else "down",
             "retries": 0,
-            "lastSeenS": 2,
+            # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         },
         "sync": {"lastOkTs": _now(), "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},

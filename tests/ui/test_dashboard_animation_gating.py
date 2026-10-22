@@ -88,7 +88,8 @@ def _read(path: str) -> str:
 
 def _sysState() -> dict:
     return {
-        "obdLink": {"state": "down", "retries": 0, "lastSeenS": 2},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "down", "retries": 0},
         "sync": {"lastOkTs": "2026-08-07T09:41:50Z", "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "idle", "driveId": None},

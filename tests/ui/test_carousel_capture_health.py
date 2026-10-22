@@ -91,7 +91,8 @@ def _sys(**kw) -> dict:
     assertion pass for a reason that has nothing to do with capture.
     """
     data = {
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 1},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": {"lastOkTs": "2026-09-08T11:59:00Z", "rows": 10,
                  "pending": None, "stale": False},
         "power": {"source": "external", "reasons": {}},

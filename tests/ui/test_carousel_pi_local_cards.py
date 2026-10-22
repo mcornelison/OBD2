@@ -253,7 +253,8 @@ def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
     view = _view(
         "systemStatusView",
         {
-            "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 1},
+            # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+            "obdLink": {"state": "linked", "retries": 0},
             "sync": {"lastOkTs": None, "rows": 0, "pending": 0, "stale": False},
             "drive": {"state": "idle", "driveId": None},
             "ts": _TS,

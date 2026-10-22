@@ -11,6 +11,7 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-08-28    | Atlas   | ARCH-007: the glyph I ruled and then owed for 8 days
+# 2026-10-22    | Rex     | US-732: MOVED PIN -- the wifi key set gains home, ts
 # ================================================================================
 ################################################################################
 
@@ -42,7 +43,8 @@ import pytest
 from src.pi.splash.system_status_emitter import buildSystemStatusState, deriveWifiState
 
 _BASE = dict(
-    obdLinkState="down", obdRetries=0, obdLastSeenS=None,
+    # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+    obdLinkState="down", obdRetries=0,
     syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
     powerSource="unknown",
     driveState="idle", driveId=None, nowIso="2026-08-28T00:00:00Z",
@@ -105,8 +107,11 @@ class TestTheBlockShapeMatchesTheRuling:
     def test_theWifiBlockHasExactlyTheRuledKeys(self):
         s = buildSystemStatusState(**_BASE, wifiAvailable=True,
                                    wifiSsid="DeathstarWifi", wifiRssiDbm=-55)
-        assert set(s["wifi"]) == {"state", "ssid", "rssiDbm"}
-        assert s["wifi"] == {"state": "up", "ssid": "DeathstarWifi", "rssiDbm": -55}
+        # MOVED PIN (US-732): the block gains home and ts (both null here --
+        # no home answer and no sample time were supplied).
+        assert set(s["wifi"]) == {"state", "ssid", "rssiDbm", "home", "ts"}
+        assert s["wifi"] == {"state": "up", "ssid": "DeathstarWifi", "rssiDbm": -55,
+                             "home": None, "ts": None}
 
     def test_wifiHasAnAvailabilityBlockLikeEveryOtherSource(self):
         s = buildSystemStatusState(**_BASE, wifiAvailable=True,

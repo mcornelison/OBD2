@@ -78,7 +78,8 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
     view = _view(
         "systemStatusView",
         {
-            "obdLink": {"state": None, "retries": 0, "lastSeenS": None},
+            # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+            "obdLink": {"state": None, "retries": 0},
             "sync": {"lastOkTs": None, "rows": 3, "pending": 0, "stale": False},
             "power": {"mode": "wall", "source": "external"},
             "drive": {"state": "idle", "driveId": None},
@@ -101,7 +102,7 @@ def test_systemStatusView_obdAvailable_rendersRealLink():
     view = _view(
         "systemStatusView",
         {
-            "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 1},
+            "obdLink": {"state": "linked", "retries": 0},
             "sync": {"lastOkTs": None, "rows": 0, "pending": 0, "stale": False},
             "power": {"mode": "car", "source": "external"},
             "drive": {"state": "idle", "driveId": None},

@@ -103,6 +103,30 @@
 #               |              | tick caches its inputs for emitNow (Atlas G2).
 # 2026-10-21    | Rex (US-897-e)| the restart seed also carries the pending set
 #               |              | its pendingCheckedAtTs dates (one read).
+# 2026-10-22    | Rex (US-876-c)| system-status `link`: the ECU layer live from
+#               |              | reachability (tracker held here), bt/adapter
+#               |              | not read; C2 retry authority with a one-tick hold.
+# 2026-10-22    | Rex (US-876-d)| link.adapter live from the connection's adapter
+#               |              | observation (own tracker, G1 via link.ecu); one
+#               |              | status read + one C2 verdict per tick.
+# 2026-10-22    | Rex (US-876-e)| link.bt live from the off-tick bluetoothctl
+#               |              | sampler (started on first use for a usable MAC;
+#               |              | stale / unreadable -> null; absent -> down).
+# 2026-10-22    | Rex (US-732) | system-status wifi from the off-tick WiFi
+#               |              | sampler; one lazy HomeNetworkDetector reads home
+#               |              | from the same sample; thresholds from config.
+# 2026-10-22    | Rex (US-916) | system-status sync.lastOkTs = max(last_ok_at)
+#               |              | and rowsWaiting / edrRowsWaiting / notCounted,
+#               |              | read every 30 s through pi.sync.backlog;
+#               |              | _recordSyncOutcome no longer stamps a time.
+# 2026-10-22    | Rex (US-877-a)| system-status `pi` health from the off-tick
+#               |              | PiHealthSampler (temp/throttle 10 s, disk 600 s,
+#               |              | uptime per tick); limit from pi.health.limits.
+# 2026-10-22    | Rex (US-877-b)| capture-health emits BEFORE system-status and
+#               |              | its returned payload feeds the verdict (P6).
+# 2026-10-22    | Rex (US-877-c)| the system-status payload is handed to the
+#               |              | alerts arbiter; every alerts emit passes
+#               |              | systemSource=arbiter.systemSource().
 # ================================================================================
 ################################################################################
 
@@ -113,7 +137,10 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pi.splash.system_status_emitter import LinkLayerTracker
 
 logger = logging.getLogger("pi.obdii.orchestrator")
 
@@ -208,6 +235,12 @@ REASON_POWER_SOURCE_UNREADABLE = "source_unreadable"
 #: rather than an absent or blocked instrument.
 REASON_POWER_SOURCE_READ_FAILED = "read_failed"
 
+# US-916 (Atlas S4): system-status.sync's backlog read -- every 30 s, cached
+# between ticks, each read-only open with a 1 s busy timeout so a locked
+# database can never stall the card tick for long.
+SYNC_HEALTH_READ_INTERVAL_S = 30.0
+SYNC_HEALTH_BUSY_TIMEOUT_S = 1.0
+
 #: Every reason an unresolved `power.source` may carry. A RESOLVED source
 #: carries None: a reason explains an absence and must never stand beside a
 #: real measurement.
@@ -233,6 +266,29 @@ class _UnreadableBatteryVerdict:
     jobAvgS = None
     jobMaxS = None
     provisional = False
+
+
+def _ecuObservedUp(status: Any) -> bool | None:
+    """Map ``status.reachability`` to the ECU layer's observation (US-876-c).
+
+    Compared by VALUE, so a status from either import root of the connection
+    module maps the same. ANSWERED is up; DID_NOT_ANSWER and NOT_YET_ATTEMPTED
+    are not up; COULD_NOT_DETERMINE, anything else or no status is not read.
+    """
+    from pi.obdii.obd_connection import Reachability
+
+    if status is None:
+        return None
+    reachability = getattr(status, "reachability", None)
+    value = getattr(reachability, "value", reachability)
+    if value == Reachability.ANSWERED.value:
+        return True
+    if value in (
+        Reachability.DID_NOT_ANSWER.value,
+        Reachability.NOT_YET_ATTEMPTED.value,
+    ):
+        return False
+    return None
 
 
 class CardStateEmitterMixin:
@@ -269,7 +325,6 @@ class CardStateEmitterMixin:
     _cardStateEmitInterval: float
     _cardSyncStaleThresholdS: float
     _lastCardStateEmitTime: datetime | None
-    _lastSyncOkTsIso: str | None
     _lastSyncRows: int
     # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
     # here for mypy only. Read through getattr so an absent attribute is fine.
@@ -509,7 +564,7 @@ class CardStateEmitterMixin:
             logger.warning("Capture-health producer init skipped: %s", e)
             self._captureHealthEmitter = None
 
-    def _emitCaptureHealthState(self) -> None:
+    def _emitCaptureHealthState(self) -> dict[str, Any] | None:
         """Publish whether capture has gone silent while the car is powered.
 
         NO SECOND ACQUISITION (ssot-design-pattern rule B). Both facts come off
@@ -525,17 +580,21 @@ class CardStateEmitterMixin:
         running" gates, and every one of them dies with the dongle -- which is
         the failure this alert reports. Gating on any of them would make the
         alert unable to fire in its own motivating incident.
+
+        Returns:
+            The payload the emitter wrote this tick (US-877-b: handed to the
+            system-status verdict), or None when dark or the write failed.
         """
         emitter = self._captureHealthEmitter
         if emitter is None:
-            return
+            return None
 
         # Cross-mixin call (HealthMonitorMixin provides the method); matches the
         # `_checkConnectionStatus` pattern used in health_monitor.py itself.
         lastRowS, freshnessReason = self._readDataLoggerRowFreshness()  # type: ignore[attr-defined]
         powerSource, _powerReason = self._gatherPowerSource()
         feedSamples = self._gatherCaptureFeedSamples()
-        emitter(
+        payload: dict[str, Any] | None = emitter(
             lastRowSecondsAgo=lastRowS,
             freshnessReason=freshnessReason,
             powerSource=powerSource,
@@ -543,6 +602,7 @@ class CardStateEmitterMixin:
             feedSamples=feedSamples,
         )
         self._recordFirstSampleMilestones(feedSamples)
+        return payload
 
     # ------------------------------------------------------ boot milestones
     #
@@ -945,6 +1005,9 @@ class CardStateEmitterMixin:
             bootId=bootId,
             codeSource=arbiter.codeSource(),
             acknowledgedIds=acked,
+            # US-877-c: the cached verdict rides every emit, so an ack rebuild
+            # never drops the system entries or the source.
+            systemSource=arbiter.systemSource(),
         )
         if store is not None and isinstance(payload, dict):
             sources = payload.get("sources") or {}
@@ -1223,13 +1286,14 @@ class CardStateEmitterMixin:
             arbiter.observeDtc(payload)
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:
-        """Cache the REAL last-sync outcome for the system-status sync tile.
+        """Cache the last push's row count and re-anchor the altitude.
 
         Called from the sync trigger paths only AFTER a push completed past the
-        route gate -- so "last synced" advances only when data actually left the
-        Pi (honest: a route-gated no-op tick never claims a sync).
+        route gate. It no longer stamps a time (US-916): "last data stored" is
+        ``sync_log.last_ok_at``, which only a push the server stored writes and
+        which survives a restart -- a stamp here also advanced on a push in
+        which every table failed.
         """
-        self._lastSyncOkTsIso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._lastSyncRows = int(rowsPushed)
         # US-518 (WP-3, F-125): a reached server means the Pi is on the home
         # network, i.e. the car is home -- the verified "at home" event that
@@ -1309,8 +1373,19 @@ class CardStateEmitterMixin:
                 return False
         self._lastCardStateEmitTime = now
 
+        captureHealth: dict[str, Any] | None = None
         try:
-            self._emitSystemStatusState()
+            # US-688: re-published every tick against a MOVED clock, like the
+            # gear below -- the row age climbs whether or not anything arrives,
+            # and a producer wired only to a write callback would go quiet at
+            # exactly the moment writes stopped, which is the alert condition.
+            # US-877-b (Atlas P6): BEFORE system-status, whose verdict judges
+            # the payload this emit returns -- in-process, never a read-back.
+            captureHealth = self._emitCaptureHealthState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("capture-health card emit failed: %s", e)
+        try:
+            self._emitSystemStatusState(captureHealth)
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("system-status card emit failed: %s", e)
         try:
@@ -1331,14 +1406,6 @@ class CardStateEmitterMixin:
             self._emitLtftTrendState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("ltft-trend card emit failed: %s", e)
-        try:
-            # US-688: re-published every tick against a MOVED clock, like the
-            # gear above -- the row age climbs whether or not anything arrives,
-            # and a producer wired only to a write callback would go quiet at
-            # exactly the moment writes stopped, which is the alert condition.
-            self._emitCaptureHealthState()
-        except Exception as e:  # noqa: BLE001 -- never crash the loop
-            logger.debug("capture-health card emit failed: %s", e)
         obdLive: dict[str, Any] | None = None
         try:
             # US-874: staleness is decided here, against a moving clock.
@@ -1773,8 +1840,17 @@ class CardStateEmitterMixin:
 
     # -------------------------------------------------------- system-status
 
-    def _emitSystemStatusState(self) -> None:
-        """Gather truthful link/sync/power/drive readings + emit system-status."""
+    def _emitSystemStatusState(self, captureHealth: dict[str, Any] | None = None) -> None:
+        """Gather truthful link/sync/power/drive readings + emit system-status.
+
+        US-877-c: the payload the emit returned is handed to the alerts arbiter
+        (``observeSystemStatus``) -- the SYSTEM source's only input.
+
+        Args:
+            captureHealth: US-877-b: the payload ``_emitCaptureHealthState``
+                returned THIS tick (Atlas P6), for the verdict; None when it
+                is dark, failed, or this is not a card tick.
+        """
         emitter = self._systemStatusEmitter
         if emitter is None:
             return
@@ -1785,13 +1861,9 @@ class CardStateEmitterMixin:
         distanceKm, distanceSinceTs, distanceEndTs, distancePartial = (
             self._gatherTripWindow()
         )
-        emitter(
+        payload = emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
-            # No per-read timestamp is tracked at this layer, so we do not claim
-            # a "seconds since last read" we cannot measure (honest-instrument).
-            obdLastSeenS=None,
-            syncLastOkTs=self._lastSyncOkTsIso,
             syncRows=self._lastSyncRows,
             # US-564: NOT MEASURED HERE -> None, never 0. A pending-row count is
             # not tracked at this layer, and `0` is the single most reassuring
@@ -1824,7 +1896,494 @@ class CardStateEmitterMixin:
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
             runMode=self._gatherRunMode(),
+            # US-876-c: the link chain. NOT gated on obdAvailable -- the
+            # never-connected branch above blanks obdLink, never this.
+            link=self._gatherLinkChain(),
+            # US-732: the wifi block from the off-tick sampler + thresholds.
+            **self._gatherWifiState(),
+            # US-916: lastOkTs + the backlog, from the 30 s cached read.
+            **self._gatherSyncState(),
+            # US-877-a: the pi health block from the off-tick sampler.
+            piHealth=self._gatherPiHealth(),
+            # US-877-b: the verdict's capture input, as written this tick.
+            captureHealth=captureHealth,
         )
+        # US-877-c: the verdict reaches the alerts arbiter IN-PROCESS, before
+        # this tick's alerts emit; only here, never from emitNow (a pure rebuild).
+        arbiter = self._alertsArbiter
+        if arbiter is not None:
+            arbiter.observeSystemStatus(payload)
+
+    def _gatherPiHealth(self) -> dict[str, Any] | None:
+        """The US-877-a ``pi`` block: the sampler's cached reads + uptime now.
+
+        Reads ONLY the sampler's cache -- vcgencmd and the disk guard never
+        run on this tick (Atlas P2). No sampler (a stub host) is None, which
+        the builder publishes as every key null.
+        """
+        sampler = self._piHealthSampler()
+        if sampler is None:
+            return None
+        try:
+            block: dict[str, Any] = sampler.snapshot()
+        except Exception as e:  # noqa: BLE001 -- not read, never a guess
+            logger.debug("pi health: snapshot unreadable: %s", e)
+            return None
+        return block
+
+    def _piCpuTempLimitC(self) -> float:
+        """Effective ``pi.health.limits.cpuTempC`` (validator DEFAULT 80)."""
+        from src.pi.hardware.pi_health import DEFAULT_CPU_TEMP_LIMIT_C
+
+        piConfig = (getattr(self, "_config", None) or {}).get("pi") or {}
+        limits = (piConfig.get("health") or {}).get("limits") or {}
+        return float(limits.get("cpuTempC", DEFAULT_CPU_TEMP_LIMIT_C))
+
+    def _piHealthSampler(self) -> Any:
+        """The Pi health sampler, started on first use (US-877-a; Atlas P4).
+
+        A daemon thread on the US-876-e sampler pattern: it waits on the
+        host's ``_shutdownEvent`` (getattr); a host without one (the stub
+        composers) starts nothing. ``_piHealthReaders`` (getattr) is the
+        tests' seam for the OS reads -- a dict of PiHealthSampler reader
+        keywords.
+
+        Returns:
+            The running sampler (or a test's stand-in), or None.
+        """
+        sampler = getattr(self, "_piSampler", None)
+        if sampler is not None:
+            return sampler
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        if shutdownEvent is None:
+            return None
+        from common.time.helper import toCanonicalIso
+        from src.pi.hardware.pi_health import PiHealthSampler
+
+        sampler = PiHealthSampler(
+            stopEvent=shutdownEvent,
+            cpuTempLimitC=self._piCpuTempLimitC(),
+            clock=self._linkNowS,
+            wallClockIso=lambda: toCanonicalIso(self._linkNowUtc()),
+            **(getattr(self, "_piHealthReaders", None) or {}),
+        )
+        sampler.start()
+        self._piSampler = sampler
+        logger.info("pi health: sampler started")
+        return sampler
+
+    def _gatherSyncState(self) -> dict[str, Any]:
+        """The US-916 sync inputs for system-status, as emit() keywords.
+
+        ``pi.sync.backlog.readSyncHealth`` on the database's path (Atlas S2),
+        read at most every ``SYNC_HEALTH_READ_INTERVAL_S`` and cached between
+        ticks (S4). The read is read-only and never migrates; this module
+        opens nothing itself. No database -> every field null.
+        """
+        database = getattr(self, "_database", None)
+        dbPath = getattr(database, "dbPath", None)
+        if not dbPath:
+            return {
+                "syncLastOkTs": None,
+                "syncRowsWaiting": None,
+                "syncEdrRowsWaiting": None,
+                "syncNotCounted": None,
+            }
+        nowS = self._linkNowS()
+        health = getattr(self, "_syncHealth", None)
+        readS = getattr(self, "_syncHealthReadS", None)
+        if health is None or readS is None or nowS - readS >= SYNC_HEALTH_READ_INTERVAL_S:
+            from src.pi.sync.backlog import readSyncHealth
+
+            health = readSyncHealth(str(dbPath), busyTimeoutSec=SYNC_HEALTH_BUSY_TIMEOUT_S)
+            self._syncHealth = health
+            self._syncHealthReadS = nowS
+        notCounted = health.notCounted
+        return {
+            "syncLastOkTs": health.lastOkTs,
+            "syncRowsWaiting": health.rowsWaiting,
+            "syncEdrRowsWaiting": health.edrRowsWaiting,
+            "syncNotCounted": list(notCounted) if notCounted is not None else None,
+        }
+
+    def _gatherLinkChain(self) -> dict[str, dict[str, str | None]]:
+        """Gather the US-876-c link chain ``{bt, adapter, ecu}`` (Atlas L6).
+
+        The ECU layer is live from ``ConnectionStatus.reachability``, the
+        adapter from the connection's adapter observation (US-876-d), BT from
+        the off-tick bluetoothctl sampler (US-876-e). One status read and one
+        retry-authority verdict serve all three (D2: a not-up layer's down is
+        the ECU's C2 rule).
+        """
+        from common.time.helper import toCanonicalIso
+        from pi.splash.system_status_emitter import LINK_UP
+
+        conn = getattr(self, "_connection", None)
+        status = None
+        if conn is not None:
+            try:
+                status = conn.getStatus()
+            except Exception as e:  # noqa: BLE001 -- unread, never a guess
+                logger.debug("link: getStatus() unreadable: %s", e)
+        nowTs = toCanonicalIso(self._linkNowUtc())
+        noAuthoritySinceTs = self._linkNoAuthoritySinceTs(conn, status, nowTs)
+        ecu = self._gatherEcuLinkLayer(status, nowTs, noAuthoritySinceTs)
+        ecuUp = ecu["state"] == LINK_UP
+        return {
+            "bt": self._gatherBtLinkLayer(nowTs, noAuthoritySinceTs, ecuUp=ecuUp),
+            "adapter": self._gatherAdapterLinkLayer(
+                status, nowTs, noAuthoritySinceTs, ecuUp=ecuUp
+            ),
+            "ecu": ecu,
+        }
+
+    def _gatherBtLinkLayer(
+        self, nowTs: str, noAuthoritySinceTs: str | None, *, ecuUp: bool
+    ) -> dict[str, str | None]:
+        """The BT layer: bluetoothctl 'Connected:' (US-876-e; Atlas L3, E2, E4, G1).
+
+        Reads ONLY the sampler's latest sample -- bluetoothctl never runs on
+        this tick. No sampler (no usable MAC), no sample yet, an unreadable
+        sample (timeout, missing tool, garbage) or one older than
+        ``BT_CONNECTED_STALE_AFTER_S`` publishes the layer null, never down
+        and never retrying. Connected is up regardless of Paired; an absent
+        device (not available / Paired: no) is down -- bluez has nothing to
+        reconnect to -- dated the sample; Connected no follows the shared
+        rule (connecting / retrying, down only by the C2 verdict). The
+        up-this-session flag counts only an up while link.ecu was up (G1).
+
+        Args:
+            nowTs: The publish instant (canonical UTC).
+            noAuthoritySinceTs: The C2 verdict, shared with the ECU layer.
+            ecuUp: Whether link.ecu is up on this same tick.
+        """
+        from pi.obdii.bluetooth_helper import (
+            BT_ABSENT,
+            BT_CONNECTED,
+            BT_CONNECTED_STALE_AFTER_S,
+        )
+        from pi.splash.system_status_emitter import unreadLinkLayer
+
+        sampler = self._btConnectedSampler()
+        if sampler is None:
+            return unreadLinkLayer()
+        tracker = self._linkTracker("_btLinkTracker")
+        sample = sampler.latest()
+        if (
+            sample is None
+            or sample.reading is None
+            or self._linkNowS() - sample.monoS > BT_CONNECTED_STALE_AFTER_S
+        ):
+            return tracker.markUnread()
+        connected = sample.reading == BT_CONNECTED
+        return tracker.observe(
+            observedUp=connected,
+            observedTs=sample.ts,
+            nowTs=nowTs,
+            noAuthoritySinceTs=sample.ts if sample.reading == BT_ABSENT else noAuthoritySinceTs,
+            chainComplete=ecuUp,
+            lastOkTs=sample.ts if connected else None,
+        )
+
+    def _btConnectedSampler(self) -> Any:
+        """The BT sampler, started on first use for a usable MAC (US-876-e).
+
+        MAC source: ``connection.macAddress``, else ``pi.bluetooth.macAddress``,
+        gated by ``isMacAddress`` -- an rfcomm path, no MAC or the --simulate
+        MAC (Atlas E1) starts nothing, and neither does a --simulate run. The
+        thread waits on the host's ``_shutdownEvent`` (E5); a host without
+        one (the stub composers) starts nothing rather than a thread nobody
+        can stop. Every attribute is read through ``getattr``.
+
+        Returns:
+            The running sampler (or a test's stand-in), or None.
+        """
+        sampler = getattr(self, "_btSampler", None)
+        if sampler is not None:
+            return sampler
+        from pi.obdii.bluetooth_helper import BtConnectedSampler, isMacAddress
+
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        if shutdownEvent is None or bool(getattr(self, "_simulate", False)):
+            return None
+        mac = getattr(getattr(self, "_connection", None), "macAddress", None)
+        if not mac:
+            btConfig = ((getattr(self, "_config", None) or {}).get("pi") or {}).get(
+                "bluetooth"
+            ) or {}
+            mac = btConfig.get("macAddress")
+        if not isinstance(mac, str) or not isMacAddress(mac):
+            return None
+        from common.time.helper import toCanonicalIso
+
+        sampler = BtConnectedSampler(
+            mac,
+            stopEvent=shutdownEvent,
+            subprocessRunner=getattr(self, "_btConnectedRunner", None),
+            clock=self._linkNowS,
+            wallClockIso=lambda: toCanonicalIso(self._linkNowUtc()),
+        )
+        sampler.start()
+        self._btSampler = sampler
+        logger.info("link: BT-connected sampler started | mac=%s", mac)
+        return sampler
+
+    def _linkTracker(self, attr: str) -> LinkLayerTracker:
+        """This layer's session tracker, created on first use (stub hosts too)."""
+        from pi.splash.system_status_emitter import LinkLayerTracker
+
+        tracker: LinkLayerTracker | None = getattr(self, attr, None)
+        if tracker is None:
+            tracker = LinkLayerTracker()
+            setattr(self, attr, tracker)
+        return tracker
+
+    def _gatherEcuLinkLayer(
+        self, status: Any, nowTs: str, noAuthoritySinceTs: str | None
+    ) -> dict[str, str | None]:
+        """The ECU layer from reachability (US-876-c; Atlas L1, c-1..c-4, C2-C5).
+
+        ANSWERED is up; DID_NOT_ANSWER / NOT_YET_ATTEMPTED are not up;
+        COULD_NOT_DETERMINE, an absent connection or a raising getStatus() are
+        not read. The up-this-session flag lives in this side's tracker, not
+        in reachability: a reconnect's generation bump resets reachability to
+        NOT_YET_ATTEMPTED, and the flag must survive it. Every attribute is
+        read through ``getattr`` so the bare stub composers keep emitting.
+
+        Args:
+            status: The connection's status this tick, or None if unreadable.
+            nowTs: The publish instant (canonical UTC).
+            noAuthoritySinceTs: The C2 verdict (see _linkNoAuthoritySinceTs).
+
+        Returns:
+            ``{"state", "ts", "lastOkTs"}``; all null for a status that carries
+            no ``reachability`` at all.
+        """
+        from pi.splash.system_status_emitter import unreadLinkLayer
+
+        if status is not None and not hasattr(status, "reachability"):
+            return unreadLinkLayer()
+        return self._linkTracker("_ecuLinkTracker").observe(
+            observedUp=_ecuObservedUp(status),
+            observedTs=getattr(status, "ecuChangedAtUtc", None),
+            nowTs=nowTs,
+            noAuthoritySinceTs=noAuthoritySinceTs,
+            lastOkTs=getattr(status, "ecuLastOkAtUtc", None),
+        )
+
+    def _gatherAdapterLinkLayer(
+        self,
+        status: Any,
+        nowTs: str,
+        noAuthoritySinceTs: str | None,
+        *,
+        ecuUp: bool,
+    ) -> dict[str, str | None]:
+        """The adapter layer: did the ELM answer (US-876-d; Atlas L4, D2-D6, G1).
+
+        ``adapterAnswered`` True is up; False (an attempt the ELM did not
+        answer) is connecting/retrying -- or down only by the shared C2 rule,
+        never because an attempt failed. A status with no adapter observation
+        (none this session, none within the connection's freshness bound, a
+        --simulate status or a stub's) is null outright: stale evidence is no
+        evidence. An unreadable status follows the ECU's unread rule. The
+        up-this-session flag counts only an up while link.ecu was up (G1).
+
+        Args:
+            status: The connection's status this tick, or None if unreadable.
+            nowTs: The publish instant (canonical UTC).
+            noAuthoritySinceTs: The C2 verdict, shared with the ECU layer.
+            ecuUp: Whether link.ecu is up on this same tick.
+        """
+        tracker = self._linkTracker("_adapterLinkTracker")
+        if status is None:
+            observedUp = None
+        else:
+            answered = getattr(status, "adapterAnswered", None)
+            if not isinstance(answered, bool):
+                return tracker.markUnread()
+            observedUp = answered
+        return tracker.observe(
+            observedUp=observedUp,
+            observedTs=getattr(status, "adapterChangedAtUtc", None),
+            nowTs=nowTs,
+            noAuthoritySinceTs=noAuthoritySinceTs,
+            chainComplete=ecuUp,
+            lastOkTs=getattr(status, "adapterLastOkAtUtc", None),
+        )
+
+    def _linkNoAuthoritySinceTs(
+        self, conn: Any, status: Any, nowTs: str
+    ) -> str | None:
+        """RE-HUNT C2: since when NO retry authority has existed, else None.
+
+        Authority is anything that will try the link again: one of the
+        orchestrator's three retry threads alive (the US-690 set -- the US-301
+        heartbeat, the recovery loop, the post-failure heartbeat), a connect in
+        flight on the connection, or the link itself still held (the data path
+        re-reads the ECU behind it every cycle -- the post-drive key-off edge
+        reads retrying, not down). A cancel is not a down fact.
+
+        ``_shutdownEvent`` set is down by itself, at once. Otherwise the
+        absence must last one heartbeat tick before it counts, so the gap
+        between a drop and the next retry thread's spawn cannot flash down.
+        """
+        from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        shuttingDown = shutdownEvent is not None and shutdownEvent.is_set()
+        if not shuttingDown and self._linkRetryAuthorityExists(conn, status):
+            self._linkNoAuthoritySince = None
+            return None
+        since = getattr(self, "_linkNoAuthoritySince", None)
+        if since is None:
+            since = (self._linkNowS(), nowTs)
+            self._linkNoAuthoritySince = since
+        sinceS, sinceTs = since
+        if shuttingDown or self._linkNowS() - sinceS >= HEARTBEAT_TICK_INTERVAL_SEC:
+            return sinceTs
+        return None
+
+    def _linkRetryAuthorityExists(self, conn: Any, status: Any) -> bool:
+        """Whether anything will try the OBD link again (C2; see above)."""
+        if bool(getattr(status, "connected", False)):
+            return True
+        inFlight = getattr(conn, "isConnectInFlight", None)
+        if callable(inFlight):
+            try:
+                if inFlight():
+                    return True
+            except Exception as e:  # noqa: BLE001 -- an unreadable probe is no authority
+                logger.debug("link: isConnectInFlight() raised: %s", e)
+        for name in (
+            "_reconnectHeartbeatThread",
+            "_reconnectThread",
+            "_postFailureReconnectHeartbeatThread",
+        ):
+            isAlive = getattr(getattr(self, name, None), "is_alive", None)
+            if callable(isAlive) and isAlive():
+                return True
+        return False
+
+    def _linkNowS(self) -> float:
+        """Monotonic seconds for the C2 authority hold."""
+        clock = getattr(self, "_linkClock", None)
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def _linkNowUtc(self) -> datetime:
+        """Aware UTC now -- the link block's publish instant."""
+        clock = getattr(self, "_linkWallClock", None)
+        if clock is not None:
+            now: datetime = clock()
+            return now
+        return datetime.now(UTC)
+
+    def _gatherWifiState(self) -> dict[str, Any]:
+        """The US-732 wifi inputs for system-status, as emit() keywords.
+
+        Reads ONLY the WiFi sampler's latest sample -- nmcli never runs on
+        this tick (Atlas W5). No sampler or no sample yet is not read
+        (``wifiAvailable`` False, no reason: the builder publishes
+        ``not_read``, ts null). A sample carries its own read time, its
+        reason when nmcli was absent or failed, and the home answer. The
+        thresholds ride along from ``pi.network.wifi`` (Atlas W4).
+        """
+        wifi: dict[str, Any] = self._wifiThresholds()
+        sampler = self._wifiLinkSampler()
+        sample = sampler.latest() if sampler is not None else None
+        if sample is None:
+            wifi.update(wifiAvailable=False, wifiUnavailableReason=None, wifiTs=None)
+            return wifi
+        reading = sample.reading
+        wifi.update(
+            wifiAvailable=reading.available,
+            wifiUnavailableReason=reading.reason,
+            wifiSsid=reading.ssid,
+            wifiRssiDbm=reading.rssiDbm,
+            wifiHome=sample.home,
+            wifiTs=sample.ts,
+        )
+        return wifi
+
+    def _wifiThresholds(self) -> dict[str, Any]:
+        """``pi.network.wifi`` weak/down dBm, the module defaults as fallback (W4)."""
+        from pi.splash.system_status_emitter import (
+            DEFAULT_DOWN_RSSI_DBM,
+            DEFAULT_WEAK_RSSI_DBM,
+        )
+
+        piConfig = (getattr(self, "_config", None) or {}).get("pi") or {}
+        wifiConfig = (piConfig.get("network") or {}).get("wifi") or {}
+        return {
+            "wifiWeakRssiDbm": wifiConfig.get("weakRssiDbm", DEFAULT_WEAK_RSSI_DBM),
+            "wifiDownRssiDbm": wifiConfig.get("downRssiDbm", DEFAULT_DOWN_RSSI_DBM),
+        }
+
+    def _wifiLinkSampler(self) -> Any:
+        """The WiFi sampler, started on first use (US-732; US-876-e's pattern).
+
+        The thread waits on the host's ``_shutdownEvent``; a host without one
+        (the stub composers) starts nothing. The home check is ONE lazily
+        built ``HomeNetworkDetector(self._config)`` (Atlas W1, ARCH-065)
+        whose ssidReader is the sampler's own reading, so the home answer
+        costs no second nmcli -- only the detector's ``hostname -I``.
+        ``_wifiReader`` (getattr) is the tests' seam for the OS read.
+
+        Returns:
+            The running sampler (or a test's stand-in), or None.
+        """
+        sampler = getattr(self, "_wifiSampler", None)
+        if sampler is not None:
+            return sampler
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        if shutdownEvent is None:
+            return None
+        from common.time.helper import toCanonicalIso
+        from src.pi.network.wifi_reader import WifiLinkSampler
+
+        sampler = WifiLinkSampler(
+            stopEvent=shutdownEvent,
+            reader=getattr(self, "_wifiReader", None),
+            clock=self._linkNowS,
+            wallClockIso=lambda: toCanonicalIso(self._linkNowUtc()),
+        )
+        detector = self._getHomeNetworkDetector(sampler.judgedSsid)
+        sampler.homeCheck = detector.isAtHomeWifi if detector is not None else None
+        sampler.start()
+        self._wifiSampler = sampler
+        logger.info("wifi: link sampler started")
+        return sampler
+
+    def _getHomeNetworkDetector(self, ssidReader: Any) -> Any | None:
+        """The orchestrator's one HomeNetworkDetector, built on demand (W1).
+
+        The ``_getAltitudeAnchor`` pattern: getattr + cache. Used for
+        ``isAtHomeWifi()`` only -- never ``probeServer()`` (Atlas W2).
+
+        Args:
+            ssidReader: The detector's SSID source (the WiFi sampler's
+                reading), ``str`` / ``""`` / None.
+
+        Returns:
+            The cached detector, or None if it cannot be built.
+        """
+        detector = getattr(self, "_homeNetworkDetector", None)
+        if detector is not None:
+            return detector
+        try:
+            from src.pi.network.home_detector import HomeNetworkDetector
+
+            config = getattr(self, "_config", None) or {}
+            detector = HomeNetworkDetector(config, ssidReader=ssidReader)
+        except Exception as e:  # noqa: BLE001 -- home is then null, never a guess
+            logger.debug("wifi: home detector unavailable: %s", e)
+            return None
+        self._homeNetworkDetector = detector
+        return detector
 
     def _gatherRunMode(self) -> str:
         """Resolve the US-901-b runMode from pi.replay.active and --simulate.

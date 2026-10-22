@@ -318,8 +318,9 @@ assert.strictEqual(c.systemStatusView([]), null, 'array -> no view');
 
 // I-3: a reconnecting OBD link -> tile shows RECONNECTING (amber), retries
 // surfaced; the top-bar BT glyph flips amber.
+// MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
 const reconn = {
-  obdLink: {state: 'reconnecting', retries: 3, lastSeenS: 14},
+  obdLink: {state: 'reconnecting', retries: 3},
   sync: {lastOkTs: '2026-06-30T19:40:00Z', rows: 10, pending: 0, stale: false},
   power: {mode: 'car', source: 'external'},
   drive: {state: 'recording', driveId: 27},
@@ -333,7 +334,7 @@ assert.strictEqual(rv.glyphs.bt, 'amber', 'BT glyph amber on reconnect');
 
 // I-4: a stale-while-driving sync -> sync tile amber + sync glyph amber.
 const stale = JSON.parse(JSON.stringify(reconn));
-stale.obdLink = {state: 'linked', retries: 0, lastSeenS: 1};
+stale.obdLink = {state: 'linked', retries: 0};
 stale.sync.stale = true;
 const sv = c.systemStatusView(stale);
 assert.strictEqual(sv.tiles.sync.level, 'amber', 'stale sync tile amber');
@@ -342,7 +343,7 @@ assert.strictEqual(sv.glyphs.sync, 'amber', 'sync glyph amber when stale');
 // F-1 (honest-instrument): a fully-degraded underlying state NEVER renders a
 // green/ok tile or glyph.
 const degraded = {
-  obdLink: {state: 'down', retries: 0, lastSeenS: null},
+  obdLink: {state: 'down', retries: 0},
   sync: {lastOkTs: null, rows: 0, pending: 12, stale: true},
   power: {mode: 'car', source: 'battery'},
   drive: {state: 'idle', driveId: null},
@@ -360,7 +361,7 @@ assert.strictEqual(dv.glyphs.power, undefined, 'power glyph survived US-696');
 
 // A healthy state DOES render green (the positive control -- ok is reachable).
 const healthy = {
-  obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+  obdLink: {state: 'linked', retries: 0},
   sync: {lastOkTs: '2026-06-30T19:41:50Z', rows: 50, pending: 0, stale: false},
   power: {mode: 'car', source: 'external'},
   drive: {state: 'recording', driveId: 27},
@@ -488,7 +489,7 @@ assert.strictEqual(c.powerTile('x').level, 'unavailable', 'string -> unavailable
 // --- the DOM render path (systemStatusView) carries the same honest badge -----
 function state(source) {
   return {
-    obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+    obdLink: {state: 'linked', retries: 0},
     sync: {lastOkTs: '2026-07-01T19:41:50Z', rows: 1, pending: 0, stale: false},
     power: {source: source},
     drive: {state: 'idle', driveId: null},
@@ -1555,7 +1556,7 @@ const c = require(process.argv[1]);
 
 function view(power) {
   return c.systemStatusView({
-    obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+    obdLink: {state: 'linked', retries: 0},
     sync: {lastOkTs: '2026-07-01T00:00:00Z', rows: 1, pending: 0, stale: false},
     power: power,
     drive: {state: 'idle', driveId: null},

@@ -22,6 +22,20 @@
 # 2026-10-20    | Ralph (Rex)  | US-897-b2 -- the alerts arbiter wiring.
 # 2026-10-21    | Ralph (Rex)  | US-897-e -- the restart seed carries the
 #               |              | pending set with its time (VCs 3, 7, 8).
+# 2026-10-22    | Ralph (Rex)  | US-876-c -- system-status `link`: the ECU layer
+#               |              | from reachability, retry authority (C2) + hold.
+# 2026-10-22    | Ralph (Rex)  | US-876-d -- link.adapter from the connection's
+#               |              | adapter observation (VCs 1-2, G1, D2, D5).
+# 2026-10-22    | Ralph (Rex)  | US-876-e -- link.bt from the BT sampler (VCs
+#               |              | 1-2, E2, E4, G1, MAC sources, off-tick thread).
+# 2026-10-22    | Ralph (Rex)  | US-732 -- system-status wifi from the WiFi
+#               |              | sampler; one lazy HomeNetworkDetector; W4.
+# 2026-10-22    | Ralph (Rex)  | US-916 -- sync lastOkTs/rowsWaiting from the DB;
+#               |              | _recordSyncOutcome stamps no time (MOVED PIN).
+# 2026-10-22    | Ralph (Rex)  | US-877-a -- system-status pi from the off-tick
+#               |              | PiHealthSampler; limit from pi.health.limits.
+# 2026-10-22    | Ralph (Rex)  | US-877-c -- the system-status payload reaches the
+#               |              | alerts arbiter; emitNow keeps the system entries.
 # ================================================================================
 ################################################################################
 
@@ -235,7 +249,8 @@ def test_maybeEmit_droppedButSeenLink_isDownButAvailable_notIdle(tmp_path):
 
     orch._maybeEmitCardStates()
     ss = _readState(tmp_path, "system-status")
-    assert ss["obdLink"] == {"state": "down", "retries": 3, "lastSeenS": None}
+    # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+    assert ss["obdLink"] == {"state": "down", "retries": 3}
     assert ss["source"]["obd"]["available"] is True
     assert ss["idle"] is False
 
@@ -290,12 +305,47 @@ def test_maybeEmit_cadenceGate_secondCallNotDue(tmp_path):
 
 
 def test_recordSyncOutcome_cachesTimestampAndRows(tmp_path):
-    """The sync-trigger hook caches a fresh ISO ts + row count for the tile."""
+    """The sync-trigger hook caches the row count for the tile.
+
+    MOVED PIN (US-916): it no longer stamps a time -- lastOkTs is
+    sync_log.last_ok_at (Atlas gap ruling 916-6).
+    """
     orch = _FakeOrch(_config(tmp_path))
     orch._recordSyncOutcome(7)
     assert orch._lastSyncRows == 7
-    assert orch._lastSyncOkTsIso is not None
-    assert orch._lastSyncOkTsIso.endswith("Z")
+    assert orch._lastSyncOkTsIso is None
+
+
+def test_maybeEmit_syncBlock_readsLastOkAndRowsWaitingFromTheDatabase(tmp_path):
+    """US-916: system-status.sync.lastOkTs is max(sync_log.last_ok_at) and
+    rowsWaiting is the push's own count, read from the orchestrator's DB."""
+    import sqlite3
+
+    from src.pi.data import sync_log
+
+    dbPath = str(tmp_path / "obd.db")
+    conn = sqlite3.connect(dbPath)
+    sync_log.initDb(conn)
+    conn.execute("CREATE TABLE realtime_data (id INTEGER PRIMARY KEY, v TEXT)")
+    conn.executemany("INSERT INTO realtime_data (v) VALUES (?)", [("x",)] * 7)
+    conn.execute(
+        "INSERT INTO sync_log (table_name, last_synced_id, status, last_ok_at) "
+        "VALUES ('realtime_data', 2, 'ok', '2026-10-22T08:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._database = SimpleNamespace(dbPath=dbPath)
+    orch._initializeCardStateEmitters()
+
+    orch._maybeEmitCardStates()
+    sync = _readState(tmp_path, "system-status")["sync"]
+    assert sync["lastOkTs"] == "2026-10-22T08:00:00Z"
+    assert sync["rowsWaiting"] == 5
+    assert sync["edrRowsWaiting"] == 0
+    assert sync["notCounted"] == sorted(
+        sync_log.SNAPSHOT_TABLES | sync_log.snapshotSyncTables()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1172,3 +1222,1266 @@ def test_b5_dtcWriteFails_arbiterSeesNothing(tmp_path, clock, monkeypatch):
 
     assert orch._alertsArbiter.codeSource() == {"assessed": False, "checkedAtTs": None}
     assert [e for e in orch._alertsArbiter.episodes() if e.source == "code"] == []
+
+
+# ---------------------------------------------------------------------------
+# US-876-c -- system-status `link`: the ECU layer live from reachability.
+# ---------------------------------------------------------------------------
+
+_LINK_NULL = {"state": None, "ts": None, "lastOkTs": None}
+
+
+def _isoOf(dt):
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class _LinkClocks:
+    """One monotonic + one wall clock shared by the connection and the provider."""
+
+    def __init__(self):
+        self.mono = 5000.0
+        self.wall = datetime(2026, 10, 22, 15, 0, 0, tzinfo=UTC)
+
+    def advance(self, seconds):
+        self.mono += seconds
+        self.wall += timedelta(seconds=seconds)
+
+
+class _EcuResponse:
+    def __init__(self, null):
+        self._null = null
+        self.value = None if null else 800
+
+    def is_null(self):
+        return self._null
+
+
+class _LinkObd:
+    """A python-obd double: linked, answering whatever `next` says."""
+
+    def __init__(self):
+        self.next = _EcuResponse(null=False)
+
+    def is_connected(self):
+        return True
+
+    def query(self, command, force=False):
+        return self.next
+
+    def close(self):
+        pass
+
+
+class _AliveThread:
+    """A retry thread that is alive (the US-301 heartbeat between ticks)."""
+
+    name = "obd-reconnect-heartbeat"
+
+    def is_alive(self):
+        return True
+
+
+def _linkOrch(tmp_path, clocks, *, heartbeat=True):
+    from pi.obdii.obd_connection import ObdConnection
+
+    conn = ObdConnection(
+        {"pi": {"bluetooth": {"macAddress": "00:11:22:33:44:55"}}},
+        monotonicFn=lambda: clocks.mono,
+        wallClockFn=lambda: clocks.wall,
+    )
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._linkClock = lambda: clocks.mono
+    orch._linkWallClock = lambda: clocks.wall
+    # US-876-e: this MAC would start the BT sampler once a test gives the host
+    # a _shutdownEvent; the double keeps it from ever spawning bluetoothctl.
+    orch._btConnectedRunner = _noBluetoothctl
+    if heartbeat:
+        orch._reconnectHeartbeatThread = _AliveThread()
+    orch._initializeCardStateEmitters()
+    return orch, conn
+
+
+def _noBluetoothctl(cmd, **kwargs):
+    raise FileNotFoundError(cmd[0])
+
+
+def _emitLink(orch, tmp_path):
+    orch._emitSystemStatusState()
+    return _readState(tmp_path, "system-status")["link"]
+
+
+def _ecuRead(conn, obd, null):
+    obd.next = _EcuResponse(null=null)
+    conn.query("RPM")
+
+
+def test_link_ecu_neverUp_up_drop_up_readsConnectingUpRetryingUp(tmp_path):
+    """Atlas VC: the reconnect after a drop reads RETRYING, not connecting --
+    the drop's generation bump resets reachability to NOT_YET_ATTEMPTED, which
+    is why the up-this-session flag lives on the orchestrator side (c-1, c-2)."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    seen = []
+
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    conn.obd = obd
+    clocks.advance(5)
+    _ecuRead(conn, obd, null=False)
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    clocks.advance(5)
+    conn.disconnect()
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    clocks.advance(5)
+    conn.obd = obd  # the reconnect
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    _ecuRead(conn, obd, null=False)
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+
+    assert seen == ["connecting", "up", "retrying", "retrying", "up"]
+
+
+def test_link_ecu_answeredThenDidNotAnswer_upThenRetrying_eachDatedItsTransition(tmp_path):
+    """VC 1: ANSWERED then DID_NOT_ANSWER -> up then retrying; ts = each
+    transition's UTC time (the answer; the decay instant), never the tick."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    window = conn.reachabilityFreshnessSeconds
+
+    clocks.advance(3)
+    answeredAt = clocks.wall
+    _ecuRead(conn, obd, null=False)
+    clocks.advance(2)
+    up = _emitLink(orch, tmp_path)["ecu"]
+    clocks.advance(window + 120)
+    retrying = _emitLink(orch, tmp_path)["ecu"]
+
+    assert up == {"state": "up", "ts": _isoOf(answeredAt), "lastOkTs": _isoOf(answeredAt)}
+    assert retrying == {
+        "state": "retrying",
+        "ts": _isoOf(answeredAt + timedelta(seconds=window)),
+        "lastOkTs": _isoOf(answeredAt),
+    }
+
+
+def test_link_obdSourceUnavailable_neverConnected_linkStillPublished(tmp_path):
+    """VC 2: source.obd.available false (never connected) -> link present; ecu
+    connecting (dated the attempt's start); bt/adapter not read."""
+    clocks = _LinkClocks()
+    builtAt = clocks.wall
+    orch, _conn = _linkOrch(tmp_path, clocks)
+    clocks.advance(30)
+
+    orch._emitSystemStatusState()
+    ss = _readState(tmp_path, "system-status")
+
+    assert ss["source"]["obd"]["available"] is False
+    assert ss["obdLink"] == {"state": None, "retries": 0}
+    assert ss["link"] == {
+        "bt": _LINK_NULL,
+        "adapter": _LINK_NULL,
+        "ecu": {"state": "connecting", "ts": _isoOf(builtAt), "lastOkTs": None},
+    }
+
+
+def test_link_couldNotDetermine_beforeAnUpIsNull_afterAnUpIsRetrying(tmp_path):
+    """COULD_NOT_DETERMINE (a read that raised) before any up -> null; after
+    an up (and a reconnect, so the old answer no longer counts) -> retrying."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+
+    def _raise(command, force=False):
+        raise RuntimeError("serial read exploded")
+
+    obd.query = _raise
+    with pytest.raises(RuntimeError):
+        conn.query("RPM")
+    before = _emitLink(orch, tmp_path)["ecu"]
+
+    obd.query = lambda command, force=False: _EcuResponse(null=False)
+    conn.query("RPM")
+    _emitLink(orch, tmp_path)
+    clocks.advance(2)
+    droppedAt = clocks.wall
+    conn.disconnect()
+    _emitLink(orch, tmp_path)
+    conn.obd = obd
+    obd.query = _raise
+    clocks.advance(3)
+    with pytest.raises(RuntimeError):
+        conn.query("RPM")
+    after = _emitLink(orch, tmp_path)["ecu"]
+
+    assert before == _LINK_NULL
+    # Still retrying -- the unread read is not a new transition, so the state
+    # stays dated by the drop that began it.
+    assert after == {
+        "state": "retrying", "ts": _isoOf(droppedAt), "lastOkTs": after["lastOkTs"],
+    }
+    assert after["lastOkTs"] is not None
+
+
+def test_link_statusWithoutReachability_ecuNotRead(tmp_path):
+    """C5: a status object with no `reachability` (the card-test fakes) reads
+    ecu null -- the provider never invents a layer it cannot see."""
+    conn = SimpleNamespace(
+        getStatus=lambda: _connectionStatus(connected=True, totalConnections=1)
+    )
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._initializeCardStateEmitters()
+
+    assert _emitLink(orch, tmp_path) == {
+        "bt": _LINK_NULL, "adapter": _LINK_NULL, "ecu": _LINK_NULL,
+    }
+
+
+def test_link_noConnection_isNull(tmp_path):
+    """conn None before any up -> null (all three keys)."""
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+
+    assert _emitLink(orch, tmp_path)["ecu"] == _LINK_NULL
+
+
+def test_link_getStatusRaisingAfterAnUp_isRetrying_notNull(tmp_path):
+    """getStatus() raising after an up -> retrying (the layer WAS there; an
+    unreadable instant is not evidence it is gone), lastOkTs kept."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    answeredAt = clocks.wall
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+
+    def _boom():
+        raise RuntimeError("status unreadable")
+
+    conn.getStatus = _boom
+    clocks.advance(4)
+    ecu = _emitLink(orch, tmp_path)["ecu"]
+
+    assert ecu["state"] == "retrying"
+    assert ecu["lastOkTs"] == _isoOf(answeredAt)
+
+
+def test_link_cancelThenALiveHeartbeat_isNotDown(tmp_path):
+    """C2: a cancel (cancelPendingConnects) is NOT a down fact -- with the
+    heartbeat alive the layer keeps retrying however long it lasts."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+    conn.disconnect()
+    conn.cancelPendingConnects()
+
+    states = []
+    for _tick in range(4):
+        clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC)
+        states.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+
+    assert states == ["retrying"] * 4
+
+
+def test_link_noRetryAuthority_downOnlyAfterOneHeartbeatTick_datedWhenItWent(tmp_path):
+    """C2 hold: with no retry thread, no connect in flight and no held link,
+    the layer is NOT down at once (the gap before a heartbeat spawns must not
+    flash down); after one heartbeat tick without authority it is down, dated
+    when the authority was first seen gone. Authority back -> retrying."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks, heartbeat=False)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)  # up: the held link is itself the authority
+    conn.disconnect()
+
+    clocks.advance(2)
+    goneAt = clocks.wall
+    gap = _emitLink(orch, tmp_path)["ecu"]
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC - 1)
+    stillGap = _emitLink(orch, tmp_path)["ecu"]
+    clocks.advance(1)
+    down = _emitLink(orch, tmp_path)["ecu"]
+    orch._reconnectHeartbeatThread = _AliveThread()
+    clocks.advance(2)
+    back = _emitLink(orch, tmp_path)["ecu"]
+
+    assert gap["state"] == "retrying"
+    assert stillGap["state"] == "retrying"
+    assert down["state"] == "down"
+    assert down["ts"] == _isoOf(goneAt)
+    assert back["state"] == "retrying"
+
+
+def test_link_shutdownEventSet_isDownAtOnce(tmp_path):
+    """C2: _shutdownEvent set is down by itself -- no hold, even with a live
+    heartbeat (it is exiting)."""
+    import threading
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    orch._shutdownEvent = threading.Event()
+    _emitLink(orch, tmp_path)
+
+    orch._shutdownEvent.set()
+    clocks.advance(1)
+
+    assert _emitLink(orch, tmp_path)["ecu"]["state"] == "down"
+
+
+def test_link_heldLinkWithASilentEcu_isRetrying_notDown(tmp_path):
+    """The known edge (G1): after a drive, key-off silences the ECU while the
+    link stays held -- no retry thread runs, the data path re-reads it -- so
+    the layer reads retrying until shutdown, never down."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks, heartbeat=False)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+
+    clocks.advance(conn.reachabilityFreshnessSeconds + 1)
+    _ecuRead(conn, obd, null=True)
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC * 3)
+
+    assert _emitLink(orch, tmp_path)["ecu"]["state"] == "retrying"
+
+
+def test_link_obdLinkUnchanged_retriesKeepTheirShippedMeaning(tmp_path):
+    """C1: obdLink {state, retries} ships unchanged -- link retrying is not
+    reflected in obdLink.retries."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    conn._status.totalConnections = 1
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+    conn.disconnect()
+
+    orch._emitSystemStatusState()
+    ss = _readState(tmp_path, "system-status")
+
+    assert ss["link"]["ecu"]["state"] == "retrying"
+    assert ss["obdLink"] == {"state": "down", "retries": 0}
+
+
+# ---------------------------------------------------------------------------
+# US-876-d -- link.adapter: did the ELM answer (Atlas L4, D2, D5, G1).
+# ---------------------------------------------------------------------------
+
+
+class _AdapterAttempt:
+    """One connect attempt's python-obd object: ELM status + whether linked."""
+
+    def __init__(self, status, connected=False):
+        self._status = status
+        self._connected = connected
+        self.next = _EcuResponse(null=False)
+
+    def status(self):
+        return self._status
+
+    def is_connected(self):
+        return self._connected
+
+    def query(self, command, force=False):
+        return self.next
+
+    def close(self):
+        pass
+
+
+def _adapterOrch(tmp_path, clocks, *, heartbeat=True):
+    """A provider over a REAL ObdConnection whose attempts a test scripts."""
+    from pi.obdii.obd_connection import ObdConnection
+
+    conn = ObdConnection(
+        {"pi": {"bluetooth": {"macAddress": "/dev/rfcomm0", "retryDelays": []}}},
+        obdFactory=lambda port, timeout: conn.nextAttempt(),
+        monotonicFn=lambda: clocks.mono,
+        wallClockFn=lambda: clocks.wall,
+    )
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._linkClock = lambda: clocks.mono
+    orch._linkWallClock = lambda: clocks.wall
+    if heartbeat:
+        orch._reconnectHeartbeatThread = _AliveThread()
+    orch._initializeCardStateEmitters()
+    return orch, conn
+
+
+def _attempt(conn, result):
+    """One heartbeat-style attempt; ``result`` is the factory's object or raise."""
+
+    def _next():
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    conn.nextAttempt = _next
+    return conn.connectOnce()
+
+
+def test_link_adapter_elmAnswersEcuSilent_adapterUp_ecuConnecting(tmp_path):
+    """VC 1 (ARCH-061, key off at home): the ELM answers ATZ, the ECU is
+    silent -> link.adapter up dated the attempt, link.ecu connecting."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+
+    clocks.advance(3)
+    attemptAt = clocks.wall
+    assert _attempt(conn, _AdapterAttempt("ELM Connected")) is False
+    clocks.advance(2)
+    link = _emitLink(orch, tmp_path)
+
+    assert link["adapter"] == {
+        "state": "up", "ts": _isoOf(attemptAt), "lastOkTs": _isoOf(attemptAt),
+    }
+    assert link["ecu"]["state"] == "connecting"
+    assert link["bt"] == _LINK_NULL
+
+
+def test_link_adapter_noObservationFor641s_isNull(tmp_path):
+    """VC 2 (D5): no adapter observation for 641 s -> link.adapter all null --
+    even after an up while the ECU was up (stale evidence is no evidence)."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    car = _AdapterAttempt("Car Connected", connected=True)
+    _attempt(conn, car)
+    conn.query("RPM")
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "up"
+
+    clocks.advance(640)
+    atBound = _emitLink(orch, tmp_path)["adapter"]["state"]
+    clocks.advance(1)
+    stale = _emitLink(orch, tmp_path)["adapter"]
+
+    assert atBound == "up"
+    assert stale == _LINK_NULL
+
+
+def test_link_adapter_portOpenFails_beforeAnyUp_isConnecting_neverDown(tmp_path):
+    """A failed attempt is connecting before any up (d-1) -- never down."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+
+    states = []
+    for _ in range(3):
+        clocks.advance(320)
+        _attempt(conn, OSError("could not open port"))
+        states.append(_emitLink(orch, tmp_path)["adapter"]["state"])
+
+    assert states == ["connecting"] * 3
+
+
+def test_link_adapter_failedAttemptAfterAnUpWithTheEcu_isRetrying(tmp_path):
+    """After an up while link.ecu was up, a failed attempt reads retrying,
+    dated the failed attempt, with the last up kept."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    car = _AdapterAttempt("Car Connected", connected=True)
+    _attempt(conn, car)
+    okAt = clocks.wall
+    conn.query("RPM")
+    up = _emitLink(orch, tmp_path)
+
+    conn.disconnect()
+    clocks.advance(10)
+    failedAt = clocks.wall
+    _attempt(conn, OSError("could not open port"))
+    adapter = _emitLink(orch, tmp_path)["adapter"]
+
+    assert up["ecu"]["state"] == "up" and up["adapter"]["state"] == "up"
+    assert adapter == {
+        "state": "retrying", "ts": _isoOf(failedAt), "lastOkTs": _isoOf(okAt),
+    }
+
+
+def test_link_adapter_upOnlyWhileTheEcuWasSilent_thenAFailure_isConnecting(tmp_path):
+    """G1: an adapter up does not count as 'up this session' until link.ecu
+    is up beside it -- so a failure after a key-off answer reads connecting."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    _attempt(conn, _AdapterAttempt("ELM Connected"))
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "up"
+
+    clocks.advance(320)
+    _attempt(conn, _AdapterAttempt("Not Connected"))
+
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "connecting"
+
+
+def test_link_adapter_downOnlyByTheSharedC2Rule(tmp_path):
+    """D2: with no retry authority past the one-tick hold the adapter is down
+    -- the same verdict as the ECU's, on the same tick."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks, heartbeat=False)
+    _attempt(conn, OSError("could not open port"))
+    first = _emitLink(orch, tmp_path)
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC)
+    later = _emitLink(orch, tmp_path)
+
+    assert first["adapter"]["state"] == "connecting"
+    assert later["adapter"]["state"] == "down"
+    assert later["ecu"]["state"] == "down"
+
+
+def test_link_adapter_simulateStatus_hasNoAdapterFields_isNull(tmp_path):
+    """D6: a status with no adapter observation (SimulatedObdConnection's,
+    the stub composers') reads adapter null; the ECU is unaffected."""
+    from pi.obdii.obd_connection import ConnectionStatus, Reachability
+
+    status = ConnectionStatus(connected=True, reachability=Reachability.ANSWERED)
+    conn = SimpleNamespace(getStatus=lambda: status)
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._initializeCardStateEmitters()
+
+    link = _emitLink(orch, tmp_path)
+
+    assert link["adapter"] == _LINK_NULL
+    assert link["ecu"]["state"] == "up"
+
+
+def test_link_adapter_getStatusRaisingAfterAnUp_isRetrying(tmp_path):
+    """An unreadable status is the ECU's unread rule: after an up (with the
+    ECU) the adapter reads retrying, not null."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    _attempt(conn, _AdapterAttempt("Car Connected", connected=True))
+    conn.query("RPM")
+    _emitLink(orch, tmp_path)
+
+    def _boom():
+        raise RuntimeError("status unreadable")
+
+    conn.getStatus = _boom
+    clocks.advance(2)
+
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "retrying"
+
+
+# ---------------------------------------------------------------------------
+# US-876-e -- link.bt: bluetoothctl 'Connected:', sampled off the tick.
+# ---------------------------------------------------------------------------
+
+_BT_MAC = "00:04:3E:85:0D:FB"
+_BT_INFO_CONNECTED = f"Device {_BT_MAC} (public)\n\tPaired: yes\n\tConnected: yes\n"
+
+
+class _FakeBtSampler:
+    """Stands in for the sampler thread: the provider only ever calls latest()."""
+
+    def __init__(self):
+        self.sample = None
+
+    def latest(self):
+        return self.sample
+
+
+def _btSample(clocks, reading):
+    from pi.obdii.bluetooth_helper import BtConnectedSample
+
+    return BtConnectedSample(reading=reading, ts=_isoOf(clocks.wall), monoS=clocks.mono)
+
+
+def _btOrch(tmp_path, clocks, *, heartbeat=True):
+    """A provider over a real ObdConnection with a scripted BT sampler."""
+    orch, conn = _linkOrch(tmp_path, clocks, heartbeat=heartbeat)
+    sampler = _FakeBtSampler()
+    orch._btSampler = sampler
+    return orch, conn, sampler
+
+
+def test_link_bt_connectedYes_isUp_datedTheSample(tmp_path):
+    """VC 1: bluetoothctl info shows 'Connected: yes' -> link.bt up, ts and
+    lastOkTs the sample's time (never the tick)."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks)
+    sampledAt = clocks.wall
+    sampler.sample = _btSample(clocks, BT_CONNECTED)
+    clocks.advance(2)
+
+    assert _emitLink(orch, tmp_path)["bt"] == {
+        "state": "up", "ts": _isoOf(sampledAt), "lastOkTs": _isoOf(sampledAt),
+    }
+
+
+def test_link_bt_timeout_isNull_neverDown_evenAfterAnUp(tmp_path):
+    """VC 2: bluetoothctl timed out (2 s) -> link.bt {null, null} -- never
+    down, and not retrying either, even after an up with the ECU."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED
+
+    clocks = _LinkClocks()
+    orch, conn, sampler = _btOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)
+    assert _emitLink(orch, tmp_path)["bt"]["state"] == "up"
+
+    clocks.advance(5)
+    sampler.sample = _btSample(clocks, None)
+
+    assert _emitLink(orch, tmp_path)["bt"] == _LINK_NULL
+
+
+@pytest.mark.parametrize("label", ["not-available", "paired-no"])
+def test_link_bt_absentDevice_isDown_datedTheSample(tmp_path, label):
+    """'Device <MAC> not available' / 'Paired: no' (both parse to absent) ->
+    down, with a retry thread alive: bluez says there is nothing to reconnect."""
+    from pi.obdii.bluetooth_helper import BT_ABSENT
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks, heartbeat=True)
+    sampledAt = clocks.wall
+    sampler.sample = _btSample(clocks, BT_ABSENT)
+    clocks.advance(2)
+
+    assert _emitLink(orch, tmp_path)["bt"] == {
+        "state": "down", "ts": _isoOf(sampledAt), "lastOkTs": None,
+    }
+
+
+def test_link_bt_connectedNo_beforeTheEcuAnswers_isConnecting_afterIsRetrying(tmp_path):
+    """G1 (the Atlas key-off example): 'Connected: no' reads connecting until
+    BT has been up WHILE the ECU was up; after that it reads retrying."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED, BT_NOT_CONNECTED
+
+    clocks = _LinkClocks()
+    orch, conn, sampler = _btOrch(tmp_path, clocks)
+    states = []
+
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+    clocks.advance(5)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)  # up, ECU still silent
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+    clocks.advance(5)
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+
+    obd = _LinkObd()
+    conn.obd = obd
+    clocks.advance(5)
+    _ecuRead(conn, obd, null=False)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)  # up with the ECU
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+    clocks.advance(5)
+    droppedAt = clocks.wall
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    retrying = _emitLink(orch, tmp_path)["bt"]
+
+    assert states == ["connecting", "up", "connecting", "up"]
+    assert retrying["state"] == "retrying"
+    assert retrying["ts"] == _isoOf(droppedAt)
+
+
+def test_link_bt_connectedNo_withNoRetryAuthority_isDownByTheSharedC2Rule(tmp_path):
+    """'Connected: no' is down only by the shared C2 verdict (after the hold)."""
+    from pi.obdii.bluetooth_helper import BT_NOT_CONNECTED
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks, heartbeat=False)
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    first = _emitLink(orch, tmp_path)
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC)
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    later = _emitLink(orch, tmp_path)
+
+    assert first["bt"]["state"] == "connecting"
+    assert later["bt"]["state"] == "down"
+    assert later["ecu"]["state"] == "down"
+
+
+def test_link_bt_sampleOlderThan15s_isNull(tmp_path):
+    """E2: a sample older than 3 x the 5 s cadence -> all null (the sampler is
+    dead or wedged); at exactly 15 s it still stands."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED, BT_CONNECTED_STALE_AFTER_S
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)
+
+    clocks.advance(BT_CONNECTED_STALE_AFTER_S)
+    atBound = _emitLink(orch, tmp_path)["bt"]["state"]
+    clocks.advance(1)
+    stale = _emitLink(orch, tmp_path)["bt"]
+
+    assert BT_CONNECTED_STALE_AFTER_S == 15
+    assert atBound == "up"
+    assert stale == _LINK_NULL
+
+
+def test_link_bt_noSampleYet_isNull(tmp_path):
+    """Before the sampler's first sample lands the layer is not read."""
+    clocks = _LinkClocks()
+    orch, _conn, _sampler = _btOrch(tmp_path, clocks)
+
+    assert _emitLink(orch, tmp_path)["bt"] == _LINK_NULL
+
+
+class _BtRunner:
+    """A bluetoothctl double for the real sampler thread."""
+
+    def __init__(self, stdout):
+        import threading
+
+        self.stdout = stdout
+        self.calls = []
+        self.threads = []
+        self.called = threading.Event()
+
+    def __call__(self, cmd, **kwargs):
+        import subprocess
+        import threading
+
+        self.calls.append(list(cmd))
+        self.threads.append(threading.current_thread())
+        self.called.set()
+        return subprocess.CompletedProcess(cmd, 0, stdout=self.stdout, stderr="")
+
+
+def _stopSampler(orch):
+    orch._shutdownEvent.set()
+    sampler = getattr(orch, "_btSampler", None)
+    if sampler is not None:
+        sampler.thread.join(timeout=5.0)
+        assert not sampler.thread.is_alive()
+
+
+def test_link_bt_realSampler_samplesOffTheTickThread_andStopsOnShutdown(tmp_path):
+    """The provider starts ONE daemon sampler for the connection's MAC; every
+    bluetoothctl call runs on it (never the tick thread); a tick only reads
+    its latest sample; _shutdownEvent stops it (E5)."""
+    import threading
+    import time
+
+    from pi.obdii.bluetooth_helper import BT_CONNECTED_SAMPLE_INTERVAL_S
+
+    conn = SimpleNamespace(macAddress=_BT_MAC, getStatus=lambda: None)
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._shutdownEvent = threading.Event()
+    runner = _BtRunner(_BT_INFO_CONNECTED)
+    orch._btConnectedRunner = runner
+    orch._initializeCardStateEmitters()
+    try:
+        _emitLink(orch, tmp_path)
+        sampler = orch._btSampler
+        assert runner.called.wait(timeout=5.0)
+        deadline = time.monotonic() + 5.0
+        while sampler.latest() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        callsBefore = len(runner.calls)
+        bt = _emitLink(orch, tmp_path)["bt"]
+        callsDuringTick = len(runner.calls) - callsBefore
+        sameSampler = orch._btSampler is sampler
+    finally:
+        _stopSampler(orch)
+
+    assert bt["state"] == "up"
+    assert sameSampler
+    assert callsDuringTick == 0
+    assert runner.calls[0] == ["bluetoothctl", "info", _BT_MAC]
+    assert set(runner.threads) == {sampler.thread}
+    assert threading.current_thread() not in runner.threads
+    assert sampler.thread.daemon is True
+    assert sampler._intervalS == BT_CONNECTED_SAMPLE_INTERVAL_S
+
+
+def test_link_bt_configuredMac_usedWhenTheConnectionHasNone(tmp_path):
+    """MAC source: connection.macAddress, else pi.bluetooth.macAddress."""
+    import threading
+
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    config["pi"]["bluetooth"] = {"macAddress": _BT_MAC}
+    orch = _FakeOrch(config)
+    orch._shutdownEvent = threading.Event()
+    runner = _BtRunner(_BT_INFO_CONNECTED)
+    orch._btConnectedRunner = runner
+    orch._initializeCardStateEmitters()
+    try:
+        _emitLink(orch, tmp_path)
+        assert runner.called.wait(timeout=5.0)
+    finally:
+        _stopSampler(orch)
+
+    assert runner.calls[0] == ["bluetoothctl", "info", _BT_MAC]
+
+
+@pytest.mark.parametrize(
+    ("connMac", "configMac", "simulate", "withShutdownEvent"),
+    [
+        (None, None, False, True),
+        ("/dev/rfcomm0", _BT_MAC, False, True),
+        ("SIMULATED:00:11:22:33:44:55", _BT_MAC, False, True),
+        (None, _BT_MAC, True, True),
+        (_BT_MAC, None, False, False),
+    ],
+    ids=["no-mac", "rfcomm-path", "simulate-mac", "simulate-run", "stub-host-no-event"],
+)
+def test_link_bt_noUsableMac_startsNoSampler_andIsNull(
+    tmp_path, connMac, configMac, simulate, withShutdownEvent
+):
+    """No MAC, an rfcomm path, the --simulate MAC (Atlas E1) or a host with
+    no _shutdownEvent to stop it -> link.bt null and NO sampler thread."""
+    import threading
+
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    if configMac is not None:
+        config["pi"]["bluetooth"] = {"macAddress": configMac}
+    conn = None
+    if connMac is not None:
+        conn = SimpleNamespace(macAddress=connMac, getStatus=lambda: None)
+    orch = _FakeOrch(config, connection=conn)
+    orch._simulate = simulate
+    if withShutdownEvent:
+        orch._shutdownEvent = threading.Event()
+    runner = _BtRunner(_BT_INFO_CONNECTED)
+    orch._btConnectedRunner = runner
+    orch._initializeCardStateEmitters()
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    bt = _emitLink(orch, tmp_path)["bt"]
+
+    assert bt == _LINK_NULL
+    assert getattr(orch, "_btSampler", None) is None
+    assert "bt-connected-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )
+    assert runner.calls == []
+
+
+# ---------------------------------------------------------------------------
+# US-732 -- system-status wifi from the off-tick WiFi sampler.
+# ---------------------------------------------------------------------------
+
+_WIFI_HOME = "DeathStarWiFi"
+_WIFI_TS = "2026-10-22T12:00:00Z"
+
+
+class _FakeWifiSampler:
+    """Stands in for the sampler thread: the provider only ever calls latest()."""
+
+    def __init__(self, sample=None):
+        self.sample = sample
+
+    def latest(self):
+        return self.sample
+
+
+def _wifiConfig(tmp_path, wifi=None):
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    config["pi"]["homeNetwork"] = {"ssid": _WIFI_HOME, "subnet": "10.27.27.0/24"}
+    if wifi is not None:
+        config["pi"]["network"] = {"wifi": wifi}
+    return config
+
+
+def _wifiReading(kind, ssid=None, rssi=None):
+    from src.pi.network.wifi_reader import WifiReading
+
+    if kind == "associated":
+        return WifiReading(True, ssid, rssi, None)
+    if kind == "unassociated":
+        return WifiReading(False, None, None, None)
+    return WifiReading(None, None, None, kind)
+
+
+def _wifiSample(reading, home):
+    from src.pi.network.wifi_reader import WifiSample
+
+    return WifiSample(reading=reading, home=home, ts=_WIFI_TS, monoS=1.0)
+
+
+def _emitWifi(orch, tmp_path):
+    orch._emitSystemStatusState()
+    status = _readState(tmp_path, "system-status")
+    return status["wifi"], status["source"]["wifi"]
+
+
+def _wifiOrch(tmp_path, sample=None, wifi=None):
+    orch = _FakeOrch(_wifiConfig(tmp_path, wifi))
+    orch._initializeCardStateEmitters()
+    orch._wifiSampler = _FakeWifiSampler(sample)
+    return orch
+
+
+def _stopWifiSampler(orch):
+    orch._shutdownEvent.set()
+    sampler = getattr(orch, "_wifiSampler", None)
+    if sampler is not None:
+        sampler.thread.join(timeout=5.0)
+        assert not sampler.thread.is_alive()
+
+
+_WIFI_READ_OK = {"available": True, "reason": None}
+
+
+@pytest.mark.parametrize(
+    ("reading", "home", "wifi", "source"),
+    [
+        (("associated", _WIFI_HOME, -50), True,
+         {"state": "up", "ssid": _WIFI_HOME, "rssiDbm": -50, "home": True,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("associated", "CoffeeShop", -60), False,
+         {"state": "up", "ssid": "CoffeeShop", "rssiDbm": -60, "home": False,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("unassociated",), False,
+         {"state": "down", "ssid": None, "rssiDbm": None, "home": False,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("nmcli_absent",), None,
+         {"state": None, "ssid": None, "rssiDbm": None, "home": None,
+          "ts": _WIFI_TS},
+         {"available": False, "reason": "nmcli_absent"}),
+        (("read_failed",), None,
+         {"state": None, "ssid": None, "rssiDbm": None, "home": None,
+          "ts": _WIFI_TS},
+         {"available": False, "reason": "read_failed"}),
+        (("associated", _WIFI_HOME, None), True,
+         {"state": None, "ssid": _WIFI_HOME, "rssiDbm": None, "home": True,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("associated", _WIFI_HOME, -75), True,
+         {"state": "weak", "ssid": _WIFI_HOME, "rssiDbm": -75, "home": True,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+    ],
+    ids=["associated-home", "associated-other", "unassociated", "nmcli-missing",
+         "read-failed", "proc-file-missing", "minus75-weak"],
+)
+def test_wifi_theSamplersLatest_isPublished(tmp_path, reading, home, wifi, source):
+    """The provider publishes the sampler's latest sample: association from
+    nmcli, rssi from /proc, home from the detector, ts the read time."""
+    orch = _wifiOrch(tmp_path, _wifiSample(_wifiReading(*reading), home))
+
+    assert _emitWifi(orch, tmp_path) == (wifi, source)
+
+
+def test_wifi_noSampleYet_isNotRead_homeAndTsNull(tmp_path):
+    orch = _wifiOrch(tmp_path, sample=None)
+
+    wifi, source = _emitWifi(orch, tmp_path)
+
+    assert wifi == {"state": None, "ssid": None, "rssiDbm": None, "home": None, "ts": None}
+    assert source == {"available": False, "reason": "not_read"}
+
+
+def test_wifi_stubHostWithoutShutdownEvent_startsNoSampler(tmp_path):
+    """Stub hosts (no _shutdownEvent) publish wifi not read and start nothing."""
+    import threading
+
+    orch = _FakeOrch(_wifiConfig(tmp_path))
+    orch._initializeCardStateEmitters()
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    _wifi, source = _emitWifi(orch, tmp_path)
+
+    assert source == {"available": False, "reason": "not_read"}
+    assert getattr(orch, "_wifiSampler", None) is None
+    assert getattr(orch, "_homeNetworkDetector", None) is None
+    assert "wifi-link-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )
+
+
+def test_wifi_thresholds_comeFromPiNetworkWifi(tmp_path):
+    """W4: config pi.network.wifi moves the band; -65 is weak under -60."""
+    orch = _wifiOrch(
+        tmp_path,
+        _wifiSample(_wifiReading("associated", _WIFI_HOME, -65), True),
+        wifi={"weakRssiDbm": -60, "downRssiDbm": -90},
+    )
+
+    assert _emitWifi(orch, tmp_path)[0]["state"] == "weak"
+
+
+def test_wifi_thresholds_absentConfig_fallBackToTheModuleDefaults(tmp_path):
+    orch = _wifiOrch(
+        tmp_path, _wifiSample(_wifiReading("associated", _WIFI_HOME, -65), True)
+    )
+
+    assert _emitWifi(orch, tmp_path)[0]["state"] == "up"
+
+
+def test_wifi_realSampler_offTheTick_oneDetector_homeFromTheSameRead(
+    tmp_path, monkeypatch
+):
+    """The provider starts ONE daemon sampler; the read runs on it, never on
+    the tick; ONE HomeNetworkDetector (built lazily from self._config) judges
+    the sampler's own read -- its ssidReader is the sample, so no second
+    nmcli; _shutdownEvent stops the thread."""
+    import threading
+    import time
+
+    from src.pi.network import home_detector
+
+    monkeypatch.setattr(home_detector, "_readLocalIps", lambda: ["10.27.27.124"])
+    reads = []
+
+    def reader():
+        reads.append(threading.current_thread())
+        return _wifiReading("associated", _WIFI_HOME, -50)
+
+    orch = _FakeOrch(_wifiConfig(tmp_path))
+    orch._shutdownEvent = threading.Event()
+    orch._wifiReader = reader
+    orch._initializeCardStateEmitters()
+    try:
+        orch._emitSystemStatusState()
+        sampler = orch._wifiSampler
+        deadline = time.monotonic() + 5.0
+        while sampler.latest() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        readsBefore = len(reads)
+        wifi, source = _emitWifi(orch, tmp_path)
+        readsDuringTick = len(reads) - readsBefore
+        detector = orch._homeNetworkDetector
+        sameSampler = orch._wifiSampler is sampler
+    finally:
+        _stopWifiSampler(orch)
+
+    assert (wifi["state"], wifi["home"], wifi["rssiDbm"]) == ("up", True, -50)
+    assert source == _WIFI_READ_OK
+    assert sameSampler
+    assert readsDuringTick == 0
+    assert reads and all(t is not threading.main_thread() for t in reads)
+    assert detector._ssidReader == sampler.judgedSsid
+    assert detector._ssid == _WIFI_HOME
+
+
+def test_wifi_homeDetector_isBuiltOnce_andCached(tmp_path):
+    """W1: one HomeNetworkDetector, getattr + cache (the _getAltitudeAnchor
+    pattern)."""
+    orch = _FakeOrch(_wifiConfig(tmp_path))
+
+    first = orch._getHomeNetworkDetector(lambda: None)
+    second = orch._getHomeNetworkDetector(lambda: "other")
+
+    assert first is not None and first is second
+
+
+# ---------------------------------------------------------------------------
+# US-877-a -- system-status `pi` from the off-tick PiHealthSampler.
+# ---------------------------------------------------------------------------
+
+
+def _piReaders(reads, temp=52.6, throttled="throttled=0x0"):
+    import threading
+
+    from src.pi.diagnostics.disk_space_guard import assessDiskSpace
+    from src.pi.hardware.pi_health import parseThrottled
+
+    def tempReader():
+        reads.append(threading.current_thread())
+        return temp
+
+    return {
+        "tempReader": tempReader,
+        "throttledReader": lambda: parseThrottled(throttled),
+        "diskReader": lambda: assessDiskSpace(
+            "/", freeSpaceReader=lambda _p: 102005460992, searchRoots=[]
+        ),
+        "uptimeReader": lambda: 3720.6,
+    }
+
+
+def _stopPiSampler(orch):
+    orch._shutdownEvent.set()
+    for name in ("_piSampler", "_wifiSampler"):
+        sampler = getattr(orch, name, None)
+        if sampler is not None and getattr(sampler, "thread", None) is not None:
+            sampler.thread.join(timeout=5.0)
+            assert not sampler.thread.is_alive()
+
+
+def _runPiOrch(tmp_path, config, reads, **readerArgs):
+    import threading
+    import time
+
+    orch = _FakeOrch(config)
+    orch._shutdownEvent = threading.Event()
+    orch._wifiReader = lambda: _wifiReading("nmcli_absent")
+    orch._piHealthReaders = _piReaders(reads, **readerArgs)
+    orch._initializeCardStateEmitters()
+    try:
+        orch._emitSystemStatusState()
+        sampler = orch._piSampler
+        deadline = time.monotonic() + 5.0
+        while sampler.snapshot()["cpuTempC"] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        readsBefore = len(reads)
+        orch._emitSystemStatusState()
+        readsDuringTick = len(reads) - readsBefore
+        pi = _readState(tmp_path, "system-status")["pi"]
+    finally:
+        _stopPiSampler(orch)
+    return pi, readsDuringTick, sampler
+
+
+def test_pi_realSampler_offTheTick_publishesTheBlock(tmp_path):
+    """P2/P4: the reads run on the daemon sampler; the tick reads its cache."""
+    import threading
+
+    reads: list = []
+    pi, readsDuringTick, sampler = _runPiOrch(
+        tmp_path, _config(tmp_path, stateEmitIntervalSeconds=0.0), reads
+    )
+
+    assert pi["cpuTempC"] == 52.6
+    assert pi["cpuTempLimitC"] == 80.0
+    assert (pi["throttled"], pi["throttledHex"]) == (False, "0x0")
+    assert (pi["diskVerdict"], pi["diskFreeBytes"]) == ("healthy", 102005460992)
+    assert pi["uptimeS"] == 3720
+    assert pi["overLimit"] == []
+    assert all(pi[k] is not None for k in ("cpuTempTs", "throttledTs", "diskTs", "uptimeTs"))
+    assert readsDuringTick == 0
+    assert reads and all(t is not threading.main_thread() for t in reads)
+    assert sampler.thread.daemon
+
+
+def test_pi_limit_comesFromPiHealthLimits(tmp_path):
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    config["pi"]["health"] = {"limits": {"cpuTempC": 50}}
+    pi, _, _ = _runPiOrch(tmp_path, config, [], temp=52.6)
+
+    assert pi["cpuTempLimitC"] == 50.0
+    assert pi["overLimit"] == ["cpuTemp"]
+
+
+def test_pi_stubHostWithoutShutdownEvent_everyKeyNull_noThread(tmp_path):
+    import threading
+
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    orch._emitSystemStatusState()
+
+    pi = _readState(tmp_path, "system-status")["pi"]
+    assert pi.pop("overLimit") == []
+    assert set(pi.values()) == {None}
+    assert getattr(orch, "_piSampler", None) is None
+    assert "pi-health-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )
+
+
+def test_pi_aRaisingSnapshot_isNotRead(tmp_path):
+    class _Broken:
+        def snapshot(self):
+            raise RuntimeError("torn")
+
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    orch._piSampler = _Broken()
+
+    orch._emitSystemStatusState()
+
+    pi = _readState(tmp_path, "system-status")["pi"]
+    assert pi["overLimit"] == [] and pi["cpuTempC"] is None
+
+
+# ---------------------------------------------------------------------------
+# US-877-c -- the system-status verdict reaches the alerts arbiter IN-PROCESS;
+# every alerts emit (the tick and emitNow) carries arbiter.systemSource().
+# ---------------------------------------------------------------------------
+
+_PI_HOT = {"cpuTempC": 85.0, "cpuTempLimitC": 80, "overLimit": ["cpuTemp"]}
+
+
+def _systemOrch(tmp_path, piHealth):
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    holder = {"pi": piHealth}
+    orch._gatherPiHealth = lambda: holder["pi"]
+    return orch, holder
+
+
+def _systemEntries(alerts):
+    return [e for e in alerts["entries"] if e["source"] == "system"]
+
+
+def test_c_verdictPiMember_isTheSystemWatchOnStatesAlerts(tmp_path):
+    """VC: verdict members [pi] -> states/alerts entry system:pi:watch."""
+    orch, _ = _systemOrch(tmp_path, dict(_PI_HOT))
+
+    orch._emitSystemStatusState()
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    status = _readState(tmp_path, "system-status")
+    assert alerts["sources"]["system"] == {"assessed": True}
+    pi = [e for e in _systemEntries(alerts) if e["key"] == "pi"]
+    assert [e["id"] for e in pi] == ["system:pi:watch"]
+    member = next(m for m in status["verdict"]["members"] if m["key"] == "pi")
+    assert pi[0]["sentence"] == member["reason"]
+    assert pi[0]["firstSeenTs"] == status["ts"]
+
+
+def test_c_beforeAnySystemStatus_systemIsNotRead(tmp_path):
+    orch, _ = _systemOrch(tmp_path, dict(_PI_HOT))
+
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    assert alerts["sources"]["system"] == {"assessed": False, "reason": "not_read"}
+    assert _systemEntries(alerts) == []
+
+
+def test_c_emitNow_keepsTheCachedSystemEntries_andObservesNothing(tmp_path):
+    """877-c-2/3: an ack rebuild never drops the system entries for a tick, and
+    emitNow never re-reads system-status (the member clearing is not seen)."""
+    orch, holder = _systemOrch(tmp_path, dict(_PI_HOT))
+    orch._emitSystemStatusState()
+    _alertsAfterTick(orch, tmp_path)
+    holder["pi"] = None  # the pi member clears on the NEXT system-status emit
+
+    rebuilt = orch.emitNow()
+
+    assert rebuilt["sources"]["system"] == {"assessed": True}
+    assert "system:pi:watch" in [e["id"] for e in _systemEntries(rebuilt)]
+
+    orch._emitSystemStatusState()
+    after = _alertsAfterTick(orch, tmp_path)
+    assert "system:pi:watch" not in [e["id"] for e in _systemEntries(after)]
+    assert after["sources"]["system"] == {"assessed": True}
+
+
+def test_c_aFailedSystemStatusWrite_keepsTheCachedVerdict(tmp_path, monkeypatch):
+    """Atlas A3: a None hand-off keeps what is held, still assessed."""
+    import pi.splash.system_status_emitter as mod
+
+    orch, _ = _systemOrch(tmp_path, dict(_PI_HOT))
+    orch._emitSystemStatusState()
+    before = [e["id"] for e in _systemEntries(_alertsAfterTick(orch, tmp_path))]
+
+    def _boom(*_a, **_k):
+        raise OSError("tmpfs full")
+
+    monkeypatch.setattr(mod, "writeStateAtomic", _boom)
+    orch._emitSystemStatusState()
+    after = _alertsAfterTick(orch, tmp_path)
+
+    assert "system:pi:watch" in before
+    assert [e["id"] for e in _systemEntries(after)] == before
+    assert after["sources"]["system"] == {"assessed": True}

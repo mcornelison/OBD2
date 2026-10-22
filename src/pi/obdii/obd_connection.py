@@ -120,6 +120,19 @@
 #                |              | attempt only (prior level restored); every
 #                |              | attempt logs INFO 'CONNECT PHASE' lines.
 #                |              | Connect behaviour unchanged.
+# 2026-10-22    | Rex (US-876-c)| ConnectionStatus.ecuChangedAtUtc / ecuLastOkAtUtc:
+#                |              | the WALL-CLOCK canonical-UTC instant of the last
+#                |              | reachability transition (a decay is dated
+#                |              | lastAnswer + window) and of the last answer this
+#                |              | session.  Kept out of toDict().
+# 2026-10-22    | Rex (US-876-d)| The adapter observation: whether the ELM answered
+#                |              | (obd.status() of THIS attempt's object read before
+#                |              | the partial close; a connect success; any answered
+#                |              | query incl. ATRV), its transition and last-answer
+#                |              | wall times; null after 2 x the heartbeat's max
+#                |              | interval.  ConnectionStatus.adapterAnswered /
+#                |              | adapterChangedAtUtc / adapterLastOkAtUtc, kept
+#                |              | out of toDict().  Connect behaviour unchanged.
 # ================================================================================
 ################################################################################
 
@@ -153,13 +166,18 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from . import bluetooth_helper, bond_self_heal, decoders
 
 logger = logging.getLogger(__name__)
+
+
+def _wallClockNow() -> datetime:
+    """Aware UTC now -- the default wall clock for transition stamps (US-876-c)."""
+    return datetime.now(UTC)
 
 
 # OBD library import with fallback for environments where it's not available
@@ -258,6 +276,51 @@ EVENT_TYPE_RECONNECT = 'reconnect'
 # silent-skips.  Keyed by python-obd command name (obdlib.commands.RPM.name), or
 # the bare parameter string when obdlib is unavailable.
 MANDATORY_MODE01_PIDS: frozenset[str] = frozenset({'RPM'})
+
+# US-876-d (Atlas D1): the obd.status() values that mean the ELM answered.
+# python-OBD 0.7.3 -- the Pi venv's version (docs/host-versions/
+# pi-obd2-venv.freeze.txt) -- defines OBDStatus as plain strings in
+# obd/utils.py; NOT_CONNECTED ('Not Connected') is the only one below the ELM.
+# The pinned strings stand in where the package does not import (the dev box).
+_STATUS_ELM_CONNECTED = 'ELM Connected'
+_STATUS_OBD_CONNECTED = 'OBD Connected'
+_STATUS_CAR_CONNECTED = 'Car Connected'
+if obdlib is not None and hasattr(obdlib, 'OBDStatus'):
+    _ELM_ANSWERED_STATUSES: frozenset[Any] = frozenset({
+        obdlib.OBDStatus.ELM_CONNECTED,
+        obdlib.OBDStatus.OBD_CONNECTED,
+        obdlib.OBDStatus.CAR_CONNECTED,
+    })
+else:
+    _ELM_ANSWERED_STATUSES = frozenset({
+        _STATUS_ELM_CONNECTED,
+        _STATUS_OBD_CONNECTED,
+        _STATUS_CAR_CONNECTED,
+    })
+
+
+def _elmAnswered(candidate: Any) -> bool:
+    """Whether a connect attempt's OBD object says the ELM answered (US-876-d).
+
+    Read through a GUARDED getattr: a missing ``status()``, one that raises, or
+    a ``None`` result all mean "did not answer" -- never a guess that it did.
+
+    Args:
+        candidate: The object THIS attempt's factory returned, or None when
+            the factory (or anything before it) raised.
+    """
+    if candidate is None:
+        return False
+    statusFn = getattr(candidate, 'status', None)
+    if not callable(statusFn):
+        return False
+    try:
+        status = statusFn()
+    except Exception as e:  # noqa: BLE001 -- an unreadable status is "did not answer"
+        logger.debug("Adapter status() unreadable after a failed attempt: %s", e)
+        return False
+    # Equality, not hashing: a fake's status object need not be hashable.
+    return status is not None and any(status == s for s in _ELM_ANSWERED_STATUSES)
 
 
 # ================================================================================
@@ -395,6 +458,25 @@ class ConnectionStatus:
         reachability: Whether the ECU answered (US-793-a); see
             :class:`Reachability`.  Independent of ``connected``: linked to
             the dongle with no ECU is ``connected=True`` + ``DID_NOT_ANSWER``.
+        ecuChangedAtUtc: Canonical-UTC WALL time of ``reachability``'s last
+            transition (US-876-c) -- the event instant, never the read.  A
+            freshness decay is dated lastAnswer + the window; a generation
+            bump is dated the bump.  None until a producer stamps it.  The
+            first of the per-layer transition-ts family (US-876-d/e add the
+            adapter and BT layers beside it).  Not in :meth:`toDict`.
+        ecuLastOkAtUtc: Canonical-UTC WALL time of the last ECU answer THIS
+            SESSION (US-876-c), across generations; None if none.  Not in
+            :meth:`toDict`.
+        adapterAnswered: The latest ADAPTER observation (US-876-d): True the
+            ELM answered (a status of ELM Connected or better on a connect
+            attempt, or an answered query on a held session, ATRV included),
+            False an attempt it did not answer, None no observation this
+            session or none for the freshness bound.  Not in :meth:`toDict`.
+        adapterChangedAtUtc: Canonical-UTC WALL time ``adapterAnswered`` took
+            its current value -- the observing event, never the read; None
+            with it.  Not in :meth:`toDict`.
+        adapterLastOkAtUtc: Canonical-UTC WALL time of the last time the ELM
+            answered this session; None if never.  Not in :meth:`toDict`.
     """
     state: ConnectionState = ConnectionState.DISCONNECTED
     macAddress: str | None = None
@@ -407,6 +489,11 @@ class ConnectionStatus:
     totalErrors: int = 0
     signalReadable: bool = True
     reachability: Reachability = Reachability.NOT_YET_ATTEMPTED
+    ecuChangedAtUtc: str | None = None
+    ecuLastOkAtUtc: str | None = None
+    adapterAnswered: bool | None = None
+    adapterChangedAtUtc: str | None = None
+    adapterLastOkAtUtc: str | None = None
 
     def toDict(self) -> dict[str, Any]:
         """Convert status to dictionary for logging/serialization."""
@@ -540,6 +627,7 @@ class ObdConnection:
         obdFactory: Callable[..., Any] | None = None,
         shutdownEvent: threading.Event | None = None,
         monotonicFn: Callable[[], float] = time.monotonic,
+        wallClockFn: Callable[[], datetime] = _wallClockNow,
     ):
         """
         Initialize OBD connection manager.
@@ -556,6 +644,8 @@ class ObdConnection:
                 handlers installed by the orchestrator set the event.
             monotonicFn: Monotonic clock for reachability freshness (US-793-a);
                 injected by tests.
+            wallClockFn: Aware-UTC wall clock that dates reachability
+                transitions (US-876-c); injected by tests.
         """
         self.config = config
         self.database = database
@@ -668,6 +758,30 @@ class ObdConnection:
         self.reachabilityFreshnessSeconds = (
             freshness if freshness > 0 else float(DEFAULT_DRIVE_END_DURATION_SECONDS)
         )
+        # US-876-c: reachability runs on the monotonic clock, but link.ecu
+        # publishes the WALL instant of each transition (the US-860-a
+        # connectedAtUtc pattern).  The last recorded (state, wall time) pair,
+        # replaced whole like _ecuObservation.  Construction is the start of
+        # this session's first attempt, so NOT_YET_ATTEMPTED is dated by it.
+        self._wallNow = wallClockFn
+        self._lastAnswerWall: datetime | None = None
+        self._ecuTransition: tuple[Reachability, datetime] = (
+            Reachability.NOT_YET_ATTEMPTED, self._wallNow()
+        )
+        # US-876-d: the adapter observation, replaced whole like
+        # _ecuObservation -- (answered, monotonic at, wall at, wall of the
+        # value's last change), None until the first observation.
+        self._adapterObservation: tuple[bool, float, datetime, datetime] | None = None
+        self._adapterLastOkWall: datetime | None = None
+        # Atlas D5: no adapter observation for TWICE the reconnect heartbeat's
+        # longest interval reads null.  Derived from the heartbeat's own
+        # constants (BASE x 2^EXP_CAP = 320 s -> 640 s), never from
+        # retryCeilingSeconds, which drives only this class's inner backoff.
+        from .reconnect_loop import BACKOFF_EXP_CAP, HEARTBEAT_TICK_INTERVAL_SEC
+
+        self.adapterFreshnessSeconds = 2.0 * HEARTBEAT_TICK_INTERVAL_SEC * (
+            2 ** BACKOFF_EXP_CAP
+        )
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -689,8 +803,61 @@ class ObdConnection:
             # No connection object is a readable verdict, not a failed read.
             self._status.signalReadable = True
         # US-793-a: derived from reads already made -- this issues none.
-        self._status.reachability = self._readReachability()
+        reachability, changedAt = self._ecuTransitionNow()
+        self._status.reachability = reachability
+        # US-876-c: the event instants, canonical UTC.
+        from common.time.helper import toCanonicalIso
+
+        self._status.ecuChangedAtUtc = toCanonicalIso(changedAt)
+        lastAnswerWall = self._lastAnswerWall
+        self._status.ecuLastOkAtUtc = (
+            toCanonicalIso(lastAnswerWall) if lastAnswerWall is not None else None
+        )
+        # US-876-d: the adapter, judged fresh here at read time (Atlas D3).
+        observation = self._freshAdapterObservation()
+        if observation is None:
+            self._status.adapterAnswered = None
+            self._status.adapterChangedAtUtc = None
+        else:
+            self._status.adapterAnswered = observation[0]
+            self._status.adapterChangedAtUtc = toCanonicalIso(observation[3])
+        adapterOkWall = self._adapterLastOkWall
+        self._status.adapterLastOkAtUtc = (
+            toCanonicalIso(adapterOkWall) if adapterOkWall is not None else None
+        )
         return self._status
+
+    def _freshAdapterObservation(
+        self,
+    ) -> tuple[bool, float, datetime, datetime] | None:
+        """The latest adapter observation, or None if none is within the bound.
+
+        Side-effect free, like :meth:`_readReachability` (US-876-d, Atlas D5).
+        """
+        observation = self._adapterObservation
+        if observation is None:
+            return None
+        if self._now() - observation[1] > self.adapterFreshnessSeconds:
+            return None
+        return observation
+
+    def _recordAdapterObservation(self, answered: bool) -> None:
+        """Record whether the ELM answered, at this event's time (US-876-d).
+
+        The change instant moves only when the value changes -- or when the
+        previous observation had already gone stale, because the layer then
+        re-enters from null at this event.
+        """
+        nowMono = self._now()
+        nowWall = self._wallNow()
+        previous = self._freshAdapterObservation()
+        if previous is not None and previous[0] is answered:
+            changedAt = previous[3]
+        else:
+            changedAt = nowWall
+        self._adapterObservation = (answered, nowMono, nowWall, changedAt)
+        if answered:
+            self._adapterLastOkWall = nowWall
 
     def _readReachability(self) -> Reachability:
         """Derive ECU reachability from what :meth:`query` observed (US-793-a).
@@ -711,6 +878,43 @@ class ObdConnection:
         # A null read, or an answer that went stale: never a latched ANSWERED.
         return Reachability.DID_NOT_ANSWER
 
+    def _ecuTransitionNow(self) -> tuple[Reachability, datetime]:
+        """Current reachability and the wall time of its last transition (US-876-c).
+
+        Side-effect free, like :meth:`_readReachability`.  The only change
+        that happens WITHOUT passing through :meth:`_settleEcuTransition` is
+        the freshness decay -- a function of the clock, not of a read -- so an
+        ANSWERED that now reads DID_NOT_ANSWER is dated the instant it
+        decayed: the last answer plus the window (Atlas C3).
+        """
+        current = self._readReachability()
+        stored, storedAt = self._ecuTransition
+        if current is stored:
+            return current, storedAt
+        lastAnswerWall = self._lastAnswerWall
+        if (
+            stored is Reachability.ANSWERED
+            and current is Reachability.DID_NOT_ANSWER
+            and lastAnswerWall is not None
+        ):
+            return current, lastAnswerWall + timedelta(
+                seconds=self.reachabilityFreshnessSeconds
+            )
+        # A change whose settle has not run yet (another thread is between the
+        # observation update and its settle): it happened now.
+        return current, self._wallNow()
+
+    def _settleEcuTransition(self) -> None:
+        """Record a reachability change with its wall time (US-876-c).
+
+        Called wherever the observation can change -- around each ECU read
+        and at each generation bump -- so every transition but the decay is
+        dated by the event that caused it.  A steady state records nothing.
+        """
+        current, changedAt = self._ecuTransitionNow()
+        if current is not self._ecuTransition[0]:
+            self._ecuTransition = (current, changedAt)
+
     def _recordEcuRead(self, command: Any, outcome: Reachability) -> None:
         """Record one completed ECU read's outcome (US-793-a).
 
@@ -720,12 +924,16 @@ class ObdConnection:
         """
         if _isAdapterLevelCommand(command):
             return
+        # US-876-c: a decay that happened before this read keeps its own instant.
+        self._settleEcuTransition()
         generation, lastAnswerAt, _ = self._ecuObservation
         if generation != self._generation:
             lastAnswerAt = None
         if outcome is Reachability.ANSWERED:
             lastAnswerAt = self._now()
+            self._lastAnswerWall = self._wallNow()
         self._ecuObservation = (self._generation, lastAnswerAt, outcome)
+        self._settleEcuTransition()
 
     def _logReachabilityTransition(self) -> None:
         """Write one ``ecu_reachability`` row if reachability changed (US-793-c).
@@ -1046,7 +1254,13 @@ class ObdConnection:
                 except Exception:
                     self._recordEcuRead(command, Reachability.COULD_NOT_DETERMINE)
                     raise
-                self._recordEcuRead(command, _responseOutcome(response))
+                outcome = _responseOutcome(response)
+                # US-876-d (Atlas D4): any answered read on the held session --
+                # ATRV included, which _recordEcuRead ignores -- is the ELM
+                # answering.  A null read says nothing about the adapter.
+                if outcome is Reachability.ANSWERED:
+                    self._recordAdapterObservation(True)
+                self._recordEcuRead(command, outcome)
                 return response
         finally:
             # US-793-c: a changed reachability is written once, AFTER _ioLock is
@@ -1195,6 +1409,10 @@ class ObdConnection:
                 if debugWindow:
                     obdLogger.setLevel(logging.DEBUG)
 
+                # US-876-d (Atlas D6): THIS attempt's OBD object.  self.obd is
+                # not cleared before the factory runs, so a factory raise must
+                # never read the previous session's status().
+                candidate: Any | None = None
                 try:
                     self._logConnectionEvent(
                         EVENT_TYPE_CONNECT_ATTEMPT,
@@ -1209,9 +1427,10 @@ class ObdConnection:
 
                     # Create OBD connection
                     if self._obdFactory is not None:
-                        self.obd = self._obdFactory(serialPort, self.connectionTimeout)
+                        candidate = self._obdFactory(serialPort, self.connectionTimeout)
                     else:
-                        self.obd = self._createObdConnection(serialPort)
+                        candidate = self._createObdConnection(serialPort)
+                    self.obd = candidate
                     _logConnectPhase(processAttempt, CONNECT_PHASE_ELM_CONNECTED, attemptStart)
 
                     # Check if connection was successful
@@ -1224,6 +1443,8 @@ class ObdConnection:
                         self._status.lastConnectTime = datetime.now()
                         self._status.totalConnections += 1
                         self._status.retryCount = outageAttempt
+                        # US-876-d: Car Connected -- the ELM answered.
+                        self._recordAdapterObservation(True)
                         # US-751: the outage is over; the next one counts from 0.
                         self._outageAttempts = 0
 
@@ -1231,6 +1452,9 @@ class ObdConnection:
                         # generation.  Runs under the held _ioLock so the bump is
                         # atomic w.r.t. activeGeneration()/query().
                         self._generation += 1
+                        # US-876-c: the new generation is NOT_YET_ATTEMPTED
+                        # from this instant (Atlas C4).
+                        self._settleEcuTransition()
 
                         # US-199: one-shot supported-PID probe so the realtime
                         # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
@@ -1266,6 +1490,10 @@ class ObdConnection:
                     # loop made it -- the heartbeat never reaches the backoff
                     # branch below, so setting it only there left it at 0.
                     self._status.retryCount = self._outageAttempts
+
+                    # US-876-d: whether the ELM answered, read from THIS
+                    # attempt's object BEFORE the partial close drops it.
+                    self._recordAdapterObservation(_elmAnswered(candidate))
 
                     # Fix B: close the partially-opened obd (and the serial fd it
                     # opened on /dev/rfcommN) BEFORE the next attempt re-opens the
@@ -1681,6 +1909,8 @@ class ObdConnection:
             # generation so a superseded connect/query daemon bound to the old
             # connection is fenced when it finally wakes.
             self._generation += 1
+            # US-876-c: NOT_YET_ATTEMPTED from this instant (Atlas C4).
+            self._settleEcuTransition()
 
             # US-432 (BL-016): clear the engine-confirmed force latch on
             # teardown.  The next connect() re-runs the US-199 probe (dark ECU

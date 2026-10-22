@@ -299,7 +299,7 @@ def test_obdLinkBlockIsPresentWithAStateKey_downEveryCauseTheProducerCanReach(tm
            object, an unreadable status, a never-connected car, a dropped link, a
            reconnect in flight, and a live link
     When: the REAL orchestrator emits system-status for each
-    Then: `obdLink` is present in all of them, with all three of its keys.
+    Then: `obdLink` is present in all of them, with both of its keys.
 
           The story's END STATE, swept rather than spot-checked. Keyed by cause
           so a regression names the fault it broke, and so this sweep fails loudly
@@ -310,7 +310,8 @@ def test_obdLinkBlockIsPresentWithAStateKey_downEveryCauseTheProducerCanReach(tm
         assert "obdLink" in payload, cause
         block = payload["obdLink"]
         assert isinstance(block, dict), cause
-        assert set(block) == {"state", "retries", "lastSeenS"}, (cause, block)
+        # MOVED PIN (US-876-a): lastSeenS (always null) left the block.
+        assert set(block) == {"state", "retries"}, (cause, block)
 
 
 def test_sampledAt2HzForSixtySecondsWithTheLinkDown_obdLinkIsPresentInEverySample(
@@ -675,7 +676,8 @@ def test_theUnknownBranchesNeverPaintTheDownMeasurement(tmp_path):
         payload = _emit(tmp_path / cause, connection=_allCauses()[cause])
         assert payload["obdLink"]["state"] is None, cause
         assert payload["obdLink"]["retries"] == 0, cause
-        assert payload["obdLink"]["lastSeenS"] is None, cause
+        # MOVED PIN (US-876-a): the block carries no age key at all now.
+        assert "lastSeenS" not in payload["obdLink"], cause
 
 
 # ---------------------------------------------------------------------------

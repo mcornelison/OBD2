@@ -21,6 +21,10 @@
 # 2026-09-17    | Rex (US-789) | ROW-level exclusion (RowExclusion): one primary
 #                                key leaves the count and is reported in
 #                                SyncBacklog.excludedRows -- never a table.
+# 2026-10-22    | Rex (US-916) | readSyncHealth: system-status.sync's lastOkTs
+#                                (max sync_log.last_ok_at), rowsWaiting /
+#                                edrRowsWaiting (THIS module's count, split as
+#                                the drain splits it) and notCounted.
 # ================================================================================
 ################################################################################
 """Read-only outstanding-row (sync backlog) reader for the poweroff path.
@@ -39,6 +43,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.common.edr.sync_contract import EDR_SYNC_TABLES, SHUTDOWN_DRAIN_EXCLUDED_TABLES
 from src.pi.data import sync_log
 
 logger = logging.getLogger(__name__)
@@ -49,7 +54,9 @@ __all__ = [
     "BACKLOG_UNKNOWN",
     "RowExclusion",
     "SyncBacklog",
+    "SyncHealth",
     "countOutstandingRows",
+    "readSyncHealth",
     "residualAfterBatch",
 ]
 
@@ -411,3 +418,87 @@ def residualAfterBatch(
         "complete": backlog.isComplete,
         "groups": {"drive": drive, "sensor": sensor},
     }
+
+
+@dataclass(frozen=True, slots=True)
+class SyncHealth:
+    """What system-status.sync publishes about the backlog (US-916).
+
+    Every field is None when it was not read -- never 0, never a guess.
+
+    Attributes:
+        lastOkTs: ``max(sync_log.last_ok_at)``: when the server last STORED
+            data (canonical UTC). None before the first ok push after deploy.
+        rowsWaiting: Rows the server has not got, every delta table except the
+            EDR archive (the shutdown drain's exclusion). None when any of
+            those tables could not be read.
+        edrRowsWaiting: The EDR archive's rows waiting, reported beside
+            ``rowsWaiting`` as the drain reports it. None when unread.
+        notCounted: The snapshot tables, sorted -- they have no "behind by N",
+            so they are named rather than folded into a count.
+    """
+
+    lastOkTs: str | None = None
+    rowsWaiting: int | None = None
+    edrRowsWaiting: int | None = None
+    notCounted: tuple[str, ...] | None = None
+
+
+def _readLastOkAt(dbPath: str, busyTimeoutSec: float) -> str | None:
+    """``max(last_ok_at)`` through a read-only open. NEVER raises, never migrates."""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{dbPath}?mode=ro", uri=True, timeout=busyTimeoutSec)
+        return sync_log.getLastOkAt(conn)
+    except Exception as exc:  # noqa: BLE001 -- unread is null, never a raise
+        logger.debug("sync health: last_ok_at unreadable (%s)", exc)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001, S110 -- closing must not raise here
+                pass
+
+
+def _completeTotal(backlog: SyncBacklog) -> int | None:
+    """The backlog's total, or None unless every table in it was read."""
+    if backlog.error is not None or not backlog.isComplete:
+        return None
+    return backlog.total
+
+
+def readSyncHealth(
+    dbPath: str | None,
+    *,
+    busyTimeoutSec: float = DEFAULT_BUSY_TIMEOUT_SEC,
+) -> SyncHealth:
+    """Read system-status.sync's backlog facts. READ-ONLY. NEVER raises.
+
+    The counts are :func:`countOutstandingRows` -- the push's own predicate --
+    run once with the drain's EDR exclusion and once with only the EDR tables,
+    so ``rowsWaiting + edrRowsWaiting`` is every delta row a push still owes.
+
+    Args:
+        dbPath: The Pi database. None or empty -> every field None.
+        busyTimeoutSec: SQLite busy timeout for each read-only open.
+
+    Returns:
+        A :class:`SyncHealth`.
+    """
+    if not dbPath:
+        return SyncHealth()
+    drive = countOutstandingRows(
+        dbPath, busyTimeoutSec=busyTimeoutSec, excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+    )
+    edr = countOutstandingRows(
+        dbPath, busyTimeoutSec=busyTimeoutSec, onlyTables=EDR_SYNC_TABLES,
+    )
+    return SyncHealth(
+        lastOkTs=_readLastOkAt(dbPath, busyTimeoutSec),
+        rowsWaiting=_completeTotal(drive),
+        edrRowsWaiting=_completeTotal(edr),
+        notCounted=tuple(
+            sorted(sync_log.SNAPSHOT_TABLES | sync_log.snapshotSyncTables())
+        ),
+    )

@@ -100,7 +100,8 @@ def _sys(idle: object, *, driveState: str = "idle", driveId: object = None) -> d
     pin the fail-closed path.
     """
     return {
-        "obdLink": {"state": None, "retries": 0, "lastSeenS": None},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": None, "retries": 0},
         "sync": {"lastOkTs": None, "rows": 0, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "battery"},
         "drive": {"state": driveState, "driveId": driveId},

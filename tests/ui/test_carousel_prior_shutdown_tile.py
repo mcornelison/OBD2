@@ -75,7 +75,8 @@ def _block(**over: object) -> dict:
 
 def _sysState(**over: object) -> dict:
     state: dict = {
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 2},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": {"lastOkTs": "2026-09-22T16:51:32Z", "rows": 1, "pending": 0, "stale": False},
         "power": {"source": "external"},
         "drive": {"state": "idle", "driveId": None},

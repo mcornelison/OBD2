@@ -107,6 +107,8 @@ class TestInitDbCreatesSchema:
         # US-416 added last_snapshot_cursor (NULL by default; carries the
         # per-table time-cursor for the natural-key SNAPSHOT_SYNC path;
         # see ensureSnapshotSyncSchema).
+        # MOVED PIN (US-916): last_ok_at (NULL until the first ok push; when the
+        # server last STORED this table's data; see ensureLastOkSchema).
         assert set(info.keys()) == {
             'table_name',
             'last_synced_id',
@@ -117,6 +119,7 @@ class TestInitDbCreatesSchema:
             'consecutive_failures',
             'quarantined_at',
             'last_snapshot_cursor',
+            'last_ok_at',
         }
         # table_name is PRIMARY KEY
         assert info['table_name'][5] == 1  # pk column from PRAGMA

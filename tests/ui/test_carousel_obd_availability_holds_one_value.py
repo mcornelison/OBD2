@@ -839,7 +839,7 @@ def test_anAbsenceWithNoSuppliedReasonIsNotGivenTheCarOffClaimOnItsBehalf():
     state = buildSystemStatusState(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=None,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=_FRESH_SYNC,
         syncRows=10,
         syncPending=0,
@@ -872,7 +872,6 @@ def test_aSuppliedCarOffReasonIsStillHonoured_soThisWasNotABlanketBan():
     state = buildSystemStatusState(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=None,
         syncLastOkTs=_FRESH_SYNC,
         syncRows=10,
         syncPending=0,

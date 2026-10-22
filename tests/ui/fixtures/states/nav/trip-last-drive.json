@@ -5,11 +5,13 @@
   "inputs": {
     "obdLinkState": "linked",
     "obdRetries": 0,
-    "obdLastSeenS": null,
     "syncLastOkTs": null,
     "syncRows": 0,
     "syncPending": null,
     "syncStale": false,
+    "syncRowsWaiting": null,
+    "syncEdrRowsWaiting": null,
+    "syncNotCounted": null,
     "powerSource": "external",
     "runMode": "live",
     "driveState": "idle",
@@ -20,19 +22,23 @@
     "distanceSinceTs": "2026-10-20T19:49:00Z",
     "distanceEndTs": "2026-10-20T20:19:00Z",
     "distancePartial": false,
-    "nowIso": "2026-10-20T20:29:00Z"
+    "nowIso": "2026-10-20T20:29:00Z",
+    "piHealth": null,
+    "captureHealth": null
   },
   "system-status": {
     "obdLink": {
       "state": null,
-      "retries": 0,
-      "lastSeenS": null
+      "retries": 0
     },
     "sync": {
       "lastOkTs": null,
       "rows": 0,
       "pending": null,
-      "stale": false
+      "stale": false,
+      "rowsWaiting": null,
+      "edrRowsWaiting": null,
+      "notCounted": null
     },
     "power": {
       "source": "external",
@@ -41,7 +47,42 @@
     "wifi": {
       "state": null,
       "ssid": null,
-      "rssiDbm": null
+      "rssiDbm": null,
+      "home": null,
+      "ts": null
+    },
+    "pi": {
+      "cpuTempC": null,
+      "cpuTempTs": null,
+      "cpuTempLimitC": null,
+      "throttled": null,
+      "throttledHex": null,
+      "throttledSinceBoot": null,
+      "throttledTs": null,
+      "diskFreeBytes": null,
+      "diskThresholdBytes": null,
+      "diskVerdict": null,
+      "diskTs": null,
+      "uptimeS": null,
+      "uptimeTs": null,
+      "overLimit": []
+    },
+    "link": {
+      "bt": {
+        "state": null,
+        "ts": null,
+        "lastOkTs": null
+      },
+      "adapter": {
+        "state": null,
+        "ts": null,
+        "lastOkTs": null
+      },
+      "ecu": {
+        "state": null,
+        "ts": null,
+        "lastOkTs": null
+      }
     },
     "drive": {
       "state": "idle",
@@ -62,9 +103,13 @@
       },
       "wifi": {
         "available": false,
-        "reason": "wifi: not read"
+        "reason": "not_read"
       }
     },
-    "ts": "2026-10-20T20:29:00Z"
+    "ts": "2026-10-20T20:29:00Z",
+    "verdict": {
+      "issueCount": 0,
+      "members": []
+    }
   }
 }

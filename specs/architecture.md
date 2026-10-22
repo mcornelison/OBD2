@@ -861,6 +861,7 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 | `last_synced_at` | TEXT | ISO-8601 UTC timestamp of the last push attempt |
 | `last_batch_id` | TEXT | Batch identifier for server-side traceability |
 | `status` | TEXT NOT NULL DEFAULT 'pending' | CHECK constraint: `ok` \| `pending` \| `failed` |
+| `last_ok_at` | TEXT | US-916: when the server last **stored** this table's data (canonical UTC). Written ONLY by a `status='ok'` write (`updateHighWaterMark`'s ok path, `updateSnapshotCursor`); a failed push never touches it (it does rewrite `last_synced_at`). Older DBs gain it via `ensureLastOkSchema` (idempotent ALTER, run by the writers); existing rows start null, no backfill |
 
 **Sync-scope tables** (eligible for Pi -> server delta sync): `realtime_data`,
 `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`,
@@ -5143,7 +5144,8 @@ collapsed into one another:
 | Layer | Fact | Where it is read | Gates capture? |
 |---|---|---|---|
 | **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
-| **Bluetooth-connected** | the RFCOMM link to the dongle is up | `ConnectionStatus.connected` (+ `signalReadable`, US-767-a) | **no** — up on a parked car |
+| **Bluetooth-connected** | the RFCOMM link to the dongle is up | *(built, US-876-e)* `bluetoothctl info <MAC>` **`Connected:`** — `bluetooth_helper.readConnectedState`, sampled every 5 s off the card tick by `BtConnectedSampler` → `system-status.link.bt` (no `ConnectionStatus` field). `ConnectionStatus.connected` is **not** this fact: it is python-OBD's `is_connected()`, i.e. status `CAR_CONNECTED` — an ECU-at-connect fact (Atlas MEASURED; corrected in US-876-c) | **no** — up on a parked car |
+| **Adapter-answered** | the dongle's ELM answered (status ELM Connected or better at a connect attempt, or any answered read on a held session, ATRV included) | `ConnectionStatus.adapterAnswered` (US-876-d) → `system-status.link.adapter` | **no** — the ELM answers with the key out |
 | **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
 
 🔴 **A `connect_success` (or `reconnect_success`) connection_log row is NOT
@@ -6061,8 +6063,8 @@ the one provider of the warnings page: the page renders it and derives nothing (
 - An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
   handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
   `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource,
-  acknowledgedIds=())` is pure over them (`acknowledgedIds` is US-897-c's; empty leaves
-  the output unchanged);
+  acknowledgedIds=(), systemSource=None)` is pure over them (`acknowledgedIds` is
+  US-897-c's; empty leaves the output unchanged; `systemSource` is US-877-c's);
   `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
 - Built in its own try/except (`_initializeAlertsProducer`); when
   `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
@@ -6079,13 +6081,15 @@ codeAlert, entries}`.
     (Iris contract names).
   - `engine: {assessed}` -- true only when obd-live carries a FRESH COOLANT_TEMP reading
     (Q14). Engine off, stale or absent is false.
-  - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
+  - `system` (US-877-c): `{assessed: true}` once a system-status verdict was handed in this
+    boot, else `{assessed: false, reason: 'not_read'}` (the SYSTEM source, below).
+  - `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
 - **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
   stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus, round}` (`codeStatus`
   is `stored` | `pending` on a code entry, null on an engine one; `round` is `floor` |
   `ceil` on the battery entry, null on every other, US-897-d), ALREADY ORDERED (B5): tier
-  `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
-  newest `firstSeenTs`.
+  `stop > watch > minor > unrated`, then live (`engine`, and `system` tied with it,
+  US-877-c A1) before stored (`code`), then newest `firstSeenTs`, then id.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
     new id. `acknowledged` is true when this boot's ack store matches the entry's
     episode (US-897-c, below). An acknowledged entry that is no longer active is not
@@ -6195,6 +6199,33 @@ legacy AlertManager owns that section (config.json).
   too (Mode 04 wipes them): relevant = status in {stored, pending} AND severity != `na`,
   one entry per code, and an unread pending set (`pendingCheckedAtTs` null) is refused as
   `pending_not_read` (the chain is below, US-407).
+
+**The SYSTEM source** (US-877-c; Atlas Warnings s5 + P7, RULINGS 2026-10-22 A1-A6; Iris
+2026-10-19 words):
+- **Input**: the system-status payload handed IN-PROCESS (`AlertsArbiter.observeSystemStatus`).
+  `makeSystemStatusEmitter`'s emit returns the payload it wrote (None on a failed write);
+  `CardStateEmitterMixin._emitSystemStatusState` hands it over -- and ONLY it: `emitNow()` never
+  observes. System-status emits before the alerts step of the same tick, so the tick publishes
+  this tick's verdict. The arbiter CACHES the members as its own episodes, and every alerts
+  emit (the tick and `emitNow`) passes `systemSource=arbiter.systemSource()` through the one
+  call in `_publishAlertsState`, so an ack rebuild never drops a system entry or the source.
+- **Entries**: one per `verdict.members[]`, id `system:<key>:watch`, tier `watch` -- NEVER stop,
+  so a system entry never takes over, never pulses and is never in `codeAlert`; it counts
+  toward the icon. Title from the arbiter's table (`SYSTEM_TITLES`): bt `BLUETOOTH NOT LINKED`,
+  adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, wifi `WIFI NOT READ`, pi
+  `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
+  `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
+  A key not in the table is skipped with one WARNING per key (A5).
+- **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
+  the member's reason changes; `lastSeenTs` advances to each payload's `ts` (A2). A member that
+  leaves the verdict is REMOVED (a watch is never "listed until acked"). Acks follow G1
+  `{bootId, firstSeenTs}`; an acked system entry stays listed, `acknowledged: true`.
+- A None hand-off (failed system-status write) or a payload with no verdict keeps the cached
+  members and stays assessed (A3). An orchestrator restart re-alerts them with a new
+  `firstSeenTs`: they are not seeded (A4). No `alert_log` row (A6).
+- **Page**: in the codes-read nothing-found state, `carousel.js warningsQuietView` prints
+  `System checks not read yet.` while `sources.system.assessed` is false, then `Data checks are
+  not built yet.` while `sources.data.assessed` is false (both `tone: 'secondary'`).
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.
@@ -7374,7 +7405,7 @@ orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
 reusing the boot-state primitives). Schema (spec §7):
 
 ```json
-{ "obdLink": {"state":"reconnecting","retries":3,"lastSeenS":14},
+{ "obdLink": {"state":"reconnecting","retries":3},
   "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
   "power": {"mode":"car","source":"external"},
   "drive": {"state":"recording","driveId":27},
@@ -7385,8 +7416,270 @@ reusing the boot-state primitives). Schema (spec §7):
 adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
 "`system-status.drive.distanceKm`" in section 11.)
 
+**`link` — the link chain (US-876-c, Atlas L1/L5/L6, X1).** An always-present
+block, one entry per layer of the chain, every key always present:
+
+```json
+"link": { "bt":      {"state": null, "ts": null, "lastOkTs": null},
+          "adapter": {"state": null, "ts": null, "lastOkTs": null},
+          "ecu":     {"state": "up", "ts": "2026-10-20T15:02:11Z",
+                      "lastOkTs": "2026-10-20T15:04:30Z"} }
+```
+
+- **`state`** ∈ `up` (latest observation positive) / `connecting` (not up and
+  never up this session — neutral, not counted) / `retrying` (not up but up
+  earlier this session — counted) / `down` (not up and **no retry authority**)
+  / `null` (not read; `ts` and `lastOkTs` null too — available = `state != null`).
+  "This session" is this process: a restart is null until re-observed.
+- **`ts`** is the canonical-UTC time of the layer's **last state transition**,
+  never the publish tick; `connecting` is dated the attempt's start.
+- **`lastOkTs`** is the last time the layer was up this session (null if never;
+  never carried across a boot).
+- **Never blanked** when `source.obd.available` is false — that blanking was
+  the ARCH-061 grey. `obdLink {state, retries}` ships **unchanged** beside it
+  (S110 retires it); link `retrying` is not reflected in `obdLink.retries`.
+
+One rule decides every layer: `deriveLinkLayerState` + `LinkLayerTracker` in
+`system_status_emitter.py`. The tracker (one per layer, held by the
+orchestrator's `card_state_emitter`) owns the "up this session" flag, set on the
+first up and never cleared — a reconnect resets the producer's observation, so
+the flag cannot live there. For bt/adapter (US-876-d/e) "up earlier" means up
+**while link.ecu was up** (G1): before the ECU first answers, a key-off attempt
+that raises and releases BT reads `connecting`, never `retrying`.
+
+- **ECU (live, US-876-c)** from `ConnectionStatus.reachability`: `answered` →
+  up; `did_not_answer` / `not_yet_attempted` → not up; `could_not_determine`,
+  no connection or a raising `getStatus()` → not read (retrying once up this
+  session). `ts` comes from `ConnectionStatus.ecuChangedAtUtc` — the producer's
+  wall-clock stamp of each reachability transition (a freshness decay is dated
+  last answer + the window; a generation bump is dated the bump) — and
+  `lastOkTs` from `ecuLastOkAtUtc`. Both fields stay **out of `toDict()`**. A
+  status with no `reachability` field publishes the layer null.
+- **adapter (live, US-876-d; Atlas L4, D1–D6)** — up means **the ELM answered**.
+  The evidence, recorded by `obd_connection` with a wall-clock canonical-UTC
+  event time: on a connect attempt, `obd.status()` read through a guarded
+  `getattr` from **this attempt's** object (never the previous session's —
+  a factory raise is "did not answer") **before** `_closePartialConnection`,
+  `ELM Connected` / `OBD Connected` / `Car Connected` (python-OBD 0.7.3
+  `OBDStatus`) → answered, anything else / no `status()` / a raise / `None` →
+  did not answer; a connect success (Car Connected) → answered; and on a held
+  session any `query()` whose response answered — **ATRV included**, which the
+  ECU layer ignores — → answered (a null read is no adapter evidence).
+  `ConnectionStatus.adapterAnswered` (True / False / None),
+  `adapterChangedAtUtc` (when it took that value → `ts`) and
+  `adapterLastOkAtUtc` (→ `lastOkTs`) stay **out of `toDict()`**. A failed
+  attempt is `connecting` / `retrying`, **never `down`** (d-1); down is only the
+  shared C2 rule below, from the same tick's verdict as the ECU. **Freshness
+  (D5):** no observation for 2 × the reconnect heartbeat's longest interval
+  (`HEARTBEAT_TICK_INTERVAL_SEC × 2^BACKOFF_EXP_CAP` = 320 s → **640 s**;
+  derived, no config key, never `retryCeilingSeconds`) → `adapterAnswered`
+  None → the layer is **null** (`LinkLayerTracker.markUnread`, even after an
+  up: stale evidence is no evidence). A status with no adapter fields
+  (`--simulate`, stubs) is null; an unreadable `getStatus()` follows the ECU's
+  unread rule. Key off at home (ARCH-061): adapter `up`, ecu `connecting`.
+- **bt (live, US-876-e; Atlas L3, E1–E5, G1)** — up means **bluez holds the
+  connection**: `bluetoothctl info <MAC>` `Connected:` (beside
+  `parseBondState`), parsed by `bluetooth_helper.parseConnectedState` and read
+  by `readConnectedState` on its **own 2 s** subprocess timeout
+  (`BLUETOOTHCTL_CONNECTED_TIMEOUT_S`; the bond read's 5 s cap is untouched).
+  `BtConnectedSampler` runs it every **5 s on its own daemon thread**, never on
+  the 2 s tick, and exits when the orchestrator's `_shutdownEvent` is set; the
+  tick reads only its latest `{reading, ts}` sample (`ts` = the sample time;
+  the layer's `ts` = its last transition). Precedence (E4): unreadable
+  (timeout, missing tool, garbage) → **null**, never down; `Connected: yes` →
+  up regardless of Paired; `Device <MAC> not available` or `Paired: no` →
+  **down** (nothing to reconnect to), dated the sample; `Connected: no` → the
+  shared rule (connecting / retrying, down only by C2). A sample older than
+  15 s (3 × the cadence, E2) → null. MAC: `connection.macAddress`, else
+  `pi.bluetooth.macAddress`, gated by `isMacAddress` — an rfcomm path, no MAC,
+  the `--simulate` MAC (or a `--simulate` run), or a host with no
+  `_shutdownEvent` → null and **no sampler thread**. Key off at home (Atlas
+  MEASURED: Paired/Bonded yes, Connected no) → `connecting`, or `retrying`
+  after an up with the ECU (E3: that honest state's verdict membership is
+  US-877-b's).
+- **`down` (RE-HUNT C2)** needs no retry authority: none of the three retry
+  threads (US-301 heartbeat, recovery loop, post-failure heartbeat) alive, no
+  connect in flight (`isConnectInFlight()`), and the link not held
+  (`status.connected` — the data path re-reads the ECU behind a held link, so
+  the post-drive key-off edge reads `retrying`). `_shutdownEvent` set is down at
+  once. Otherwise the absence must last one heartbeat tick
+  (`HEARTBEAT_TICK_INTERVAL_SEC`) before it is down, dated when the authority
+  was first seen gone — so the gap before a retry thread spawns never flashes
+  down. A `cancelPendingConnects()` is not a down fact.
+
+**`wifi` — the Pi's WiFi link (US-732; ARCH-007, Atlas W1–W8, 732-3..732-6).**
+An always-present block, every key always present; read-only (the Pi observes
+its link, it never manages it):
+
+```json
+"wifi": {"state": "up", "ssid": "DeathStarWiFi", "rssiDbm": -50,
+         "home": true, "ts": "2026-10-22T12:00:00Z"}
+```
+
+- **One OS read**, `pi.network.wifi_reader.readWifiLink` (reusable by
+  powerwatch later): association + SSID from NetworkManager's **cached** list,
+  `home_detector.readWifiRows(ifname="wlan0")` = `nmcli -t -f ACTIVE,SSID
+  device wifi list ifname wlan0 --rescan no` (20 ms; 🔴 never without
+  `--rescan no` — the rescan measured 4.1 s); `rssiDbm` = wlan0's `level` in
+  `/proc/net/wireless` (2 ms), read only while associated. **nmcli decides
+  association alone**: associated = an `ACTIVE=yes` row with a non-empty SSID
+  (an empty SSID is not associated → `ssid` null). With nmcli absent, /proc
+  never decides.
+- **Typed nmcli outcome (W2).** `readWifiRows` returns `rows` / `tool_absent` /
+  `read_failed` (timeout, OS error, **non-zero exit**). Powerwatch's
+  `_listWifiRows` keeps today's semantics on top of it (`None` when missing /
+  timed out, `[]` on a non-zero exit) — both readers are pinned in one test
+  (`tests/pi/network/test_wifi_reader.py`).
+- **`state`** = the shipped `deriveWifiState(associated, rssiDbm)`, unchanged
+  (732-4): `up` / `weak` / `down` from `pi.network.wifi.weakRssiDbm` (-70) /
+  `downRssiDbm` (-90), read from config by the orchestrator and passed through
+  `emit()` (W4; the module defaults are fallback only). Not associated is a
+  **measured `down`** (`source.wifi.available` true, reason null; W3).
+  Associated with no usable level (no /proc file or line) → `state` null.
+- **`home`** = `HomeNetworkDetector.isAtHomeWifi()`, the ARCH-065 one owner —
+  "home WiFi seen", **not** "server reachable" (no `probeServer()` here). The
+  orchestrator holds ONE detector, built lazily in `card_state_emitter`
+  (`_getHomeNetworkDetector`, the `_getAltitudeAnchor` pattern) with the
+  sampler's own reading as its `ssidReader`: a sample costs one nmcli and the
+  detector's one `hostname -I`, never a second of either (732-6). Null when
+  not read — the bool is not trusted on a failed read.
+- **`ts`** = the read time of the sample behind the block (canonical UTC; a
+  failed read included), null when never read (W6).
+- **Cadence (W5).** `WifiLinkSampler` reads every **30 s on its own daemon
+  thread** and exits on `_shutdownEvent`; the 2 s tick reads only its latest
+  sample — no subprocess on the tick. A host with no `_shutdownEvent` (the
+  stub composers) starts no sampler and publishes not read.
+- **`source.wifi`**: `available` = the link was read. Reasons when not:
+  `nmcli_absent` (the dev box — kept apart so a dev box never counts an issue),
+  `read_failed`, or `not_read` (no sample yet; W8 replaced the prose
+  `wifi: not read`). Not read blanks `state` / `ssid` / `rssiDbm` / `home`.
+  The page's null mark (`--`) is S110's.
+
+**`sync` — last data stored and rows waiting (US-916; Atlas S1–S5, 916-1..916-6).**
+Every key always present; null = not read, never 0:
+
+```json
+"sync": {"lastOkTs": "2026-10-22T08:00:00Z", "rows": 12, "pending": null,
+         "stale": false, "rowsWaiting": 0, "edrRowsWaiting": 1771,
+         "notCounted": ["profiles", "startup_log", "vehicle_info"]}
+```
+
+- **`lastOkTs`** (the key the System tile already reads; one fact, one key) =
+  `max(sync_log.last_ok_at)` — when the server last **stored** data. The page
+  words it **"last data stored"**, never "last contact". It survives a restart
+  (it lives in obd.db) and advances on every stored push, powerwatch's key-off
+  drain (`forcePush`) included. Null until the first ok push after deploy.
+  `_recordSyncOutcome` no longer stamps a time (it still caches `rows` and
+  re-anchors the altitude).
+- **`rowsWaiting`** = `pi.sync.backlog.countOutstandingRows` — the push's own
+  predicate, never a second counter — with the shutdown drain's EDR exclusion;
+  **`edrRowsWaiting`** = the same count over `EDR_SYNC_TABLES` only, reported
+  beside it as the drain does. Each is null when any table it covers could not
+  be read (a partial count is never published).
+- **`notCounted`** = the snapshot tables (`SNAPSHOT_TABLES` + `SNAPSHOT_SYNC`),
+  sorted: named, never folded into a count.
+- **`pending`** is kept, null (S110 retires it with the page).
+- **Read.** `backlog.readSyncHealth(dbPath)` — read-only opens, 1 s busy
+  timeout, never migrates (a sync_log without `last_ok_at` → `lastOkTs` null,
+  no raise). The orchestrator reads it from `_database.dbPath` at most every
+  **30 s**, cached between ticks; no database → every field null.
+
+**`pi` — Pi health with its limits marked (US-877-a; Atlas Y-5, P1–P5).**
+Always a key, the exact key set below, **no block `ts`** — every value carries
+its own event-time ts:
+
+```json
+"pi": {"cpuTempC": 52.6, "cpuTempTs": "…", "cpuTempLimitC": 80.0,
+       "throttled": false, "throttledHex": "0x0", "throttledSinceBoot": false,
+       "throttledTs": "…", "diskFreeBytes": 102005460992,
+       "diskThresholdBytes": 21474836480, "diskVerdict": "healthy", "diskTs": "…",
+       "uptimeS": 3720, "uptimeTs": "…", "overLimit": []}
+```
+
+- **Provider.** `src/pi/hardware/pi_health.py` (`PiHealthSampler`), reached by
+  `card_state_emitter._gatherPiHealth` as ONE `piHealth` dict (builder, `emit()`
+  and the orchestrator call). Unwired (a stub host with no `_shutdownEvent`) or
+  not yet read → every key null and `overLimit` `[]`.
+- **Reads.** `cpuTempC` = `vcgencmd measure_temp` ONLY (0.1 °C; no thermal_zone0
+  fallback; `telemetry_logger`'s own reader is separate and unchanged);
+  `throttled*` = `vcgencmd get_throttled` (2 s timeout, encoding declared);
+  `disk*` = the US-762 `disk_space_guard.assessDiskSpace`, called unchanged
+  (UNKNOWN → `diskVerdict` `unknown`, `diskFreeBytes` null); `uptimeS` =
+  `soc_calibration.readSystemUptimeSeconds`, floored to an int. Off-Pi vcgencmd
+  is absent → temp/throttle null; disk is real on any host.
+- **Cadence.** Temp + throttle every **10 s** and disk every **600 s** on a
+  daemon thread waiting on `_shutdownEvent` (the US-876-e sampler pattern);
+  uptime is read on each tick. The tick publishes cached values only and never
+  blocks on vcgencmd or the guard. A failed read publishes null for that field,
+  its ts the time it was tried.
+- **Limits — the provider judges, the page compares nothing.** `overLimit` lists,
+  in the order `cpuTemp`, `throttled`, `disk`:
+  `cpuTemp` when `cpuTempC >= pi.health.limits.cpuTempC` (inclusive; validator
+  DEFAULT **80**, raspberrypi.com frequency management: Arm throttling 80–85 °C,
+  80 = onset; `_validatePiHealth` finite, 0 < x < 125; a DEFAULT only, never an
+  overlay key) — published as `cpuTempLimitC`; `throttled` when ANY of bits 0–3
+  is set now (firmware facts, no threshold); bits 16–19 are `throttledSinceBoot`
+  (+ `throttledHex`) and NOT counted; `disk` when the guard's verdict is
+  `breached` against its `LOW_DISK_THRESHOLD_BYTES` (published as
+  `diskThresholdBytes`). A field not read is never over.
+- **Not here.** The software version is not in this block (Atlas P8: one reader,
+  `.deploy-version`).
+
+**`verdict` — every counted issue, named (US-877-b; Atlas Y-6, P4/P6/P7, E3).**
+Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
+`adapter`, `capture`, `wifi`, `pi`:
+
+```json
+"verdict": {"issueCount": 1,
+            "members": [{"key": "pi", "reason": "CPU 80.2 °C, limit 80 °C."}]}
+```
+
+- **One pure function.** `system_status_emitter.buildSystemVerdict(link,
+  wifiSource, captureHealth, piHealth, driveState)` — no I/O, importable (S110's
+  fixture generator calls it too). `buildSystemStatusState` calls it on the
+  blocks it has just published (`link`, `source.wifi`, `pi`) plus its
+  `captureHealth` parameter (builder, `emit()` and the orchestrator call).
+- **Members, each from a provider field — never a page comparison.** A null /
+  not-read value is never an issue.
+  - `bt`: `link.bt` `down`; or `retrying` ONLY while `drive.state` is
+    `recording` (E3) — evaluated each tick, never latched. A parked car after
+    a drive reads `retrying` but is not a member; the key-off → drive-end
+    window counts (CIO accepted).
+  - `adapter`: `link.adapter` `down` or `retrying` while `link.bt` is `up`.
+  - `capture`: any of the four `feeds.<name>.state == "stalled"` AND
+    `link.ecu.state == "up"` (P6). The top-level capture-health state
+    (`never_written` included) is never read; no `feeds` block or a None
+    payload → no member.
+  - `wifi`: `source.wifi.reason == "read_failed"` only. `nmcli_absent`,
+    `not_read` and a measured WiFi down never count — absence is not an issue.
+  - `pi`: `pi.overLimit` non-empty (the provider's verdict, never re-compared).
+  - **Not counted:** ECU silent (`connecting`), away from home, any null. No
+    `sync` member (877-b-1: no sourced threshold) and no UPS member (P5: no
+    grounded band) — both banked.
+- **`reason` is the finished sentence** (Iris 2026-10-19 words; the page
+  composes nothing): bt retrying `Link dropped. Retrying.`; bt down `Not
+  linked. Check the OBD dongle.`; adapter `Bluetooth up; adapter not
+  answering.`; capture `OBD feed stalled.` / `OBD, IMU and UPS feeds stalled.`
+  / `All 4 feeds stalled.` — feeds named in the order OBD, light, IMU, UPS
+  (NOT `FEED_NAMES` order), the first capitalised, `A and B` / `A, B and C`;
+  wifi `WiFi couldn't be read.`; pi one limit over → its sentence: `CPU 80.2
+  °C, limit 80 °C.` (the reading at vcgencmd's 0.1, never rounded),
+  `Under-voltage now. Check the 5 V supply.` (`throttledHex` bit 0 set — it
+  always wins) or `Throttling now. CPU slowed.` (bits 1–3 only), `Disk 19.9 GiB
+  free, limit 20 GiB.` (GiB = 2^30; free FLOORED to 0.1 toward the breach);
+  limits print `%g` (`80`, `80.5`, `20`); two or more over → `Over limit: CPU
+  temp, throttling, disk.` listing only those over, in `overLimit` order. A
+  member's key stays put when its reason changes mid-episode. Machine detail
+  stays in the fields (`link.*.state`, the feeds, `source.wifi.reason`,
+  `pi.overLimit`); nothing parses the sentence.
+- **Order (P6).** `_maybeEmitCardStates` emits capture-health BEFORE
+  system-status; the capture emitter RETURNS the payload it wrote (None when
+  dark or the write failed) and `_emitSystemStatusState(captureHealth)` hands
+  it to the verdict in-process — never a file read-back of the previous tick
+  (`tests/pi/orchestrator/test_card_state_emit_order.py`).
+
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
-`linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`
+`linked` (green) / `reconnecting` (amber, with `retries`) / `down`
 (red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
 flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
 tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
@@ -7440,8 +7733,9 @@ source state is recomputed. Four decisions are load-bearing:
   *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
   excluding unavailables would make a tappable headline open an **empty**
   overlay — the exact dead end this surface exists to remove.
-- **Freshness is never fabricated.** Only `obdLink` publishes `lastSeenS`; rows
-  for sources that publish no age read **"age not reported"**, never
+- **Freshness is never fabricated.** No source publishes a per-source age (the
+  always-null `obdLink.lastSeenS` was removed, US-876-a), so every row's
+  freshness reads **"age not reported"**, never
   `"seen 0s ago"` (which would claim we had just seen a source we never timed —
   the zeroed-altitude lie of US-508 in a different costume).
 - **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a

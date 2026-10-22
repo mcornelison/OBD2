@@ -146,17 +146,15 @@ def _systemStatus(**overrides: Any) -> dict:
     story records. Every other source is deliberately HEALTHY so that any
     non-green this file observes can only have come from the OBD source.
 
-    `obdLastSeenS` is a REAL NUMBER on purpose. The producer blanks the whole
-    `obdLink` block when the source is unavailable, so a fixture that passed
-    None here would make that blanking invisible: the drill-down's freshness
-    would read "age not reported" whether the producer zeroed the field or not,
-    and the assertion that it does would be inert. Handing it a value the
-    producer must throw away is what makes the guard load-bearing.
+    MOVED PIN (US-876-a): this fixture used to hand the producer a REAL
+    `obdLastSeenS` it had to blank. That key is gone from system-status; the
+    producer still blanks the whole `obdLink` block to {state: null,
+    retries: 0} when the source is unavailable, and that is pinned below.
     """
     args: dict[str, Any] = {
         "obdLinkState": "down",
         "obdRetries": 0,
-        "obdLastSeenS": 7,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": _FRESH_SYNC,
         "syncRows": 1204,
         "syncPending": 0,
@@ -354,7 +352,7 @@ def test_theHarnessActuallyReadsTheObdTile_negativeControl():
     Then: the harness reads a real value, a real level and a real colour.
     """
     tile = _obdTile(
-        _systemStatus(obdAvailable=True, obdLinkState="linked", obdLastSeenS=2)
+        _systemStatus(obdAvailable=True, obdLinkState="linked")
     )
     assert tile["value"] == "LINKED", f"harness read no tile value: {tile!r}"
     assert tile["level"] == "ok", f"harness read no tile level: {tile!r}"
@@ -456,10 +454,12 @@ def test_obdAvailable_rendersTheRealLinkState_soTheNaIsNotUnconditional():
     When: the OBD source is AVAILABLE and the link is live
     Then: the real link state renders and the NA is nowhere on the card.
     """
-    payload = _systemStatus(obdAvailable=True, obdLinkState="linked", obdLastSeenS=2)
+    payload = _systemStatus(obdAvailable=True, obdLinkState="linked")
     tile = _obdTile(payload)
     assert tile["value"] == "LINKED", tile
-    assert tile["detail"] == "seen 2s ago", tile
+    # MOVED PIN (US-876-a): no age is published, so a linked tile's detail is
+    # the empty string it always rendered in production.
+    assert tile["detail"] == "", tile
     assert REASON_OBD_OFF not in _systemCardText(payload)
 
 
@@ -521,7 +521,7 @@ def test_allSourcesHealthy_summaryDoesSayOk_soTheGuardAboveIsNotVacuous():
     Then: the card DOES say SYSTEM OK.
     """
     text = _systemCardText(
-        _systemStatus(obdAvailable=True, obdLinkState="linked", obdLastSeenS=2)
+        _systemStatus(obdAvailable=True, obdLinkState="linked")
     )
     assert f"SYSTEM {MIDDLE_DOT} OK" in text, text
 
@@ -548,7 +548,7 @@ def test_unavailableSourceBeatsAStaleLinkedBlockSittingBesideIt():
           voluntarily blanking a field the renderer was never told to ignore.
     """
     payload = _systemStatus()
-    payload["obdLink"] = {"state": "linked", "retries": 0, "lastSeenS": 4}
+    payload["obdLink"] = {"state": "linked", "retries": 0}
     tile = _obdTile(payload)
     assert tile["value"] == "NA", tile
     assert tile["detail"] == REASON_OBD_OFF, tile
@@ -570,7 +570,7 @@ def test_unavailableSourceBeatsAStaleLinkedBlock_onTheGLYPHToo():
           own `obdOff ? "neutral"` branch is the one this story is about.
     """
     payload = _systemStatus()
-    payload["obdLink"] = {"state": "linked", "retries": 0, "lastSeenS": 4}
+    payload["obdLink"] = {"state": "linked", "retries": 0}
     assert _btGlyph(payload) == "neutral"
 
 
@@ -598,8 +598,8 @@ def test_unavailableWithNoReason_stillPrintsAReason_neverABlankDetail():
 
 def test_unavailableSource_drillRowCarriesTheReasonAndNoFabricatedAge():
     """
-    Given: the drill-down reads freshness from `data.obdLink.lastSeenS` -- a
-           SECOND read, independent of the tile it lists
+    Given: the drill-down's freshness column is a SECOND fact on the row,
+           independent of the tile it lists
     When: the real producer's unavailable payload is rendered and the overlay
           drawn
     Then: the row carries the reason and says the age was NOT REPORTED.
@@ -624,9 +624,10 @@ def test_unavailableSource_drillRowCarriesTheReasonAndNoFabricatedAge():
     # complaint about a field.
     assert "age not reported" in obdRows[0], obdRows
     assert "seen" not in obdRows[0], obdRows
-    assert payload["obdLink"]["lastSeenS"] is None, (
-        "the producer stopped blanking obdLink -- the drill row can now print an "
-        "age for a source nobody read"
+    # MOVED PIN (US-876-a): was `obdLink.lastSeenS is None`; the key is gone.
+    assert payload["obdLink"] == {"state": None, "retries": 0}, (
+        "the producer stopped blanking obdLink -- the panel can now print a "
+        "link state for a source nobody read"
     )
 
 

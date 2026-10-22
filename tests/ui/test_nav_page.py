@@ -793,6 +793,78 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
         assert buildSystemStatusState(**fx["inputs"]) == fx["system-status"], name
 
 
+# The trip fixtures' system-status SHAPE, written out by hand (never read from
+# an older fixture). A story that adds or removes a system-status key
+# regenerates the fixtures from the real builder and edits THIS table, so the
+# regenerated files can differ from the old ones only in the keys named here.
+# US-876-a: obdLink lost `lastSeenS` (and the inputs lost `obdLastSeenS`).
+# US-876-c: the new top-level `link` block, its three layers (checked below).
+# US-876-d: NO delta -- link.adapter fills keys US-876-c already publishes and
+#           the builder gains no input (the provider feeds the existing `link`).
+# US-876-e: NO delta -- link.bt likewise fills keys US-876-c already publishes
+#           (the BT sampler feeds the existing `link`; no new builder input).
+# US-732:   `wifi` gains `home` and `ts` (null in every trip fixture: no wifi
+#           input). No input key added or removed. One VALUE moves with them:
+#           source.wifi.reason "wifi: not read" -> "not_read" (Atlas W8).
+# US-916:   `sync` gains `rowsWaiting`, `edrRowsWaiting` and `notCounted` (null
+#           in every trip fixture: no database in a trip scene); the inputs
+#           gain the three builder parameters behind them, all null.
+# US-877-a: the new top-level `pi` health block (every key null and overLimit
+#           [] in every trip fixture: no sampler in a trip scene); the inputs
+#           gain its one builder parameter, piHealth, null.
+# US-877-b: the new top-level `verdict` {issueCount, members} (0 and [] in
+#           every trip fixture: nothing read is no issue); the inputs gain its
+#           one builder parameter, captureHealth, null.
+_TRIP_STATUS_KEYS = {
+    "obdLink": {"state", "retries"},
+    "sync": {
+        "lastOkTs", "rows", "pending", "stale",
+        "rowsWaiting", "edrRowsWaiting", "notCounted",
+    },
+    "power": {"source", "reasons"},
+    "wifi": {"state", "ssid", "rssiDbm", "home", "ts"},
+    "link": {"bt", "adapter", "ecu"},
+    "pi": {
+        "cpuTempC", "cpuTempTs", "cpuTempLimitC",
+        "throttled", "throttledHex", "throttledSinceBoot", "throttledTs",
+        "diskFreeBytes", "diskThresholdBytes", "diskVerdict", "diskTs",
+        "uptimeS", "uptimeTs", "overLimit",
+    },
+    "drive": {
+        "state", "driveId", "lastDrive", "distanceKm", "distanceSinceTs",
+        "elapsedSec", "distancePartial",
+    },
+    "idle": None,
+    "priorShutdown": None,
+    "runMode": None,
+    "source": {"obd", "wifi"},
+    "ts": None,
+    "verdict": {"issueCount", "members"},
+}
+_TRIP_LINK_LAYER_KEYS = {"state", "ts", "lastOkTs"}
+_TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
+_TRIP_INPUT_KEYS_ADDED = {
+    "syncRowsWaiting", "syncEdrRowsWaiting", "syncNotCounted", "piHealth",
+    "captureHealth",
+}
+
+
+def test_tripFixtures_carryExactlyTheExpectedTopLevelAndBlockKeys():
+    """Every regenerated trip fixture has the hand-written key set above, at the
+    top level and inside each block, and no input the builder no longer takes."""
+    for name in TRIP_FIXTURES:
+        fx = _fixture(name)
+        status = fx["system-status"]
+        assert set(status) == set(_TRIP_STATUS_KEYS), name
+        for block, keys in _TRIP_STATUS_KEYS.items():
+            if keys is not None:
+                assert set(status[block]) == keys, (name, block)
+        for layer in _TRIP_STATUS_KEYS["link"]:
+            assert set(status["link"][layer]) == _TRIP_LINK_LAYER_KEYS, (name, layer)
+        assert not _TRIP_INPUT_KEYS_REMOVED & set(fx["inputs"]), name
+        assert _TRIP_INPUT_KEYS_ADDED <= set(fx["inputs"]), name
+
+
 def test_gradeNullFixture_isTheRealBridgesPayload_gradeOnlyNull():
     from pi.sensors.imu_state_bridge import buildImuState
 
