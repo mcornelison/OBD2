@@ -8,9 +8,7 @@
 
 Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, this spec wins.
 
-**Mockup:** `proposals/2026-10-12-v030-system-page.html` → https://claude.ai/artifact/47FkWPp39fVQL3ciKph8ra (**layout A is the locked one**). OEM skin: https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74.
-- ⚠️ Both mockups predate this fold. They still show `≈ 92 %` and `on car power` on the UPS row, a power-mode row and an amber weak-WiFi glyph.
-- §4 and §4.7 win over both mockups (§10 lists the gaps).
+**Mockup:** **`specs/v030-system-page-oem.html` (v2, 2026-10-22, UIDEV-010) is current: System, details and Settings, brought up to this spec** (§10). Layout A is the locked one, as first drawn in `proposals/2026-10-12-v030-system-page.html` (https://claude.ai/artifact/47FkWPp39fVQL3ciKph8ra). The 2026-10-15 OEM artifact (https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74) predates the S110 fold.
 
 **DoD lines served:** 7 (themed pages: System + power), 8, 12 (closes ARCH-061 and US-713; carries US-729, US-732, US-742, US-759 as rules)
 **Also:** F-126 Settings, **brought INTO V0.30 by the CIO 2026-10-12** (reverses R16 for F-126). **S110 stories:** US-894 System page · US-895 Settings · US-878-c brightness override.
@@ -153,7 +151,7 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
     - **`stalled` is amber only while `capture` is a member.** A stall with the ECU not up isn't a member, so the value is `stalled` in `--text-secondary`, with the sentence `not counted: ECU not answering`.
   - then ` · synced <when>` from `sync.lastOkTs` ("last data stored", S109 Rule 10), in local time (I3 date rule):
     - same local day ⇒ `fmtTimeOfDay` (`6:42 PM`);
-    - the local day before ⇒ `yesterday 6:42 PM`;
+    - the local day before ⇒ `yesterday`, **with no time on the row** (corrected 2026-10-22, UIDEV-010). `recording · synced yesterday 12:59 PM` is 37 characters = 445 px in the 334 px value column, so the ellipsis cut the time to a wrong-looking `5:0…`. That is the failure the `+` rule below exists to prevent. `recording · synced yesterday` is 28 characters and fits. The full `fmtStamp` is in the DATA detail;
     - older ⇒ `Oct 12` (month and padded day from the US-559 `STAMP_MONTHS`). The full `fmtStamp` is in the DATA detail;
     - a time with no date is only ever today's. A days-old sync must never read like this afternoon.
   - `lastOkTs` null ⇒ ` · no sync on record`. Never `1970` or a raw ISO string.
@@ -249,8 +247,8 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
 
 | Setting | Control | Key | Apply tag |
 |---|---|---|---|
-| Brightness (US-878-c) | `AUTO` \| `FIXED` segmented, then a `− nn % +` stepper shown only when FIXED | Atlas names the key(s) | the shipped tag its consumer earns (see below) |
-| Auto-dim ends (dim-start, full-bright) | two lux steppers on a **1-2-3-5 ladder from 1 to 1000 lux** (1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100 · 200 · 300 · 500 · 1000), whose ends **cannot cross** | `pi.display.autoDim.luxMin` / `luxFull` (now in `OVERRIDABLE_KEYS`, Atlas) | the tag its consumer earns (Atlas; `autoDim` is re-read on mtime change, US-878-b) |
+| Brightness (US-878-c) | `AUTO` \| `FIXED` segmented, then a `− nn % +` stepper shown only when FIXED | `overrideLevel` (Atlas S110 B4) | **`applies on reload`** (Atlas B12: the applier reads it from the per-request blob on the reload the band triggers) |
+| Auto-dim ends (dim-start, full-bright) | two lux steppers on a **1-2-3-5 ladder from 1 to 1000 lux** (1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100 · 200 · 300 · 500 · 1000), whose ends **cannot cross** | `pi.display.autoDim.luxMin` / `luxFull` (now in `OVERRIDABLE_KEYS`, Atlas) | **`applies at the next light reading`** (Atlas B12, a new `SETTINGS_APPLY_NOTES` entry: the bridge re-reads config on its next burst. It claims no time, because with no sensor nothing applies it) |
 | Auto-rotate pages | stepper `Off · 5 s · 8 s · 10 s · 15 s · 30 s` | `pi.display.carousel.autoRotateS`, 0 = off (US-541-a) | `applies on reload` |
 | Calibration mode | `Off` \| `On` | `pi.calibration.mode` | `applies on capture restart` |
 | Auto-analyze after drive | `Off` \| `On` | `pi.analysis.triggerAfterDrive` | `applies on capture restart` |
@@ -294,6 +292,8 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
   - **DISPLAY:** brightness, auto-dim range, rotate pages;
   - **SYSTEM:** calibration mode, analyze each drive.
 - **Rows are stacked:** name + apply tag; description; control; status. **Setting names are upper case**, since the Michroma subset has no lower case.
+  - **A long apply tag drops to its own line; it never clips.** `AUTO-DIM RANGE` (Michroma) plus `applies at the next light reading` (33 characters = 298 px mono at `--fs-meta`) is wider than the row (UIDEV-010, measured on the v2 mockup).
+  - **Descriptions fit on one line**, about 45 characters at `--fs-meta`. The v2 mockup's: `AUTO follows the sensor. FIXED holds a level.` · `dim below, full above; also DAY / DUSK / NIGHT` · `cycle pages; Off keeps the page you chose` · `log every reading for a calibration session` · `send each drive for analysis after it syncs`.
 - **Controls:** steppers `− value +` with 40 px targets (brightness, the two lux ends, rotate pages); segmented choices for `AUTO|FIXED`; switches for the two booleans.
 
 One list, which **scrolls with a visible scrollbar** if it's taller than the panel (no silent clip).
@@ -430,14 +430,21 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 
 ## 9. Open items
 - **Atlas:**
-  - the brightness override key(s) and the apply tags for brightness and auto-dim (US-878-c);
+  - ~~the brightness override key(s) and the apply tags for brightness and auto-dim (US-878-c)~~ **RULED 2026-10-19 (S110 B4, B12):** `overrideLevel`; `applies on reload` / `applies at the next light reading` (§4.7);
   - whether `restedHistory` is ever reader-facing (with Spool).
+- **Build note (UIDEV-010):** shipped `healthValue` returns `—` for an unknown health. §4.4's rule is that `--` is the one no-data mark, so the UPS detail owes the swap when it is built.
 - **CIO:**
   - whether the effective `minLevel` floor is right, in the car.
 - **Marcus:** ARCH-061 + US-713 close through this design.
 
-## 10. Mockup gaps (the spec wins)
-Both System mockups (2026-10-12, OEM 2026-10-15) and the Settings mockup (2026-10-13) predate this fold. **Where they differ, this spec wins:**
+## 10. The OEM mockup (v2, 2026-10-22, UIDEV-010)
+**`specs/v030-system-page-oem.html` v2 is brought up to this spec. Build from it, System and Settings both.** It is rebuilt on the §5 provider shapes (verdict members, per-layer link with `null`, the WiFi reason, sync with `notCounted`, battery-health + `power.source`, the Pi block), and it draws every §7 fixture: 41 panels, including the detail and Settings views.
+- **AC 7 is asserted, not eyeballed:** every amber element carries the member it belongs to (`data-m`), and on every fixture the amber set equals `verdict.members` (41/41 in the mockup's harness).
+- **Corrections it made to this spec:** the yesterday sync stamp (§4.3), the two apply tags (§4.7, Atlas B12), and the tag wrap and description length (§4.7).
+- **Unchanged and not drawn:** the ⋮ overlay's service band (US-659's rules).
+
+### Superseded: the gaps the older mockups had
+The 2026-10-12 System mockup, the 2026-10-15 OEM mockup (`proposals/`, never in the repo) and the 2026-10-13 Settings mockup all predate the S110 fold. Their gaps were these, and the v2 mockup closes every one:
 - **UPS row:**
   - shows `≈ 92 %` and `on car power`. It's now `4.12 V` + `on external power · 12 s ago`;
   - the UPS detail shows pack epoch and trend (dropped), and lacks the health verdict (added).
@@ -450,4 +457,4 @@ Both System mockups (2026-10-12, OEM 2026-10-15) and the Settings mockup (2026-1
   - no locked state.
 - **⋮:** shown hidden while moving (now always visible).
 
-The mockups can be brought up on a later lease. Nothing in S110's build reads them.
+Brought up on UIDEV-010 (2026-10-22).
