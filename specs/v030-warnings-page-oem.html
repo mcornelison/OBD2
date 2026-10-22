@@ -220,9 +220,10 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <label><input type="radio" name="ca" value="cleared"><span>Cleared (≤ 101 °C held 60 s)</span></label>
       </fieldset>
       <fieldset>
-        <legend>Car (engineParked) · page underneath</legend>
-        <label><input type="radio" name="mv" value="parked" checked><span>Parked</span></label>
-        <label><input type="radio" name="mv" value="moving"><span>Not parked (driving or idling)</span></label>
+        <legend>Car (states/gear, System §4.7.2) · page underneath</legend>
+        <label><input type="radio" name="mv" value="parked" checked><span>Parked (P or N, held 8 s)</span></label>
+        <label><input type="radio" name="mv" value="moving"><span>Not parked (numbered gear, or the hold)</span></label>
+        <label><input type="radio" name="mv" value="unknown"><span>Gear unknown</span></label>
         <label><input type="radio" name="pg" value="alerts" checked><span>Alerts</span></label>
         <label><input type="radio" name="pg" value="driving"><span>Driving</span></label>
       </fieldset>
@@ -273,7 +274,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <li><b>Red is the STOP tier only,</b> and today that means a live coolant red. A red RPM or battery tile is a WATCH entry with an amber icon. The tile shows where the value is; the tier says what to do.</li>
         <li><b>PULL OVER</b> reuses the shipped STOP skeleton: an opaque field, an 8 px red frame on <code>stop-alarm-pulse</code> (inside <code>prefers-reduced-motion: no-preference</code>), white copy, full brightness, no button. A tap stops the icon pulse only. Stale, it stays up with the last value, and <code>last reading n s ago</code> goes on its own <code>--fs-label</code> line.</li>
         <li><b>The code alert</b> uses the same skeleton with no pulse and no brightness override. Its frame is <code>TIER_COLOR_VAR[codeAlert.tier]</code>, the provider's tier. It has one real button, <code>DISMISS</code>, and is not drawn while not parked (hiding it isn't a dismiss). PULL OVER outranks it.</li>
-        <li><b>The clear lock says what unlocks it.</b> <code>engine off to clear</code> shows only when not being parked is the sole blocker (the shipped <code>clearButtonView</code>: <code>moving</code> replaces only <code>ok</code>). Every other reason wins, because engine-off would not unlock it: a WATCH or unrated code, a sync still pending, pending codes not read, a code that came back (Atlas, US-919, 2026-10-21). Which non-ok reason shows first is the gate's order, not the page's.</li>
+        <li><b>The clear lock says what unlocks it.</b> Parked is gear <code>P</code> or <code>N</code> held 8 s (CIO 2026-10-22). <code>stop to clear</code> shows only when not being parked is the sole blocker, and <code>gear unknown</code> takes its place while <code>states/gear</code> is unavailable (the shipped <code>clearButtonView</code>: <code>moving</code> replaces only <code>ok</code>; <code>parked_unknown</code> is new). Every other reason wins, because stopping would not unlock it: a WATCH or unrated code, a sync still pending, pending codes not read, a code that came back (Atlas, US-919, 2026-10-21). Which non-ok reason shows first is the gate's order, not the page's.</li>
         <li><b>Detail fetch fails:</b> the entry's own chip, title and sentence, plus <code>details unavailable</code>. <b>No Clear control is drawn</b>: the fetch is what feeds the gate. ⚠️ The spec doesn't name this case yet; flagged.</li>
         <li><b>REPLAY stays on top.</b> The data-source marker sits above both screens.</li>
         <li><b>Fit (measured):</b> <code>PULL OVER</code> 345.7 px at 44 · <code>ENGINE OVERHEATING</code> 416.1 px at 26 · <code>TROUBLE CODES</code> 315.5 px at 26 · <code>DISMISS</code> 123.0 px at 20 · <code>NOT CHECKED</code> 352.7 px at 34 (Michroma). The widest chip, <code>UNRATED</code>, is 107 px, so the chip column is 116 px, and the worst row (<code>999 days ago</code>) is ~457 of 456 px. The title wraps there; it never clips.</li>
@@ -368,11 +369,13 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     sync_pending: "🔒 CLEAR CODES — waiting for server sync",
     session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
     pending_not_read: "🔒 CLEAR CODES — pending codes haven’t been read",
-    moving: "🔒 CLEAR CODES — engine off to clear"
+    moving: "🔒 CLEAR CODES — stop to clear",
+    parked_unknown: "🔒 CLEAR CODES — gear unknown"
   };
   // The shipped rule: 'moving' replaces ONLY 'ok'. Every other reason wins (Atlas US-919, 2026-10-21).
-  function clearButtonView(reason, parked) {
-    if (reason === "ok" && parked !== true) reason = "moving";
+  // UIDEV-011: parked is the gear fact; an unknown gear gets its own word, in the same place as 'moving'.
+  function clearButtonView(reason, parked, unk) {
+    if (reason === "ok" && parked !== true) reason = unk ? "parked_unknown" : "moving";
     return { reason: reason, enabled: reason === "ok", label: CLEAR_REASON_LABEL[reason] };
   }
   function fmtThousands(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -477,7 +480,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     var e = byId(d, o.detail);
     if (!e) return "";
     var rec = o.detailFails ? null : DTC[codeOf(e.id)];
-    var v = clearButtonView(clearGateReason(d, o.gate), !o.moving);
+    var v = clearButtonView(clearGateReason(d, o.gate), !o.moving, o.unk);
     var facts = rec
       ? '<div class="fact"><span class="fl">DESCRIPTION</span><span class="fv">' + rec.long + "</span></div>" +
         '<div class="fact"><span class="fl">FIRST SEEN</span><span class="fv">' + agoText(NOW_ISO, e.firstSeenTs) + "</span></div>"
@@ -500,7 +503,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     var ic = providerIcon(d, o.acked), take = providerTakeover(d);
     // precedence: PULL OVER > CODE ALERT; the code alert is not drawn while not parked and is not acked by hiding
     var ca = !take && !d.nodata && d.codeAlert && !o.dismissed && !o.moving;
-    // the detail OPENS only while parked (the click handler); once open it stays, and while not parked its Clear says engine off
+    // the detail OPENS only while parked (the click handler); once open it stays, and while not parked its Clear says stop to clear (or gear unknown)
     var dt = !d.nodata && o.detail && o.pg === "alerts" && !!byId(d, o.detail);
     var old = p.querySelector(".list"), keep = old ? old.scrollTop : 0;
     p.className = "panel" + (o.night && !take ? " night" : "");
@@ -531,11 +534,11 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   }
   var live = document.getElementById("live");
   function liveOpts() {
-    return { pg: S.pg, moving: S.mv === "moving", acked: S.acked, dismissed: S.dismissed, staleS: S.staleS, replay: S.ds === "replay",
+    return { pg: S.pg, moving: S.mv !== "parked", unk: S.mv === "unknown", acked: S.acked, dismissed: S.dismissed, staleS: S.staleS, replay: S.ds === "replay",
              night: S.ad === "night", err: S.err, detail: S.detail, gate: S.gt === "ok" ? null : S.gt, detailFails: S.df === "fail" };
   }
 
-  var B = { pg: "alerts", moving: false, acked: false, dismissed: false, staleS: 12, replay: false, night: false, err: "", detail: null, gate: null, detailFails: false };
+  var B = { pg: "alerts", moving: false, unk: false, acked: false, dismissed: false, staleS: 12, replay: false, night: false, err: "", detail: null, gate: null, detailFails: false };
   function o_(over) { return with_(B, over || {}); }
   var stopStale = sc({ list: [with_(E.coolant, { stale: true }), E.p0400, E.p0443] });
   var five = [E.p1103, E.p0400, E.p0443, E.p0507, E.p0135];
@@ -578,11 +581,12 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     ] },
     { h: "Code detail + clear", fx: [
       { t: "detail-minor-clearable", d: "Parked, one MINOR code, synced: <code>CLEAR CODES</code> is a real bordered control (hard confirm and re-read as shipped).", data: SC.minor, o: o_({ detail: E.p0443.id }) },
-      { t: "detail-not-parked", d: "The same, while not parked: <code>engine off to clear</code>. This is the only case where engine-off would unlock it.", data: SC.minor, o: o_({ detail: E.p0443.id, moving: true, pg: "alerts" }) },
+      { t: "detail-gear-unknown", d: "The same with <code>states/gear</code> unavailable: <code>gear unknown</code>. It names the missing fact; stopping would not fix a dead link.", data: SC.minor, o: o_({ detail: E.p0443.id, moving: true, unk: true, pg: "alerts" }) },
+      { t: "detail-not-parked", d: "The same, while not parked: <code>stop to clear</code>. This is the only case where stopping would unlock it.", data: SC.minor, o: o_({ detail: E.p0443.id, moving: true, pg: "alerts" }) },
       { t: "detail-watch-present", d: "A WATCH code is stored too. Mode 04 would wipe it, so: <code>a STOP/WATCH code is present</code>, parked or not.", data: sc({ list: [E.p0400, E.p0443] }), o: o_({ detail: E.p0443.id }) },
       { t: "detail-unrated", d: "<code>severity could not be determined</code>. An unknown can't be judged safe to wipe.", data: sc({ list: [E.p0507] }), o: o_({ detail: E.p0507.id }) },
-      { t: "detail-sync-pending-moving", d: "The car as shipped (<code>syncAcked</code> always false), not parked: <code>waiting for server sync</code>, not <code>engine off</code>. Stopping wouldn't unlock it (US-919 B).", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "sync_pending", moving: true }) },
-      { t: "detail-pending-unread-moving", d: "Pending codes not read, not parked: <code>pending codes haven’t been read</code>. Engine-off doesn't read Mode 07.", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "pending_not_read", moving: true }) },
+      { t: "detail-sync-pending-moving", d: "The car as shipped (<code>syncAcked</code> always false), not parked: <code>waiting for server sync</code>, not <code>stop to clear</code>. Stopping wouldn't unlock it (US-919 B).", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "sync_pending", moving: true }) },
+      { t: "detail-pending-unread-moving", d: "Pending codes not read, not parked: <code>pending codes haven’t been read</code>. Stopping doesn't read Mode 07.", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "pending_not_read", moving: true }) },
       { t: "detail-session-locked", d: "A cleared code came straight back: locked for the session.", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "session_locked" }) },
       { t: "detail-fetch-failed", d: "<code>states/dtc</code> didn't load: chip, title and sentence from the entry, plus <code>details unavailable</code>. No Clear control is drawn (flagged).", data: SC.minor, o: o_({ detail: E.p0443.id, detailFails: true }) }
     ] }
@@ -610,7 +614,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     else {
       txt = "states/alerts: " + d.list.filter(isActive).length + " active · codes " + (d.checked ? "read " + d.checked : "not read") + " · icon " + r.ic.state +
         (d.codeAlert && !S.dismissed ? (r.ca ? " · code alert up" : " · code alert held (not parked)") : "");
-      if (r.dt) { var v = clearButtonView(clearGateReason(d, o.gate), !o.moving); txt += " · detail " + codeOf(S.detail) + " · gate " + clearGateReason(d, o.gate) + " → " + v.reason; }
+      if (r.dt) { var v = clearButtonView(clearGateReason(d, o.gate), !o.moving, o.unk); txt += " · detail " + codeOf(S.detail) + " · gate " + clearGateReason(d, o.gate) + " → " + v.reason; }
     }
     document.getElementById("readout").textContent = txt;
   }

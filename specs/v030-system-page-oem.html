@@ -173,10 +173,11 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <label><input type="radio" name="sc" value="verdict-absent"><span>No verdict</span></label>
       </fieldset>
       <fieldset>
-        <legend>Car (engineParked)</legend>
-        <label><input type="radio" name="pk" value="parked" checked><span>Parked (engine off 8 s)</span></label>
-        <label><input type="radio" name="pk" value="idling"><span>Idling, stationary</span></label>
-        <label><input type="radio" name="pk" value="driving"><span>Driving</span></label>
+        <legend>Car (states/gear, §4.7.2)</legend>
+        <label><input type="radio" name="pk" value="parked" checked><span>Parked (P or N, held 8 s)</span></label>
+        <label><input type="radio" name="pk" value="hold"><span>Stopped, in the 8 s hold</span></label>
+        <label><input type="radio" name="pk" value="driving"><span>Driving (numbered gear)</span></label>
+        <label><input type="radio" name="pk" value="unknown"><span>Gear unknown</span></label>
       </fieldset>
       <fieldset>
         <legend>Screen</legend>
@@ -193,7 +194,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <label><input type="radio" name="wr" value="ok" checked><span>Accepted</span></label>
         <label><input type="radio" name="wr" value="fail"><span>Rejected (400)</span></label>
       </fieldset>
-      <p class="hint">Tap the panel too: a row or the Pi line (parked only), SETTINGS (always), ‹ BACK, and any Settings control. Switch to Idling or Driving with a save in flight: it still ends in <code>saved</code> or <code>couldn't save</code>.</p>
+      <p class="hint">Tap the panel too: a row or the Pi line (parked only), SETTINGS (always), ‹ BACK, and any Settings control. Switch to the hold, Driving or Gear unknown with a save in flight: it still ends in <code>saved</code> or <code>couldn't save</code>.</p>
       <div class="readout" id="readout">—</div>
     </div>
   </section>
@@ -222,7 +223,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <li><b>ARCH-061 closes:</b> BT and ADAPTER green, ECU grey, <code>ECU not answering (key off?)</code>, <code>ALL OK</code>. Parked key-off between attempts is <code>n-n-n</code>: <code>Bluetooth trying to link (key off?)</code>, neutral. No word promises an outcome (<code>takes ~1 min</code> is gone).</li>
         <li><b>Dashed = no reading; solid = a reading.</b> A <code>null</code> layer is a dashed step and a hollow top-bar dot, never the <code>down</code> look.</li>
         <li><b>WiFi glyph:</b> <code>up</code> green; <code>weak</code> neutral; no reading dim arcs with no slash; <code>down</code> or <code>not_associated</code> slashed; <code>read_failed</code> amber, the one counted WiFi state.</li>
-        <li><b>Locked until parked</b> (engine off held 8 s): Settings stays readable, every control goes tertiary with no <code>−</code>/<code>+</code>, a tap writes nothing, and one line says <code>🔒 view only — engine off to change</code>. No word on the glass says <code>moving</code>.</li>
+        <li><b>Locked until parked</b> (gear <code>P</code> or <code>N</code> held 8 s, CIO 2026-10-22): Settings stays readable, every control goes tertiary with no <code>−</code>/<code>+</code>, a tap writes nothing, and one line says <code>🔒 view only — stop to change</code>, or <code>🔒 view only — gear unknown</code> while the gear is unknown. No word on the glass says <code>moving</code>.</li>
         <li><b>Brightness FIXED</b> runs from the effective <code>minLevel</code> (75 % shipped) to 100 % in 5 % steps; an unreadable <code>minLevel</code> disables FIXED and reads <code>Unknown</code>. AUTO→FIXED starts at the level the panel applies now.</li>
         <li><b>Auto-dim ends</b> step the 1-2-3-5 ladder from 1 to 1000 lux and cannot cross: the page disables the crossing step, and the seam's 400 is the rule.</li>
         <li><b>No-data mark is <code>--</code></b>, never <code>—</code>. ⚠️ Shipped <code>healthValue</code> still returns <code>—</code> for an unknown health; the build owes the swap.</li>
@@ -579,7 +580,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     return '<div class="srow"><div class="shead"><span class="sname">' + name + '</span><span class="apply">' + apply + "</span></div>" +
       '<span class="sdesc">' + desc + '</span><div class="sctl">' + ctl + '</div><span class="sstat">' + (s || "") + "</span></div>";
   }
-  function settingsView(st, parked) {
+  function settingsView(st, parked, unk) {
     var s = st.shown, locked = !parked, lad = brightLadder(st.minLevel);
     var bri;
     if (s.bMode == null) bri = seg("bmode", ["auto", "fixed"], null, locked) + '<span class="gap"></span><span class="tword">Unknown</span>';
@@ -595,7 +596,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       '<span class="gap"></span><span class="stag">full</span>' + stepper("lfull", fmtThousands(s.luxFull) + " lux", nFullDn != null && nFullDn > s.luxMin, nextOn(LUX, s.luxFull, 1) != null, locked, false, s.luxFull >= 1000);
     var rot = stepper("rot", s.rot == null ? "Unknown" : s.rot ? s.rot + " s" : "Off", s.rot > 0, nextOn(ROT, s.rot, 1) != null, locked);
     return obar("settings") + '<div class="list' + (locked ? " locked" : "") + '">' +
-      (locked ? '<div class="lockline">🔒 view only — engine off to change</div>' : "") +
+      (locked ? '<div class="lockline">🔒 view only — ' + (unk ? "gear unknown" : "stop to change") + '</div>' : "") +
       '<div class="sec">DISPLAY</div>' +
       srow(st, "bri", "BRIGHTNESS", "applies on reload", "AUTO follows the sensor. FIXED holds a level.", bri) +
       srow(st, "dim", "AUTO-DIM RANGE", "applies at the next light reading", "dim below, full above; also DAY / DUSK / NIGHT", dim) +
@@ -606,9 +607,9 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       '<div class="svc">Service controls (restart, exit) are in the ⋮ menu.</div></div>';
   }
 
-  function render(p, d, view, st, parked) {
+  function render(p, d, view, st, parked, unk) {
     var keep = p.querySelector(".list"), top = keep ? keep.scrollTop : 0;
-    p.innerHTML = view === "system" ? systemView(d, parked) : view === "settings" ? settingsView(st, parked) : detailView(d, view);
+    p.innerHTML = view === "system" ? systemView(d, parked) : view === "settings" ? settingsView(st, parked, unk) : detailView(d, view);
     var l = p.querySelector(".list"); if (l) l.scrollTop = top;
   }
 
@@ -623,7 +624,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       " | verdict " + (d.verdict ? d.verdict.issueCount + " [" + d.verdict.members.map(function (m) { return m.key; }).join(", ") + "]" : "absent") +
       " | wifi " + d.wifi.state + (d.wifiSrc.reason ? " (" + d.wifiSrc.reason + ")" : "") + " | " + (parked() ? "parked" : S.pk + ": locked, row taps open nothing") + " | " + S.view;
   }
-  function draw() { syncRadios(); render(live, SCN[S.sc], S.view, S.set, parked()); readout(); }
+  function draw() { syncRadios(); render(live, SCN[S.sc], S.view, S.set, parked(), S.pk === "unknown"); readout(); }
 
   // The simulated seam: write, then READ BACK and show what was stored, never what was sent.
   function save(keys, id) {
@@ -723,7 +724,9 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       F("settings-lux-cross-rejected", "A crossing write reached the seam: 400, <code>couldn't save</code>, snapped back to 200 / 300. The page guard disables dim <code>+</code> here.", "arch061-during-attempt", "settings", { st: crossRej }),
       F("settings-floor-from-minlevel", "<code>minLevel</code> unreadable: FIXED is disabled and reads <code>Unknown</code>. A guessed floor would be a fabricated one.", "arch061-during-attempt", "settings", { st: noMin }),
       F("settings off-step values", "Stored <code>4 lux</code> and <code>12 s</code> show as stored; the next tap moves to the ladder neighbour.", "arch061-during-attempt", "settings", { st: offStep, scroll: 110 }),
-      F("settings-locked-idling", "Stationary, engine on: view-only, tertiary ink, no <code>−</code>/<code>+</code>, one lock line. Nothing says moving.", "arch061-during-attempt", "settings", { parked: false, st: fixed80 }),
+      F("settings-locked-hold", "Stopped in <code>N</code>, inside the 8 s hold: view-only, tertiary ink, no <code>−</code>/<code>+</code>, one lock line, <code>stop to change</code>. Nothing says moving.", "arch061-during-attempt", "settings", { parked: false, st: fixed80 }),
+      F("settings-locked-gear-unknown", "<code>states/gear</code> unavailable (<code>link_down</code>): the line names the missing fact, <code>gear unknown</code>, and promises no unlock.", "arch061-during-attempt", "settings", { parked: false, unk: true, st: fixed80 }),
+      F("settings-parked-idling", "Gear <code>N</code>, engine idling, held 8 s: parked, so the band is live. Under the old engine-off rule this was locked.", "arch061-during-attempt", "settings", { st: fixed80 }),
       F("settings-locked-driving", "Driving, with a write that was in flight at the lock: it still ends in <code>saved</code>.", "all-ok-driving", "settings", { parked: false, st: lockDrive, scroll: 150 })
     ] }
   ];
@@ -735,7 +738,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   });
   fxRoot.innerHTML = html;
   var fxPanels = FIX.map(function (f, i) {
-    var p = document.getElementById("fx" + i); render(p, SCN[f.sc], f.v, f.st || newSettings(), f.parked);
+    var p = document.getElementById("fx" + i); render(p, SCN[f.sc], f.v, f.st || newSettings(), f.parked, f.unk);
     var l = f.scroll && p.querySelector ? p.querySelector(".list") : null; if (l) l.scrollTop = f.scroll;   // show the part the fixture is about
     return p;
   });
