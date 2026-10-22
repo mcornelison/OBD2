@@ -35,7 +35,7 @@
 │                                     +1.6 %   │
 ├──────────────────────────────────────────────┤
 │ LAST 30 S      THIS DRIVE      SINCE RESET   │ ~70
-│ ≈24 MPG        ≈26.3 MPG       ≈24.6 MPG     │   unit after every figure (US-922, §4.3)
+│ 24 MPG         ≈26.3 MPG       ≈24.6 MPG     │   unit after every figure (US-922, §4.3)
 ├──────────────────────────────────────────────┤
 │ FUEL TRIM TREND  −1.6 %   •─•─•─•─•─•─•─•    │ ~44  dots + median line + dashed baseline
 └──────────────────────────────────────────────┘
@@ -67,12 +67,12 @@
 - **Open loop ⇒ total trim `--`** (dimmed) + `not applied in open loop`: trims aren't being applied, so showing them would describe something not happening.
 - Total trim is **not banded** (the spec gives no band for it). Neutral colour.
 
-### 4.3 MPG (all three carry `≈`)
+### 4.3 MPG (THIS DRIVE and SINCE RESET carry `≈`; LAST 30 S does not)
 - **The unit is on the glass** (US-922, CIO 2026-10-22: he did not recognise the row as fuel economy; *"just text, not new functionality"*). Every MPG figure is followed by **`MPG`**: mono, `--fs-label`, `--text-secondary`, on the figure's baseline with the 4 px `--fuel-unit-gap`. The same markup and class as the airflow's `g/s` (`.fuel-unit`), so the page has one unit idiom.
-  - **Shown only with a figure.** `--` never carries a unit: its reason line already says why there's no number. `99+` carries it (`≈99+ MPG`).
+  - **Shown only with a figure.** `--` never carries a unit: its reason line already says why there's no number. `99+` carries it (`99+ MPG`).
   - **Why a unit per figure and not a row heading:** a heading is one more line (≈ 30 px with the grid gap) on a card body that already scrolls (measured on dev `c1b20e8e`: 239 px client, more content than that), and it would push the trend further down. The unit costs no height. The labels don't change, so `SINCE RESET` (141.3 of 141.33 px) is untouched.
   - **Fit, computed at the worst case** (DejaVu Sans Mono, the Pi's mono face, 0.602 em per character; a headless-Windows render uses Consolas and is narrower, so it can't prove this; column 141.33 px, 136 px when the body's scrollbar shows, which is the case to design for):
-    - LAST 30 S at 34 px: `≈99+` 81.9 + 4 + `MPG` 36.1 = **122.0 px**.
+    - LAST 30 S at 34 px (no `≈`, below): `99+` 61.4 + 4 + `MPG` 36.1 = **101.5 px**.
     - THIS DRIVE / SINCE RESET at 26 px: `≈99.9` → 118.4 px; `≈100.0` (six characters) → **134.0 px**, 2 px inside 136.
     - Seven characters (≥ 1000 MPG) would be 149.7 px: the figure line may wrap, so `MPG` drops under the figure. It never clips, shrinks or ellipsizes (same rule as the reason texts).
   - Words, not a label change: `LAST 30 S`, `THIS DRIVE`, `SINCE RESET` stay as they are; `MPG NOW` stays retired. The reset confirm already says `Reset average MPG?`.
@@ -81,21 +81,20 @@
 - **LAST 30 S** (was MPG NOW; Spool 2026-10-14):
   - **The label is `LAST 30 S`, never "instant".** SPEED and MAF are sampled ~2.2 s apart, so a per-sample ratio is two points and swings wildly.
   - The provider computes miles ÷ gallons summed over a rolling 30 s window. It never averages per-sample MPGs.
-  - **It carries `≈` like the other two** (Iris RULED 2026-10-22, S112 I1; UIDEV-012): `≈27 MPG`, `≈99+ MPG`. Shipped `carousel.js` drops it (*"the label already says last 30 s"*, pinned by `test_fuel_page.py`); that is the build's to change. **Why:** `LAST 30 S` names the window, not the precision. The figure is the same stoichiometric MAF estimate as the other two, and the noisiest of the three, and it has no `open loop` note to say so. The sign is the only cue on it that the number is an estimate. It fits: `≈99+ MPG` is 122.0 px of 136. *If Spool's 2026-10-14 display rule (his s2) itself drops the sign, his rule wins and this line reverts; the shipped comment cites him only for the integer and `99+`.*
+  - **No `≈`** (Spool 2026-10-14 §2: *"label is 'last 30 s', no '~' needed beyond the drive-level estimate marking"*; S112 I1, 2026-10-22). It shows `27 MPG` and `99+ MPG`, as shipped (`carousel.js` `FUEL_MPG_LAST30_CAP`, pinned by `test_fuel_page.py`). *My UIDEV-012 ruling to keep the sign carried a void-if on exactly this note. It fired, and this line reverted the same day.*
   - **Integer.** At ≥ 99 it shows `99+` (decel coasts produce big numbers: right direction, false precision).
   - `--` + reason when the window covers < 0.1 mi (idle, crawling), has < 10 MAF samples, or hits any drive-level null rule. About 55 % of in-drive windows are null on the corpus, which is expected.
   - **No provider field on dev yet** (the US-881 successor story; Atlas S104 ruling 2). Until it lands, the slot shows `--` + `not published`. The field name and any extra reason codes belong to the provider story; the page maps whatever codes it ships through the §4.6 table.
   - `stopped` at 0 mph comes from the provider's reason, not from the page reading speed.
 - **THIS DRIVE:** `thisDrive.mpg`. `thisDrive` is null until the window opens, which shows `--` + `not started`. A null `mpg` shows `--` + the §4.6 text for `thisDrive.mpgNullReason`. The distance floor is `pi.fuel.minMiles` (1.0 mi on dev), so `too short yet` shows for the first mile.
 - **SINCE RESET:** `sinceReset.mpg`, accumulated across drives until reset. `sinceReset` null (no row yet) shows `--` + `never reset`. The block carries **no reason field**, so a null `mpg` shows `--` + `too short yet`; the page does not guess between the provider's other causes.
-- **Reset gate (CIO RULED 2026-10-22, V0.30; Marcus folded it into UIDEV-011). The one control with its own gate:**
-  - **Allowed** when **parked** (System §4.7.2: gear `P` or `N`, held 8 s) **OR** when `states/obd-live` `params.SPEED` is **fresh** (≤ `pi.display.stale.obdLiveSec`) **and ≤ 8 km/h** (5 mph), in any gear. At 3 mph in 2nd it is allowed.
-  - **Not allowed** otherwise: fresh SPEED > 8 km/h and not parked, or SPEED stale/absent and not parked. Unknown speed never allows it (fails closed, the §4.7.2 rule's direction).
-  - The speed side has **no hold**: the CIO ruled none, and the page doesn't add one. The parked side keeps its 8 s / 3 s debounce.
-  - The SERVER re-checks the same gate on the POST and refuses with its own reason (`driving`). It must not keep the old parked-only test, or the page offers a reset the server refuses at walking pace. That is the build's (Ralph/Atlas), recorded here so the two gates stay one.
-- **Reset:** long-press ~2 s **while the gate allows it**, then an in-page confirm `Reset average MPG?`, then `POST /fuel-reset`, then show the **re-read** stored value (F-126 honest write; never optimistic success). Hint `hold to reset` appears **only while the gate allows it**, and the long-press is inert otherwise (R5: nothing to work at speed, so no word is drawn either).
+- **Reset gate: the PROVIDER's** (CIO RULED the gate 2026-10-22; Atlas C1–C3 accepted 2026-10-22, S112 I4, US-923). **The page computes nothing.** It renders `states/fuel-economy.resetAllowed {value, reason}`, published by the orchestrator. The page reads no speed and no gear for the reset.
+  - **The gate itself (the orchestrator's; recorded so the words match it):** allowed when the RAW gear is `P` or `N` (**no 8 s hold, for the reset only**: Atlas C2), **or** when SPEED is fresh (≤ `pi.gear.maxAgeSec`, 3 s: the deriver's freshness, not `obdLiveSec`) and ≤ 8 km/h (5 mph) in any gear. Unknown speed and not P/N never allows it.
+  - **The same predicate re-checks at service time** in the orchestrator when the POST lands (C3), so the page and the server can't disagree. A mid-drive reset at walking pace is allowed.
+  - **`value === true`** ⇒ hint `hold to reset` and the long-press work. **Anything else** (false, null, missing block, unreadable) ⇒ no hint, and the long-press is inert. Absence fails closed.
+- **Reset:** long-press ~2 s **while the gate allows it**, then an in-page confirm `Reset average MPG?`, then `POST /fuel-reset`, then show the **re-read** stored value (F-126 honest write; never optimistic success). Hint `hold to reset` appears **only while `resetAllowed.value` is true**, and the long-press is inert otherwise (R5: nothing to work at speed, so no word is drawn either).
   - **Its own refusal word: `slow to reset`** (13 characters, inside the 16-character row rule). It's what the server's 409 `driving` now shows. Not `park to reset` (false: parking isn't needed) and not `stop to …` (the System/Warnings word, false here: at 5 mph the reset works).
-  - A refusal while the speed is unknown still shows the server's reason through the §4.6 table; if the server ever distinguishes it, `speed unknown` (13) is the word.
+  - **`speed_unknown` ⇒ `speed unknown`** (13), now live: the provider names it, so the page shows the provider's word, not a guess. Both texts appear only as a refusal outcome beside the LATEST value, not as a standing line.
   - **`resetting…` shows from `Yes`, not from the 200** (Atlas 2026-10-15, S105 rulings Q4 UX note): the POST can take up to `pi.fuel.resetTimeoutSec` (5 s), and the single-threaded states server stalls the page's reads meanwhile. The confirm clock (`pi.display.stale.fuelResetConfirmSec`, default 6 s) starts at the 200.
   - **The page never holds a cached "old value".** It always renders the LATEST `states/fuel-economy` read, plus the outcome text; the only time it masks the provider is `resetting…`, bounded by the confirm window. 409 `driving` ⇒ provider value + `slow to reset`; 503 / `unavailable` / `reset failed: …` ⇒ provider value + `couldn't reset`; **504 ⇒ `couldn't confirm`** (the server doesn't know whether the reset landed, and the next read settles it, so if it did land the page shows the new total); confirm timeout ⇒ provider value + `couldn't confirm`.
 
@@ -123,7 +122,8 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 | `gaps` | :82 (gap time > `pi.fuel.maxExcludedPct`) | `too many gaps` |
 | `too_short` | :83 (< `pi.fuel.minMiles`) | `too short yet` |
 | `no_fuel` | :84 | `no fuel counted` |
-| reset `driving` | `orchestrator/core.py`, fuel-reset outcome (refused by the §4.3 gate) | `slow to reset` (was `park to reset`, false since the CIO's 8 km/h clause) |
+| reset `driving` | `orchestrator/core.py`, fuel-reset outcome; `resetAllowed.reason` (refused by the §4.3 gate) | `slow to reset` (was `park to reset`, false since the CIO's 8 km/h clause) |
+| reset `speed_unknown` | same (S112 I4, US-923) | `speed unknown` |
 | reset `unavailable` | same | `couldn't reset` |
 | reset `reset failed: …` | same (free text) | `couldn't reset` (the raw text goes to the log; it doesn't fit) |
 | reset HTTP 504, or no confirming read within `fuelResetConfirmSec` | `states_http_server.py:487-495` (outcome unknown) | `couldn't confirm` (16 chars), beside the LATEST provider value |
@@ -143,6 +143,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 | Trend + verdict | `states/ltft-trend`: `median`, `level`, `reason`, `sufficient`, `baseline`, `points[].inMedian`, `epochBreak`; `reason` includes `ECU relearning` (US-890-g) | exists | — |
 | THIS DRIVE, SINCE RESET | `states/fuel-economy` `{thisDrive{fuelL, mpg, sinceTs, approximate, openLoopAirPct, mpgNullReason?}, sinceReset{fuelL, distanceKm, mpg, resetAtTs}, ts}` | **exists** (US-881-b/c, `fuel_economy_emitter.py`) | — |
 | MPG last 30 s | a `states/fuel-economy` field following Spool's ratio-of-sums rules a–c | **not on dev** (US-881 successor) | Atlas design · Marcus story |
+| Reset allowed | `states/fuel-economy.resetAllowed {value, reason}` (`driving` \| `speed_unknown`), one predicate shared with the POST re-check | **US-923** (Atlas C1–C3) | Ralph |
 | Reset write | token-gated `POST /fuel-reset` via `fuel_reset_channel`; outcome `{requestId, ok, reason, resetAtTs, completedAtEpoch}`, refused with `driving` while a drive records | **exists** (US-881-d) | — |
 
 ## 6. Acceptance criteria (draft; folded from the S104 brief + Atlas/Spool rulings 2026-10-14)
@@ -150,18 +151,18 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 2. Airflow is `--fs-hero`, steps with each reading, no interpolation. Above `params.MAF.scale.max`: the bar is exactly full, the number shows the unclamped reading, no `sensor limit` text, and nothing on the airflow element is amber or red. Grep gate: no MAF max literal in `carousel.js`.
 3. Loop chip outlined, no state colour. Open loop: total trim `--` dimmed + `not applied in open loop`.
 4. Total trim is the live LTFT + STFT sum, unbanded and neutral. It is never read from `ltft-trend.totalTrim`.
-5. All MPG carry `≈`. The `approximate` flag shows `open loop` (`--amber-warn`, `--fs-meta`) on its own line under the THIS DRIVE figure. The text `rich, overstated` appears nowhere.
+5. THIS DRIVE and SINCE RESET carry `≈`; LAST 30 S does not (Spool 2026-10-14 §2). The `approximate` flag shows `open loop` (`--amber-warn`, `--fs-meta`) on its own line under the THIS DRIVE figure. The text `rich, overstated` appears nowhere.
 5a. **MPG unit (US-922):** every MPG figure, `99+` included, is followed by `MPG` in `.fuel-unit` (mono, `--fs-label`, `--text-secondary`); a `--` never is. Screenshot `≈100.0 MPG` in THIS DRIVE at 480×320 with the body scrollbar showing: one line, nothing clipped.
 6. LAST 30 S: label `LAST 30 S`, never `instant`; integer; `99+` at ≥ 99; `--` + reason for every null. While the provider field is absent: `--` + `not published`. Grep gate: `carousel.js` never divides by a MAF value.
 7. THIS DRIVE / SINCE RESET: every null shows `--` + the §4.6 text for the provider's code. An unknown code shows the raw code. Nothing is ever blank.
-8. Reset: hint + long-press follow the §4.3 gate: present when parked (gear `N`, idling, held 8 s) and when fresh SPEED ≤ 8 km/h in a numbered gear (fixture: 5 km/h in 2nd); absent at fresh SPEED 9 km/h not parked, and with SPEED stale not parked. A 409 `driving` shows `slow to reset`; `park to reset` appears nowhere. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. `resetting…` from `Yes`. On `driving` / `unavailable` / failure / 504 / confirm timeout: the LATEST provider value + the §4.6 text, never a page-cached value. VC: a 504, then a read with `sinceReset.resetAtTs` = T and `mpg` null ⇒ `--` + `too short yet`, not the pre-reset MPG.
+8. Reset: hint + long-press follow `resetAllowed.value === true` only, and nothing else: present at `{true}`; absent at `{false, driving}`, `{false, speed_unknown}`, `null` and a missing block. Grep gate: the Fuel reset code in `carousel.js` reads no SPEED, gear or parked state. A refusal shows `slow to reset` / `speed unknown`; `park to reset` appears nowhere. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. `resetting…` from `Yes`. On `driving` / `unavailable` / failure / 504 / confirm timeout: the LATEST provider value + the §4.6 text, never a page-cached value. VC: a 504, then a read with `sinceReset.resetAtTs` = T and `mpg` null ⇒ `--` + `too short yet`, not the pre-reset MPG.
 9. Trend dots are exactly the `inMedian` points (a > 5-drive fixture proves the window). Colour only from `level`. A relearning epoch shows the provider's `ECU relearning` reason and no dot for it; `isReset` does not appear in `carousel.js` (US-890-g). Grep gate: no trim threshold in `carousel.js`.
 10. LAST 30 S and total trim ≥ 34 px; THIS DRIVE / SINCE RESET `--fs-secondary` (parked-read). No reason text wider than its MPG column (§4.6 fit rule).
 11. Tokens-only CSS; geometry as scoped custom properties on the card (S103 G-4 rule).
 12. **DoD (R15): CIO judgement in the car.**
 
 ## 7. Fixtures
-`idle-closed` · `cruise-closed` · `wot-open-above-scale-max` · `stopped` · `last30-null-crawl` · `last30-99-plus` · `last30-not-published` · `trend-healthy` · `trend-amber` · `ltft-relearning-after-reset` (built by `buildLtftTrendState`, replaces the hand-set `ltft-reset-zero-flat`) · `maf-null` · `mpg-null-reasons` (one per §4.6 code) · `sinceReset-never` · `parked-reset-available` · `slow-reset-available` (5 km/h in 2nd: hint shown) · `reset-gate-closed-9kmh` (no hint) · `reset-gate-speed-stale` (no hint) · `reset-refused-driving` (`slow to reset`) · `reset-write-fails` · `stale`.
+`idle-closed` · `cruise-closed` · `wot-open-above-scale-max` · `stopped` · `last30-null-crawl` · `last30-99-plus` · `last30-not-published` · `trend-healthy` · `trend-amber` · `ltft-relearning-after-reset` (built by `buildLtftTrendState`, replaces the hand-set `ltft-reset-zero-flat`) · `maf-null` · `mpg-null-reasons` (one per §4.6 code) · `sinceReset-never` · `parked-reset-available` · `reset-allowed-true` (hint shown) · `reset-allowed-driving` (no hint) · `reset-allowed-speed-unknown` (no hint) · `reset-allowed-missing` (no hint) · `reset-refused-driving` (`slow to reset`) · `reset-write-fails` · `stale`.
 
 ## 8. Out of scope
 Fuel level (PID unsupported on this ECU) · AFR / wideband (no sensor) · boost inference (steady-state only, ±2 psi; not on a live page) · O2 voltage as AFR (narrowband is not AFR).
