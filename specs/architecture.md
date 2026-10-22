@@ -570,9 +570,22 @@ layers keep `/dev/rfcomm0` live after reboot:
    anyway, so even if the systemd unit is missing the service self-heals
    on its first connect attempt.
 
-Install via `deploy/install-rfcomm-bind.sh` (runs on the Pi) or let
-`deploy-pi.sh --init` do it automatically — the init path writes
-`/etc/default/obdlink` from the Pi's `.env` MAC and enables the unit.
+The unit FILE and the bind are installed by two different paths (US-908-b):
+
+- **The unit file is synced on EVERY deploy** — `deploy-pi.sh`
+  `step_sync_rfcomm_bind_unit` (top level, right after
+  `step_install_bond_selfheal_unit`): `cmp -s` against
+  `/etc/systemd/system/rfcomm-bind.service`; when changed, `install -m 644` +
+  `daemon-reload`; when up to date, nothing. **No restart, no enable, no
+  rfcomm call** — a changed unit takes effect on the next boot.
+- **The bind itself stays `--init`** — `deploy/install-rfcomm-bind.sh` (runs on
+  the Pi), which `deploy-pi.sh --init` calls via `step_install_rfcomm_bind`:
+  it writes `/etc/default/obdlink` from the repo-canonical `$OBD_BT_MAC`
+  (US-477), enables the unit and restarts it. Routine deploys never do.
+
+`tests/deploy/test_every_unit_has_an_installer.py` holds every
+`deploy/*.service` / `*.timer` to an every-deploy installer (or a one-entry
+allow-list), so a unit installed only under `--init` fails the suite.
 
 **Config keys (all optional, override from defaults):**
 
