@@ -7477,6 +7477,54 @@ that raises and releases BT reads `connecting`, never `retrying`.
   was first seen gone — so the gap before a retry thread spawns never flashes
   down. A `cancelPendingConnects()` is not a down fact.
 
+**`wifi` — the Pi's WiFi link (US-732; ARCH-007, Atlas W1–W8, 732-3..732-6).**
+An always-present block, every key always present; read-only (the Pi observes
+its link, it never manages it):
+
+```json
+"wifi": {"state": "up", "ssid": "DeathStarWiFi", "rssiDbm": -50,
+         "home": true, "ts": "2026-10-22T12:00:00Z"}
+```
+
+- **One OS read**, `pi.network.wifi_reader.readWifiLink` (reusable by
+  powerwatch later): association + SSID from NetworkManager's **cached** list,
+  `home_detector.readWifiRows(ifname="wlan0")` = `nmcli -t -f ACTIVE,SSID
+  device wifi list ifname wlan0 --rescan no` (20 ms; 🔴 never without
+  `--rescan no` — the rescan measured 4.1 s); `rssiDbm` = wlan0's `level` in
+  `/proc/net/wireless` (2 ms), read only while associated. **nmcli decides
+  association alone**: associated = an `ACTIVE=yes` row with a non-empty SSID
+  (an empty SSID is not associated → `ssid` null). With nmcli absent, /proc
+  never decides.
+- **Typed nmcli outcome (W2).** `readWifiRows` returns `rows` / `tool_absent` /
+  `read_failed` (timeout, OS error, **non-zero exit**). Powerwatch's
+  `_listWifiRows` keeps today's semantics on top of it (`None` when missing /
+  timed out, `[]` on a non-zero exit) — both readers are pinned in one test
+  (`tests/pi/network/test_wifi_reader.py`).
+- **`state`** = the shipped `deriveWifiState(associated, rssiDbm)`, unchanged
+  (732-4): `up` / `weak` / `down` from `pi.network.wifi.weakRssiDbm` (-70) /
+  `downRssiDbm` (-90), read from config by the orchestrator and passed through
+  `emit()` (W4; the module defaults are fallback only). Not associated is a
+  **measured `down`** (`source.wifi.available` true, reason null; W3).
+  Associated with no usable level (no /proc file or line) → `state` null.
+- **`home`** = `HomeNetworkDetector.isAtHomeWifi()`, the ARCH-065 one owner —
+  "home WiFi seen", **not** "server reachable" (no `probeServer()` here). The
+  orchestrator holds ONE detector, built lazily in `card_state_emitter`
+  (`_getHomeNetworkDetector`, the `_getAltitudeAnchor` pattern) with the
+  sampler's own reading as its `ssidReader`: a sample costs one nmcli and the
+  detector's one `hostname -I`, never a second of either (732-6). Null when
+  not read — the bool is not trusted on a failed read.
+- **`ts`** = the read time of the sample behind the block (canonical UTC; a
+  failed read included), null when never read (W6).
+- **Cadence (W5).** `WifiLinkSampler` reads every **30 s on its own daemon
+  thread** and exits on `_shutdownEvent`; the 2 s tick reads only its latest
+  sample — no subprocess on the tick. A host with no `_shutdownEvent` (the
+  stub composers) starts no sampler and publishes not read.
+- **`source.wifi`**: `available` = the link was read. Reasons when not:
+  `nmcli_absent` (the dev box — kept apart so a dev box never counts an issue),
+  `read_failed`, or `not_read` (no sample yet; W8 replaced the prose
+  `wifi: not read`). Not read blanks `state` / `ssid` / `rssiDbm` / `home`.
+  The page's null mark (`--`) is S110's.
+
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries`) / `down`
 (red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop

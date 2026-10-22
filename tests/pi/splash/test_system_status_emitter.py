@@ -27,6 +27,8 @@
 #               |              | state function + tracker (Atlas L1, G1), the
 #               |              | link block's shape and the emit forwarding.
 # 2026-10-22    | Rex (US-876-d)| LinkLayerTracker.markUnread (stale evidence).
+# 2026-10-22    | Rex (US-732) | wifi home + ts, the not_read token, the two
+#               |              | VCs and the emit forwarding of the wifi inputs.
 # ================================================================================
 ################################################################################
 
@@ -110,7 +112,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         # ARCH-007: `wifi` joins the A-3 schema per the Atlas contract ruling
         # of 2026-08-20. It defaults to UNAVAILABLE, never to a fabricated link:
         # a caller that has not wired the provider must not publish one.
-        "wifi": {"state": None, "ssid": None, "rssiDbm": None},
+        # US-732: home and ts are always keys; null when not read.
+        "wifi": {"state": None, "ssid": None, "rssiDbm": None, "home": None, "ts": None},
         # US-876-c: `link` is ALWAYS a key, every layer always present; a
         # caller that supplies no chain publishes every layer as not read.
         "link": {
@@ -120,7 +123,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         },
         "source": {
             "obd": {"available": True, "reason": None},
-            "wifi": {"available": False, "reason": "wifi: not read"},
+            # US-732 (Atlas W8): the snake token, not the old prose.
+            "wifi": {"available": False, "reason": "not_read"},
         },
         "ts": _NOW,
     }
@@ -954,3 +958,122 @@ def test_orchestratorEmit_passesLink_evenFromAComposerWithNoConnection():
     assert composer.calls[0]["link"] == {
         "bt": _NULL_LAYER, "adapter": _NULL_LAYER, "ecu": _NULL_LAYER,
     }
+
+
+# ---------------------------------------------------------------------------
+# US-732 -- wifi {state, ssid, rssiDbm, home, ts}.
+# ---------------------------------------------------------------------------
+
+_WIFI_TS = "2026-06-30T19:41:40Z"
+
+
+def _wifiState(**wifi):
+    return buildSystemStatusState(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
+        **wifi,
+    )
+
+
+def test_wifi_vc1_associatedHomeAtMinus50_isUpHomeTrue():
+    """VC 1: wlan0 associated to the home SSID, level -50."""
+    state = _wifiState(wifiAvailable=True, wifiSsid="DeathStarWiFi", wifiRssiDbm=-50,
+                       wifiHome=True, wifiTs=_WIFI_TS)
+
+    assert state["wifi"] == {
+        "state": "up", "ssid": "DeathStarWiFi", "rssiDbm": -50, "home": True,
+        "ts": _WIFI_TS,
+    }
+    assert state["source"]["wifi"] == {"available": True, "reason": None}
+
+
+def test_wifi_vc2_nmcliAbsent_allNull_reasonNmcliAbsent():
+    """VC 2: nmcli absent (dev box) -> state/ssid/rssiDbm/home null;
+    source.wifi.available false, reason nmcli_absent."""
+    state = _wifiState(wifiAvailable=False, wifiUnavailableReason="nmcli_absent",
+                       wifiTs=_WIFI_TS)
+
+    wifi = state["wifi"]
+    assert (wifi["state"], wifi["ssid"], wifi["rssiDbm"], wifi["home"]) == (
+        None, None, None, None,
+    )
+    assert state["source"]["wifi"] == {"available": False, "reason": "nmcli_absent"}
+
+
+def test_wifi_associatedOther_isUpHomeFalse():
+    state = _wifiState(wifiAvailable=True, wifiSsid="CoffeeShop", wifiRssiDbm=-55,
+                       wifiHome=False, wifiTs=_WIFI_TS)
+    assert state["wifi"]["state"] == "up"
+    assert state["wifi"]["home"] is False
+
+
+def test_wifi_unassociated_isAMeasuredDown_availableNoReason():
+    """Atlas 2026-10-22 W3: not associated -> available true, state down,
+    reason null."""
+    state = _wifiState(wifiAvailable=True, wifiSsid=None, wifiRssiDbm=None,
+                       wifiHome=False, wifiTs=_WIFI_TS)
+    assert state["wifi"]["state"] == "down"
+    assert state["source"]["wifi"] == {"available": True, "reason": None}
+
+
+def test_wifi_associatedAtMinus75_isWeak_theShippedBandUnchanged():
+    state = _wifiState(wifiAvailable=True, wifiSsid="DeathStarWiFi", wifiRssiDbm=-75,
+                       wifiHome=True, wifiTs=_WIFI_TS)
+    assert state["wifi"]["state"] == "weak"
+
+
+def test_wifi_notRead_homeIsNull_evenIfTheCallerPassedOne():
+    """The detector's bool is not trusted on a failed read."""
+    state = _wifiState(wifiAvailable=False, wifiUnavailableReason="read_failed",
+                       wifiHome=True, wifiTs=_WIFI_TS)
+    assert state["wifi"]["home"] is None
+    assert state["wifi"]["ts"] == _WIFI_TS
+    assert state["source"]["wifi"]["reason"] == "read_failed"
+
+
+def test_wifi_neverRead_isNotRead_tsNull():
+    state = _wifiState()
+    assert state["wifi"]["ts"] is None
+    assert state["source"]["wifi"] == {"available": False, "reason": "not_read"}
+
+
+def test_emitter_forwardsWifi_andItsThresholds_throughTheJsonRoundTrip(tmp_path):
+    """Every new builder input travels builder <- emit() <- orchestrator; the
+    thresholds too (W4) -- -65 is weak only under the injected -60 band."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=120.0, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        powerSource="external", driveState="idle", driveId=None,
+        wifiAvailable=True, wifiUnavailableReason=None, wifiSsid="DeathStarWiFi",
+        wifiRssiDbm=-65, wifiHome=True, wifiTs=_WIFI_TS,
+        wifiWeakRssiDbm=-60, wifiDownRssiDbm=-90,
+    )
+
+    payload = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert payload["wifi"] == {
+        "state": "weak", "ssid": "DeathStarWiFi", "rssiDbm": -65, "home": True,
+        "ts": _WIFI_TS,
+    }
+    assert payload["source"]["wifi"] == {"available": True, "reason": None}
+
+
+def test_orchestratorEmit_stubComposer_wifiNotRead_defaultThresholds():
+    """Stub hosts: no _shutdownEvent -> no sampler -> wifi not read, and the
+    module defaults stand in for an absent pi.network.wifi."""
+    composer = _StubComposer({}, False)
+
+    composer._emitSystemStatusState()
+
+    call = composer.calls[0]
+    assert call["wifiAvailable"] is False
+    assert call["wifiUnavailableReason"] is None
+    assert call["wifiTs"] is None
+    assert (call["wifiWeakRssiDbm"], call["wifiDownRssiDbm"]) == (-70, -90)
+    assert getattr(composer, "_wifiSampler", None) is None

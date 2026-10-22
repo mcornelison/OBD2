@@ -112,6 +112,9 @@
 # 2026-10-22    | Rex (US-876-e)| link.bt live from the off-tick bluetoothctl
 #               |              | sampler (started on first use for a usable MAC;
 #               |              | stale / unreadable -> null; absent -> down).
+# 2026-10-22    | Rex (US-732) | system-status wifi from the off-tick WiFi
+#               |              | sampler; one lazy HomeNetworkDetector reads home
+#               |              | from the same sample; thresholds from config.
 # ================================================================================
 ################################################################################
 
@@ -1859,6 +1862,8 @@ class CardStateEmitterMixin:
             # US-876-c: the link chain. NOT gated on obdAvailable -- the
             # never-connected branch above blanks obdLink, never this.
             link=self._gatherLinkChain(),
+            # US-732: the wifi block from the off-tick sampler + thresholds.
+            **self._gatherWifiState(),
         )
 
     def _gatherLinkChain(self) -> dict[str, dict[str, str | None]]:
@@ -2136,6 +2141,109 @@ class CardStateEmitterMixin:
             now: datetime = clock()
             return now
         return datetime.now(UTC)
+
+    def _gatherWifiState(self) -> dict[str, Any]:
+        """The US-732 wifi inputs for system-status, as emit() keywords.
+
+        Reads ONLY the WiFi sampler's latest sample -- nmcli never runs on
+        this tick (Atlas W5). No sampler or no sample yet is not read
+        (``wifiAvailable`` False, no reason: the builder publishes
+        ``not_read``, ts null). A sample carries its own read time, its
+        reason when nmcli was absent or failed, and the home answer. The
+        thresholds ride along from ``pi.network.wifi`` (Atlas W4).
+        """
+        wifi: dict[str, Any] = self._wifiThresholds()
+        sampler = self._wifiLinkSampler()
+        sample = sampler.latest() if sampler is not None else None
+        if sample is None:
+            wifi.update(wifiAvailable=False, wifiUnavailableReason=None, wifiTs=None)
+            return wifi
+        reading = sample.reading
+        wifi.update(
+            wifiAvailable=reading.available,
+            wifiUnavailableReason=reading.reason,
+            wifiSsid=reading.ssid,
+            wifiRssiDbm=reading.rssiDbm,
+            wifiHome=sample.home,
+            wifiTs=sample.ts,
+        )
+        return wifi
+
+    def _wifiThresholds(self) -> dict[str, Any]:
+        """``pi.network.wifi`` weak/down dBm, the module defaults as fallback (W4)."""
+        from pi.splash.system_status_emitter import (
+            DEFAULT_DOWN_RSSI_DBM,
+            DEFAULT_WEAK_RSSI_DBM,
+        )
+
+        piConfig = (getattr(self, "_config", None) or {}).get("pi") or {}
+        wifiConfig = (piConfig.get("network") or {}).get("wifi") or {}
+        return {
+            "wifiWeakRssiDbm": wifiConfig.get("weakRssiDbm", DEFAULT_WEAK_RSSI_DBM),
+            "wifiDownRssiDbm": wifiConfig.get("downRssiDbm", DEFAULT_DOWN_RSSI_DBM),
+        }
+
+    def _wifiLinkSampler(self) -> Any:
+        """The WiFi sampler, started on first use (US-732; US-876-e's pattern).
+
+        The thread waits on the host's ``_shutdownEvent``; a host without one
+        (the stub composers) starts nothing. The home check is ONE lazily
+        built ``HomeNetworkDetector(self._config)`` (Atlas W1, ARCH-065)
+        whose ssidReader is the sampler's own reading, so the home answer
+        costs no second nmcli -- only the detector's ``hostname -I``.
+        ``_wifiReader`` (getattr) is the tests' seam for the OS read.
+
+        Returns:
+            The running sampler (or a test's stand-in), or None.
+        """
+        sampler = getattr(self, "_wifiSampler", None)
+        if sampler is not None:
+            return sampler
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        if shutdownEvent is None:
+            return None
+        from common.time.helper import toCanonicalIso
+        from src.pi.network.wifi_reader import WifiLinkSampler
+
+        sampler = WifiLinkSampler(
+            stopEvent=shutdownEvent,
+            reader=getattr(self, "_wifiReader", None),
+            clock=self._linkNowS,
+            wallClockIso=lambda: toCanonicalIso(self._linkNowUtc()),
+        )
+        detector = self._getHomeNetworkDetector(sampler.judgedSsid)
+        sampler.homeCheck = detector.isAtHomeWifi if detector is not None else None
+        sampler.start()
+        self._wifiSampler = sampler
+        logger.info("wifi: link sampler started")
+        return sampler
+
+    def _getHomeNetworkDetector(self, ssidReader: Any) -> Any | None:
+        """The orchestrator's one HomeNetworkDetector, built on demand (W1).
+
+        The ``_getAltitudeAnchor`` pattern: getattr + cache. Used for
+        ``isAtHomeWifi()`` only -- never ``probeServer()`` (Atlas W2).
+
+        Args:
+            ssidReader: The detector's SSID source (the WiFi sampler's
+                reading), ``str`` / ``""`` / None.
+
+        Returns:
+            The cached detector, or None if it cannot be built.
+        """
+        detector = getattr(self, "_homeNetworkDetector", None)
+        if detector is not None:
+            return detector
+        try:
+            from src.pi.network.home_detector import HomeNetworkDetector
+
+            config = getattr(self, "_config", None) or {}
+            detector = HomeNetworkDetector(config, ssidReader=ssidReader)
+        except Exception as e:  # noqa: BLE001 -- home is then null, never a guess
+            logger.debug("wifi: home detector unavailable: %s", e)
+            return None
+        self._homeNetworkDetector = detector
+        return detector
 
     def _gatherRunMode(self) -> str:
         """Resolve the US-901-b runMode from pi.replay.active and --simulate.

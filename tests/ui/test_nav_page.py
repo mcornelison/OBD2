@@ -803,11 +803,14 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 #           the builder gains no input (the provider feeds the existing `link`).
 # US-876-e: NO delta -- link.bt likewise fills keys US-876-c already publishes
 #           (the BT sampler feeds the existing `link`; no new builder input).
+# US-732:   `wifi` gains `home` and `ts` (null in every trip fixture: no wifi
+#           input). No input key added or removed. One VALUE moves with them:
+#           source.wifi.reason "wifi: not read" -> "not_read" (Atlas W8).
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
     "sync": {"lastOkTs", "rows", "pending", "stale"},
     "power": {"source", "reasons"},
-    "wifi": {"state", "ssid", "rssiDbm"},
+    "wifi": {"state", "ssid", "rssiDbm", "home", "ts"},
     "link": {"bt", "adapter", "ecu"},
     "drive": {
         "state", "driveId", "lastDrive", "distanceKm", "distanceSinceTs",

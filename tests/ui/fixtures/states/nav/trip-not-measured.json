@@ -34,7 +34,9 @@
     "wifi": {
       "state": null,
       "ssid": null,
-      "rssiDbm": null
+      "rssiDbm": null,
+      "home": null,
+      "ts": null
     },
     "link": {
       "bt": {
@@ -72,7 +74,7 @@
       },
       "wifi": {
         "available": false,
-        "reason": "wifi: not read"
+        "reason": "not_read"
       }
     },
     "ts": "2026-10-20T20:12:00Z"

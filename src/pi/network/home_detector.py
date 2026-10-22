@@ -31,6 +31,10 @@
 #               |              | -> ACTIVE_HOME / VISIBLE / NOT_VISIBLE / FAILED
 # 2026-10-11    | Rex          | US-776-k1: observationBoundSec -- the sweep plus
 #               |              | getHomeNetworkState's own bounded calls
+# 2026-10-22    | Rex (US-732) | readWifiRows: the cached nmcli list read as a
+#               |              | TYPED outcome (rows / tool absent / read failed,
+#               |              | optional ifname); _listWifiRows keeps powerwatch's
+#               |              | None / [] semantics on top of it (Atlas W2)
 # ================================================================================
 ################################################################################
 
@@ -106,6 +110,9 @@ __all__ = [
     "HomeNetworkState",
     "ProbeResult",
     "SweepResult",
+    "WifiRowsOutcome",
+    "WifiRowsRead",
+    "readWifiRows",
 ]
 
 logger = logging.getLogger(__name__)
@@ -219,25 +226,65 @@ def _unescapeNmcliTerse(value: str) -> str:
     return _NMCLI_TERSE_ESCAPE.sub(r"\1", value)
 
 
-def _listWifiRows(timeout: float) -> list[tuple[str, str]] | None:
-    """Run ``nmcli -t -f ACTIVE,SSID device wifi list --rescan no``.
+class WifiRowsOutcome(StrEnum):
+    """What one cached nmcli list read came back with (US-732, Atlas W2).
+
+    Replaces the ``None`` / ``[]`` overloading :func:`_listWifiRows` still
+    returns for powerwatch: a missing tool and a failed read are different
+    facts (a dev box is not a fault), and a non-zero exit is a failed read,
+    never "not associated".
+    """
+
+    ROWS = "rows"  # nmcli ran and exited 0; the rows are the answer
+    TOOL_ABSENT = "tool_absent"  # nmcli is not installed
+    READ_FAILED = "read_failed"  # timeout, OS error, or a non-zero exit
+
+
+@dataclass(frozen=True)
+class WifiRowsRead:
+    """One cached nmcli list read, typed (US-732).
+
+    Attributes:
+        outcome: The :class:`WifiRowsOutcome`.
+        rows: One ``(active, ssid)`` pair per listed AP, the SSID unescaped;
+            empty unless ``outcome`` is ROWS.
+        returncode: nmcli's exit status when it ran to completion, else
+            ``None`` (missing, timeout, OS error).  Kept so powerwatch's
+            reader can still tell a non-zero exit from a dead tool.
+    """
+
+    outcome: WifiRowsOutcome
+    rows: tuple[tuple[str, str], ...] = ()
+    returncode: int | None = None
+
+
+def readWifiRows(
+    timeout: float = _NMCLI_TIMEOUT_SECONDS, *, ifname: str | None = None
+) -> WifiRowsRead:
+    """Run ``nmcli -t -f ACTIVE,SSID device wifi list [ifname X] --rescan no``.
 
     ``--rescan no`` reads NetworkManager's cached AP list: the default
-    rescan can outlast the timeout, and a forced rescan needs polkit rights
-    the service user lacks (US-776-e, measured).
+    rescan can outlast the timeout (4.1 s measured, Atlas W1), and a forced
+    rescan needs polkit rights the service user lacks (US-776-e, measured).
+
+    Args:
+        timeout: Subprocess budget in seconds.
+        ifname: Restrict the list to one interface (US-732 passes wlan0,
+            Atlas W7); None lists every interface, as powerwatch always has.
 
     Returns:
-        ``None`` when nmcli is unavailable (missing, timeout, OS error);
-        ``[]`` when it exited non-zero; otherwise one ``(active, ssid)`` pair
-        per listed AP, the SSID unescaped.
+        A :class:`WifiRowsRead`.
     """
+    command = ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list"]
+    if ifname is not None:
+        command += ["ifname", ifname]
+    command += ["--rescan", "no"]
     try:
         result = subprocess.run(
             # US-776-b: replaced `iwgetid -r` -- iwgetid is not installed on
             # the Pi, so the reader returned None on every call and the Pi
             # never believed it was home.  nmcli is installed.
-            ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list",
-             "--rescan", "no"],
+            command,
             # An SSID is USER-AUTHORED and routinely non-ASCII, so this is the
             # one site in the tree where the locale-default codec is not a
             # theoretical exposure: a household name with an accent in it
@@ -247,10 +294,12 @@ def _listWifiRows(timeout: float) -> list[tuple[str, str]] | None:
             # (US-710 / TD-068)
             capture_output=True, text=True, encoding="utf-8", timeout=timeout,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
+    except FileNotFoundError:
+        return WifiRowsRead(WifiRowsOutcome.TOOL_ABSENT)
+    except (subprocess.TimeoutExpired, OSError):
+        return WifiRowsRead(WifiRowsOutcome.READ_FAILED)
     if result.returncode != 0:
-        return []
+        return WifiRowsRead(WifiRowsOutcome.READ_FAILED, returncode=result.returncode)
     rows: list[tuple[str, str]] = []
     for line in result.stdout.splitlines():
         # ACTIVE is yes/no and never contains ':', so the first ':' always
@@ -258,7 +307,26 @@ def _listWifiRows(timeout: float) -> list[tuple[str, str]] | None:
         active, separator, ssid = line.partition(":")
         if separator:
             rows.append((active, _unescapeNmcliTerse(ssid)))
-    return rows
+    return WifiRowsRead(WifiRowsOutcome.ROWS, tuple(rows), result.returncode)
+
+
+def _listWifiRows(timeout: float) -> list[tuple[str, str]] | None:
+    """Powerwatch's view of :func:`readWifiRows` -- today's semantics, exactly.
+
+    Returns:
+        ``None`` when nmcli is unavailable (missing, timeout, OS error);
+        ``[]`` when it exited non-zero; otherwise one ``(active, ssid)`` pair
+        per listed AP, the SSID unescaped.
+    """
+    read = readWifiRows(timeout)
+    if read.outcome is WifiRowsOutcome.ROWS:
+        return list(read.rows)
+    if read.returncode is not None:
+        # US-732 (Atlas W2): system-status reads a non-zero exit as a failed
+        # read, but the home decision keeps the [] -> "not associated" it was
+        # tuned on.  Changing it here would move powerwatch's AWAY/UNKNOWN.
+        return []
+    return None
 
 
 def _readSsidViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> str | None:

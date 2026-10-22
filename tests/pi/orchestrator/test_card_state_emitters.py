@@ -28,6 +28,8 @@
 #               |              | adapter observation (VCs 1-2, G1, D2, D5).
 # 2026-10-22    | Ralph (Rex)  | US-876-e -- link.bt from the BT sampler (VCs
 #               |              | 1-2, E2, E4, G1, MAC sources, off-tick thread).
+# 2026-10-22    | Ralph (Rex)  | US-732 -- system-status wifi from the WiFi
+#               |              | sampler; one lazy HomeNetworkDetector; W4.
 # ================================================================================
 ################################################################################
 
@@ -2025,3 +2027,215 @@ def test_link_bt_noUsableMac_startsNoSampler_andIsNull(
         {t.name for t in threading.enumerate()} - threadsBefore
     )
     assert runner.calls == []
+
+
+# ---------------------------------------------------------------------------
+# US-732 -- system-status wifi from the off-tick WiFi sampler.
+# ---------------------------------------------------------------------------
+
+_WIFI_HOME = "DeathStarWiFi"
+_WIFI_TS = "2026-10-22T12:00:00Z"
+
+
+class _FakeWifiSampler:
+    """Stands in for the sampler thread: the provider only ever calls latest()."""
+
+    def __init__(self, sample=None):
+        self.sample = sample
+
+    def latest(self):
+        return self.sample
+
+
+def _wifiConfig(tmp_path, wifi=None):
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    config["pi"]["homeNetwork"] = {"ssid": _WIFI_HOME, "subnet": "10.27.27.0/24"}
+    if wifi is not None:
+        config["pi"]["network"] = {"wifi": wifi}
+    return config
+
+
+def _wifiReading(kind, ssid=None, rssi=None):
+    from src.pi.network.wifi_reader import WifiReading
+
+    if kind == "associated":
+        return WifiReading(True, ssid, rssi, None)
+    if kind == "unassociated":
+        return WifiReading(False, None, None, None)
+    return WifiReading(None, None, None, kind)
+
+
+def _wifiSample(reading, home):
+    from src.pi.network.wifi_reader import WifiSample
+
+    return WifiSample(reading=reading, home=home, ts=_WIFI_TS, monoS=1.0)
+
+
+def _emitWifi(orch, tmp_path):
+    orch._emitSystemStatusState()
+    status = _readState(tmp_path, "system-status")
+    return status["wifi"], status["source"]["wifi"]
+
+
+def _wifiOrch(tmp_path, sample=None, wifi=None):
+    orch = _FakeOrch(_wifiConfig(tmp_path, wifi))
+    orch._initializeCardStateEmitters()
+    orch._wifiSampler = _FakeWifiSampler(sample)
+    return orch
+
+
+def _stopWifiSampler(orch):
+    orch._shutdownEvent.set()
+    sampler = getattr(orch, "_wifiSampler", None)
+    if sampler is not None:
+        sampler.thread.join(timeout=5.0)
+        assert not sampler.thread.is_alive()
+
+
+_WIFI_READ_OK = {"available": True, "reason": None}
+
+
+@pytest.mark.parametrize(
+    ("reading", "home", "wifi", "source"),
+    [
+        (("associated", _WIFI_HOME, -50), True,
+         {"state": "up", "ssid": _WIFI_HOME, "rssiDbm": -50, "home": True,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("associated", "CoffeeShop", -60), False,
+         {"state": "up", "ssid": "CoffeeShop", "rssiDbm": -60, "home": False,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("unassociated",), False,
+         {"state": "down", "ssid": None, "rssiDbm": None, "home": False,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("nmcli_absent",), None,
+         {"state": None, "ssid": None, "rssiDbm": None, "home": None,
+          "ts": _WIFI_TS},
+         {"available": False, "reason": "nmcli_absent"}),
+        (("read_failed",), None,
+         {"state": None, "ssid": None, "rssiDbm": None, "home": None,
+          "ts": _WIFI_TS},
+         {"available": False, "reason": "read_failed"}),
+        (("associated", _WIFI_HOME, None), True,
+         {"state": None, "ssid": _WIFI_HOME, "rssiDbm": None, "home": True,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+        (("associated", _WIFI_HOME, -75), True,
+         {"state": "weak", "ssid": _WIFI_HOME, "rssiDbm": -75, "home": True,
+          "ts": _WIFI_TS},
+         _WIFI_READ_OK),
+    ],
+    ids=["associated-home", "associated-other", "unassociated", "nmcli-missing",
+         "read-failed", "proc-file-missing", "minus75-weak"],
+)
+def test_wifi_theSamplersLatest_isPublished(tmp_path, reading, home, wifi, source):
+    """The provider publishes the sampler's latest sample: association from
+    nmcli, rssi from /proc, home from the detector, ts the read time."""
+    orch = _wifiOrch(tmp_path, _wifiSample(_wifiReading(*reading), home))
+
+    assert _emitWifi(orch, tmp_path) == (wifi, source)
+
+
+def test_wifi_noSampleYet_isNotRead_homeAndTsNull(tmp_path):
+    orch = _wifiOrch(tmp_path, sample=None)
+
+    wifi, source = _emitWifi(orch, tmp_path)
+
+    assert wifi == {"state": None, "ssid": None, "rssiDbm": None, "home": None, "ts": None}
+    assert source == {"available": False, "reason": "not_read"}
+
+
+def test_wifi_stubHostWithoutShutdownEvent_startsNoSampler(tmp_path):
+    """Stub hosts (no _shutdownEvent) publish wifi not read and start nothing."""
+    import threading
+
+    orch = _FakeOrch(_wifiConfig(tmp_path))
+    orch._initializeCardStateEmitters()
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    _wifi, source = _emitWifi(orch, tmp_path)
+
+    assert source == {"available": False, "reason": "not_read"}
+    assert getattr(orch, "_wifiSampler", None) is None
+    assert getattr(orch, "_homeNetworkDetector", None) is None
+    assert "wifi-link-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )
+
+
+def test_wifi_thresholds_comeFromPiNetworkWifi(tmp_path):
+    """W4: config pi.network.wifi moves the band; -65 is weak under -60."""
+    orch = _wifiOrch(
+        tmp_path,
+        _wifiSample(_wifiReading("associated", _WIFI_HOME, -65), True),
+        wifi={"weakRssiDbm": -60, "downRssiDbm": -90},
+    )
+
+    assert _emitWifi(orch, tmp_path)[0]["state"] == "weak"
+
+
+def test_wifi_thresholds_absentConfig_fallBackToTheModuleDefaults(tmp_path):
+    orch = _wifiOrch(
+        tmp_path, _wifiSample(_wifiReading("associated", _WIFI_HOME, -65), True)
+    )
+
+    assert _emitWifi(orch, tmp_path)[0]["state"] == "up"
+
+
+def test_wifi_realSampler_offTheTick_oneDetector_homeFromTheSameRead(
+    tmp_path, monkeypatch
+):
+    """The provider starts ONE daemon sampler; the read runs on it, never on
+    the tick; ONE HomeNetworkDetector (built lazily from self._config) judges
+    the sampler's own read -- its ssidReader is the sample, so no second
+    nmcli; _shutdownEvent stops the thread."""
+    import threading
+    import time
+
+    from src.pi.network import home_detector
+
+    monkeypatch.setattr(home_detector, "_readLocalIps", lambda: ["10.27.27.124"])
+    reads = []
+
+    def reader():
+        reads.append(threading.current_thread())
+        return _wifiReading("associated", _WIFI_HOME, -50)
+
+    orch = _FakeOrch(_wifiConfig(tmp_path))
+    orch._shutdownEvent = threading.Event()
+    orch._wifiReader = reader
+    orch._initializeCardStateEmitters()
+    try:
+        orch._emitSystemStatusState()
+        sampler = orch._wifiSampler
+        deadline = time.monotonic() + 5.0
+        while sampler.latest() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        readsBefore = len(reads)
+        wifi, source = _emitWifi(orch, tmp_path)
+        readsDuringTick = len(reads) - readsBefore
+        detector = orch._homeNetworkDetector
+        sameSampler = orch._wifiSampler is sampler
+    finally:
+        _stopWifiSampler(orch)
+
+    assert (wifi["state"], wifi["home"], wifi["rssiDbm"]) == ("up", True, -50)
+    assert source == _WIFI_READ_OK
+    assert sameSampler
+    assert readsDuringTick == 0
+    assert reads and all(t is not threading.main_thread() for t in reads)
+    assert detector._ssidReader == sampler.judgedSsid
+    assert detector._ssid == _WIFI_HOME
+
+
+def test_wifi_homeDetector_isBuiltOnce_andCached(tmp_path):
+    """W1: one HomeNetworkDetector, getattr + cache (the _getAltitudeAnchor
+    pattern)."""
+    orch = _FakeOrch(_wifiConfig(tmp_path))
+
+    first = orch._getHomeNetworkDetector(lambda: None)
+    second = orch._getHomeNetworkDetector(lambda: "other")
+
+    assert first is not None and first is second

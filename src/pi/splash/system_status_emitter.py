@@ -38,6 +38,9 @@
 #               |              | state function + tracker (Atlas L1/L5, G1).
 # 2026-10-22    | Rex (US-876-d)| LinkLayerTracker.markUnread: a layer whose
 #               |              | producer judged its evidence stale reads null.
+# 2026-10-22    | Rex (US-732) | wifi gains home + ts; emit() forwards the wifi
+#               |              | inputs and thresholds; REASON_WIFI_UNKNOWN is
+#               |              | the snake token not_read (Atlas W4/W6/W8).
 # ================================================================================
 ################################################################################
 
@@ -349,7 +352,10 @@ def _publishLinkChain(link: dict | None) -> dict[str, dict[str, str | None]]:
 DEFAULT_WEAK_RSSI_DBM: int = -70
 DEFAULT_DOWN_RSSI_DBM: int = -90
 
-REASON_WIFI_UNKNOWN = "wifi: not read"
+# US-732 (Atlas W8): no sample has been taken yet. A snake token like the
+# provider's own nmcli_absent / read_failed (pi.network.wifi_reader), never
+# prose.
+REASON_WIFI_UNKNOWN = "not_read"
 
 # US-628 -- the two `power.source` readings that are MEASUREMENTS. Anything
 # else is an absence, and an absence is what may carry a reason. Stated as the
@@ -421,6 +427,8 @@ def buildSystemStatusState(
     distanceEndTs: str | None = None,
     distancePartial: bool | None = None,
     link: dict | None = None,
+    wifiHome: bool | None = None,
+    wifiTs: str | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -488,6 +496,20 @@ def buildSystemStatusState(
             it. Normalised to every layer and key; a missing layer or a null
             state is all three null. NEVER blanked by ``obdAvailable`` -- that
             blanking is the ARCH-061 grey this block replaces.
+        wifiAvailable: US-732: whether the WiFi link was read
+            (``source.wifi.available``). False blanks state/ssid/rssiDbm/home.
+        wifiUnavailableReason: Why not read -- ``nmcli_absent`` /
+            ``read_failed`` from the provider; None publishes
+            ``REASON_WIFI_UNKNOWN`` (no sample yet). Ignored when available.
+        wifiSsid: The associated SSID, None when not associated (the state
+            infers association from it).
+        wifiRssiDbm: wlan0's level in dBm, or None.
+        wifiWeakRssiDbm / wifiDownRssiDbm: The band thresholds, from
+            ``pi.network.wifi`` (Atlas W4); the module defaults are fallback.
+        wifiHome: US-732: ``HomeNetworkDetector.isAtHomeWifi()`` -- "home
+            WiFi seen", not "server reachable". Published only when read.
+        wifiTs: US-732: the read time of the sample behind this block
+            (canonical UTC), None when never read (Atlas W6).
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -551,6 +573,10 @@ def buildSystemStatusState(
             ) if wifiAvailable else None,
             "ssid": wifiSsid if wifiAvailable else None,
             "rssiDbm": wifiRssiDbm if wifiAvailable else None,
+            # US-732: the detector's bool is not trusted on a failed read.
+            "home": wifiHome if wifiAvailable else None,
+            # The sample's read time, failed reads included: when we looked.
+            "ts": wifiTs,
         },
         # US-876-c (Atlas L6): always a key, every layer always present, and
         # deliberately NOT gated on obdAvailable like obdLink above.
@@ -680,6 +706,14 @@ def makeSystemStatusEmitter(
         distanceEndTs: str | None = None,
         distancePartial: bool | None = None,
         link: dict | None = None,
+        wifiAvailable: bool = False,
+        wifiUnavailableReason: str | None = None,
+        wifiSsid: str | None = None,
+        wifiRssiDbm: int | None = None,
+        wifiHome: bool | None = None,
+        wifiTs: str | None = None,
+        wifiWeakRssiDbm: int = DEFAULT_WEAK_RSSI_DBM,
+        wifiDownRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -708,6 +742,14 @@ def makeSystemStatusEmitter(
                 distanceEndTs=distanceEndTs,
                 distancePartial=distancePartial,
                 link=link,
+                wifiAvailable=wifiAvailable,
+                wifiUnavailableReason=wifiUnavailableReason,
+                wifiSsid=wifiSsid,
+                wifiRssiDbm=wifiRssiDbm,
+                wifiHome=wifiHome,
+                wifiTs=wifiTs,
+                wifiWeakRssiDbm=wifiWeakRssiDbm,
+                wifiDownRssiDbm=wifiDownRssiDbm,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
