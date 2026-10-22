@@ -45,6 +45,9 @@
 #               |              | notCounted; lastOkTs is now max(last_ok_at).
 # 2026-10-22    | Rex (US-877-a)| the always-present `pi` health block (Atlas
 #               |              | Y-5, P2): one piHealth dict, normalised here.
+# 2026-10-22    | Rex (US-877-b)| the always-present `verdict` {issueCount,
+#               |              | members}: the pure buildSystemVerdict, fed the
+#               |              | published blocks + this tick's capture-health.
 # ================================================================================
 ################################################################################
 
@@ -136,8 +139,15 @@ __all__ = [
     "RUN_MODE_REPLAY",
     "RUN_MODE_SIMULATE",
     "SYSTEM_STATUS_FILENAME",
+    "VERDICT_ADAPTER",
+    "VERDICT_BT",
+    "VERDICT_CAPTURE",
+    "VERDICT_MEMBER_ORDER",
+    "VERDICT_PI",
+    "VERDICT_WIFI",
     "LinkLayerTracker",
     "buildSystemStatusState",
+    "buildSystemVerdict",
     "deriveElapsedSec",
     "deriveLinkLayerState",
     "deriveRunMode",
@@ -361,6 +371,181 @@ def _publishLinkChain(link: dict | None) -> dict[str, dict[str, str | None]]:
     return published
 
 
+# US-877-b: the verdict's members, in their fixed publish order (Iris s4.1).
+# No `sync` member (Atlas 877-b-1: no sourced threshold) and no UPS member
+# (Spool + Atlas P5: no grounded band) -- both banked, never improvised.
+VERDICT_BT = "bt"
+VERDICT_ADAPTER = "adapter"
+VERDICT_CAPTURE = "capture"
+VERDICT_WIFI = "wifi"
+VERDICT_PI = "pi"
+VERDICT_MEMBER_ORDER: tuple[str, ...] = (
+    VERDICT_BT, VERDICT_ADAPTER, VERDICT_CAPTURE, VERDICT_WIFI, VERDICT_PI,
+)
+
+# Mirror pi.obdii.capture_health's feed names and STATE_STALLED (pinned equal
+# by test; importing pi.obdii here would import the orchestrator, which
+# imports this module). The feeds a capture reason names, in the order it
+# names them (OBD, light, IMU, UPS -- spec s4.3), deliberately NOT FEED_NAMES'.
+_CAPTURE_STATE_STALLED = "stalled"
+_CAPTURE_FEED_WORDS: tuple[tuple[str, str], ...] = (
+    ("obd", "OBD"), ("light", "light"), ("imu", "IMU"), ("ups", "UPS"),
+)
+
+# Mirrors pi.network.wifi_reader.WIFI_REASON_READ_FAILED (pinned equal by
+# test): the one WiFi reason that is an issue. nmcli_absent and not_read are
+# absences, never issues (b-2).
+_WIFI_REASON_READ_FAILED = "read_failed"
+
+# Mirror pi.hardware.pi_health's overLimit names (pinned equal by test) and
+# name each in the list sentence (Iris 2026-10-19).
+_PI_OVER_CPU_TEMP = "cpuTemp"
+_PI_OVER_THROTTLED = "throttled"
+_PI_OVER_DISK = "disk"
+_PI_OVER_LIMIT_WORDS: dict[str, str] = {
+    _PI_OVER_CPU_TEMP: "CPU temp",
+    _PI_OVER_THROTTLED: "throttling",
+    _PI_OVER_DISK: "disk",
+}
+
+# get_throttled bit 0: under-voltage NOW. Set, it wins over bits 1-3 (Atlas P7).
+_THROTTLED_UNDER_VOLTAGE_BIT = 0x1
+
+# The disk sentence prints GiB (2^30): the threshold is 20 GiB, not 20 GB.
+_BYTES_PER_GIB = 2**30
+
+
+def _captureReason(stalledWords: list[str]) -> str:
+    """'OBD feed stalled.' / 'OBD and UPS feeds stalled.' / 'All 4 feeds stalled.'"""
+    if len(stalledWords) == len(_CAPTURE_FEED_WORDS):
+        return f"All {len(stalledWords)} feeds stalled."
+    first = stalledWords[0]
+    words = [first[:1].upper() + first[1:], *stalledWords[1:]]
+    if len(words) == 1:
+        return f"{words[0]} feed stalled."
+    return f"{', '.join(words[:-1])} and {words[-1]} feeds stalled."
+
+
+def _stalledCaptureWords(captureHealth: dict | None) -> list[str]:
+    """The stalled feeds' words, in naming order; [] when there is no feeds block.
+
+    Only ``feeds.<name>.state`` is read -- the top-level capture-health state
+    (``never_written`` included) is never a member (Atlas P6, b-3).
+    """
+    feeds = captureHealth.get("feeds") if isinstance(captureHealth, dict) else None
+    if not isinstance(feeds, dict):
+        return []
+    stalled: list[str] = []
+    for name, word in _CAPTURE_FEED_WORDS:
+        feed = feeds.get(name)
+        if isinstance(feed, dict) and feed.get("state") == _CAPTURE_STATE_STALLED:
+            stalled.append(word)
+    return stalled
+
+
+def _floorTenthsOfGib(freeBytes: int) -> str:
+    """Free bytes as GiB floored to 0.1 -- toward the breach, never up to the limit.
+
+    Integer arithmetic: a float division can land a hair under an exact tenth
+    and floor one tenth too far.
+    """
+    tenths = (int(freeBytes) * 10) // _BYTES_PER_GIB
+    return f"{tenths // 10}.{tenths % 10}"
+
+
+def _piSingleLimitReason(name: str, pi: dict) -> str | None:
+    """The one-limit sentence with its value, or None when its value is unread."""
+    if name == _PI_OVER_CPU_TEMP:
+        temp, limit = pi.get("cpuTempC"), pi.get("cpuTempLimitC")
+        if temp is None or limit is None:
+            return None
+        # vcgencmd's own 0.1 resolution: printed, never rounded to the limit.
+        return f"CPU {float(temp):.1f} °C, limit {float(limit):g} °C."
+    if name == _PI_OVER_THROTTLED:
+        try:
+            bits = int(str(pi.get("throttledHex")), 16)
+        except ValueError:
+            return None
+        if bits & _THROTTLED_UNDER_VOLTAGE_BIT:
+            return "Under-voltage now. Check the 5 V supply."
+        return "Throttling now. CPU slowed."
+    if name == _PI_OVER_DISK:
+        free, threshold = pi.get("diskFreeBytes"), pi.get("diskThresholdBytes")
+        if free is None or threshold is None:
+            return None
+        limitGib = threshold / _BYTES_PER_GIB
+        return f"Disk {_floorTenthsOfGib(free)} GiB free, limit {limitGib:g} GiB."
+    return None
+
+
+def _piReason(pi: dict, overLimit: list[str]) -> str:
+    """One limit over: its full sentence. Two or more: the list, overLimit order."""
+    if len(overLimit) == 1:
+        single = _piSingleLimitReason(overLimit[0], pi)
+        if single is not None:
+            return single
+    names = [_PI_OVER_LIMIT_WORDS.get(name, name) for name in overLimit]
+    return f"Over limit: {', '.join(names)}."
+
+
+def buildSystemVerdict(
+    *,
+    link: dict | None,
+    wifiSource: dict | None,
+    captureHealth: dict | None,
+    piHealth: dict | None,
+    driveState: str | None,
+) -> dict:
+    """Name every counted system issue (US-877-b; Atlas Y-6, P4/P6, E3).
+
+    Pure, no I/O: the emitter calls it inside :func:`buildSystemStatusState`,
+    and S110's fixture generator calls it too. Each member comes from a
+    provider field; a null / not-read value is never an issue.
+
+    Args:
+        link: The published link chain ``{bt, adapter, ecu}`` (each
+            ``{state, ...}``).
+        wifiSource: ``source.wifi`` -- ``{available, reason}``.
+        captureHealth: The capture-health payload as its emit wrote it this
+            tick, or None (dark, failed, or not handed in).
+        piHealth: The published ``pi`` block (its ``overLimit`` is the
+            provider's verdict -- never re-compared here).
+        driveState: ``recording`` / ``idle`` -- bt ``retrying`` counts only
+            while recording (Atlas E3), evaluated each call, never latched.
+
+    Returns:
+        ``{"issueCount": int, "members": [{"key", "reason"}]}``, members in
+        :data:`VERDICT_MEMBER_ORDER`, ``issueCount == len(members)``.
+    """
+    chain = link or {}
+
+    def layerState(layer: str) -> str | None:
+        block = chain.get(layer)
+        return block.get("state") if isinstance(block, dict) else None
+
+    members: list[dict[str, str]] = []
+    btState = layerState("bt")
+    if btState == LINK_DOWN:
+        members.append({"key": VERDICT_BT, "reason": "Not linked. Check the OBD dongle."})
+    elif btState == LINK_RETRYING and driveState == "recording":
+        members.append({"key": VERDICT_BT, "reason": "Link dropped. Retrying."})
+    if btState == LINK_UP and layerState("adapter") in (LINK_DOWN, LINK_RETRYING):
+        members.append(
+            {"key": VERDICT_ADAPTER, "reason": "Bluetooth up; adapter not answering."}
+        )
+    if layerState("ecu") == LINK_UP:
+        stalled = _stalledCaptureWords(captureHealth)
+        if stalled:
+            members.append({"key": VERDICT_CAPTURE, "reason": _captureReason(stalled)})
+    if (wifiSource or {}).get("reason") == _WIFI_REASON_READ_FAILED:
+        members.append({"key": VERDICT_WIFI, "reason": "WiFi couldn't be read."})
+    pi = piHealth or {}
+    overLimit = list(pi.get("overLimit") or [])
+    if overLimit:
+        members.append({"key": VERDICT_PI, "reason": _piReason(pi, overLimit)})
+    return {"issueCount": len(members), "members": members}
+
+
 def _publishPiHealth(piHealth: dict | None) -> dict:
     """Normalise the provider's block to the exact key set (Atlas P2).
 
@@ -460,6 +645,7 @@ def buildSystemStatusState(
     syncEdrRowsWaiting: int | None = None,
     syncNotCounted: list[str] | None = None,
     piHealth: dict | None = None,
+    captureHealth: dict | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -552,6 +738,10 @@ def buildSystemStatusState(
             ``pi.hardware.pi_health.PiHealthSampler.snapshot`` (values, their
             own ts, the limits and ``overLimit``). None -- unwired or not yet
             read -- publishes every key null and ``overLimit`` [].
+        captureHealth: US-877-b: the capture-health payload its emit wrote
+            THIS tick, handed in-process (Atlas P6) -- only its ``feeds`` are
+            read, by :func:`buildSystemVerdict`. None (dark / failed) is no
+            capture member.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -581,7 +771,7 @@ def buildSystemStatusState(
     powerReasons: dict[str, str] = {}
     if powerSource not in RESOLVED_POWER_SOURCES and powerSourceReason:
         powerReasons["source"] = powerSourceReason
-    return {
+    state = {
         "obdLink": obdLink,
         "sync": {
             "lastOkTs": syncLastOkTs,
@@ -669,6 +859,16 @@ def buildSystemStatusState(
         },
         "ts": nowIso,
     }
+    # US-877-b (Atlas P6 fold): always a key, judged from the blocks published
+    # above -- the page counts nothing.
+    state["verdict"] = buildSystemVerdict(
+        link=state["link"],
+        wifiSource=state["source"][SOURCE_WIFI],
+        captureHealth=captureHealth,
+        piHealth=state["pi"],
+        driveState=driveState,
+    )
+    return state
 
 
 def isSyncStaleWhileDriving(
@@ -766,6 +966,7 @@ def makeSystemStatusEmitter(
         syncEdrRowsWaiting: int | None = None,
         syncNotCounted: list[str] | None = None,
         piHealth: dict | None = None,
+        captureHealth: dict | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -806,6 +1007,7 @@ def makeSystemStatusEmitter(
                 syncEdrRowsWaiting=syncEdrRowsWaiting,
                 syncNotCounted=syncNotCounted,
                 piHealth=piHealth,
+                captureHealth=captureHealth,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

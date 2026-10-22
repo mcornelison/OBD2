@@ -18,7 +18,8 @@
     "driveId": 112,
     "obdAvailable": true,
     "nowIso": "2026-10-20T20:12:00Z",
-    "piHealth": null
+    "piHealth": null,
+    "captureHealth": null
   },
   "system-status": {
     "obdLink": {
@@ -100,6 +101,10 @@
         "reason": "not_read"
       }
     },
-    "ts": "2026-10-20T20:12:00Z"
+    "ts": "2026-10-20T20:12:00Z",
+    "verdict": {
+      "issueCount": 0,
+      "members": []
+    }
   }
 }

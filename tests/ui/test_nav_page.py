@@ -812,6 +812,9 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # US-877-a: the new top-level `pi` health block (every key null and overLimit
 #           [] in every trip fixture: no sampler in a trip scene); the inputs
 #           gain its one builder parameter, piHealth, null.
+# US-877-b: the new top-level `verdict` {issueCount, members} (0 and [] in
+#           every trip fixture: nothing read is no issue); the inputs gain its
+#           one builder parameter, captureHealth, null.
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
     "sync": {
@@ -836,11 +839,13 @@ _TRIP_STATUS_KEYS = {
     "runMode": None,
     "source": {"obd", "wifi"},
     "ts": None,
+    "verdict": {"issueCount", "members"},
 }
 _TRIP_LINK_LAYER_KEYS = {"state", "ts", "lastOkTs"}
 _TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
 _TRIP_INPUT_KEYS_ADDED = {
     "syncRowsWaiting", "syncEdrRowsWaiting", "syncNotCounted", "piHealth",
+    "captureHealth",
 }
 
 

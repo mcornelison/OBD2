@@ -7596,6 +7596,59 @@ its own event-time ts:
 - **Not here.** The software version is not in this block (Atlas P8: one reader,
   `.deploy-version`).
 
+**`verdict` — every counted issue, named (US-877-b; Atlas Y-6, P4/P6/P7, E3).**
+Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
+`adapter`, `capture`, `wifi`, `pi`:
+
+```json
+"verdict": {"issueCount": 1,
+            "members": [{"key": "pi", "reason": "CPU 80.2 °C, limit 80 °C."}]}
+```
+
+- **One pure function.** `system_status_emitter.buildSystemVerdict(link,
+  wifiSource, captureHealth, piHealth, driveState)` — no I/O, importable (S110's
+  fixture generator calls it too). `buildSystemStatusState` calls it on the
+  blocks it has just published (`link`, `source.wifi`, `pi`) plus its
+  `captureHealth` parameter (builder, `emit()` and the orchestrator call).
+- **Members, each from a provider field — never a page comparison.** A null /
+  not-read value is never an issue.
+  - `bt`: `link.bt` `down`; or `retrying` ONLY while `drive.state` is
+    `recording` (E3) — evaluated each tick, never latched. A parked car after
+    a drive reads `retrying` but is not a member; the key-off → drive-end
+    window counts (CIO accepted).
+  - `adapter`: `link.adapter` `down` or `retrying` while `link.bt` is `up`.
+  - `capture`: any of the four `feeds.<name>.state == "stalled"` AND
+    `link.ecu.state == "up"` (P6). The top-level capture-health state
+    (`never_written` included) is never read; no `feeds` block or a None
+    payload → no member.
+  - `wifi`: `source.wifi.reason == "read_failed"` only. `nmcli_absent`,
+    `not_read` and a measured WiFi down never count — absence is not an issue.
+  - `pi`: `pi.overLimit` non-empty (the provider's verdict, never re-compared).
+  - **Not counted:** ECU silent (`connecting`), away from home, any null. No
+    `sync` member (877-b-1: no sourced threshold) and no UPS member (P5: no
+    grounded band) — both banked.
+- **`reason` is the finished sentence** (Iris 2026-10-19 words; the page
+  composes nothing): bt retrying `Link dropped. Retrying.`; bt down `Not
+  linked. Check the OBD dongle.`; adapter `Bluetooth up; adapter not
+  answering.`; capture `OBD feed stalled.` / `OBD, IMU and UPS feeds stalled.`
+  / `All 4 feeds stalled.` — feeds named in the order OBD, light, IMU, UPS
+  (NOT `FEED_NAMES` order), the first capitalised, `A and B` / `A, B and C`;
+  wifi `WiFi couldn't be read.`; pi one limit over → its sentence: `CPU 80.2
+  °C, limit 80 °C.` (the reading at vcgencmd's 0.1, never rounded),
+  `Under-voltage now. Check the 5 V supply.` (`throttledHex` bit 0 set — it
+  always wins) or `Throttling now. CPU slowed.` (bits 1–3 only), `Disk 19.9 GiB
+  free, limit 20 GiB.` (GiB = 2^30; free FLOORED to 0.1 toward the breach);
+  limits print `%g` (`80`, `80.5`, `20`); two or more over → `Over limit: CPU
+  temp, throttling, disk.` listing only those over, in `overLimit` order. A
+  member's key stays put when its reason changes mid-episode. Machine detail
+  stays in the fields (`link.*.state`, the feeds, `source.wifi.reason`,
+  `pi.overLimit`); nothing parses the sentence.
+- **Order (P6).** `_maybeEmitCardStates` emits capture-health BEFORE
+  system-status; the capture emitter RETURNS the payload it wrote (None when
+  dark or the write failed) and `_emitSystemStatusState(captureHealth)` hands
+  it to the verdict in-process — never a file read-back of the previous tick
+  (`tests/pi/orchestrator/test_card_state_emit_order.py`).
+
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries`) / `down`
 (red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop

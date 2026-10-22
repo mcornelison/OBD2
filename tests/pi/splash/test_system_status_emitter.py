@@ -33,6 +33,8 @@
 #               |              | edrRowsWaiting / notCounted; their forwarding.
 # 2026-10-22    | Rex (US-877-a)| the exact pin gains `pi` (all null); the pi
 #               |              | block's normalisation + its emit forwarding.
+# 2026-10-22    | Rex (US-877-b)| the exact pin gains `verdict`; the verdict's
+#               |              | members, rules, exact reasons and forwarding.
 # ================================================================================
 ################################################################################
 
@@ -58,6 +60,7 @@ from pi.splash.system_status_emitter import (
     SYSTEM_STATUS_FILENAME,
     LinkLayerTracker,
     buildSystemStatusState,
+    buildSystemVerdict,
     deriveLinkLayerState,
     deriveRunMode,
     isSyncStaleWhileDriving,
@@ -145,6 +148,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
             "wifi": {"available": False, "reason": "not_read"},
         },
         "ts": _NOW,
+        # US-877-b: `verdict` is ALWAYS a key; nothing read is no issue.
+        "verdict": {"issueCount": 0, "members": []},
     }
 
 
@@ -1235,3 +1240,362 @@ def test_orchestratorEmit_stubComposer_piHealthNone_startsNoSampler():
     assert "pi-health-sampler" not in (
         {t.name for t in threading.enumerate()} - threadsBefore
     )
+
+
+# ---------------------------------------------------------------------------
+# US-877-b -- the verdict: every counted issue, named (Atlas Y-6, P4/P6, E3).
+# ---------------------------------------------------------------------------
+
+_GIB = 2**30
+_DISK_LIMIT_BYTES = 21474836480  # LOW_DISK_THRESHOLD_BYTES: 20 GiB
+
+
+def _layer(state):
+    if state is None:
+        return {"state": None, "ts": None, "lastOkTs": None}
+    return {"state": state, "ts": _NOW, "lastOkTs": _NOW}
+
+
+def _chain(bt=LINK_UP, adapter=LINK_UP, ecu=LINK_UP):
+    return {"bt": _layer(bt), "adapter": _layer(adapter), "ecu": _layer(ecu)}
+
+
+def _capture(topState="ok", **feedStates):
+    """A capture-health payload; every feed ok unless named."""
+    return {
+        "state": topState, "lastRowSecondsAgo": 1.0, "stallSeconds": 60.0,
+        "reason": None, "ts": _NOW,
+        "feeds": {
+            name: {
+                "state": feedStates.get(name, "ok"),
+                "firstSampleTs": _NOW, "lastSampleSecondsAgo": 1.0,
+            }
+            for name in ("obd", "imu", "light", "ups")
+        },
+    }
+
+
+def _pi(**fields):
+    return {**_PI_BLOCK, **fields}
+
+
+def _verdict(**overrides):
+    """Everything fine -- every layer up, WiFi read, feeds ok, no limit over,
+    recording -- with only the named inputs changed."""
+    kwargs = {
+        "link": _chain(),
+        "wifiSource": {"available": True, "reason": None},
+        "captureHealth": _capture(),
+        "piHealth": _pi(),
+        "driveState": "recording",
+    }
+    kwargs.update(overrides)
+    return buildSystemVerdict(**kwargs)
+
+
+def _keys(verdict):
+    return [m["key"] for m in verdict["members"]]
+
+
+_REASON_TABLE = [
+    # (id, machine-field inputs, the ONE member's key, its exact reason)
+    ("bt-retrying-recording", {"link": _chain(bt=LINK_RETRYING, adapter=LINK_RETRYING)},
+     "bt", "Link dropped. Retrying."),
+    ("bt-down", {"link": _chain(bt=LINK_DOWN, adapter=LINK_DOWN), "driveState": "idle"},
+     "bt", "Not linked. Check the OBD dongle."),
+    ("adapter-retrying", {"link": _chain(adapter=LINK_RETRYING)},
+     "adapter", "Bluetooth up; adapter not answering."),
+    ("adapter-down", {"link": _chain(adapter=LINK_DOWN)},
+     "adapter", "Bluetooth up; adapter not answering."),
+    ("capture-obd", {"captureHealth": _capture(obd="stalled")},
+     "capture", "OBD feed stalled."),
+    ("capture-light-capitalised", {"captureHealth": _capture(light="stalled")},
+     "capture", "Light feed stalled."),
+    ("capture-two", {"captureHealth": _capture(ups="stalled", imu="stalled")},
+     "capture", "IMU and UPS feeds stalled."),
+    ("capture-three-obd-imu-ups",
+     {"captureHealth": _capture(ups="stalled", imu="stalled", obd="stalled")},
+     "capture", "OBD, IMU and UPS feeds stalled."),
+    ("capture-three-light-before-imu",
+     {"captureHealth": _capture(imu="stalled", light="stalled", obd="stalled")},
+     "capture", "OBD, light and IMU feeds stalled."),
+    ("capture-all-4",
+     {"captureHealth": _capture(obd="stalled", imu="stalled", light="stalled", ups="stalled")},
+     "capture", "All 4 feeds stalled."),
+    ("wifi-read-failed", {"wifiSource": {"available": False, "reason": "read_failed"}},
+     "wifi", "WiFi couldn't be read."),
+    ("pi-cpu", {"piHealth": _pi(cpuTempC=80.2, overLimit=["cpuTemp"])},
+     "pi", "CPU 80.2 °C, limit 80 °C."),
+    ("pi-cpu-at-limit-prints-0.1", {"piHealth": _pi(cpuTempC=80.0, overLimit=["cpuTemp"])},
+     "pi", "CPU 80.0 °C, limit 80 °C."),
+    ("pi-cpu-fractional-limit",
+     {"piHealth": _pi(cpuTempC=81.0, cpuTempLimitC=80.5, overLimit=["cpuTemp"])},
+     "pi", "CPU 81.0 °C, limit 80.5 °C."),
+    ("pi-under-voltage-bit0",
+     {"piHealth": _pi(throttled=True, throttledHex="0x50005", overLimit=["throttled"])},
+     "pi", "Under-voltage now. Check the 5 V supply."),
+    ("pi-bit0-wins-over-bits-1-3",
+     {"piHealth": _pi(throttled=True, throttledHex="0xf", overLimit=["throttled"])},
+     "pi", "Under-voltage now. Check the 5 V supply."),
+    ("pi-throttling-bits-1-3-only",
+     {"piHealth": _pi(throttled=True, throttledHex="0x4", overLimit=["throttled"])},
+     "pi", "Throttling now. CPU slowed."),
+    ("pi-disk-19.9",
+     {"piHealth": _pi(diskFreeBytes=int(19.95 * _GIB), diskVerdict="breached",
+                      overLimit=["disk"])},
+     "pi", "Disk 19.9 GiB free, limit 20 GiB."),
+    ("pi-disk-floored-never-20.0",
+     {"piHealth": _pi(diskFreeBytes=_DISK_LIMIT_BYTES - 1, diskVerdict="breached",
+                      overLimit=["disk"])},
+     "pi", "Disk 19.9 GiB free, limit 20 GiB."),
+    ("pi-two-over",
+     {"piHealth": _pi(cpuTempC=85.0, diskVerdict="breached", diskFreeBytes=1,
+                      overLimit=["cpuTemp", "disk"])},
+     "pi", "Over limit: CPU temp, disk."),
+    ("pi-three-over",
+     {"piHealth": _pi(cpuTempC=85.0, throttled=True, throttledHex="0x1",
+                      diskVerdict="breached", diskFreeBytes=1,
+                      overLimit=["cpuTemp", "throttled", "disk"])},
+     "pi", "Over limit: CPU temp, throttling, disk."),
+]
+
+
+@pytest.mark.parametrize(
+    ("inputs", "key", "reason"),
+    [row[1:] for row in _REASON_TABLE],
+    ids=[row[0] for row in _REASON_TABLE],
+)
+def test_verdict_eachMemberAlone_theExactReasonTable(inputs, key, reason):
+    """Each member alone, from its machine field, with Iris's exact words."""
+    assert _verdict(**inputs) == {
+        "issueCount": 1, "members": [{"key": key, "reason": reason}],
+    }
+
+
+def test_verdict_everythingFine_isZeroIssues():
+    assert _verdict() == {"issueCount": 0, "members": []}
+
+
+def test_verdict_nullsNeverCount():
+    """Nothing read -- every layer null, WiFi not read, no capture payload,
+    pi unread -- is no issue."""
+    verdict = _verdict(
+        link=_chain(bt=None, adapter=None, ecu=None),
+        wifiSource={"available": False, "reason": "not_read"},
+        captureHealth=None,
+        piHealth={"overLimit": []},
+    )
+    assert verdict == {"issueCount": 0, "members": []}
+    assert _verdict(link=None, wifiSource=None, piHealth=None)["issueCount"] == 0
+
+
+def test_verdict_connectingNeverCounts():
+    """Key off at home (ARCH-061): ECU, adapter and BT connecting -- 0 issues."""
+    for chain in (
+        _chain(bt=LINK_CONNECTING, adapter=LINK_CONNECTING, ecu=LINK_CONNECTING),
+        _chain(adapter=LINK_CONNECTING, ecu=LINK_CONNECTING),
+        _chain(ecu=LINK_CONNECTING),
+    ):
+        assert _verdict(link=chain, driveState="idle")["members"] == [], chain
+
+
+def test_verdict_wifiAbsenceNeverCounts_onlyReadFailed():
+    """nmcli absent, not read, and a measured WiFi down are not issues (b-2)."""
+    for source in (
+        {"available": False, "reason": "nmcli_absent"},
+        {"available": False, "reason": "not_read"},
+        {"available": True, "reason": None},  # down / away from home: measured
+    ):
+        assert _verdict(wifiSource=source)["members"] == [], source
+
+
+def test_verdict_captureStalled_withEcuNotUp_neverCounts():
+    """Atlas P6: a parked car's idle-stalled feed is not an issue."""
+    stalled = _capture(obd="stalled", imu="stalled")
+    for ecu in (LINK_CONNECTING, LINK_RETRYING, LINK_DOWN, None):
+        verdict = _verdict(link=_chain(ecu=ecu), captureHealth=stalled)
+        assert verdict["members"] == [], ecu
+
+
+def test_verdict_captureTopLevelStateIsNeverRead_noFeedsOrNoneIsNoMember():
+    """The top-level never_written/stalled is never a member; a missing feeds
+    block or a None payload is no member (b-3)."""
+    neverWritten = _capture(topState="stalled")
+    neverWritten["reason"] = "never_written"
+    assert _verdict(captureHealth=neverWritten)["members"] == []
+    noFeeds = _capture(obd="stalled")
+    del noFeeds["feeds"]
+    assert _verdict(captureHealth=noFeeds)["members"] == []
+    assert _verdict(captureHealth=None)["members"] == []
+    assert _verdict(captureHealth={"feeds": None})["members"] == []
+
+
+def test_verdict_btRetrying_driveNotRecording_neverCounts():
+    """Atlas E3: a parked car after a drive reads retrying but is NOT a member;
+    bt down still counts parked (no retry authority is a real fault)."""
+    retrying = _chain(bt=LINK_RETRYING, adapter=LINK_RETRYING, ecu=LINK_RETRYING)
+    assert _verdict(link=retrying, driveState="idle")["members"] == []
+    assert _keys(_verdict(link=retrying, driveState="recording")) == ["bt"]
+    assert _keys(_verdict(link=_chain(bt=LINK_DOWN), driveState="idle")) == ["bt"]
+
+
+def test_verdict_btRetrying_isEvaluatedEachCall_neverLatched():
+    retrying = _chain(bt=LINK_RETRYING, adapter=LINK_RETRYING)
+    assert _keys(_verdict(link=retrying, driveState="recording")) == ["bt"]
+    assert _keys(_verdict(link=retrying, driveState="idle")) == []
+    assert _keys(_verdict(link=retrying, driveState="recording")) == ["bt"]
+
+
+def test_verdict_adapter_onlyWhileBtUp():
+    """The adapter not answering is the adapter's issue only while BT is up."""
+    for bt in (LINK_CONNECTING, LINK_RETRYING, LINK_DOWN, None):
+        keys = _keys(_verdict(link=_chain(bt=bt, adapter=LINK_DOWN), driveState="idle"))
+        assert "adapter" not in keys, bt
+    assert _keys(_verdict(link=_chain(adapter=LINK_CONNECTING))) == []
+
+
+def test_verdict_fixedOrder_countIsLen_andNoSyncKeyEver():
+    """Every member at once, in the fixed order; issueCount == len(members);
+    no sync member exists (Atlas 877-b-1) however bad sync is."""
+    everything = {
+        "captureHealth": _capture(obd="stalled"),
+        "wifiSource": {"available": False, "reason": "read_failed"},
+        "piHealth": _pi(cpuTempC=90.0, overLimit=["cpuTemp"]),
+    }
+    btSide = _verdict(link=_chain(bt=LINK_RETRYING), **everything)
+    adapterSide = _verdict(link=_chain(adapter=LINK_RETRYING), **everything)
+
+    assert _keys(btSide) == ["bt", "capture", "wifi", "pi"]
+    assert _keys(adapterSide) == ["adapter", "capture", "wifi", "pi"]
+    for verdict in (btSide, adapterSide):
+        assert verdict["issueCount"] == len(verdict["members"])
+        assert all(set(m) == {"key", "reason"} for m in verdict["members"])
+        assert "sync" not in _keys(verdict)
+
+
+def test_builder_noSyncMember_evenWithASyncThatNeverSucceeded():
+    state = _verdictState(
+        syncLastOkTs=None, syncStale=True, syncRowsWaiting=99999,
+        syncEdrRowsWaiting=99999,
+    )
+    assert "sync" not in _keys(state["verdict"])
+
+
+def test_verdict_memberOrderConstant_isBtAdapterCaptureWifiPi():
+    from pi.splash.system_status_emitter import VERDICT_MEMBER_ORDER
+
+    assert VERDICT_MEMBER_ORDER == ("bt", "adapter", "capture", "wifi", "pi")
+
+
+def test_verdict_aMembersKeyStaysPut_whenItsReasonChangesMidEpisode():
+    first = _verdict(piHealth=_pi(cpuTempC=80.2, overLimit=["cpuTemp"]))
+    second = _verdict(piHealth=_pi(
+        cpuTempC=80.4, diskVerdict="breached", diskFreeBytes=1,
+        overLimit=["cpuTemp", "disk"],
+    ))
+    assert _keys(first) == _keys(second) == ["pi"]
+    assert first["members"][0]["reason"] != second["members"][0]["reason"]
+
+
+def test_verdict_mirroredVocabularies_matchTheirProducers():
+    """The verdict reads producer tokens it cannot import (circular); pin them."""
+    from pi.obdii import capture_health
+    from pi.splash import system_status_emitter as sse
+    from src.pi.hardware import pi_health
+    from src.pi.network import wifi_reader
+
+    assert sse._CAPTURE_STATE_STALLED == capture_health.STATE_STALLED
+    assert {n for n, _w in sse._CAPTURE_FEED_WORDS} == set(capture_health.FEED_NAMES)
+    assert [w for _n, w in sse._CAPTURE_FEED_WORDS] == ["OBD", "light", "IMU", "UPS"]
+    assert sse._WIFI_REASON_READ_FAILED == wifi_reader.WIFI_REASON_READ_FAILED
+    assert set(sse._PI_OVER_LIMIT_WORDS) == {
+        pi_health.OVER_LIMIT_CPU_TEMP, pi_health.OVER_LIMIT_THROTTLED,
+        pi_health.OVER_LIMIT_DISK,
+    }
+
+
+def test_verdict_vc1_btRetrying_everythingElseFine_isOneBtIssue():
+    verdict = _verdict(link=_chain(bt=LINK_RETRYING))
+    assert verdict["issueCount"] == 1
+    assert _keys(verdict) == ["bt"]
+
+
+def test_verdict_vc2_wifiNotRead_ecuConnecting_isZeroIssues():
+    verdict = _verdict(
+        link=_chain(ecu=LINK_CONNECTING),
+        wifiSource={"available": False, "reason": "not_read"},
+    )
+    assert verdict == {"issueCount": 0, "members": []}
+
+
+def _verdictState(**kw):
+    base = {
+        "obdLinkState": OBD_LINKED, "obdRetries": 0,
+        "syncLastOkTs": None, "syncRows": 0, "syncPending": None, "syncStale": False,
+        "powerSource": "external", "driveState": "recording", "driveId": 7,
+        "nowIso": _NOW,
+    }
+    base.update(kw)
+    return buildSystemStatusState(**base)
+
+
+def test_builder_verdict_isComputedFromItsOwnPublishedBlocks():
+    """The builder judges what it publishes: link, source.wifi, pi -- plus the
+    capture payload handed in."""
+    state = _verdictState(
+        link=_chain(),
+        captureHealth=_capture(ups="stalled"),
+        wifiAvailable=False, wifiUnavailableReason="read_failed",
+        piHealth=_pi(throttled=True, throttledHex="0x4", overLimit=["throttled"]),
+    )
+    assert state["verdict"] == {
+        "issueCount": 3,
+        "members": [
+            {"key": "capture", "reason": "UPS feed stalled."},
+            {"key": "wifi", "reason": "WiFi couldn't be read."},
+            {"key": "pi", "reason": "Throttling now. CPU slowed."},
+        ],
+    }
+
+
+def test_builder_captureHealthNone_verdictZero_whenNothingElseIsAnIssue():
+    assert _verdictState(link=_chain(), captureHealth=None)["verdict"] == {
+        "issueCount": 0, "members": [],
+    }
+
+
+def test_builder_wifiNotRead_withNoReason_isNotAnIssue():
+    """The builder's own not_read default never counts."""
+    assert _verdictState(wifiAvailable=False)["verdict"]["members"] == []
+
+
+def test_emitter_forwardsCaptureHealth_theVerdictShipsInTheFile(tmp_path):
+    """Wiring trap: emit() must take and forward captureHealth."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=120.0, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None,
+        powerSource="external", driveState="recording", driveId=7,
+        link=_chain(), captureHealth=_capture(obd="stalled"),
+    )
+
+    payload = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert payload["verdict"] == {
+        "issueCount": 1, "members": [{"key": "capture", "reason": "OBD feed stalled."}],
+    }
+
+
+def test_orchestratorEmit_forwardsTheCaptureHealthItWasHanded():
+    composer = _StubComposer({}, False)
+    handed = _capture(obd="stalled")
+
+    composer._emitSystemStatusState(handed)
+    composer._emitSystemStatusState()
+
+    assert composer.calls[0]["captureHealth"] is handed
+    assert composer.calls[1]["captureHealth"] is None

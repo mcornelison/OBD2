@@ -23,6 +23,7 @@
 # 2026-10-13    | Rex (US-873) | `feeds` block: per-feed state, first sample this
 #               |              | process and last sample age for obd/imu/light/ups,
 #               |              | built by the new pure buildCaptureFeedsState.
+# 2026-10-22    | Rex (US-877-b)| emit returns the payload it wrote (Atlas P6).
 # ================================================================================
 ################################################################################
 
@@ -350,7 +351,8 @@ def makeCaptureHealthEmitter(
         ``feeds`` block (see :func:`buildCaptureFeedsState`). Best-effort by
         contract: a write failure is logged
         but NEVER raised, so the dashboard hook can never block the
-        orchestrator's poll loop.
+        orchestrator's poll loop. It returns the payload it wrote, or None
+        when the write failed (US-877-b).
     """
     from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
@@ -364,7 +366,7 @@ def makeCaptureHealthEmitter(
         powerSource: str,
         stallSeconds: float,
         feedSamples: Mapping[str, tuple[str | None, float | None]] | None = None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         try:
             payload = buildCaptureHealthState(
                 lastRowSecondsAgo=lastRowSecondsAgo,
@@ -387,5 +389,9 @@ def makeCaptureHealthEmitter(
             logger.error(
                 "states/capture-health write failed (%s) -- ignored", exc
             )
+            return None
+        # US-877-b (Atlas P6): the payload just written, for the system-status
+        # verdict this same tick -- never a file read-back of the last one.
+        return payload
 
     return emit

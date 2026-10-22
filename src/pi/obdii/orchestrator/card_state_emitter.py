@@ -122,6 +122,8 @@
 # 2026-10-22    | Rex (US-877-a)| system-status `pi` health from the off-tick
 #               |              | PiHealthSampler (temp/throttle 10 s, disk 600 s,
 #               |              | uptime per tick); limit from pi.health.limits.
+# 2026-10-22    | Rex (US-877-b)| capture-health emits BEFORE system-status and
+#               |              | its returned payload feeds the verdict (P6).
 # ================================================================================
 ################################################################################
 
@@ -559,7 +561,7 @@ class CardStateEmitterMixin:
             logger.warning("Capture-health producer init skipped: %s", e)
             self._captureHealthEmitter = None
 
-    def _emitCaptureHealthState(self) -> None:
+    def _emitCaptureHealthState(self) -> dict[str, Any] | None:
         """Publish whether capture has gone silent while the car is powered.
 
         NO SECOND ACQUISITION (ssot-design-pattern rule B). Both facts come off
@@ -575,17 +577,21 @@ class CardStateEmitterMixin:
         running" gates, and every one of them dies with the dongle -- which is
         the failure this alert reports. Gating on any of them would make the
         alert unable to fire in its own motivating incident.
+
+        Returns:
+            The payload the emitter wrote this tick (US-877-b: handed to the
+            system-status verdict), or None when dark or the write failed.
         """
         emitter = self._captureHealthEmitter
         if emitter is None:
-            return
+            return None
 
         # Cross-mixin call (HealthMonitorMixin provides the method); matches the
         # `_checkConnectionStatus` pattern used in health_monitor.py itself.
         lastRowS, freshnessReason = self._readDataLoggerRowFreshness()  # type: ignore[attr-defined]
         powerSource, _powerReason = self._gatherPowerSource()
         feedSamples = self._gatherCaptureFeedSamples()
-        emitter(
+        payload: dict[str, Any] | None = emitter(
             lastRowSecondsAgo=lastRowS,
             freshnessReason=freshnessReason,
             powerSource=powerSource,
@@ -593,6 +599,7 @@ class CardStateEmitterMixin:
             feedSamples=feedSamples,
         )
         self._recordFirstSampleMilestones(feedSamples)
+        return payload
 
     # ------------------------------------------------------ boot milestones
     #
@@ -1360,8 +1367,19 @@ class CardStateEmitterMixin:
                 return False
         self._lastCardStateEmitTime = now
 
+        captureHealth: dict[str, Any] | None = None
         try:
-            self._emitSystemStatusState()
+            # US-688: re-published every tick against a MOVED clock, like the
+            # gear below -- the row age climbs whether or not anything arrives,
+            # and a producer wired only to a write callback would go quiet at
+            # exactly the moment writes stopped, which is the alert condition.
+            # US-877-b (Atlas P6): BEFORE system-status, whose verdict judges
+            # the payload this emit returns -- in-process, never a read-back.
+            captureHealth = self._emitCaptureHealthState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("capture-health card emit failed: %s", e)
+        try:
+            self._emitSystemStatusState(captureHealth)
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("system-status card emit failed: %s", e)
         try:
@@ -1382,14 +1400,6 @@ class CardStateEmitterMixin:
             self._emitLtftTrendState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("ltft-trend card emit failed: %s", e)
-        try:
-            # US-688: re-published every tick against a MOVED clock, like the
-            # gear above -- the row age climbs whether or not anything arrives,
-            # and a producer wired only to a write callback would go quiet at
-            # exactly the moment writes stopped, which is the alert condition.
-            self._emitCaptureHealthState()
-        except Exception as e:  # noqa: BLE001 -- never crash the loop
-            logger.debug("capture-health card emit failed: %s", e)
         obdLive: dict[str, Any] | None = None
         try:
             # US-874: staleness is decided here, against a moving clock.
@@ -1824,8 +1834,14 @@ class CardStateEmitterMixin:
 
     # -------------------------------------------------------- system-status
 
-    def _emitSystemStatusState(self) -> None:
-        """Gather truthful link/sync/power/drive readings + emit system-status."""
+    def _emitSystemStatusState(self, captureHealth: dict[str, Any] | None = None) -> None:
+        """Gather truthful link/sync/power/drive readings + emit system-status.
+
+        Args:
+            captureHealth: US-877-b: the payload ``_emitCaptureHealthState``
+                returned THIS tick (Atlas P6), for the verdict; None when it
+                is dark, failed, or this is not a card tick.
+        """
         emitter = self._systemStatusEmitter
         if emitter is None:
             return
@@ -1880,6 +1896,8 @@ class CardStateEmitterMixin:
             **self._gatherSyncState(),
             # US-877-a: the pi health block from the off-tick sampler.
             piHealth=self._gatherPiHealth(),
+            # US-877-b: the verdict's capture input, as written this tick.
+            captureHealth=captureHealth,
         )
 
     def _gatherPiHealth(self) -> dict[str, Any] | None:

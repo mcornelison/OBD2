@@ -23,7 +23,8 @@
     "distanceEndTs": "2026-10-20T20:19:00Z",
     "distancePartial": false,
     "nowIso": "2026-10-20T20:29:00Z",
-    "piHealth": null
+    "piHealth": null,
+    "captureHealth": null
   },
   "system-status": {
     "obdLink": {
@@ -105,6 +106,10 @@
         "reason": "not_read"
       }
     },
-    "ts": "2026-10-20T20:29:00Z"
+    "ts": "2026-10-20T20:29:00Z",
+    "verdict": {
+      "issueCount": 0,
+      "members": []
+    }
   }
 }
