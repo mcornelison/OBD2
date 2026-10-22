@@ -51,7 +51,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     }
   ]
 }

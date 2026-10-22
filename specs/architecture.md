@@ -6068,8 +6068,9 @@ codeAlert, entries}`.
     (Q14). Engine off, stale or absent is false.
   - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
 - **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
-  stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus}` (`codeStatus` is
-  `stored` | `pending` on a code entry, null on an engine one), ALREADY ORDERED (B5): tier
+  stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus, round}` (`codeStatus`
+  is `stored` | `pending` on a code entry, null on an engine one; `round` is `floor` |
+  `ceil` on the battery entry, null on every other, US-897-d), ALREADY ORDERED (B5): tier
   `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
   newest `firstSeenTs`.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
@@ -6122,12 +6123,18 @@ legacy AlertManager owns that section (config.json).
   sentence `Head somewhere safe. Turn off accessories.`; high -> title `OVERCHARGING`,
   sentence `Head somewhere safe, then engine off.` No directive. A low<->high flip keeps
   the same id and `firstSeenTs`.
-- `value`: one decimal, rounded TOWARD the breach (Spool 2026-10-19): low floors
-  (11.96 -> 11.9), high ceils (15.04 -> 15.1); unit `V`. `last.value` while stale follows
-  the same rule. `lastSeenTs` = the last red reading.
+- `value`: the RAW reading, unit `V`, plus `round` = the EPISODE's side for the whole
+  episode -- `floor` for a low episode, `ceil` for a high one -- for the red readings, the
+  green hold and `last.value` alike (US-897-d; Atlas RULED 2026-10-20/21). The page
+  applies it LAST: `carousel.js displayUnits(value, unit, round)` rounds TOWARD the breach
+  (Spool 2026-10-19) after unit conversion, at the rule's decimals (11.96 -> `11.9 V`,
+  15.04 -> `15.1 V`), float-guarded so an exact tenth is never moved. The provider never
+  pre-rounds (`_towardBreach` deleted), so a converted unit cannot round back to the safe
+  side. Every other entry carries `round: null` (toFixed, unchanged); the takeover has no
+  `round`. `lastSeenTs` = the last red reading.
 - **End**: only after the band has been GREEN for `pi.warnings.battery.clearGreenHoldSec`
   (10, Spool 2026-10-14), measured on the readings' `ts`. During the hold the entry stays
-  active with the current reading (rounded on the episode's side). A red reading, a null
+  active with the current RAW reading and the episode's `round`. A red reading, a null
   band (`engine_not_running`, `amber_not_shipped`), a stale or an absent reading restarts
   the green run and never ends it -- the last three show the stale shape (`value: null`,
   `stale: true`, `last` = the last red reading).

@@ -68,7 +68,8 @@
       "lastSeenTs": "2026-10-20T17:29:48Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": null
+      "codeStatus": null,
+      "round": null
     }
   ]
 }

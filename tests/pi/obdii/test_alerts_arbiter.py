@@ -16,6 +16,9 @@
 # 2026-10-20    | Rex (US-897-b5) | The CODE source, codeAlert and the code icon.
 # 2026-10-20    | Rex (US-897-c) | acknowledgedIds: default byte-identical; acked
 #                                entries, pulse, cleared-entry removal, codeAlert.
+# 2026-10-21    | Rex (US-897-d) | MOVED PIN (US-897-d): battery value/last.value
+#                                are RAW; every entry gains `round` (battery:
+#                                the episode's side, else null).
 # ================================================================================
 ################################################################################
 
@@ -68,6 +71,8 @@ _ENTRY_KEYS = {
     "active",
     "acknowledged",
     "codeStatus",
+    # MOVED PIN (US-897-d): the page's rounding direction.
+    "round",
 }
 
 
@@ -235,7 +240,10 @@ def test_coolantRedFresh_stopEntry_takeover_iconStopPulsing() -> None:
     assert entry["acknowledged"] is False
     assert entry["firstSeenTs"] == "2026-10-20T15:12:27Z"
     assert entry["lastSeenTs"] == "2026-10-20T15:12:27Z"
+    # US-897-d: only the battery entry carries a direction.
+    assert entry["round"] is None
 
+    # US-897-d (Atlas REVIEW G3): the takeover gains no round field.
     assert state["takeover"] == {
         "id": _STOP_ID,
         "title": "ENGINE OVERHEATING",
@@ -687,8 +695,10 @@ def _batteryEntry(state: dict[str, Any]) -> dict[str, Any] | None:
     return next((e for e in state["entries"] if e["id"] == _BATTERY_ID), None)
 
 
-def test_batteryLow_watchEntry_chargingFaultWords_valueFlooredTowardTheBreach() -> None:
-    """VC1: 11.96 V red -> CHARGING FAULT, 11.9 (floor toward the breach)."""
+def test_batteryLow_watchEntry_chargingFaultWords_rawValue_roundFloor() -> None:
+    """VC1: 11.96 V red -> CHARGING FAULT, the RAW 11.96 + round 'floor'.
+
+    MOVED PIN (US-897-d): was value 11.9 (pre-rounded in the provider)."""
     state = _stepBattery(_arbiter(), _batt(11.96, "2026-10-20T15:12:27Z"))
 
     entry = _batteryEntry(state)
@@ -700,7 +710,8 @@ def test_batteryLow_watchEntry_chargingFaultWords_valueFlooredTowardTheBreach() 
     assert entry["title"] == _LOW_TITLE
     assert entry["sentence"] == _LOW_SENTENCE
     assert entry["directive"] is None
-    assert entry["value"] == 11.9
+    assert entry["value"] == 11.96
+    assert entry["round"] == "floor"
     assert entry["unit"] == "V"
     assert entry["active"] is True
     assert entry["stale"] is False
@@ -710,27 +721,77 @@ def test_batteryLow_watchEntry_chargingFaultWords_valueFlooredTowardTheBreach() 
     assert state["takeover"] is None
 
 
-def test_batteryHigh_overchargingWords_valueCeiledTowardTheBreach() -> None:
-    """VC2: 15.04 V red -> OVERCHARGING, 15.1 (ceil toward the breach)."""
+def test_batteryHigh_overchargingWords_rawValue_roundCeil() -> None:
+    """VC2: 15.04 V red -> OVERCHARGING, the RAW 15.04 + round 'ceil'.
+
+    MOVED PIN (US-897-d): was value 15.1."""
     entry = _batteryEntry(_stepBattery(_arbiter(), _batt(15.04, "2026-10-20T15:12:27Z")))
 
     assert entry is not None
     assert entry["title"] == _HIGH_TITLE
     assert entry["sentence"] == _HIGH_SENTENCE
-    assert entry["value"] == 15.1
+    assert entry["value"] == 15.04
+    assert entry["round"] == "ceil"
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [(11.96, 11.9), (11.9, 11.9), (11.01, 11.0), (9.99, 9.9), (15.04, 15.1), (15.1, 15.1),
-     (15.0001, 15.1), (16.0, 16.0)],
+    ("value", "round_"),
+    [(11.96, "floor"), (11.9, "floor"), (11.01, "floor"), (9.99, "floor"), (15.04, "ceil"),
+     (15.1, "ceil"), (15.0001, "ceil"), (16.0, "ceil")],
 )
-def test_batteryValue_oneDecimal_roundedTowardTheBreach(value: float, expected: float) -> None:
-    """Spool 2026-10-19: low floors, high ceils; an exact tenth is never moved."""
+def test_batteryValue_isRaw_roundIsTheSide(value: float, round_: str) -> None:
+    """MOVED PIN (US-897-d; Atlas RULED 2026-10-20): the provider publishes the
+    RAW reading and the direction; the page rounds toward the breach last."""
     entry = _batteryEntry(_stepBattery(_arbiter(), _batt(value, "2026-10-20T15:12:27Z")))
 
     assert entry is not None
-    assert entry["value"] == expected
+    assert entry["value"] == value
+    assert entry["round"] == round_
+
+
+def test_towardBreach_isDeleted() -> None:
+    """US-897-d: no caller is left for the provider-side rounding."""
+    assert not hasattr(aa, "_towardBreach")
+
+
+def test_batteryGreenHold_rawValue_keepsTheEpisodesRound() -> None:
+    """VC (Atlas RULED 2026-10-21, reading 3): a low episode in its green hold at
+    12.46 publishes 12.46 with round 'floor' -- no band fired on this reading,
+    so the round is the EPISODE's side, never null."""
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+
+    held = _batteryEntry(_stepBattery(arbiter, _batt(12.46, "2026-10-20T15:12:02Z", band="green")))
+
+    assert held is not None
+    assert held["active"] is True
+    assert held["value"] == 12.46
+    assert held["round"] == "floor"
+
+
+def test_batteryEnded_lastIsRaw_roundStays() -> None:
+    """The ended entry's last.value is the raw red reading, with the side's round."""
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(15.04, "2026-10-20T15:12:00Z"))
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+
+    ended = _batteryEntry(_stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:12Z", band="green")))
+
+    assert ended is not None
+    assert ended["active"] is False
+    assert ended["last"]["value"] == 15.04
+    assert ended["round"] == "ceil"
+
+
+def test_batteryFlip_roundFollowsTheEpisodesSide() -> None:
+    """A low episode that reads high red takes the high side, and its round."""
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+
+    entry = _batteryEntry(_stepBattery(arbiter, _batt(15.04, "2026-10-20T15:12:02Z")))
+
+    assert entry is not None
+    assert entry["round"] == "ceil"
 
 
 def test_batterySide_comesFromTheConfiguredEdges_notTheBandReason() -> None:
@@ -817,7 +878,9 @@ def test_batteryNullBand_neverEndsIt_staysActiveStale(reason: str) -> None:
     assert entry["active"] is True
     assert entry["stale"] is True
     assert entry["value"] is None
-    assert entry["last"]["value"] == 11.9
+    # MOVED PIN (US-897-d): last.value is raw; the round keeps the direction.
+    assert entry["last"]["value"] == 11.96
+    assert entry["round"] == "floor"
     assert entry["last"]["ts"] == "2026-10-20T15:12:00Z"
 
 
@@ -832,7 +895,7 @@ def test_batteryNullBand_breaksTheGreenHold() -> None:
     assert held is not None and held["active"] is True
 
 
-def test_batteryStale_keepsItActive_withLastRoundedTowardTheBreach() -> None:
+def test_batteryStale_keepsItActive_withRawLast_andTheRound() -> None:
     arbiter = _arbiter()
     _stepBattery(arbiter, _batt(15.04, "2026-10-20T15:12:00Z"))
 
@@ -842,7 +905,9 @@ def test_batteryStale_keepsItActive_withLastRoundedTowardTheBreach() -> None:
     assert entry["active"] is True
     assert entry["stale"] is True
     assert entry["value"] is None
-    assert entry["last"]["value"] == 15.1
+    # MOVED PIN (US-897-d): was 15.1; the page ceils it with this round.
+    assert entry["last"]["value"] == 15.04
+    assert entry["round"] == "ceil"
     assert entry["last"]["band"]["band"] == "red"
     assert entry["title"] == _HIGH_TITLE
 
@@ -935,7 +1000,9 @@ def test_seed_batteryEntrySurvivesARestart_activeIsStale(tmp_path: Path) -> None
     assert entry["active"] is True
     assert entry["stale"] is True
     assert entry["title"] == _HIGH_TITLE
-    assert entry["last"]["value"] == 15.1
+    # MOVED PIN (US-897-d): was 15.1. The seeded side brings its round back.
+    assert entry["last"]["value"] == 15.04
+    assert entry["round"] == "ceil"
     assert entry["firstSeenTs"] == "2026-10-20T15:12:00Z"
 
 
@@ -990,6 +1057,7 @@ def test_overRev_peakFromEveryReadingBetweenSnapshots_sampledSentence_valueUnitN
 
     assert entry is not None
     assert set(entry) == _ENTRY_KEYS
+    assert entry["round"] is None
     assert entry["source"] == "engine"
     assert entry["key"] == "RPM"
     assert entry["tier"] == "watch"
@@ -1299,6 +1367,7 @@ def test_codes_theCarsTwoCodes_watchThenMinor_codeAlert_sourcesAssessed() -> Non
     assert [e["id"] for e in entries] == ["code:P0400:watch", "code:P0443:minor"]
     egr, purge = entries
     assert set(egr) == _ENTRY_KEYS
+    assert egr["round"] is None and purge["round"] is None
     assert egr["source"] == "code"
     assert egr["key"] == "P0400"
     assert egr["tier"] == "watch"

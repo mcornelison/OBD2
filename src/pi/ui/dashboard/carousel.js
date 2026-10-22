@@ -2457,10 +2457,11 @@
 
   // A reading through the S103 G1 helper by its OWN unit (coolant 'C' -> °F).
   // Not a number -> no value: a code row and the over-rev row (Atlas G3: its
-  // peak lives in the provider's sentence) carry none.
-  function warningValueText(value, unit) {
+  // peak lives in the provider's sentence) carry none. `round` is the entry's
+  // own direction (US-897-d: the battery's, toward the breach), else null.
+  function warningValueText(value, unit, round) {
     if (typeof value !== "number" || !isFinite(value)) return null;
-    var shown = displayUnits(value, unit);
+    var shown = displayUnits(value, unit, round);
     return shown.unit ? shown.text + " " + shown.unit : shown.text;
   }
 
@@ -2476,6 +2477,8 @@
     var stale = active && entry.stale === true;
     var last = isObj(entry.last) ? entry.last : null;
     var key = typeof entry.key === "string" ? entry.key : null;
+    // A stale last.value keeps the episode's direction (US-897-d).
+    var round = typeof entry.round === "string" ? entry.round : null;
     return {
       id: typeof entry.id === "string" ? entry.id : "",
       source: typeof entry.source === "string" ? entry.source : "",
@@ -2484,8 +2487,8 @@
       chip: WARNING_CHIP[tier],
       title: typeof entry.title === "string" && entry.title ? entry.title : key || DRIVING_NOT_READ,
       value: stale
-        ? (last ? warningValueText(last.value, entry.unit) : null)
-        : warningValueText(entry.value, entry.unit),
+        ? (last ? warningValueText(last.value, entry.unit, round) : null)
+        : warningValueText(entry.value, entry.unit, round),
       stale: stale ? warningStaleText(last ? last.ts : null, Date.parse(nowTs)) : null,
       sentence: typeof entry.sentence === "string" && entry.sentence ? entry.sentence : null,
       age: active ? agoText(nowTs, entry.firstSeenTs) : WARNING_CLEARED_TEXT,
@@ -4253,13 +4256,39 @@
     count: { unit: "", decimals: 0, convert: null },
   };
 
-  function displayUnits(value, unit) {
+  // US-897-d (Atlas RULED 2026-10-20): an optional `round` -- 'floor' or 'ceil',
+  // the provider's direction TOWARD the breach -- applied as the FINAL step,
+  // after convert, at the rule's decimals, so a converted unit can never round
+  // back to the safe side. Any other value (null, absent) is toFixed, unchanged.
+  // The provider publishes the raw reading; only this step rounds it.
+  var ROUND_DIRECTIONS = { floor: Math.floor, ceil: Math.ceil };
+  // Below this distance from a whole step the scaled value IS that step: a value
+  // that arrives as 0.30000000000000004 (0.1 + 0.2) scales to 3.0000000000000004,
+  // and a bare Math.ceil would show 0.4 (the trap the S107 _towardBreach
+  // docstring named). Far under any real 1-dp difference (0.1 scales to 1) and
+  // far over float error at these magnitudes.
+  var ROUND_STEP_EPSILON = 1e-9;
+
+  function roundToward(x, decimals, round) {
+    var scale = Math.pow(10, decimals);
+    var scaled = x * scale;
+    var nearest = Math.round(scaled);
+    var step = Math.abs(scaled - nearest) < ROUND_STEP_EPSILON ? nearest : round(scaled);
+    return (step / scale).toFixed(decimals);
+  }
+
+  function displayUnits(value, unit, round) {
     var rule = typeof unit === "string" &&
       Object.prototype.hasOwnProperty.call(DISPLAY_UNITS, unit) ? DISPLAY_UNITS[unit] : null;
     if (!rule) {
       return { text: String(value), unit: typeof unit === "string" ? unit : "" };
     }
     var shown = rule.convert ? rule.convert(value) : value;
+    var direction = typeof round === "string" &&
+      Object.prototype.hasOwnProperty.call(ROUND_DIRECTIONS, round) ? ROUND_DIRECTIONS[round] : null;
+    if (direction) {
+      return { text: roundToward(shown, rule.decimals, direction), unit: rule.unit };
+    }
     return { text: shown.toFixed(rule.decimals), unit: rule.unit };
   }
 
