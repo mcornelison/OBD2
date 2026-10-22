@@ -79,6 +79,8 @@
 # 2026-10-21    | Rex (US-897-e) | The post-clear re-read empties the carried
 #               |              | pending set first (Mode 04 wiped it); the
 #               |              | restart seed of that set survives the init.
+# 2026-10-22    | Rex (US-916) | _lastSyncOkTsIso is gone: system-status reads
+#               |              | lastOkTs from sync_log.last_ok_at.
 # ================================================================================
 ################################################################################
 
@@ -321,10 +323,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # dtc emit, never nulled once set.
         self._dtcCheckedAtTs: str | None = None
         self._dtcPendingCheckedAtTs: str | None = None
-        # Card-state emit cadence + cached sync status (updated by the sync
-        # trigger path so the system-status tile reflects the REAL last push
-        # without a per-tick DB scan).  None before the first tick so the very
-        # first runLoop pass emits (no boot-instant lag).
+        # Card-state emit cadence + the last push's row count (updated by the
+        # sync trigger path).  None before the first tick so the very first
+        # runLoop pass emits (no boot-instant lag).
         self._lastCardStateEmitTime: datetime | None = None
         dashConfig = config.get('pi', {}).get('dashboard', {})
         self._cardStateEmitEnabled: bool = (
@@ -338,7 +339,6 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 'syncStaleThresholdSeconds', DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
             )
         )
-        self._lastSyncOkTsIso: str | None = None
         self._lastSyncRows: int = 0
         # for the system-status power tile; built once in
         # _initializeCardStateEmitters.  None on the bench / when disabled.

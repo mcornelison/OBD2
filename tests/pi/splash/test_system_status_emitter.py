@@ -29,6 +29,8 @@
 # 2026-10-22    | Rex (US-876-d)| LinkLayerTracker.markUnread (stale evidence).
 # 2026-10-22    | Rex (US-732) | wifi home + ts, the not_read token, the two
 #               |              | VCs and the emit forwarding of the wifi inputs.
+# 2026-10-22    | Rex (US-916) | the exact pin gains sync rowsWaiting /
+#               |              | edrRowsWaiting / notCounted; their forwarding.
 # ================================================================================
 ################################################################################
 
@@ -88,7 +90,12 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
     )
     assert state == {
         "obdLink": {"state": "reconnecting", "retries": 3},
-        "sync": {"lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False},
+        # US-916: rowsWaiting / edrRowsWaiting / notCounted are always keys;
+        # null when not read (a caller that passes none read nothing).
+        "sync": {
+            "lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False,
+            "rowsWaiting": None, "edrRowsWaiting": None, "notCounted": None,
+        },
         # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
         # a real measurement, and a reason standing beside one would be a
         # second, contradictory account of the same fact.
@@ -1077,3 +1084,59 @@ def test_orchestratorEmit_stubComposer_wifiNotRead_defaultThresholds():
     assert call["wifiTs"] is None
     assert (call["wifiWeakRssiDbm"], call["wifiDownRssiDbm"]) == (-70, -90)
     assert getattr(composer, "_wifiSampler", None) is None
+
+
+# ---------------------------------------------------------------------------
+# US-916 -- sync rowsWaiting / edrRowsWaiting / notCounted.
+# ---------------------------------------------------------------------------
+
+
+def test_sync_backlogFields_areTransportedVerbatim_zeroIsNotNull():
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
+        syncRowsWaiting=0, syncEdrRowsWaiting=1771,
+        syncNotCounted=["profiles", "vehicle_info"],
+    )
+    assert state["sync"] == {
+        "lastOkTs": _SYNC_OK, "rows": 0, "pending": None, "stale": False,
+        "rowsWaiting": 0, "edrRowsWaiting": 1771,
+        "notCounted": ["profiles", "vehicle_info"],
+    }
+
+
+def test_emitter_forwardsTheSyncBacklog_throughTheJsonRoundTrip(tmp_path):
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=120.0, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        powerSource="external", driveState="idle", driveId=None,
+        syncRowsWaiting=120, syncEdrRowsWaiting=None, syncNotCounted=["profiles"],
+    )
+
+    payload = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert payload["sync"]["lastOkTs"] == _SYNC_OK
+    assert payload["sync"]["rowsWaiting"] == 120
+    assert payload["sync"]["edrRowsWaiting"] is None
+    assert payload["sync"]["notCounted"] == ["profiles"]
+
+
+def test_orchestratorEmit_stubComposer_noDatabase_syncFieldsNull():
+    """Stub hosts have no _database: lastOkTs and the backlog are not read."""
+    composer = _StubComposer({}, False)
+    composer._lastSyncOkTsIso = _SYNC_OK  # the retired stamp is never read
+
+    composer._emitSystemStatusState()
+
+    call = composer.calls[0]
+    assert call["syncLastOkTs"] is None
+    assert call["syncRowsWaiting"] is None
+    assert call["syncEdrRowsWaiting"] is None
+    assert call["syncNotCounted"] is None
+    assert call["syncPending"] is None

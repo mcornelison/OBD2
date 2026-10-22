@@ -30,6 +30,8 @@
 #               |              | 1-2, E2, E4, G1, MAC sources, off-tick thread).
 # 2026-10-22    | Ralph (Rex)  | US-732 -- system-status wifi from the WiFi
 #               |              | sampler; one lazy HomeNetworkDetector; W4.
+# 2026-10-22    | Ralph (Rex)  | US-916 -- sync lastOkTs/rowsWaiting from the DB;
+#               |              | _recordSyncOutcome stamps no time (MOVED PIN).
 # ================================================================================
 ################################################################################
 
@@ -299,12 +301,47 @@ def test_maybeEmit_cadenceGate_secondCallNotDue(tmp_path):
 
 
 def test_recordSyncOutcome_cachesTimestampAndRows(tmp_path):
-    """The sync-trigger hook caches a fresh ISO ts + row count for the tile."""
+    """The sync-trigger hook caches the row count for the tile.
+
+    MOVED PIN (US-916): it no longer stamps a time -- lastOkTs is
+    sync_log.last_ok_at (Atlas gap ruling 916-6).
+    """
     orch = _FakeOrch(_config(tmp_path))
     orch._recordSyncOutcome(7)
     assert orch._lastSyncRows == 7
-    assert orch._lastSyncOkTsIso is not None
-    assert orch._lastSyncOkTsIso.endswith("Z")
+    assert orch._lastSyncOkTsIso is None
+
+
+def test_maybeEmit_syncBlock_readsLastOkAndRowsWaitingFromTheDatabase(tmp_path):
+    """US-916: system-status.sync.lastOkTs is max(sync_log.last_ok_at) and
+    rowsWaiting is the push's own count, read from the orchestrator's DB."""
+    import sqlite3
+
+    from src.pi.data import sync_log
+
+    dbPath = str(tmp_path / "obd.db")
+    conn = sqlite3.connect(dbPath)
+    sync_log.initDb(conn)
+    conn.execute("CREATE TABLE realtime_data (id INTEGER PRIMARY KEY, v TEXT)")
+    conn.executemany("INSERT INTO realtime_data (v) VALUES (?)", [("x",)] * 7)
+    conn.execute(
+        "INSERT INTO sync_log (table_name, last_synced_id, status, last_ok_at) "
+        "VALUES ('realtime_data', 2, 'ok', '2026-10-22T08:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._database = SimpleNamespace(dbPath=dbPath)
+    orch._initializeCardStateEmitters()
+
+    orch._maybeEmitCardStates()
+    sync = _readState(tmp_path, "system-status")["sync"]
+    assert sync["lastOkTs"] == "2026-10-22T08:00:00Z"
+    assert sync["rowsWaiting"] == 5
+    assert sync["edrRowsWaiting"] == 0
+    assert sync["notCounted"] == sorted(
+        sync_log.SNAPSHOT_TABLES | sync_log.snapshotSyncTables()
+    )
 
 
 # ---------------------------------------------------------------------------

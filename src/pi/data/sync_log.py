@@ -95,6 +95,11 @@
 #                               delta-synced, never an UPDATE table.
 # 2026-10-14    | Rex (US-860-d)| Registered boot_milestone (PK 'id') --
 #                               delta-synced, never an UPDATE table.
+# 2026-10-22    | Rex (US-916) | last_ok_at: stamped ONLY on a status='ok'
+#                               write (updateHighWaterMark's ok path,
+#                               updateSnapshotCursor) -- "data last STORED by
+#                               the server" -- + ensureLastOkSchema migration +
+#                               getLastOkAt (the read; never migrates).
 # ================================================================================
 ################################################################################
 
@@ -156,13 +161,16 @@ __all__ = [
     'SYNC_MODIFIED_AT_COLUMN',
     'SYNC_UPDATE_TABLES_PK',
     'VALID_STATUSES',
+    'LAST_OK_AT_COLUMN',
     'clearQuarantine',
     'countDeltaRows',
+    'ensureLastOkSchema',
     'ensureQuarantineSchema',
     'ensureSnapshotSyncSchema',
     'ensureSyncModifiedAtSchema',
     'getDeltaRows',
     'getHighWaterMark',
+    'getLastOkAt',
     'getModifiedHighWaterMark',
     'getQuarantineState',
     'getSnapshotCursor',
@@ -321,6 +329,12 @@ VALID_STATUSES: frozenset[str] = frozenset({'ok', 'pending', 'failed'})
 # ``last_synced_id`` delta cursor.  Snapshot-sync tables (TEXT-PK, insert-once)
 # have no integer delta cursor, so they track progress here instead.  Older DBs
 # pick it up via the idempotent ALTER in :func:`ensureSnapshotSyncSchema`.
+#
+# US-916: ``last_ok_at`` is when the server last STORED this table's data --
+# written only by a status='ok' write, never by a failed push (which DOES
+# rewrite ``last_synced_at``, so that column cannot answer the question).
+# Older DBs pick it up via the idempotent ALTER in :func:`ensureLastOkSchema`;
+# existing rows start NULL (no backfill).
 SYNC_LOG_SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS sync_log (
     table_name              TEXT    PRIMARY KEY,
@@ -332,9 +346,13 @@ CREATE TABLE IF NOT EXISTS sync_log (
     last_synced_modified_at TEXT,
     consecutive_failures    INTEGER NOT NULL DEFAULT 0,
     quarantined_at          TEXT,
-    last_snapshot_cursor    TEXT
+    last_snapshot_cursor    TEXT,
+    last_ok_at              TEXT
 )
 """
+
+# US-916: sync_log column holding when the server last stored the table's data.
+LAST_OK_AT_COLUMN: str = 'last_ok_at'
 
 # US-416: sync_log column holding the SNAPSHOT_SYNC path's per-table time-cursor
 # high-water mark (the max cursorCol value successfully pushed so far).
@@ -710,6 +728,9 @@ def updateHighWaterMark(
     use a distinct write path -- never pass the delta-max id with
     ``status='failed'`` expecting the id to be held back.
 
+    US-916: ``status='ok'`` also stamps ``last_ok_at`` (running
+    :func:`ensureLastOkSchema` first); any other status leaves it untouched.
+
     US-315: ``lastModifiedAt`` is the new high-water mark for the parallel
     modified_at cursor.  Pass ``None`` (default) for non-opt-in tables or
     when no row in the pushed batch had a non-NULL ``_sync_modified_at`` --
@@ -731,40 +752,27 @@ def updateHighWaterMark(
     _validateStatus(status)
 
     now = _utcIsoTimestamp()
-    if lastModifiedAt is None:
-        # COALESCE preserves the existing modified_at cursor when the caller
-        # didn't compute a new one (non-opt-in table, or all pushed rows
-        # had NULL _sync_modified_at).
-        conn.execute(
-            """
-            INSERT INTO sync_log
-                (table_name, last_synced_id, last_synced_at,
-                 last_batch_id, status)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(table_name) DO UPDATE SET
-                last_synced_id = excluded.last_synced_id,
-                last_synced_at = excluded.last_synced_at,
-                last_batch_id  = excluded.last_batch_id,
-                status         = excluded.status
-            """,
-            (tableName, int(lastId), now, batchId, status),
-        )
-    else:
-        conn.execute(
-            """
-            INSERT INTO sync_log
-                (table_name, last_synced_id, last_synced_at,
-                 last_batch_id, status, last_synced_modified_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(table_name) DO UPDATE SET
-                last_synced_id          = excluded.last_synced_id,
-                last_synced_at          = excluded.last_synced_at,
-                last_batch_id           = excluded.last_batch_id,
-                status                  = excluded.status,
-                last_synced_modified_at = excluded.last_synced_modified_at
-            """,
-            (tableName, int(lastId), now, batchId, status, lastModifiedAt),
-        )
+    columns = ['last_synced_id', 'last_synced_at', 'last_batch_id', 'status']
+    values: list[Any] = [int(lastId), now, batchId, status]
+    if lastModifiedAt is not None:
+        # Omitted when None so the existing modified_at cursor is preserved
+        # (non-opt-in table, or all pushed rows had NULL _sync_modified_at).
+        columns.append('last_synced_modified_at')
+        values.append(lastModifiedAt)
+    if status == 'ok':
+        # US-916: only the ok path says the server stored data; a failed write
+        # never touches last_ok_at.
+        ensureLastOkSchema(conn)
+        columns.append(LAST_OK_AT_COLUMN)
+        values.append(now)
+    placeholders = ', '.join('?' for _ in range(len(columns) + 1))
+    updates = ', '.join(f"{col} = excluded.{col}" for col in columns)
+    conn.execute(
+        f"INSERT INTO sync_log (table_name, {', '.join(columns)}) "  # noqa: S608 -- const identifiers
+        f"VALUES ({placeholders}) "
+        f"ON CONFLICT(table_name) DO UPDATE SET {updates}",
+        (tableName, *values),
+    )
     conn.commit()
 
 
@@ -1281,20 +1289,27 @@ def updateSnapshotCursor(
     _validateSnapshotTable(tableName)
     _validateStatus(status)
     ensureSnapshotSyncSchema(conn)
+    ensureLastOkSchema(conn)
 
     now = _utcIsoTimestamp()
+    # US-916: a snapshot push the server stored is data last stored too; any
+    # other status keeps the existing last_ok_at (COALESCE of a NULL param).
+    lastOkAt = now if status == 'ok' else None
     # COALESCE + comparison keeps the cursor monotonic: if a prior cursor is
     # already >= newCursor, keep it (never rewind on a stale/partial push).
     conn.execute(
         f"""
         INSERT INTO sync_log
             (table_name, last_synced_at, last_batch_id, status,
-             {SNAPSHOT_SYNC_CURSOR_COLUMN})
-        VALUES (?, ?, ?, ?, ?)
+             {SNAPSHOT_SYNC_CURSOR_COLUMN}, {LAST_OK_AT_COLUMN})
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(table_name) DO UPDATE SET
             last_synced_at = excluded.last_synced_at,
             last_batch_id  = excluded.last_batch_id,
             status         = excluded.status,
+            {LAST_OK_AT_COLUMN} = COALESCE(
+                excluded.{LAST_OK_AT_COLUMN}, sync_log.{LAST_OK_AT_COLUMN}
+            ),
             {SNAPSHOT_SYNC_CURSOR_COLUMN} = CASE
                 WHEN sync_log.{SNAPSHOT_SYNC_CURSOR_COLUMN} IS NULL
                     THEN excluded.{SNAPSHOT_SYNC_CURSOR_COLUMN}
@@ -1304,6 +1319,57 @@ def updateSnapshotCursor(
                 ELSE sync_log.{SNAPSHOT_SYNC_CURSOR_COLUMN}
             END
         """,  # noqa: S608 -- const identifier interpolation only
-        (tableName, now, batchId, status, newCursor),
+        (tableName, now, batchId, status, newCursor, lastOkAt),
     )
     conn.commit()
+
+
+# ================================================================================
+# Data last stored (US-916)
+# ================================================================================
+
+
+def ensureLastOkSchema(conn: sqlite3.Connection) -> bool:
+    """Idempotently add the US-916 ``last_ok_at`` column to sync_log.
+
+    Fresh DBs already have it (it is in :data:`SYNC_LOG_SCHEMA`); this handles
+    older DBs via ``ALTER TABLE ... ADD COLUMN`` (the
+    :func:`ensureQuarantineSchema` pattern). Called by the WRITERS only --
+    :func:`getLastOkAt` never migrates.
+
+    Args:
+        conn: Open sqlite3 connection. ``initDb`` is called first so a fresh
+            DB lands in a known shape before the ALTER probe runs.
+
+    Returns:
+        ``True`` if the ALTER actually ran; ``False`` when the column was
+        already present.
+    """
+    initDb(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    if LAST_OK_AT_COLUMN in cols:
+        return False
+    conn.execute(f"ALTER TABLE sync_log ADD COLUMN {LAST_OK_AT_COLUMN} TEXT")
+    conn.commit()
+    return True
+
+
+def getLastOkAt(conn: sqlite3.Connection) -> str | None:
+    """When the server last stored ANY table's data: ``max(last_ok_at)``.
+
+    Read-only: a DB with no sync_log, or a sync_log without the column (not
+    pushed since deploy), answers None -- never a raise, never an ALTER.
+
+    Args:
+        conn: Open sqlite3 connection (may be read-only).
+
+    Returns:
+        The latest ``last_ok_at`` (canonical UTC), or None when none is stored.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    if LAST_OK_AT_COLUMN not in cols:
+        return None
+    row = conn.execute(
+        f"SELECT MAX({LAST_OK_AT_COLUMN}) FROM sync_log",  # noqa: S608 -- const identifier
+    ).fetchone()
+    return row[0] if row is not None else None

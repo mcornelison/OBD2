@@ -861,6 +861,7 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 | `last_synced_at` | TEXT | ISO-8601 UTC timestamp of the last push attempt |
 | `last_batch_id` | TEXT | Batch identifier for server-side traceability |
 | `status` | TEXT NOT NULL DEFAULT 'pending' | CHECK constraint: `ok` \| `pending` \| `failed` |
+| `last_ok_at` | TEXT | US-916: when the server last **stored** this table's data (canonical UTC). Written ONLY by a `status='ok'` write (`updateHighWaterMark`'s ok path, `updateSnapshotCursor`); a failed push never touches it (it does rewrite `last_synced_at`). Older DBs gain it via `ensureLastOkSchema` (idempotent ALTER, run by the writers); existing rows start null, no backfill |
 
 **Sync-scope tables** (eligible for Pi -> server delta sync): `realtime_data`,
 `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`,
@@ -7524,6 +7525,35 @@ its link, it never manages it):
   `read_failed`, or `not_read` (no sample yet; W8 replaced the prose
   `wifi: not read`). Not read blanks `state` / `ssid` / `rssiDbm` / `home`.
   The page's null mark (`--`) is S110's.
+
+**`sync` — last data stored and rows waiting (US-916; Atlas S1–S5, 916-1..916-6).**
+Every key always present; null = not read, never 0:
+
+```json
+"sync": {"lastOkTs": "2026-10-22T08:00:00Z", "rows": 12, "pending": null,
+         "stale": false, "rowsWaiting": 0, "edrRowsWaiting": 1771,
+         "notCounted": ["profiles", "startup_log", "vehicle_info"]}
+```
+
+- **`lastOkTs`** (the key the System tile already reads; one fact, one key) =
+  `max(sync_log.last_ok_at)` — when the server last **stored** data. The page
+  words it **"last data stored"**, never "last contact". It survives a restart
+  (it lives in obd.db) and advances on every stored push, powerwatch's key-off
+  drain (`forcePush`) included. Null until the first ok push after deploy.
+  `_recordSyncOutcome` no longer stamps a time (it still caches `rows` and
+  re-anchors the altitude).
+- **`rowsWaiting`** = `pi.sync.backlog.countOutstandingRows` — the push's own
+  predicate, never a second counter — with the shutdown drain's EDR exclusion;
+  **`edrRowsWaiting`** = the same count over `EDR_SYNC_TABLES` only, reported
+  beside it as the drain does. Each is null when any table it covers could not
+  be read (a partial count is never published).
+- **`notCounted`** = the snapshot tables (`SNAPSHOT_TABLES` + `SNAPSHOT_SYNC`),
+  sorted: named, never folded into a count.
+- **`pending`** is kept, null (S110 retires it with the page).
+- **Read.** `backlog.readSyncHealth(dbPath)` — read-only opens, 1 s busy
+  timeout, never migrates (a sync_log without `last_ok_at` → `lastOkTs` null,
+  no raise). The orchestrator reads it from `_database.dbPath` at most every
+  **30 s**, cached between ticks; no database → every field null.
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries`) / `down`

@@ -806,9 +806,15 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # US-732:   `wifi` gains `home` and `ts` (null in every trip fixture: no wifi
 #           input). No input key added or removed. One VALUE moves with them:
 #           source.wifi.reason "wifi: not read" -> "not_read" (Atlas W8).
+# US-916:   `sync` gains `rowsWaiting`, `edrRowsWaiting` and `notCounted` (null
+#           in every trip fixture: no database in a trip scene); the inputs
+#           gain the three builder parameters behind them, all null.
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
-    "sync": {"lastOkTs", "rows", "pending", "stale"},
+    "sync": {
+        "lastOkTs", "rows", "pending", "stale",
+        "rowsWaiting", "edrRowsWaiting", "notCounted",
+    },
     "power": {"source", "reasons"},
     "wifi": {"state", "ssid", "rssiDbm", "home", "ts"},
     "link": {"bt", "adapter", "ecu"},
@@ -824,6 +830,7 @@ _TRIP_STATUS_KEYS = {
 }
 _TRIP_LINK_LAYER_KEYS = {"state", "ts", "lastOkTs"}
 _TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
+_TRIP_INPUT_KEYS_ADDED = {"syncRowsWaiting", "syncEdrRowsWaiting", "syncNotCounted"}
 
 
 def test_tripFixtures_carryExactlyTheExpectedTopLevelAndBlockKeys():
@@ -839,6 +846,7 @@ def test_tripFixtures_carryExactlyTheExpectedTopLevelAndBlockKeys():
         for layer in _TRIP_STATUS_KEYS["link"]:
             assert set(status["link"][layer]) == _TRIP_LINK_LAYER_KEYS, (name, layer)
         assert not _TRIP_INPUT_KEYS_REMOVED & set(fx["inputs"]), name
+        assert _TRIP_INPUT_KEYS_ADDED <= set(fx["inputs"]), name
 
 
 def test_gradeNullFixture_isTheRealBridgesPayload_gradeOnlyNull():

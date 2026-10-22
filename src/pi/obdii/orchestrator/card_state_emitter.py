@@ -115,6 +115,10 @@
 # 2026-10-22    | Rex (US-732) | system-status wifi from the off-tick WiFi
 #               |              | sampler; one lazy HomeNetworkDetector reads home
 #               |              | from the same sample; thresholds from config.
+# 2026-10-22    | Rex (US-916) | system-status sync.lastOkTs = max(last_ok_at)
+#               |              | and rowsWaiting / edrRowsWaiting / notCounted,
+#               |              | read every 30 s through pi.sync.backlog;
+#               |              | _recordSyncOutcome no longer stamps a time.
 # ================================================================================
 ################################################################################
 
@@ -223,6 +227,12 @@ REASON_POWER_SOURCE_UNREADABLE = "source_unreadable"
 #: rather than an absent or blocked instrument.
 REASON_POWER_SOURCE_READ_FAILED = "read_failed"
 
+# US-916 (Atlas S4): system-status.sync's backlog read -- every 30 s, cached
+# between ticks, each read-only open with a 1 s busy timeout so a locked
+# database can never stall the card tick for long.
+SYNC_HEALTH_READ_INTERVAL_S = 30.0
+SYNC_HEALTH_BUSY_TIMEOUT_S = 1.0
+
 #: Every reason an unresolved `power.source` may carry. A RESOLVED source
 #: carries None: a reason explains an absence and must never stand beside a
 #: real measurement.
@@ -307,7 +317,6 @@ class CardStateEmitterMixin:
     _cardStateEmitInterval: float
     _cardSyncStaleThresholdS: float
     _lastCardStateEmitTime: datetime | None
-    _lastSyncOkTsIso: str | None
     _lastSyncRows: int
     # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
     # here for mypy only. Read through getattr so an absent attribute is fine.
@@ -1261,13 +1270,14 @@ class CardStateEmitterMixin:
             arbiter.observeDtc(payload)
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:
-        """Cache the REAL last-sync outcome for the system-status sync tile.
+        """Cache the last push's row count and re-anchor the altitude.
 
         Called from the sync trigger paths only AFTER a push completed past the
-        route gate -- so "last synced" advances only when data actually left the
-        Pi (honest: a route-gated no-op tick never claims a sync).
+        route gate. It no longer stamps a time (US-916): "last data stored" is
+        ``sync_log.last_ok_at``, which only a push the server stored writes and
+        which survives a restart -- a stamp here also advanced on a push in
+        which every table failed.
         """
-        self._lastSyncOkTsIso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._lastSyncRows = int(rowsPushed)
         # US-518 (WP-3, F-125): a reached server means the Pi is on the home
         # network, i.e. the car is home -- the verified "at home" event that
@@ -1826,7 +1836,6 @@ class CardStateEmitterMixin:
         emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
-            syncLastOkTs=self._lastSyncOkTsIso,
             syncRows=self._lastSyncRows,
             # US-564: NOT MEASURED HERE -> None, never 0. A pending-row count is
             # not tracked at this layer, and `0` is the single most reassuring
@@ -1864,7 +1873,43 @@ class CardStateEmitterMixin:
             link=self._gatherLinkChain(),
             # US-732: the wifi block from the off-tick sampler + thresholds.
             **self._gatherWifiState(),
+            # US-916: lastOkTs + the backlog, from the 30 s cached read.
+            **self._gatherSyncState(),
         )
+
+    def _gatherSyncState(self) -> dict[str, Any]:
+        """The US-916 sync inputs for system-status, as emit() keywords.
+
+        ``pi.sync.backlog.readSyncHealth`` on the database's path (Atlas S2),
+        read at most every ``SYNC_HEALTH_READ_INTERVAL_S`` and cached between
+        ticks (S4). The read is read-only and never migrates; this module
+        opens nothing itself. No database -> every field null.
+        """
+        database = getattr(self, "_database", None)
+        dbPath = getattr(database, "dbPath", None)
+        if not dbPath:
+            return {
+                "syncLastOkTs": None,
+                "syncRowsWaiting": None,
+                "syncEdrRowsWaiting": None,
+                "syncNotCounted": None,
+            }
+        nowS = self._linkNowS()
+        health = getattr(self, "_syncHealth", None)
+        readS = getattr(self, "_syncHealthReadS", None)
+        if health is None or readS is None or nowS - readS >= SYNC_HEALTH_READ_INTERVAL_S:
+            from src.pi.sync.backlog import readSyncHealth
+
+            health = readSyncHealth(str(dbPath), busyTimeoutSec=SYNC_HEALTH_BUSY_TIMEOUT_S)
+            self._syncHealth = health
+            self._syncHealthReadS = nowS
+        notCounted = health.notCounted
+        return {
+            "syncLastOkTs": health.lastOkTs,
+            "syncRowsWaiting": health.rowsWaiting,
+            "syncEdrRowsWaiting": health.edrRowsWaiting,
+            "syncNotCounted": list(notCounted) if notCounted is not None else None,
+        }
 
     def _gatherLinkChain(self) -> dict[str, dict[str, str | None]]:
         """Gather the US-876-c link chain ``{bt, adapter, ecu}`` (Atlas L6).

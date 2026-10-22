@@ -41,6 +41,8 @@
 # 2026-10-22    | Rex (US-732) | wifi gains home + ts; emit() forwards the wifi
 #               |              | inputs and thresholds; REASON_WIFI_UNKNOWN is
 #               |              | the snake token not_read (Atlas W4/W6/W8).
+# 2026-10-22    | Rex (US-916) | sync gains rowsWaiting / edrRowsWaiting /
+#               |              | notCounted; lastOkTs is now max(last_ok_at).
 # ================================================================================
 ################################################################################
 
@@ -429,13 +431,17 @@ def buildSystemStatusState(
     link: dict | None = None,
     wifiHome: bool | None = None,
     wifiTs: str | None = None,
+    syncRowsWaiting: int | None = None,
+    syncEdrRowsWaiting: int | None = None,
+    syncNotCounted: list[str] | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
     Args:
         obdLinkState: One of ``OBD_LINKED`` / ``OBD_RECONNECTING`` / ``OBD_DOWN``.
         obdRetries: Reconnect attempt count for the current drop (0 when linked).
-        syncLastOkTs: ISO-8601 instant of the last successful Pi->server sync.
+        syncLastOkTs: When the server last STORED data: max(sync_log.last_ok_at)
+            (US-916), canonical UTC; None when none is stored.
         syncRows: Rows synced in the last successful batch.
         syncPending: Rows captured but not yet synced, or None when no caller
             actually measures it (US-564). None is carried through to the display
@@ -510,6 +516,12 @@ def buildSystemStatusState(
             WiFi seen", not "server reachable". Published only when read.
         wifiTs: US-732: the read time of the sample behind this block
             (canonical UTC), None when never read (Atlas W6).
+        syncRowsWaiting: US-916: rows the server has not got, the EDR archive
+            excluded (``pi.sync.backlog.readSyncHealth``); None when not read.
+        syncEdrRowsWaiting: US-916: the EDR archive's rows waiting, its own
+            field as the drain reports it; None when not read.
+        syncNotCounted: US-916: the snapshot tables, sorted -- named, never
+            folded into a count; None when not read.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -546,6 +558,10 @@ def buildSystemStatusState(
             "rows": syncRows,
             "pending": syncPending,
             "stale": syncStale,
+            # US-916: transported verbatim; null = not read, never 0.
+            "rowsWaiting": syncRowsWaiting,
+            "edrRowsWaiting": syncEdrRowsWaiting,
+            "notCounted": syncNotCounted,
         },
         # US-668 (CIO 2026-09-02): the operator-declared `mode` (car/wall) is
         # GONE. It was a fact the operator typed in so the screen could show it
@@ -714,6 +730,9 @@ def makeSystemStatusEmitter(
         wifiTs: str | None = None,
         wifiWeakRssiDbm: int = DEFAULT_WEAK_RSSI_DBM,
         wifiDownRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
+        syncRowsWaiting: int | None = None,
+        syncEdrRowsWaiting: int | None = None,
+        syncNotCounted: list[str] | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -750,6 +769,9 @@ def makeSystemStatusEmitter(
                 wifiTs=wifiTs,
                 wifiWeakRssiDbm=wifiWeakRssiDbm,
                 wifiDownRssiDbm=wifiDownRssiDbm,
+                syncRowsWaiting=syncRowsWaiting,
+                syncEdrRowsWaiting=syncEdrRowsWaiting,
+                syncNotCounted=syncNotCounted,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
