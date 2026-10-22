@@ -1,7 +1,7 @@
 <title>Warnings Page, OEM Skin</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Michroma&display=swap">
 <style>
-/* Layout concept: the V0.30 Warnings page (layout A: ranked list, scrolling) + the top-bar warning icon + the coolant PULL OVER takeover + the key-on CODE ALERT, at true 480x320 in the 90s Mitsubishi OEM skin, fed by a simulated states/alerts (Atlas 2026-10-14 shape), with fixed fixture panels underneath. Built to the S106 brief (2026-10-18). */
+/* Layout concept: the V0.30 Warnings page (layout A: ranked list, scrolling) + the top-bar warning icon + the coolant PULL OVER takeover + the key-on CODE ALERT + the code detail with its clear lock, at true 480x320 in the 90s Mitsubishi OEM skin, fed by a simulated states/alerts (Atlas 2026-10-14 shape), with fixed fixture panels underneath. v3 2026-10-22 (UIDEV-010): brought up to the merged spec (S106 brief, S108 folds, S110/S111 clear-lock words and rounding, S109 not-assessed lines). */
 :root {
   color-scheme: light;
   /* panel tokens = tokens.css values; the panel is always dark. No new tokens (Atlas 2026-10-16). */
@@ -13,7 +13,7 @@
   --fs-giant: 120px; --fs-hero: 44px; --fs-primary: 34px; --fs-secondary: 26px; --fs-label: 20px; --fs-meta: 15px;
   --bar-h: 34px; --dots-h: 16px; --chip-w: 116px; --takeover-edge: 8px; --tap-min: 40px;
   --font-display: "Michroma", "Eurostile", "Arial", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-mono: "DejaVu Sans Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
   --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
   /* page chrome around the panel (light) */
   --page: #F3F0EA; --ink: #1D1B18; --ink-dim: #6B655C; --rule: #D9D3C8; --chip: #FBF9F5; --bezel: #1A1918;
@@ -30,6 +30,7 @@ header { display: grid; gap: 8px; }
 h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(20px, 3.4vw, 28px); letter-spacing: .06em; margin: 0; text-wrap: balance; }
 .lede { color: var(--ink-dim); max-width: 68ch; margin: 0; }
 h2 { font-family: var(--font-display); font-weight: 400; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); margin: 0; }
+h3 { font-family: var(--font-display); font-weight: 400; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); margin: 18px 0 0; grid-column: 1 / -1; }
 
 .stage { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 @media (max-width: 820px) { .stage { grid-template-columns: 1fr; } }
@@ -42,11 +43,12 @@ h2 { font-family: var(--font-display); font-weight: 400; font-size: 13px; letter
 .controls input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
 .controls button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--ink); cursor: pointer; justify-self: start; }
 .controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.hint { font-size: 13px; color: var(--ink-dim); margin: 0; }
 .readout { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; border-top: 1px solid var(--rule); padding-top: 10px; overflow-wrap: anywhere; }
 
 .frame { width: 100%; aspect-ratio: 3 / 2; position: relative; overflow: hidden; border-radius: 6px; background: var(--bg); box-shadow: 0 0 0 7px var(--bezel), 0 0 0 8px var(--rule); }
 .panel { position: absolute; top: 0; left: 0; width: 480px; height: 320px; transform-origin: 0 0; background: var(--bg); color: var(--text-primary); overflow: hidden; }
-.panel.night .page, .panel.night .topbar, .panel.night .dots, .panel.night .codealert { filter: brightness(.75); }
+.panel.night .page, .panel.night .topbar, .panel.night .dots, .panel.night .codealert, .panel.night .detail { filter: brightness(.75); }
 
 .fixtures { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 22px 20px; margin-top: 12px; }
 .fx { display: grid; gap: 8px; min-width: 0; align-content: start; }
@@ -59,12 +61,13 @@ h2 { font-family: var(--font-display); font-weight: 400; font-size: 13px; letter
 code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
 
 /* ================= the 480x320 panel ================= */
-.topbar { position: absolute; top: 0; left: 0; right: 0; height: var(--bar-h); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 10px; background: var(--surface); border-bottom: 1px solid var(--line); z-index: 10; }
-.glyphs { display: flex; align-items: center; gap: 9px; font-family: var(--font-display); font-size: 10px; letter-spacing: .08em; color: var(--text-tertiary); }
-.chain { display: inline-flex; align-items: center; }
-.chain i { width: 7px; height: 7px; border-radius: 50%; background: var(--green-ok); }
-.chain s { width: 7px; height: 2px; background: var(--green-ok); }
-.g-ok { color: var(--green-ok); }
+.topbar { position: absolute; top: 0; left: 0; right: 0; height: var(--bar-h); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 10px; background: var(--surface); border-bottom: 1px solid var(--line); z-index: 10; --glyph-ls: 0.04em; }
+/* the S108 four-item cluster at the 26 px bar face (Warnings §4.2, System §4.2.1): chain 3ch, sync, WiFi SVG 1ch, icon slot 3 chars */
+.glyphs { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: var(--fs-secondary); line-height: 1; color: var(--text-secondary); }
+.glyph { letter-spacing: var(--glyph-ls); }
+.chain { display: block; width: 3ch; height: 1em; color: var(--green-ok); }
+.wifi { display: block; width: 1ch; height: 1em; color: var(--green-ok); }
+.sync { color: var(--green-ok); }
 .clock { font-family: var(--font-mono); font-size: var(--fs-label); font-variant-numeric: tabular-nums; color: var(--text-primary); }
 .clock.hide { visibility: hidden; }
 .right { justify-self: end; display: flex; align-items: center; gap: 8px; }
@@ -74,46 +77,52 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
 .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-tertiary); }
 .dots i.on { background: var(--accent); width: 8px; height: 8px; }
 
-/* top-bar warning icon: renders states/alerts.icon.state as given (none / not_checked / watch / stop) */
-.wicon { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: var(--fs-meta); font-weight: 600; line-height: 1; }
-.wicon svg { display: block; }
-.wicon.none { color: var(--text-tertiary); }
+/* top-bar warning icon: renders states/alerts.icon as given. Fixed slot: 3 x (1ch + ls), never min-width (▲99 must not reflow) */
+.wicon { display: inline-block; width: calc(3 * (1ch + var(--glyph-ls))); text-align: start; white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+.wicon.none, .wicon.nodata { color: var(--text-tertiary); font-weight: 400; }
 .wicon.not_checked, .wicon.watch { color: var(--amber-warn); }
 .wicon.stop { color: var(--critical-red); }
-.wicon.pulse svg { animation: ipulse 1.2s steps(2, jump-none) infinite; }
+@media (prefers-reduced-motion: no-preference) {
+  .wicon.pulse { animation: ipulse 1.2s steps(2, jump-none) infinite; }
+}
 @keyframes ipulse { 0% { opacity: 1; } 100% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) {
+  .wicon.pulse { outline: 2px solid var(--critical-red); outline-offset: 1px; }
+}
 
 .page { position: absolute; top: var(--bar-h); bottom: var(--dots-h); left: 0; right: 0; padding: 6px 10px 0; display: grid; grid-template-rows: auto minmax(0, 1fr) 18px; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .h { font-family: var(--font-display); font-size: var(--fs-primary); line-height: 1; white-space: nowrap; }
 .h.unk { color: var(--amber-warn); }
+.h.nd { font-family: var(--font-mono); color: var(--text-tertiary); }
 .hs { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--text-secondary); white-space: nowrap; }
 .list { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--text-tertiary) var(--surface); padding-right: 4px; }
 .list::-webkit-scrollbar { width: 6px; }
 .list::-webkit-scrollbar-track { background: var(--surface); }
 .list::-webkit-scrollbar-thumb { background: var(--text-tertiary); border-radius: 3px; }
+/* row: chip | title (+ value) | age ; the sentence spans under title + age (spec §3) */
 .entry { display: grid; grid-template-columns: var(--chip-w) minmax(0, 1fr) max-content; column-gap: 8px; row-gap: 2px; padding-block: 6px; min-height: 48px; box-sizing: border-box; border-bottom: 1px solid var(--line); }
+.entry.code { cursor: pointer; }
 /* chip inks per tier (Atlas 2026-10-16): STOP #fff (the existing STOP copy colour), WATCH/MINOR var(--bg), UNRATED --text-primary */
-.chip { grid-column: 1; grid-row: 1; font-family: var(--font-display); font-size: var(--fs-meta); line-height: 23px; height: 23px; text-align: center; border-radius: 4px; color: var(--bg); white-space: nowrap; }
+.chip { grid-column: 1; grid-row: 1; align-self: start; font-family: var(--font-display); font-size: var(--fs-meta); line-height: 23px; height: 23px; text-align: center; border-radius: 4px; color: var(--bg); white-space: nowrap; }
 .chip.stop { background: var(--critical-red); color: #fff; }
 .chip.watch { background: var(--amber-warn); }
 .chip.minor { background: var(--green-ok); }
 .chip.unrated { background: var(--neutral-chip-bg); color: var(--text-primary); }
 .chip.cleared { background: transparent; color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--text-tertiary); }
-.et { grid-column: 2 / 4; grid-row: 1; font-family: var(--font-mono); font-size: var(--fs-label); line-height: 23px; overflow-wrap: anywhere; }
-.et .v { font-variant-numeric: tabular-nums; }
-.src { grid-column: 1; grid-row: 2; font-family: var(--font-display); font-size: var(--fs-meta); line-height: 18px; color: var(--text-secondary); text-align: center; white-space: nowrap; }
-.es { grid-column: 2; grid-row: 2; font-family: var(--font-body); font-size: var(--fs-meta); line-height: 18px; color: var(--text-secondary); }
-.es.reading { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.age { grid-column: 3; grid-row: 2; align-self: end; font-family: var(--font-mono); font-size: var(--fs-meta); line-height: 18px; color: var(--text-tertiary); white-space: nowrap; }
+/* the title WRAPS, never clips: the worst row (999 days ago) is ~457 of 456 px at a 116 px chip column */
+.et { grid-column: 2; grid-row: 1; font-family: var(--font-mono); font-size: var(--fs-label); line-height: 23px; overflow-wrap: anywhere; }
+.et .v { font-variant-numeric: tabular-nums; white-space: nowrap; }   /* a value never splits from its unit */
+.es { grid-column: 2 / 4; grid-row: 2; font-family: var(--font-mono); font-size: var(--fs-meta); line-height: 18px; color: var(--text-secondary); }
+.es.stale { grid-row: 3; }
+.age { grid-column: 3; grid-row: 1; align-self: center; font-family: var(--font-mono); font-size: var(--fs-meta); line-height: 18px; color: var(--text-tertiary); white-space: nowrap; }
 .entry.inactive .et, .entry.inactive .es { color: var(--text-tertiary); }
 .more { font-family: var(--font-mono); font-size: var(--fs-meta); line-height: 18px; color: var(--text-secondary); }
 .empty { display: grid; gap: 8px; align-content: start; padding-top: 18px; }
 .empty .big { font-family: var(--font-display); font-size: var(--fs-secondary); line-height: 1.1; }
 .empty .big.unk { color: var(--amber-warn); }
 .empty .q { font-family: var(--font-mono); font-weight: 700; }
-.empty .why { font-family: var(--font-body); font-size: var(--fs-meta); color: var(--text-secondary); line-height: 1.3; }
-.empty .nb { font-family: var(--font-body); font-size: var(--fs-meta); color: var(--text-tertiary); line-height: 1.3; }
+.empty .why, .empty .nb { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--text-secondary); line-height: 1.3; }
 
 /* a stand-in Driving page, so the takeover can be shown covering another page */
 .drv { grid-template-rows: 1fr; place-items: center; }
@@ -123,44 +132,69 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
 
 /* PULL OVER: the shipped #dtc-takeover[data-severity="stop"] skeleton (dashboard.css), reused.
    Above every page, menu and overlay; below the data-source marker only. */
-.takeover { position: absolute; inset: 0; z-index: 40; box-sizing: border-box; background: var(--bg); color: #fff; border: var(--takeover-edge) solid var(--critical-red); display: grid; align-content: center; justify-items: center; gap: 8px; padding: 10px 18px; text-align: center; cursor: default; animation: stop-alarm-pulse 1.1s ease-in-out infinite; }
+.takeover { position: absolute; inset: 0; z-index: 40; box-sizing: border-box; background: var(--bg); color: #fff; border: var(--takeover-edge) solid var(--critical-red); display: grid; align-content: center; justify-items: center; gap: 6px; padding: 10px 18px; text-align: center; cursor: default; }
+@media (prefers-reduced-motion: no-preference) {
+  .takeover { animation: stop-alarm-pulse 1.1s ease-in-out infinite; }
+}
 /* the ONE STOP motion, same two stops as the shipped keyframe (Atlas 2026-10-16) */
 @keyframes stop-alarm-pulse { 0%, 100% { border-color: var(--critical-red); } 50% { border-color: var(--bg); } }
 .takeover .po { font-family: var(--font-display); font-size: var(--fs-hero); line-height: 1.05; background: var(--critical-red); color: #fff; padding: 5px 14px; border-radius: 3px; }
 .takeover .tt { font-family: var(--font-display); font-size: var(--fs-secondary); line-height: 1.1; }
 .takeover .tv { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-primary); line-height: 1; font-variant-numeric: tabular-nums; }
-.takeover .tv.dim { color: var(--text-secondary); }
-.takeover .ts { font-family: var(--font-body); font-size: var(--fs-label); line-height: 1.2; max-width: 428px; }
+.takeover .tl { font-family: var(--font-mono); font-size: var(--fs-label); line-height: 1.1; color: var(--text-secondary); }
+.takeover .ts { font-family: var(--font-mono); font-size: var(--fs-label); line-height: 1.2; max-width: 428px; }
 .takeover .ta { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--text-secondary); }
-.takeover .ta.stale { color: var(--amber-warn); }
-.takeover .err, .codealert .err { font-family: var(--font-body); font-size: var(--fs-meta); color: var(--amber-warn); }
+.takeover .err, .codealert .err, .detail .err { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--amber-warn); }
 
-/* KEY-ON CODE ALERT: same skeleton, NO pulse, NO full-brightness override; frame = the top tier's chip colour */
+/* KEY-ON CODE ALERT: same skeleton, NO pulse, NO full-brightness override; frame = TIER_COLOR_VAR[codeAlert.tier] */
 .codealert { position: absolute; inset: 0; z-index: 35; box-sizing: border-box; background: var(--bg); border: var(--takeover-edge) solid var(--neutral-chip-bg); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; padding: 14px 16px 12px; }
+.codealert.stop { border-color: var(--critical-red); }
 .codealert.watch { border-color: var(--amber-warn); }
 .codealert.minor { border-color: var(--green-ok); }
 .codealert .cah { font-family: var(--font-display); font-size: var(--fs-secondary); line-height: 1.1; text-align: center; }
 .codealert .rows { display: grid; align-content: start; gap: 2px; }
-.codealert .entry { grid-template-columns: var(--chip-w) minmax(0, 1fr); }
-.codealert .entry .et { grid-column: 2; }
-.codealert .camore { font-family: var(--font-body); font-size: var(--fs-meta); color: var(--text-secondary); }
+.codealert .entry { grid-template-columns: var(--chip-w) minmax(0, 1fr); cursor: default; }
+.codealert .entry .es { grid-column: 2; }
+.codealert .camore { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--text-secondary); }
 .codealert .cafoot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 /* DISMISS is a real control, so it looks like one (US-758): bordered, >= 40 px */
 .codealert .dismiss { font-family: var(--font-display); font-size: var(--fs-label); min-height: var(--tap-min); padding: 0 18px; border: 2px solid var(--text-primary); border-radius: 6px; background: transparent; color: var(--text-primary); cursor: pointer; }
-.codealert .dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.marker { position: absolute; top: 0; left: 50%; transform: translateX(-50%); height: var(--bar-h); padding: 0 8px; display: grid; place-items: center; z-index: 50; background: var(--bg); color: var(--text-primary); font-family: var(--font-display); font-size: var(--fs-label); pointer-events: none; white-space: nowrap; }
+.codealert .dismiss:focus-visible, .detail button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-@media (prefers-reduced-motion: reduce) {
-  .wicon.pulse svg { animation: none; }
-  .takeover { animation: none; }
-}
+/* CODE DETAIL (#dtc-detail): parked only. Below the code alert, PULL OVER and the marker. */
+.detail { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: grid; grid-template-rows: var(--bar-h) minmax(0, 1fr) auto; }
+.detail .obar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.detail .back { justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap-min); padding: 0 6px; background: transparent; border: 0; color: var(--text-primary); cursor: pointer; }
+.detail .back .m { font-family: var(--font-mono); font-size: var(--fs-secondary); line-height: 1; }
+.detail .back .t { font-family: var(--font-display); font-size: var(--fs-meta); }
+.detail .obar .pname { justify-self: end; }
+.detail .db { padding: 10px 12px 0; display: grid; align-content: start; gap: 10px; overflow: hidden; }
+.detail .dh { display: grid; grid-template-columns: var(--chip-w) minmax(0, 1fr); column-gap: 8px; align-items: center; }
+.detail .dh .chip { grid-row: auto; }
+.detail .dh .et { grid-column: 2; grid-row: auto; }
+/* the directive band shows the entry's sentence (U4), never the tier-table directive */
+.detail .band { font-family: var(--font-mono); font-size: var(--fs-label); line-height: 1.25; padding: 8px 10px; background: var(--surface); border-left: 4px solid var(--neutral-chip-bg); }
+.detail .band.stop { border-left-color: var(--critical-red); }
+.detail .band.watch { border-left-color: var(--amber-warn); }
+.detail .band.minor { border-left-color: var(--green-ok); }
+.detail .fact { display: grid; gap: 2px; }
+.detail .fl { font-family: var(--font-display); font-size: var(--fs-meta); color: var(--text-secondary); }
+.detail .fv { font-family: var(--font-mono); font-size: var(--fs-meta); line-height: 1.3; color: var(--text-primary); }
+.detail .fv.na { color: var(--text-secondary); }
+.detail .dfoot { padding: 8px 12px 10px; display: grid; gap: 4px; }
+/* CLEAR: enabled = a real bordered control. Locked = visible, disabled, the lock label; it says what unlocks it */
+.detail .clear { min-height: var(--tap-min); width: 100%; padding: 6px 10px; border-radius: 6px; text-align: center; }
+.detail .clear.on { font-family: var(--font-display); font-size: var(--fs-label); border: 2px solid var(--text-primary); background: transparent; color: var(--text-primary); cursor: pointer; }
+.detail .clear.lock { font-family: var(--font-mono); font-size: var(--fs-meta); line-height: 1.3; border: 1px solid var(--line); background: var(--surface); color: var(--text-secondary); cursor: default; }
+
+.marker { position: absolute; top: 0; left: 50%; transform: translateX(-50%); height: var(--bar-h); padding: 0 8px; display: grid; place-items: center; z-index: 50; background: var(--bg); color: var(--text-primary); font-family: var(--font-display); font-size: var(--fs-label); pointer-events: none; white-space: nowrap; }
 </style>
 
 <div class="wrap">
   <header>
-    <span class="eyebrow">V0.30 · Warnings · S106 brief</span>
+    <span class="eyebrow">V0.30 · Warnings · v3, to the merged spec</span>
     <h1>Warnings page in the OEM skin</h1>
-    <p class="lede">The real 480 × 320 Warnings page in the 90s Mitsubishi OEM style. Every active entry is in one list, ranked by the provider, and the list scrolls when it runs long. The warning icon in the top bar shows on every page. Two screens can cover the page. <b>PULL OVER</b> is for a live coolant red only, and it can't be dismissed. The <b>code alert</b> shows stored codes once per key-on: it can be dismissed, and it is never drawn while the car moves. Pick a scenario, then switch the page underneath, drive off, go stale, acknowledge, or let an acknowledge fail.</p>
+    <p class="lede">The real 480 × 320 Warnings page in the 90s Mitsubishi OEM style, brought up to the merged spec on 2026-10-22. Every active entry is in one list, ranked by the provider, and the list scrolls when it runs long. The warning icon in the top bar shows on every page. Two screens can cover the page. <b>PULL OVER</b> is for a live coolant red only, and it can't be dismissed. The <b>code alert</b> shows stored codes once per key-on; it can be dismissed, and it is never drawn while the car moves. Parked, a tap on a code row opens its <b>detail</b>, where the Clear button says what unlocks it. Pick a scenario, then switch the page underneath, drive off, go stale, acknowledge, or let a write fail.</p>
   </header>
 
   <section class="stage" aria-label="Live page">
@@ -173,8 +207,10 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <label><input type="radio" name="sc" value="stop"><span>Live coolant red</span></label>
         <label><input type="radio" name="sc" value="keyon"><span>Key-on codes</span></label>
         <label><input type="radio" name="sc" value="keyonstop"><span>Key-on codes + coolant red</span></label>
+        <label><input type="radio" name="sc" value="minor"><span>One MINOR code</span></label>
         <label><input type="radio" name="sc" value="unchecked"><span>Codes not read</span></label>
         <label><input type="radio" name="sc" value="seven"><span>Seven entries</span></label>
+        <label><input type="radio" name="sc" value="nodata"><span>No alerts data</span></label>
       </fieldset>
       <fieldset>
         <legend>Coolant feed (overheat only)</legend>
@@ -184,22 +220,32 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <label><input type="radio" name="ca" value="cleared"><span>Cleared (≤ 101 °C held 60 s)</span></label>
       </fieldset>
       <fieldset>
-        <legend>Car · page underneath</legend>
+        <legend>Car (engineParked) · page underneath</legend>
         <label><input type="radio" name="mv" value="parked" checked><span>Parked</span></label>
-        <label><input type="radio" name="mv" value="moving"><span>Moving</span></label>
+        <label><input type="radio" name="mv" value="moving"><span>Not parked (driving or idling)</span></label>
         <label><input type="radio" name="pg" value="alerts" checked><span>Alerts</span></label>
         <label><input type="radio" name="pg" value="driving"><span>Driving</span></label>
       </fieldset>
       <fieldset>
-        <legend>Data source · auto-dim · ack channel</legend>
+        <legend>Clear gate (states/dtc) · detail fetch</legend>
+        <label><input type="radio" name="gt" value="ok" checked><span>Synced</span></label>
+        <label><input type="radio" name="gt" value="sync_pending"><span>Waiting for sync (the car today)</span></label>
+        <label><input type="radio" name="gt" value="pending_not_read"><span>Pending not read</span></label>
+        <label><input type="radio" name="gt" value="session_locked"><span>A cleared code came back</span></label>
+        <label><input type="radio" name="df" value="ok" checked><span>Detail loads</span></label>
+        <label><input type="radio" name="df" value="fail"><span>Detail fetch fails</span></label>
+      </fieldset>
+      <fieldset>
+        <legend>Data source · auto-dim · write channel</legend>
         <label><input type="radio" name="ds" value="live" checked><span>Live</span></label>
         <label><input type="radio" name="ds" value="replay"><span>Replay</span></label>
         <label><input type="radio" name="ad" value="day" checked><span>Day 100 %</span></label>
         <label><input type="radio" name="ad" value="night"><span>Night 75 %</span></label>
-        <label><input type="radio" name="ch" value="ok" checked><span>Ack OK</span></label>
-        <label><input type="radio" name="ch" value="fail"><span>Ack fails (503)</span></label>
+        <label><input type="radio" name="ch" value="ok" checked><span>Writes OK</span></label>
+        <label><input type="radio" name="ch" value="fail"><span>Writes fail (503)</span></label>
       </fieldset>
       <button type="button" id="ack">Acknowledge the takeover (tap)</button>
+      <p class="hint">Parked on Alerts, tap a code row to open its detail. Not parked, the tap does nothing.</p>
       <div class="readout" id="readout">—</div>
     </div>
   </section>
@@ -213,21 +259,25 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     <div>
       <h2>What the page reads</h2>
       <ul>
-        <li><b>Only <code>states/alerts</code>.</b> Each <code>entries[]</code> row is <code>{id, source, key, tier, title, sentence, value, unit, firstSeenTs, active, stale, acknowledged}</code>, already in the provider's order: tier, then live before stored, then newest. The page never sorts.</li>
-        <li><b>The icon</b> renders <code>icon.state</code>, <code>icon.count</code> and <code>icon.pulse</code> exactly as given. A live STOP or WATCH outranks <code>?</code>. MINOR-only shows as watch, which is counted and therefore amber (proposed to Atlas, G7).</li>
-        <li><b>The two screens</b> come from <code>takeover</code> (coolant STOP, not dismissable) and <code>codeAlert</code> (<code>ids[]</code>, dismissable). Titles and sentences are Spool's words, from the provider.</li>
-        <li><b>Acknowledge</b> is <code>POST /alerts-ack {id}</code> and counts only for this boot. It is an honest write: the pulse stops, or the code alert closes, only when the re-read says so. On failure the screen stays, and says it couldn't save.</li>
-        <li><b>Only what was assessed.</b> System and data checks aren't built in V0.30 (<code>sources.system/data.assessed: false</code>), so the empty state never claims they are clear.</li>
+        <li><b>Only <code>states/alerts</code></b>, except in the code detail. Each <code>entries[]</code> row is <code>{id, source, key, tier, title, sentence, value, unit, round, firstSeenTs, active, stale, acknowledged}</code>, already in the provider's order: tier, then live before stored, then newest. The page never sorts.</li>
+        <li><b>The icon</b> renders <code>icon.state</code>, <code>icon.count</code> and <code>icon.pulse</code> as given: <code>△</code> tertiary, amber <code>?</code>, amber <code>▲n</code>, red <code>▲n</code>, and <code>--</code> tertiary with no payload (never <code>△</code>: that would claim the codes were read). MINOR- or UNRATED-only is <code>watch</code> (Atlas G7): counted means amber. Above 99 it reads <code>▲99</code>, in a fixed 3-character slot.</li>
+        <li><b>Words are the provider's:</b> titles, sentences and the takeover's <code>directive</code>. Codes read <code>EGR FLOW (P0400)</code>; an unrated code is the bare code with <code>Severity unknown. Get it diagnosed.</code> No P0430: bank-2 codes can't set on this inline four.</li>
+        <li><b>Values</b> go through <code>displayUnits(value, unit, round)</code>. Conversion first (coolant °C ⇒ °F), and the provider's <code>round</code> direction last: battery low 11.96 floors to <code>11.9 V</code>, high 15.04 ceils to <code>15.1 V</code>. No threshold reaches the page.</li>
+        <li><b>Ages:</b> rows use <code>agoText</code> (<code>just now</code>, <code>n min ago</code>, <code>41 days ago</code>), with no source prefix. A stale reading says <code>last reading n s ago</code>, capped at <code>999+ s ago</code>.</li>
+        <li><b>Only what was assessed.</b> In the checked, nothing-found state, each unassessed source gets its own line in <code>--text-secondary</code>: <code>System checks not read yet.</code> until the first verdict, and <code>Data checks are not built yet.</code> The NOT CHECKED state adds neither.</li>
       </ul>
     </div>
     <div>
       <h2>Rules drawn here</h2>
       <ul>
         <li><b>Red is the STOP tier only,</b> and today that means a live coolant red. A red RPM or battery tile is a WATCH entry with an amber icon. The tile shows where the value is; the tier says what to do.</li>
-        <li><b>PULL OVER</b> reuses the shipped STOP skeleton: an opaque field, an 8 px red frame on the shipped <code>stop-alarm-pulse</code>, white copy, full brightness. It has no button. Tapping it stops the icon pulse only. It closes when the provider clears the entry, never because the data went stale.</li>
-        <li><b>The code alert</b> uses the same skeleton with no pulse and no brightness override. Its frame takes the highest tier's chip colour. It has one real button, <code>DISMISS</code>, and is <b>not drawn while moving</b> (hiding it isn't a dismiss). PULL OVER outranks it.</li>
+        <li><b>PULL OVER</b> reuses the shipped STOP skeleton: an opaque field, an 8 px red frame on <code>stop-alarm-pulse</code> (inside <code>prefers-reduced-motion: no-preference</code>), white copy, full brightness, no button. A tap stops the icon pulse only. Stale, it stays up with the last value, and <code>last reading n s ago</code> goes on its own <code>--fs-label</code> line.</li>
+        <li><b>The code alert</b> uses the same skeleton with no pulse and no brightness override. Its frame is <code>TIER_COLOR_VAR[codeAlert.tier]</code>, the provider's tier. It has one real button, <code>DISMISS</code>, and is not drawn while not parked (hiding it isn't a dismiss). PULL OVER outranks it.</li>
+        <li><b>The clear lock says what unlocks it.</b> <code>engine off to clear</code> shows only when not being parked is the sole blocker (the shipped <code>clearButtonView</code>: <code>moving</code> replaces only <code>ok</code>). Every other reason wins, because engine-off would not unlock it: a WATCH or unrated code, a sync still pending, pending codes not read, a code that came back (Atlas, US-919, 2026-10-21). Which non-ok reason shows first is the gate's order, not the page's.</li>
+        <li><b>Detail fetch fails:</b> the entry's own chip, title and sentence, plus <code>details unavailable</code>. <b>No Clear control is drawn</b>: the fetch is what feeds the gate. ⚠️ The spec doesn't name this case yet; flagged.</li>
         <li><b>REPLAY stays on top.</b> The data-source marker sits above both screens.</li>
-        <li><b>Fit (measured, Michroma):</b> <code>PULL OVER</code> 345.7 px at 44 · <code>ENGINE OVERHEATING</code> 416.1 px at 26 · <code>TROUBLE CODES</code> 315.5 px at 26 · <code>DISMISS</code> 123.0 px at 20 · <code>NOT CHECKED</code> 352.7 px at 34. The widest chip, <code>UNRATED</code>, is 107 px in a 116 px column.</li>
+        <li><b>Fit (measured):</b> <code>PULL OVER</code> 345.7 px at 44 · <code>ENGINE OVERHEATING</code> 416.1 px at 26 · <code>TROUBLE CODES</code> 315.5 px at 26 · <code>DISMISS</code> 123.0 px at 20 · <code>NOT CHECKED</code> 352.7 px at 34 (Michroma). The widest chip, <code>UNRATED</code>, is 107 px, so the chip column is 116 px, and the worst row (<code>999 days ago</code>) is ~457 of 456 px. The title wraps there; it never clips.</li>
+        <li><b>Top bar:</b> the S108 four-item cluster at 26 px (chain 3ch · <code>⇅</code> · WiFi SVG · the icon), 159.4 of 168.6 px. Other OEM mockups draw a word stand-in; the spec's widths govern the build.</li>
       </ul>
     </div>
   </section>
@@ -237,124 +287,231 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
 (function () {
   "use strict";
   var TIER = { stop: "STOP", watch: "WATCH", minor: "MINOR", unrated: "UNRATED" };
-  var RANK = { stop: 3, watch: 2, minor: 1, unrated: 0 };
-  // Entries as the provider publishes them. v = value + unit as the page shows it (unit via the S103 helper).
-  // UNRATED sentences are null until Spool writes the provider sentence (brief G1): no placeholder.
+  // The ONE tier -> colour map (US-899-a1); class names stand in for the token vars here.
+  var TIER_COLOR_VAR = { stop: "stop", watch: "watch", minor: "minor", unrated: "unrated" };
+  var NOW = Date.now();
+  function ago(ms) { return new Date(NOW - ms).toISOString(); }
+  var MIN = 60000, H = 60 * MIN, DAY = 24 * H;
+  var NOW_ISO = new Date(NOW).toISOString();
+
+  // Entries as the provider publishes them: raw value + unit + round direction (the page converts, then rounds last).
   var E = {
-    coolant: { id: "engine:COOLANT_TEMP:stop", tier: "stop", title: "ENGINE OVERHEATING", v: "234 °F", sentence: "Stop safely, engine off. Do not open the radiator cap hot.", src: "ENGINE", age: "2 min", live: true },
-    battLow: { id: "engine:BATTERY_V:watch", tier: "watch", title: "CHARGING FAULT", v: "11.8 V", sentence: "Head somewhere safe. Turn off accessories.", src: "ENGINE", age: "now", live: true },
-    battHigh: { id: "engine:BATTERY_V:watch", tier: "watch", title: "OVERCHARGING", v: "15.3 V", sentence: "Head somewhere safe, then engine off.", src: "ENGINE", age: "1 min", live: true },
-    overRev: { id: "engine:RPM:watch", tier: "watch", title: "OVER-REV", v: "", sentence: "peak 7,150 rpm (sampled)", reading: true, src: "ENGINE", age: "4 min", live: true },
-    p0400: { id: "code:P0400:watch", tier: "watch", title: "P0400", v: "", sentence: "EGR flow fault. Get it checked soon.", src: "CODE", age: "3 days" },
-    p0430: { id: "code:P0430:watch", tier: "watch", title: "P0430", v: "", sentence: "Catalyst below threshold, bank 2. Get it checked soon.", src: "CODE", age: "3 days" },
-    p0443: { id: "code:P0443:minor", tier: "minor", title: "P0443", v: "", sentence: "Evap purge valve circuit. Emissions only.", src: "CODE", age: "3 days" },
-    p0507: { id: "code:P0507:unrated", tier: "unrated", title: "P0507", v: "", sentence: null, src: "CODE", age: "5 h" },
-    p0135: { id: "code:P0135:unrated", tier: "unrated", title: "P0135", v: "", sentence: null, src: "CODE", age: "2 h" }
+    coolant: { id: "engine:COOLANT_TEMP:stop", source: "engine", tier: "stop", title: "ENGINE OVERHEATING", sentence: "Stop safely, engine off. Do not open the radiator cap hot.", value: 112.2, unit: "C", round: "ceil", firstSeenTs: ago(2 * MIN), live: true },
+    battLow: { id: "engine:BATTERY_V:watch", source: "engine", tier: "watch", title: "CHARGING FAULT", sentence: "Head somewhere safe. Turn off accessories.", value: 11.96, unit: "V", round: "floor", firstSeenTs: ago(20 * 1000), live: true },
+    battHigh: { id: "engine:BATTERY_V:watch", source: "engine", tier: "watch", title: "OVERCHARGING", sentence: "Head somewhere safe, then engine off.", value: 15.04, unit: "V", round: "ceil", firstSeenTs: ago(MIN), live: true },
+    overRev: { id: "engine:RPM:watch", source: "engine", tier: "watch", title: "OVER-REV", sentence: "peak 7,150 rpm (sampled)", value: null, unit: null, round: null, firstSeenTs: ago(4 * MIN), live: true },
+    p0400: { id: "code:P0400:watch", source: "code", tier: "watch", title: "EGR FLOW (P0400)", sentence: "Drive gently. Get it diagnosed.", value: null, unit: null, firstSeenTs: ago(41 * DAY) },
+    p1103: { id: "code:P1103:watch", source: "code", tier: "watch", title: "WASTEGATE (P1103)", sentence: "No full throttle. Get it diagnosed.", value: null, unit: null, firstSeenTs: ago(3 * DAY) },
+    p0443: { id: "code:P0443:minor", source: "code", tier: "minor", title: "EVAP PURGE (P0443)", sentence: "Emissions only. Safe to drive.", value: null, unit: null, firstSeenTs: ago(41 * DAY) },
+    p0507: { id: "code:P0507:unrated", source: "code", tier: "unrated", title: "P0507", sentence: "Severity unknown. Get it diagnosed.", value: null, unit: null, firstSeenTs: ago(5 * H) },
+    p0135: { id: "code:P0135:unrated", source: "code", tier: "unrated", title: "P0135", sentence: "Severity unknown. Get it diagnosed.", value: null, unit: null, firstSeenTs: ago(2 * H) }
+  };
+  // The full states/dtc record, read ONLY when the detail opens (the G-7 exception).
+  var DTC = {
+    P0400: { long: "Exhaust gas recirculation flow malfunction" },
+    P1103: { long: "Turbocharger wastegate actuator malfunction" },
+    P0443: { long: "Evaporative emission purge control valve circuit" },
+    P0507: { long: "Idle air control system RPM higher than expected" },
+    P0135: { long: "O2 sensor heater circuit, bank 1 sensor 1" }
   };
   function with_(e, over) { var o = {}, k; for (k in e) o[k] = e[k]; for (k in over) o[k] = over[k]; return o; }
-  var CHECKED = "6:42";   // 12-hour, no AM/PM: the one clock rule
-  // d: { checked (null = sources.code.assessed false), engine (sources.engine.assessed), list, codeAlert: null | ids[] }
+  var CHECKED = "6:42";   // fmtTimeOfDay: 12-hour, no AM/PM
+  var SYS_NOT_READ = { assessed: false, reason: "not_read" }, SYS_OK = { assessed: true }, DATA_NB = { assessed: false, reason: "not_built" };
+  // d: { checked (null = sources.code.assessed false), engine, system, data, list, codeAlert: null | {ids, tier}, nodata }
+  function sc(o) { return with_({ checked: CHECKED, engine: true, system: SYS_OK, data: DATA_NB, list: [], codeAlert: null }, o); }
   var SC = {
-    clean: { checked: CHECKED, engine: true, list: [], codeAlert: null },
-    watch: { checked: CHECKED, engine: true, list: [E.battLow, E.p0400, E.p0443], codeAlert: null },
-    stop: { checked: CHECKED, engine: true, list: [E.coolant, E.p0400, E.p0443], codeAlert: null },
-    keyon: { checked: CHECKED, engine: true, list: [E.p0400, E.p0443], codeAlert: [E.p0400.id, E.p0443.id] },
-    keyonstop: { checked: CHECKED, engine: true, list: [E.coolant, E.p0400, E.p0443], codeAlert: [E.p0400.id, E.p0443.id] },
-    unchecked: { checked: null, engine: true, list: [], codeAlert: null },
-    seven: { checked: CHECKED, engine: true, list: [E.battLow, E.overRev, E.p0400, E.p0430, E.p0443, E.p0507, E.p0135], codeAlert: null }
+    clean: sc({}),
+    watch: sc({ list: [E.battLow, E.p0400, E.p0443] }),
+    stop: sc({ list: [E.coolant, E.p0400, E.p0443] }),
+    keyon: sc({ list: [E.p0400, E.p0443], codeAlert: { ids: [E.p0400.id, E.p0443.id], tier: "watch" } }),
+    keyonstop: sc({ list: [E.coolant, E.p0400, E.p0443], codeAlert: { ids: [E.p0400.id, E.p0443.id], tier: "watch" } }),
+    minor: sc({ list: [E.p0443] }),
+    unchecked: sc({ checked: null, system: SYS_NOT_READ }),
+    seven: sc({ list: [E.battLow, E.overRev, E.p1103, E.p0400, E.p0443, E.p0507, E.p0135] }),
+    nodata: { nodata: true }
   };
-  var S = { sc: "clean", cf: "fresh", ca: "active", mv: "parked", pg: "alerts", ds: "live", ad: "day", ch: "ok", acked: false, dismissed: false, staleS: 12, err: "" };
+  var S = { sc: "clean", cf: "fresh", ca: "active", mv: "parked", pg: "alerts", gt: "ok", df: "ok", ds: "live", ad: "day", ch: "ok",
+            acked: false, dismissed: false, staleS: 12, err: "", detail: null };
 
   function isActive(e) { return e.active !== false; }
   function clockText(d) { var h = d.getHours(), m = d.getMinutes(); return ((h % 12) || 12) + ":" + (m < 10 ? "0" : "") + m; }
   function byId(d, id) { for (var i = 0; i < d.list.length; i++) if (d.list[i].id === id) return d.list[i]; return null; }
+  function codeOf(id) { return id.split(":")[1]; }   // id = code:<code>:<tier>
 
-  // SIMULATED PROVIDER. On the Pi, icon / takeover / codeAlert come computed in states/alerts and the page compares nothing.
+  // ---------- SIMULATED PROVIDER. On the Pi these come computed in states/alerts; the page compares nothing. ----------
   function providerIcon(d, acked) {
+    if (d.nodata) return null;
     var act = d.list.filter(isActive), n = act.length;
-    var stop = act.some(function (e) { return e.tier === "stop"; });
-    if (stop) return { state: "stop", count: n, pulse: !acked };
-    if (n) return { state: "watch", count: n, pulse: false };      // G7 proposal: MINOR-/UNRATED-only = watch (amber = counted)
+    if (act.some(function (e) { return e.tier === "stop"; })) return { state: "stop", count: n, pulse: !acked };
+    if (n) return { state: "watch", count: n, pulse: false };
     if (!d.checked) return { state: "not_checked", count: 0, pulse: false };
     return { state: "none", count: 0, pulse: false };
   }
-  function providerTakeover(d) { var t = d.list[0]; return t && t.tier === "stop" && t.live && isActive(t) ? t : null; }
+  function providerTakeover(d) {
+    if (d.nodata) return null;
+    var t = d.list[0];
+    return t && t.tier === "stop" && t.live && isActive(t) ? with_(t, { directive: "PULL OVER" }) : null;
+  }
+  // SIMULATED GATE (clearGateReason, unchanged and not the page's to order). Mode 04 wipes every code, so it reads all of them.
+  function clearGateReason(d, extra) {
+    var codes = d.list.filter(function (e) { return e.source === "code" && isActive(e); });
+    if (codes.some(function (e) { return e.tier === "stop" || e.tier === "watch"; })) return "severity_present";
+    if (codes.some(function (e) { return e.tier === "unrated"; })) return "severity_unknown";
+    return extra || "ok";
+  }
 
   // ---------- page code: renders what the provider gave ----------
-  function icon(ic) {
-    var q = ic.state === "not_checked", fill = ic.state === "watch" || ic.state === "stop";
-    var tri = q
-      ? '<svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="M9 1.5 17 15H1z" fill="none" stroke="currentColor" stroke-width="1.5"/><text x="9" y="13.5" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="ui-monospace, monospace">?</text></svg>'
-      : '<svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="M9 1.5 17 15H1z" fill="' + (fill ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="1.5"/></svg>';
-    var label = { stop: "STOP", watch: "WATCH", not_checked: "codes not checked", none: "no warnings" }[ic.state];
-    return '<span class="wicon ' + ic.state + (ic.pulse ? " pulse" : "") + '" role="img" aria-label="Warnings: ' + label + (ic.count ? ", " + ic.count : "") + '">' + tri + (ic.count ? ic.count : "") + "</span>";
+  var CLEAR_REASON_LABEL = {   // shipped carousel.js words (S108 US-898-c, S111 US-919)
+    ok: "CLEAR CODES",
+    severity_present: "🔒 CLEAR CODES — a STOP/WATCH code is present",
+    severity_unknown: "🔒 CLEAR CODES — severity could not be determined",
+    sync_pending: "🔒 CLEAR CODES — waiting for server sync",
+    session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
+    pending_not_read: "🔒 CLEAR CODES — pending codes haven’t been read",
+    moving: "🔒 CLEAR CODES — engine off to clear"
+  };
+  // The shipped rule: 'moving' replaces ONLY 'ok'. Every other reason wins (Atlas US-919, 2026-10-21).
+  function clearButtonView(reason, parked) {
+    if (reason === "ok" && parked !== true) reason = "moving";
+    return { reason: reason, enabled: reason === "ok", label: CLEAR_REASON_LABEL[reason] };
   }
-  function topbar(ic, o) {
-    return '<div class="topbar"><div class="glyphs"><span class="chain"><i></i><s></s><i></i><s></s><i></i></span>' +
-      '<span class="g-ok">WIFI</span><span class="g-ok">SYNC</span>' + icon(ic) + "</div>" +
-      '<div class="clock' + (o.replay ? " hide" : "") + '">' + clockText(new Date()) + '</div><div class="right"><span class="pname">' + (o.pg === "driving" ? "DRIVING" : "ALERTS") + '</span><span class="kebab" aria-hidden="true">⋮</span></div></div>';
+  function fmtThousands(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  // displayUnits: convert first, apply the provider's round direction LAST, at the rule's decimals.
+  function displayUnits(value, unit, round) {
+    if (typeof value !== "number" || !isFinite(value)) return "";
+    var v = value, dec = 0, u = "";
+    if (unit === "C") { v = value * 9 / 5 + 32; dec = 0; u = " °F"; }
+    else if (unit === "V") { dec = 1; u = " V"; }
+    else if (unit === "rpm") { dec = 0; u = " rpm"; }
+    var f = Math.pow(10, dec), r;
+    if (round === "floor") r = Math.floor(v * f + 1e-9) / f;
+    else if (round === "ceil") r = Math.ceil(v * f - 1e-9) / f;
+    else r = Math.round(v * f) / f;
+    return (dec ? r.toFixed(dec) : fmtThousands(Math.round(r))) + u;
   }
-  // Page order: Driving, NAV, Engine, Fuel, Motion, Light, Alerts, System, Battery.
-  function dots(pg) { var on = pg === "driving" ? 0 : 6, s = '<div class="dots" aria-hidden="true">'; for (var i = 0; i < 9; i++) s += "<i" + (i === on ? ' class="on"' : "") + "></i>"; return s + "</div>"; }
+  // agoText: the shipped one-vocabulary duration (carousel.js:1378 + ageText).
+  function agoText(nowTs, thenTs) {
+    if (typeof nowTs !== "string" || typeof thenTs !== "string") return "age unknown";
+    var now = Date.parse(nowTs), then = Date.parse(thenTs);
+    if (isNaN(now) || isNaN(then)) return "age unknown";
+    var secs = Math.floor((now - then) / 1000);
+    if (secs < 60) return "just now";
+    if (secs < 3600) return Math.floor(secs / 60) + " min ago";
+    if (secs < 86400) return Math.floor(secs / 3600) + " h ago";
+    var days = Math.floor(secs / 86400);
+    return days === 1 ? "1 day ago" : days + " days ago";
+  }
+  // Freshness (S105 M7): floor, clamp at 0, a space before s, capped at 999+.
+  function lastReading(s) { s = Math.max(0, Math.floor(s)); return "last reading " + (s > 999 ? "999+" : s) + " s ago"; }
 
-  function entry(e, compact) {
-    var act = isActive(e);
-    return '<div class="entry' + (act ? "" : " inactive") + '"><span class="chip ' + (act ? e.tier : "cleared") + '">' + TIER[e.tier] + "</span>" +
-      '<span class="et">' + e.title + (e.v ? ' <span class="v">' + e.v + "</span>" : "") + "</span>" +
-      (compact ? "" : '<span class="src">' + e.src + "</span>") +
-      (e.sentence ? '<span class="es' + (e.reading ? " reading" : "") + '">' + e.sentence + "</span>" : "") +
-      (compact ? "" : '<span class="age">' + (act ? e.age : "cleared") + "</span>") + "</div>";
+  function alertIconView(ic) {
+    if (!ic) return { cls: "nodata", text: "--", label: "no warnings data" };
+    if (ic.state === "none") return { cls: "none", text: "△", label: "no warnings" };
+    if (ic.state === "not_checked") return { cls: "not_checked", text: "?", label: "codes not checked" };
+    return { cls: ic.state + (ic.pulse ? " pulse" : ""), text: "▲" + Math.min(ic.count, 99), label: ic.state.toUpperCase() + ", " + ic.count };
+  }
+  var CHAIN_SVG = '<svg class="chain" viewBox="0 0 30 10" aria-hidden="true"><circle cx="4" cy="5" r="3" fill="currentColor"/><path d="M7 5h4" stroke="currentColor" stroke-width="1.6"/><circle cx="15" cy="5" r="3" fill="currentColor"/><path d="M18 5h4" stroke="currentColor" stroke-width="1.6"/><circle cx="26" cy="5" r="3" fill="currentColor"/></svg>';
+  var WIFI_SVG = '<svg class="wifi" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M1 4.6a7 7 0 0 1 10 0"/><path d="M2.8 6.6a4.5 4.5 0 0 1 6.4 0"/><path d="M4.6 8.5a2 2 0 0 1 2.8 0"/><circle cx="6" cy="10.4" r=".8" fill="currentColor" stroke="none"/></svg>';
+  function topbar(ic, o) {
+    var v = alertIconView(ic);
+    return '<div class="topbar"><div class="glyphs"><span id="glyph-bt" title="OBD link">' + CHAIN_SVG + '</span><span class="glyph sync" title="sync">⇅</span>' +
+      '<span id="glyph-wifi" title="WiFi">' + WIFI_SVG + '</span><span class="glyph wicon ' + v.cls + '" id="glyph-warnings" role="img" aria-label="Warnings: ' + v.label + '">' + v.text + "</span></div>" +
+      '<div class="clock' + (o.replay ? " hide" : "") + '">' + clockText(new Date()) + '</div><div class="right"><span class="pname">' + (o.pg === "driving" ? "DRIVING" : "ALERTS") + "</span>" +
+      (o.moving ? "" : '<span class="kebab" aria-hidden="true">⋮</span>') + "</div></div>";
+  }
+  // Page order (W-21): Driving · Nav · Engine · Fuel · O2 · Motion · Light · System · Warnings.
+  function dots(pg) { var on = pg === "driving" ? 0 : 8, s = '<div class="dots" aria-hidden="true">'; for (var i = 0; i < 9; i++) s += "<i" + (i === on ? ' class="on"' : "") + "></i>"; return s + "</div>"; }
+
+  function valueText(e) { return displayUnits(e.value, e.unit, e.round); }
+  function entry(e, compact, o) {
+    var act = isActive(e), v = valueText(e), stale = e.stale && act;
+    // a stale row keeps its sentence and adds the freshness line under it (§3 title rule, §4.6)
+    return '<div class="entry' + (act ? "" : " inactive") + (e.source === "code" && !compact ? " code" : "") + '"' + (e.source === "code" && !compact ? ' data-code="' + e.id + '"' : "") + ">" +
+      '<span class="chip ' + (act ? e.tier : "cleared") + '">' + TIER[e.tier] + "</span>" +
+      '<span class="et">' + e.title + (v ? ' <span class="v">' + v + "</span>" : "") + "</span>" +
+      (compact ? "" : '<span class="age">' + (act ? agoText(NOW_ISO, e.firstSeenTs) : "cleared") + "</span>") +
+      (e.sentence ? '<span class="es">' + e.sentence + "</span>" : "") +
+      (stale ? '<span class="es stale">' + lastReading(o.staleS) + "</span>" : "") + "</div>";
   }
   function head(d) {
+    if (d.nodata) return '<div class="head"><span class="h nd">--</span></div>';
     var n = d.list.filter(isActive).length;
     if (n) return '<div class="head"><span class="h">' + n + ' ACTIVE</span><span class="hs">' + (d.checked ? "codes read " + d.checked : "codes not read yet") + "</span></div>";
     if (!d.checked) return '<div class="head"><span class="h unk">NOT CHECKED</span></div>';
     return '<div class="head"><span class="h">NONE</span><span class="hs">codes read ' + d.checked + "</span></div>";
   }
-  // Only what was assessed: system + data are assessed:false in V0.30, so they are never called clear.
+  // Print only what was assessed (§4.3). The not-assessed lines: checked + nothing found ONLY (S109 I2), --text-secondary (I1).
   function emptyState(d) {
-    var nb = '<span class="nb">System and data checks are not built yet.</span>';
-    if (!d.checked) return '<div class="empty"><span class="big unk"><span class="q">?</span> NOT CHECKED YET</span><span class="why">Trouble codes haven\'t been read since key-on, so "nothing found" can\'t be claimed.</span>' + nb + "</div>";
+    if (d.nodata) return '<div class="empty"><span class="why">no warnings data</span></div>';
+    if (!d.checked) return '<div class="empty"><span class="big unk"><span class="q">?</span> NOT CHECKED YET</span><span class="why">Trouble codes haven\'t been read since key-on, so "nothing found" can\'t be claimed.</span></div>';
+    var nb = "";
+    if (d.system && !d.system.assessed && d.system.reason === "not_read") nb += '<span class="nb">System checks not read yet.</span>';
+    if (d.data && !d.data.assessed && d.data.reason === "not_built") nb += '<span class="nb">Data checks are not built yet.</span>';
     return '<div class="empty"><span class="big">NO WARNINGS</span><span class="why">Codes read at ' + d.checked + "." + (d.engine ? " Engine checks clear." : "") + "</span>" + nb + "</div>";
   }
-  function alertsPage(d) {
-    if (!d.list.length) return '<div class="page">' + head(d) + emptyState(d) + '<div class="more"></div></div>';
-    return '<div class="page">' + head(d) + '<div class="list">' + d.list.map(function (e) { return entry(e, false); }).join("") + '</div><div class="more"></div></div>';
+  function alertsPage(d, o) {
+    if (d.nodata || !d.list.length) return '<div class="page">' + head(d) + emptyState(d) + '<div class="more"></div></div>';
+    return '<div class="page">' + head(d) + '<div class="list">' + d.list.map(function (e) { return entry(e, false, o); }).join("") + '</div><div class="more"></div></div>';
   }
-  function drivingPage() {
-    return '<div class="page drv"><div style="display:grid;justify-items:center;gap:6px"><span class="g">3</span><span class="sp">38 mph</span><span class="tile">coolant 234 °F</span></div></div>';
+  function drivingPage(d) {
+    var batt = !d.nodata && d.list.filter(function (e) { return e.id === E.battLow.id && isActive(e); })[0];
+    var tile = batt ? "battery " + valueText(batt) : "coolant 234 °F";
+    return '<div class="page drv"><div style="display:grid;justify-items:center;gap:6px"><span class="g">3</span><span class="sp">38 mph</span><span class="tile">' + tile + "</span></div></div>";
   }
-  function takeover(e, o) {
-    var age = e.stale ? '<span class="ta stale">last reading ' + o.staleS + " s ago</span>" : '<span class="ta">for ' + e.age + "</span>";
-    return '<div class="takeover" role="alert" data-ack="1"><span class="po">PULL OVER</span><span class="tt">' + e.title + "</span>" +
-      '<span class="tv' + (e.stale ? " dim" : "") + '">' + e.v + '</span><span class="ts">' + e.sentence + "</span>" + age +
+  function takeover(t, o) {
+    // directive, title, sentence: the provider's words. The stale line is its own --fs-label line, only when stale.
+    return '<div class="takeover" role="alert" data-ack="1"><span class="po">' + t.directive + '</span><span class="tt">' + t.title + "</span>" +
+      '<span class="tv">' + valueText(t) + "</span>" + (t.stale ? '<span class="tl">' + lastReading(o.staleS) + "</span>" : "") +
+      '<span class="ts">' + t.sentence + '</span><span class="ta">' + agoText(NOW_ISO, t.firstSeenTs) + "</span>" +
       (o.err === "ack" ? "<span class=\"err\">couldn't acknowledge</span>" : "") + "</div>";
   }
   function codeAlert(d, o) {
-    var codes = d.codeAlert.map(function (id) { return byId(d, id); }).filter(Boolean);
-    var top = codes.reduce(function (a, e) { return RANK[e.tier] > RANK[a.tier] ? e : a; }, codes[0]);
+    var codes = d.codeAlert.ids.map(function (id) { return byId(d, id); }).filter(Boolean);
     var shown = codes.slice(0, 3), more = codes.length - shown.length;
-    return '<div class="codealert ' + top.tier + '" role="alertdialog" aria-label="Trouble codes"><span class="cah">TROUBLE CODES</span>' +
-      '<div class="rows">' + shown.map(function (e) { return entry(e, true); }).join("") + "</div>" +
+    return '<div class="codealert ' + TIER_COLOR_VAR[d.codeAlert.tier] + '" role="alertdialog" aria-label="Trouble codes"><span class="cah">TROUBLE CODES</span>' +
+      '<div class="rows">' + shown.map(function (e) { return entry(e, true, o); }).join("") + "</div>" +
       '<div class="cafoot"><span class="camore">' + (more > 0 ? "+" + more + " more on ALERTS" : "") +
       (o.err === "dismiss" ? "<span class=\"err\"> couldn't dismiss</span>" : "") + '</span><button type="button" class="dismiss" data-dismiss="1">DISMISS</button></div></div>';
   }
+  function detail(d, o) {
+    var e = byId(d, o.detail);
+    if (!e) return "";
+    var rec = o.detailFails ? null : DTC[codeOf(e.id)];
+    var v = clearButtonView(clearGateReason(d, o.gate), !o.moving);
+    var facts = rec
+      ? '<div class="fact"><span class="fl">DESCRIPTION</span><span class="fv">' + rec.long + "</span></div>" +
+        '<div class="fact"><span class="fl">FIRST SEEN</span><span class="fv">' + agoText(NOW_ISO, e.firstSeenTs) + "</span></div>"
+      : '<div class="fact"><span class="fv na">details unavailable</span></div>';
+    var clear = rec
+      ? (v.enabled ? '<button type="button" class="clear on" data-clear="1">' + v.label + "</button>"
+                   : '<button type="button" class="clear lock" disabled aria-disabled="true">' + v.label + "</button>") +
+        (o.err === "clear" ? "<span class=\"err\">couldn't clear</span>" : "")
+      : "";
+    return '<div class="detail" id="dtc-detail" role="dialog" aria-label="Code ' + codeOf(e.id) + '">' +
+      '<div class="obar"><button type="button" class="back" data-back="1"><span class="m">‹</span><span class="t">BACK</span></button>' +
+      '<span class="clock">' + clockText(new Date()) + '</span><span class="pname">ALERTS</span></div>' +
+      '<div class="db"><div class="dh"><span class="chip ' + e.tier + '">' + TIER[e.tier] + '</span><span class="et">' + e.title + "</span></div>" +
+      '<div class="band ' + e.tier + '">' + e.sentence + "</div>" + facts + "</div>" +
+      '<div class="dfoot">' + clear + "</div></div>";
+  }
 
-  // o: {pg, moving, acked, dismissed, staleS, replay, night, err}
+  // o: {pg, moving, acked, dismissed, staleS, replay, night, err, detail, gate, detailFails}
   function render(p, d, o) {
     var ic = providerIcon(d, o.acked), take = providerTakeover(d);
-    // precedence: PULL OVER > CODE ALERT; the code alert is not drawn while moving and is not acked by hiding
-    var ca = !take && d.codeAlert && !o.dismissed && !o.moving;
+    // precedence: PULL OVER > CODE ALERT; the code alert is not drawn while not parked and is not acked by hiding
+    var ca = !take && !d.nodata && d.codeAlert && !o.dismissed && !o.moving;
+    // the detail OPENS only while parked (the click handler); once open it stays, and while not parked its Clear says engine off
+    var dt = !d.nodata && o.detail && o.pg === "alerts" && !!byId(d, o.detail);
     var old = p.querySelector(".list"), keep = old ? old.scrollTop : 0;
     p.className = "panel" + (o.night && !take ? " night" : "");
-    p.innerHTML = topbar(ic, o) + (o.pg === "driving" ? drivingPage() : alertsPage(d)) + dots(o.pg) +
-      (take ? takeover(take, o) : "") + (ca ? codeAlert(d, o) : "") + (o.replay ? '<div class="marker">REPLAY</div>' : "");
+    p.innerHTML = topbar(ic, o) + (o.pg === "driving" ? drivingPage(d) : alertsPage(d, o)) + dots(o.pg) +
+      (dt ? detail(d, o) : "") + (take ? takeover(take, o) : "") + (ca ? codeAlert(d, o) : "") + (o.replay ? '<div class="marker">REPLAY</div>' : "");
     var l = p.querySelector(".list");
     if (l) { l.scrollTop = keep; l.addEventListener("scroll", function () { cue(p); }); }
     cue(p);
-    return { ic: ic, take: take, ca: !!ca };
+    return { ic: ic, take: take, ca: !!ca, dt: !!dt };
   }
-  // "n more below": entries whose bottom edge sits below the visible part of the list.
+  // "n more below": entries whose bottom edge sits below the visible part of the list (counted from layout).
   function cue(p) {
     var l = p.querySelector(".list"), m = p.querySelector(".more");
     if (!l || !m) return;
@@ -373,40 +530,71 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     return d;
   }
   var live = document.getElementById("live");
-  function liveOpts() { return { pg: S.pg, moving: S.mv === "moving", acked: S.acked, dismissed: S.dismissed, staleS: S.staleS, replay: S.ds === "replay", night: S.ad === "night", err: S.err }; }
+  function liveOpts() {
+    return { pg: S.pg, moving: S.mv === "moving", acked: S.acked, dismissed: S.dismissed, staleS: S.staleS, replay: S.ds === "replay",
+             night: S.ad === "night", err: S.err, detail: S.detail, gate: S.gt === "ok" ? null : S.gt, detailFails: S.df === "fail" };
+  }
 
-  var B = { pg: "alerts", moving: false, acked: false, dismissed: false, staleS: 12, replay: false, night: false, err: "" };
+  var B = { pg: "alerts", moving: false, acked: false, dismissed: false, staleS: 12, replay: false, night: false, err: "", detail: null, gate: null, detailFails: false };
   function o_(over) { return with_(B, over || {}); }
-  var stopStale = with_(SC.stop, { list: [with_(E.coolant, { stale: true }), E.p0400, E.p0443] });
-  var FIX = [
-    { t: "stop-live-overheat", d: "Coolant red covers the page: <code>PULL OVER</code>, the value and its unit. No button; the icon is red and pulsing.", data: SC.stop, o: o_() },
-    { t: "stop-live-stale", d: "Coolant went stale while hot. The takeover <b>stays</b> and shows the last value with its age.", data: stopStale, o: o_({ staleS: 12 }) },
-    { t: "stop-acknowledged", d: "Tapped, and the re-read says acknowledged: the icon stops pulsing, and the takeover stays up because the cause is still active.", data: SC.stop, o: o_({ acked: true }) },
-    { t: "ack-fails-503", d: "The ack didn't save: the pulse continues and the takeover says so. Never optimistic.", data: SC.stop, o: o_({ err: "ack" }) },
-    { t: "stop-live-cleared", d: "The provider cleared it (≤ 101 °C held 60 s). The takeover is gone; the entry stays until the provider drops it.", data: with_(SC.stop, { list: [with_(E.coolant, { active: false }), E.p0400, E.p0443] }), o: o_() },
-    { t: "replay-stop-live", d: "A replayed overheat still says <code>REPLAY</code>: the marker sits above the takeover.", data: SC.stop, o: o_({ replay: true }) },
-    { t: "stop over Driving", d: "The takeover covers whatever page is showing, not just Warnings.", data: SC.stop, o: o_({ pg: "driving" }) },
-    { t: "code-alert-keyon", d: "Parked at key-on: the stored codes, the frame in the highest tier's colour, and one real <code>DISMISS</code> button.", data: SC.keyon, o: o_({ pg: "driving" }) },
-    { t: "code-alert-moving", d: "The same key-on alert while moving is <b>not drawn</b>. Hiding isn't a dismiss: it comes back when parked.", data: SC.keyon, o: o_({ pg: "driving", moving: true }) },
-    { t: "code-alert-and-stop", d: "Both active: only PULL OVER is drawn. The code alert returns after the coolant clears.", data: SC.keyonstop, o: o_({ pg: "driving" }) },
-    { t: "code-alert-dismiss-fails", d: "Dismiss didn't save: the alert stays and says so.", data: SC.keyon, o: o_({ pg: "driving", err: "dismiss" }) },
-    { t: "watch-battery-low", d: "The battery tile is red from its band; the entry is WATCH and the icon amber. No takeover.", data: { checked: CHECKED, engine: true, list: [E.battLow], codeAlert: null }, o: o_() },
-    { t: "watch-battery-high", d: "<code>OVERCHARGING</code>, Spool's words. No time-to-stall on screen.", data: { checked: CHECKED, engine: true, list: [E.battHigh], codeAlert: null }, o: o_() },
-    { t: "watch-over-rev", d: "<code>(sampled)</code> is mandatory, because the true peak can be higher. It's in the sentence, with no value field (G3).", data: { checked: CHECKED, engine: true, list: [E.overRev], codeAlert: null }, o: o_() },
-    { t: "two-stored-codes-real", d: "The car's real codes, P0400 WATCH and P0443 MINOR, once US-754 lands. Stored codes never take over.", data: { checked: CHECKED, engine: true, list: [E.p0400, E.p0443], codeAlert: null }, o: o_() },
-    { t: "unrated-code", d: "An unknown code is UNRATED, never a guessed tier. No sentence until Spool's provider text exists (G1).", data: { checked: CHECKED, engine: true, list: [E.p0507], codeAlert: null }, o: o_() },
-    { t: "mixed-live-and-stored", d: "Live before stored within a tier, in the provider's order.", data: { checked: CHECKED, engine: true, list: [E.battLow, E.p0400, E.p0443, E.p0507], codeAlert: null }, o: o_() },
-    { t: "seven-entries-scroll", d: "All seven render. Scroll the panel: the bar and the cue show what's below.", data: SC.seven, o: o_() },
-    { t: "checked-clean", d: "Codes read and nothing active. Engine checks are claimed; system and data are named as not built.", data: SC.clean, o: o_() },
-    { t: "engine-not-assessed", d: "obd-live absent: the engine clause is left out, never claimed.", data: with_(SC.clean, { engine: false }), o: o_() },
-    { t: "not-checked", d: "Codes not read since key-on: the <code>?</code> icon, <code>NOT CHECKED</code>, and no all-clear text anywhere.", data: SC.unchecked, o: o_() },
-    { t: "codes-unread-with-watch", d: "An active WATCH outranks <code>?</code>; the header says the codes aren't read yet.", data: { checked: null, engine: true, list: [E.battLow], codeAlert: null }, o: o_() },
-    { t: "ack-prior-boot", d: "An ack from the previous boot doesn't count: the key-on alert is back.", data: SC.keyon, o: o_({ pg: "driving" }) }
+  var stopStale = sc({ list: [with_(E.coolant, { stale: true }), E.p0400, E.p0443] });
+  var five = [E.p1103, E.p0400, E.p0443, E.p0507, E.p0135];
+  var GROUPS = [
+    { h: "PULL OVER", fx: [
+      { t: "stop-live-overheat", d: "Coolant red covers the page: the provider's <code>directive</code>, the title, and the value in °F (112.2 °C, ceiled). No button; the icon is red <code>▲3</code> and pulsing.", data: SC.stop, o: o_() },
+      { t: "stop-live-stale", d: "Coolant went stale while hot. The takeover <b>stays</b>, with the last value and <code>last reading 12 s ago</code> on its own line.", data: stopStale, o: o_({ staleS: 12 }) },
+      { t: "stop-acknowledged", d: "Tapped, and the re-read says acknowledged: the icon stops pulsing; the takeover stays because the cause is still active.", data: SC.stop, o: o_({ acked: true }) },
+      { t: "ack-fails-503", d: "The ack didn't save: the pulse continues, and the takeover says so. Never optimistic.", data: SC.stop, o: o_({ err: "ack" }) },
+      { t: "stop-live-cleared", d: "The provider cleared it (≤ 101 °C held 60 s). The takeover is gone; the entry stays, marked <code>cleared</code>, until the provider drops it.", data: sc({ list: [with_(E.coolant, { active: false }), E.p0400, E.p0443] }), o: o_() },
+      { t: "replay-stop-live", d: "A replayed overheat still says <code>REPLAY</code>: the marker sits above the takeover.", data: SC.stop, o: o_({ replay: true }) },
+      { t: "stop over Driving", d: "The takeover covers whatever page is showing, not just Warnings.", data: SC.stop, o: o_({ pg: "driving" }) },
+      { t: "watch-battery-red-no-takeover", d: "A red battery tile on Driving, an amber <code>▲1</code> icon, and no takeover: band and tier are two facts.", data: sc({ list: [E.battLow] }), o: o_({ pg: "driving", moving: true }) }
+    ] },
+    { h: "Code alert", fx: [
+      { t: "code-alert-keyon", d: "Parked at key-on: the stored codes, the frame in the provider's <code>codeAlert.tier</code> colour, one real <code>DISMISS</code>.", data: SC.keyon, o: o_({ pg: "driving" }) },
+      { t: "code-alert-moving", d: "The same alert while not parked is <b>not drawn</b>. Hiding isn't a dismiss: it comes back when parked.", data: SC.keyon, o: o_({ pg: "driving", moving: true }) },
+      { t: "code-alert-and-stop", d: "Both active: only PULL OVER is drawn. The code alert returns after the coolant clears.", data: SC.keyonstop, o: o_({ pg: "driving" }) },
+      { t: "code-alert-five-codes", d: "Up to 3 rows, then <code>+2 more on ALERTS</code> (mono: <code>+</code> isn't in Michroma).", data: sc({ list: five, codeAlert: { ids: five.map(function (e) { return e.id; }), tier: "watch" } }), o: o_({ pg: "driving" }) },
+      { t: "code-alert-dismiss-fails", d: "Dismiss didn't save: the alert stays and says so.", data: SC.keyon, o: o_({ pg: "driving", err: "dismiss" }) },
+      { t: "ack-prior-boot", d: "An ack from the previous boot doesn't count: the key-on alert is back.", data: SC.keyon, o: o_({ pg: "driving" }) }
+    ] },
+    { h: "The list", fx: [
+      { t: "watch-battery-low", d: "11.96 V with <code>round: floor</code> shows <code>11.9 V</code>: never on the safe side of the threshold that fired.", data: sc({ list: [E.battLow] }), o: o_() },
+      { t: "watch-battery-high", d: "15.04 V with <code>round: ceil</code> shows <code>15.1 V</code>. <code>OVERCHARGING</code>, Spool's words, no time-to-stall.", data: sc({ list: [E.battHigh] }), o: o_() },
+      { t: "watch-over-rev", d: "<code>(sampled)</code> is mandatory, because the true peak can be higher. It's in the sentence; <code>value</code> is null (G3).", data: sc({ list: [E.overRev] }), o: o_() },
+      { t: "two-stored-codes-real", d: "The car's real codes: <code>EGR FLOW (P0400)</code> WATCH and <code>EVAP PURGE (P0443)</code> MINOR, <code>41 days ago</code>. No source prefix.", data: sc({ list: [E.p0400, E.p0443] }), o: o_() },
+      { t: "unrated-code", d: "An unknown code is UNRATED, never a guessed tier: the bare code and <code>Severity unknown. Get it diagnosed.</code>", data: sc({ list: [E.p0507] }), o: o_() },
+      { t: "mixed-live-and-stored", d: "Live before stored within a tier, in the provider's order.", data: sc({ list: [E.battLow, E.p0400, E.p0443, E.p0507] }), o: o_() },
+      { t: "seven-entries-scroll", d: "All seven render. Scroll the panel: the bar and the cue show what's below.", data: SC.seven, o: o_() },
+      { t: "icon-count-120", d: "120 active entries: the icon reads <code>▲99</code> in its fixed 3-character slot.", data: sc({ list: (function () { var a = []; for (var i = 0; i < 120; i++) a.push(with_(E.p0507, { id: "code:P" + (1000 + i) + ":unrated", title: "P" + (1000 + i) })); return a; })() }), o: o_() }
+    ] },
+    { h: "Empty states", fx: [
+      { t: "checked-clean", d: "Codes read, nothing active, System assessed: <code>△</code>, and only <code>Data checks are not built yet.</code>", data: SC.clean, o: o_() },
+      { t: "system-data-not-assessed", d: "Before the first System verdict: both lines, System first, in <code>--text-secondary</code>. Nothing pairs system or data with clear.", data: sc({ system: SYS_NOT_READ }), o: o_() },
+      { t: "engine-not-assessed", d: "obd-live absent: the engine clause is left out, never claimed.", data: sc({ engine: false }), o: o_() },
+      { t: "not-checked", d: "Codes not read since key-on: amber <code>?</code>, <code>NOT CHECKED</code>, and no all-clear text. No not-assessed lines here (S109 I2).", data: SC.unchecked, o: o_() },
+      { t: "codes-unread-with-watch", d: "An active WATCH outranks <code>?</code>; the header says <code>codes not read yet</code>.", data: sc({ checked: null, list: [E.battLow] }), o: o_() },
+      { t: "icon-missing-payload", d: "No <code>states/alerts</code>: header <code>--</code>, body <code>no warnings data</code>, icon <code>--</code> tertiary, never <code>△</code>.", data: SC.nodata, o: o_() }
+    ] },
+    { h: "Code detail + clear", fx: [
+      { t: "detail-minor-clearable", d: "Parked, one MINOR code, synced: <code>CLEAR CODES</code> is a real bordered control (hard confirm and re-read as shipped).", data: SC.minor, o: o_({ detail: E.p0443.id }) },
+      { t: "detail-not-parked", d: "The same, while not parked: <code>engine off to clear</code>. This is the only case where engine-off would unlock it.", data: SC.minor, o: o_({ detail: E.p0443.id, moving: true, pg: "alerts" }) },
+      { t: "detail-watch-present", d: "A WATCH code is stored too. Mode 04 would wipe it, so: <code>a STOP/WATCH code is present</code>, parked or not.", data: sc({ list: [E.p0400, E.p0443] }), o: o_({ detail: E.p0443.id }) },
+      { t: "detail-unrated", d: "<code>severity could not be determined</code>. An unknown can't be judged safe to wipe.", data: sc({ list: [E.p0507] }), o: o_({ detail: E.p0507.id }) },
+      { t: "detail-sync-pending-moving", d: "The car as shipped (<code>syncAcked</code> always false), not parked: <code>waiting for server sync</code>, not <code>engine off</code>. Stopping wouldn't unlock it (US-919 B).", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "sync_pending", moving: true }) },
+      { t: "detail-pending-unread-moving", d: "Pending codes not read, not parked: <code>pending codes haven’t been read</code>. Engine-off doesn't read Mode 07.", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "pending_not_read", moving: true }) },
+      { t: "detail-session-locked", d: "A cleared code came straight back: locked for the session.", data: SC.minor, o: o_({ detail: E.p0443.id, gate: "session_locked" }) },
+      { t: "detail-fetch-failed", d: "<code>states/dtc</code> didn't load: chip, title and sentence from the entry, plus <code>details unavailable</code>. No Clear control is drawn (flagged).", data: SC.minor, o: o_({ detail: E.p0443.id, detailFails: true }) }
+    ] }
   ];
-  var fxRoot = document.getElementById("fixtures");
-  fxRoot.innerHTML = FIX.map(function (f, i) {
-    return '<div class="fx"><div class="frame"><div class="panel" id="fx' + i + '"></div></div><p><b>' + f.t + ".</b> " + f.d + "</p></div>";
-  }).join("");
+  var FIX = [];
+  GROUPS.forEach(function (g) { g.fx.forEach(function (f) { f.g = g.h; FIX.push(f); }); });
+  var fxRoot = document.getElementById("fixtures"), html = "", lastG = "";
+  FIX.forEach(function (f, i) {
+    if (f.g !== lastG) { html += "<h3>" + f.g + "</h3>"; lastG = f.g; }
+    html += '<div class="fx"><div class="frame"><div class="panel" id="fx' + i + '"></div></div><p><b>' + f.t + ".</b> " + f.d + "</p></div>";
+  });
+  fxRoot.innerHTML = html;
   var fxPanels = FIX.map(function (f, i) { return document.getElementById("fx" + i); });
   function renderFixtures() { FIX.forEach(function (f, i) { render(fxPanels[i], f.data, f.o); }); }
 
@@ -415,20 +603,25 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   window.addEventListener("resize", fit);
 
   function step() {
-    var d = liveData(), r = render(live, d, liveOpts());
-    document.getElementById("readout").textContent = r.take
-      ? "takeover up: " + r.take.title + " " + r.take.v + (r.take.stale ? " (stale " + S.staleS + " s, stays up)" : "") + (S.acked ? " · acknowledged" : " · icon pulsing") + " · brightness 100 %"
-      : "states/alerts: " + d.list.filter(isActive).length + " active · codes " + (d.checked ? "read " + d.checked : "not read") + " · icon " + r.ic.state +
-        (d.codeAlert && !S.dismissed ? (r.ca ? " · code alert up" : " · code alert held (moving)") : "");
+    var d = liveData(), o = liveOpts(), r = render(live, d, o);
+    var txt;
+    if (r.take) txt = "takeover up: " + r.take.title + " " + valueText(r.take) + (r.take.stale ? " (stale " + S.staleS + " s, stays up)" : "") + (S.acked ? " · acknowledged" : " · icon pulsing") + " · brightness 100 %";
+    else if (d.nodata) txt = "states/alerts: missing · icon -- · header --";
+    else {
+      txt = "states/alerts: " + d.list.filter(isActive).length + " active · codes " + (d.checked ? "read " + d.checked : "not read") + " · icon " + r.ic.state +
+        (d.codeAlert && !S.dismissed ? (r.ca ? " · code alert up" : " · code alert held (not parked)") : "");
+      if (r.dt) { var v = clearButtonView(clearGateReason(d, o.gate), !o.moving); txt += " · detail " + codeOf(S.detail) + " · gate " + clearGateReason(d, o.gate) + " → " + v.reason; }
+    }
+    document.getElementById("readout").textContent = txt;
   }
   renderFixtures(); fit(); step();
   setInterval(function () { if (S.cf === "stale") S.staleS += 1; step(); }, 1000);
 
-  ["sc", "cf", "ca", "mv", "pg", "ds", "ad", "ch"].forEach(function (name) {
+  ["sc", "cf", "ca", "mv", "pg", "gt", "df", "ds", "ad", "ch"].forEach(function (name) {
     document.querySelectorAll('input[name="' + name + '"]').forEach(function (r) {
       r.addEventListener("change", function () {
         S[name] = r.value;
-        if (name === "sc" || (name === "ca" && r.value === "active")) { S.acked = false; S.dismissed = false; S.err = ""; }
+        if (name === "sc" || (name === "ca" && r.value === "active")) { S.acked = false; S.dismissed = false; S.err = ""; S.detail = null; }
         if (name === "cf") S.staleS = 12;
         step();
       });
@@ -436,15 +629,19 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   });
   var errTimer = 0;
   function fail(kind) { S.err = kind; clearTimeout(errTimer); errTimer = setTimeout(function () { S.err = ""; step(); }, 3000); step(); }
-  // Honest write: the state changes only on a successful re-read (simulated by the channel switch).
+  // Honest writes: the state changes only on a successful re-read (simulated by the channel switch).
   function ack() { if (S.ch === "fail") return fail("ack"); S.acked = true; step(); }
   function dismiss() { if (S.ch === "fail") return fail("dismiss"); S.dismissed = true; step(); }
+  function clearCodes() { if (S.ch === "fail") return fail("clear"); S.sc = "clean"; S.detail = null; document.querySelector('input[name="sc"][value="clean"]').checked = true; step(); }
   document.getElementById("ack").addEventListener("click", ack);
   live.addEventListener("click", function (ev) {
-    var t = ev.target.closest ? ev.target : null;
+    var t = ev.target && ev.target.closest ? ev.target : null;
     if (!t) return;
     if (t.closest("[data-dismiss]")) dismiss();
     else if (t.closest("[data-ack]")) ack();
+    else if (t.closest("[data-back]")) { S.detail = null; step(); }
+    else if (t.closest("[data-clear]")) clearCodes();
+    else if (t.closest("[data-code]")) { if (S.mv === "parked") { S.detail = t.closest("[data-code]").getAttribute("data-code"); step(); } }   // not parked: the tap does nothing
   });
 })();
 </script>
