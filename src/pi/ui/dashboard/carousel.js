@@ -2330,7 +2330,9 @@
   var WARNINGS_NOT_CHECKED_TEXT =
     "Trouble codes haven't been read since key-on, so \"nothing found\" can't be claimed.";
   var WARNINGS_ENGINE_CLAUSE = " Engine checks clear.";
-  var WARNINGS_NOT_BUILT_TEXT = "System and data checks are not built yet.";
+  // US-877-c (Iris 2026-10-19): one line per unassessed source, System first.
+  var WARNINGS_SYSTEM_NOT_READ_TEXT = "System checks not read yet.";
+  var WARNINGS_DATA_NOT_BUILT_TEXT = "Data checks are not built yet.";
 
   // A source is assessed only when the provider says exactly true; absent or
   // anything else is "not assessed" -- the direction that claims nothing.
@@ -2370,7 +2372,8 @@
   // The body of a card with nothing ACTIVE (cleared rows may still be listed
   // under it -- a row is never hidden). Code read assessed: 'NO WARNINGS', when
   // the codes were read (+ the engine clause only while engine is assessed),
-  // and the not-built line while system or data is not assessed. Not assessed:
+  // then a not-read / not-built line for each of system and data while it is
+  // not assessed. Not assessed:
   // '? NOT CHECKED YET' and why nothing can be claimed -- no other line, so the
   // card says nothing about any source. null while anything is active.
   function warningsQuietView(alerts, rows) {
@@ -2391,8 +2394,11 @@
         (warningSourceAssessed(sources, "engine") ? WARNINGS_ENGINE_CLAUSE : ""),
       tone: "primary",
     }];
-    if (!warningSourceAssessed(sources, "system") || !warningSourceAssessed(sources, "data")) {
-      lines.push({ text: WARNINGS_NOT_BUILT_TEXT, tone: "secondary" });
+    if (!warningSourceAssessed(sources, "system")) {
+      lines.push({ text: WARNINGS_SYSTEM_NOT_READ_TEXT, tone: "secondary" });
+    }
+    if (!warningSourceAssessed(sources, "data")) {
+      lines.push({ text: WARNINGS_DATA_NOT_BUILT_TEXT, tone: "secondary" });
     }
     return { state: "none", mark: null, head: WARNINGS_NONE_HEAD, lines: lines };
   }

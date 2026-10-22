@@ -34,6 +34,8 @@
 #               |              | _recordSyncOutcome stamps no time (MOVED PIN).
 # 2026-10-22    | Ralph (Rex)  | US-877-a -- system-status pi from the off-tick
 #               |              | PiHealthSampler; limit from pi.health.limits.
+# 2026-10-22    | Ralph (Rex)  | US-877-c -- the system-status payload reaches the
+#               |              | alerts arbiter; emitNow keeps the system entries.
 # ================================================================================
 ################################################################################
 
@@ -2399,3 +2401,87 @@ def test_pi_aRaisingSnapshot_isNotRead(tmp_path):
 
     pi = _readState(tmp_path, "system-status")["pi"]
     assert pi["overLimit"] == [] and pi["cpuTempC"] is None
+
+
+# ---------------------------------------------------------------------------
+# US-877-c -- the system-status verdict reaches the alerts arbiter IN-PROCESS;
+# every alerts emit (the tick and emitNow) carries arbiter.systemSource().
+# ---------------------------------------------------------------------------
+
+_PI_HOT = {"cpuTempC": 85.0, "cpuTempLimitC": 80, "overLimit": ["cpuTemp"]}
+
+
+def _systemOrch(tmp_path, piHealth):
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    holder = {"pi": piHealth}
+    orch._gatherPiHealth = lambda: holder["pi"]
+    return orch, holder
+
+
+def _systemEntries(alerts):
+    return [e for e in alerts["entries"] if e["source"] == "system"]
+
+
+def test_c_verdictPiMember_isTheSystemWatchOnStatesAlerts(tmp_path):
+    """VC: verdict members [pi] -> states/alerts entry system:pi:watch."""
+    orch, _ = _systemOrch(tmp_path, dict(_PI_HOT))
+
+    orch._emitSystemStatusState()
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    status = _readState(tmp_path, "system-status")
+    assert alerts["sources"]["system"] == {"assessed": True}
+    pi = [e for e in _systemEntries(alerts) if e["key"] == "pi"]
+    assert [e["id"] for e in pi] == ["system:pi:watch"]
+    member = next(m for m in status["verdict"]["members"] if m["key"] == "pi")
+    assert pi[0]["sentence"] == member["reason"]
+    assert pi[0]["firstSeenTs"] == status["ts"]
+
+
+def test_c_beforeAnySystemStatus_systemIsNotRead(tmp_path):
+    orch, _ = _systemOrch(tmp_path, dict(_PI_HOT))
+
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    assert alerts["sources"]["system"] == {"assessed": False, "reason": "not_read"}
+    assert _systemEntries(alerts) == []
+
+
+def test_c_emitNow_keepsTheCachedSystemEntries_andObservesNothing(tmp_path):
+    """877-c-2/3: an ack rebuild never drops the system entries for a tick, and
+    emitNow never re-reads system-status (the member clearing is not seen)."""
+    orch, holder = _systemOrch(tmp_path, dict(_PI_HOT))
+    orch._emitSystemStatusState()
+    _alertsAfterTick(orch, tmp_path)
+    holder["pi"] = None  # the pi member clears on the NEXT system-status emit
+
+    rebuilt = orch.emitNow()
+
+    assert rebuilt["sources"]["system"] == {"assessed": True}
+    assert "system:pi:watch" in [e["id"] for e in _systemEntries(rebuilt)]
+
+    orch._emitSystemStatusState()
+    after = _alertsAfterTick(orch, tmp_path)
+    assert "system:pi:watch" not in [e["id"] for e in _systemEntries(after)]
+    assert after["sources"]["system"] == {"assessed": True}
+
+
+def test_c_aFailedSystemStatusWrite_keepsTheCachedVerdict(tmp_path, monkeypatch):
+    """Atlas A3: a None hand-off keeps what is held, still assessed."""
+    import pi.splash.system_status_emitter as mod
+
+    orch, _ = _systemOrch(tmp_path, dict(_PI_HOT))
+    orch._emitSystemStatusState()
+    before = [e["id"] for e in _systemEntries(_alertsAfterTick(orch, tmp_path))]
+
+    def _boom(*_a, **_k):
+        raise OSError("tmpfs full")
+
+    monkeypatch.setattr(mod, "writeStateAtomic", _boom)
+    orch._emitSystemStatusState()
+    after = _alertsAfterTick(orch, tmp_path)
+
+    assert "system:pi:watch" in before
+    assert [e["id"] for e in _systemEntries(after)] == before
+    assert after["sources"]["system"] == {"assessed": True}

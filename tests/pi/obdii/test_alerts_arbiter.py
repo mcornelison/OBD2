@@ -19,6 +19,9 @@
 # 2026-10-21    | Rex (US-897-d) | MOVED PIN (US-897-d): battery value/last.value
 #                                are RAW; every entry gains `round` (battery:
 #                                the episode's side, else null).
+# 2026-10-22    | Rex (US-877-c) | The SYSTEM source: sources.system not_read ->
+#                                assessed; one inert WATCH per verdict member,
+#                                removed when it clears; ack, order, icon.
 # ================================================================================
 ################################################################################
 
@@ -196,7 +199,8 @@ def test_shape_everyKeyPresent_nothingAssessed() -> None:
     assert state["sources"] == {
         "code": {"assessed": False, "checkedAtTs": None},
         "engine": {"assessed": False},
-        "system": {"assessed": False, "reason": "not_built"},
+        # US-877-c: system is built; before a verdict is read it is not_read.
+        "system": {"assessed": False, "reason": "not_read"},
         "data": {"assessed": False, "reason": "not_built"},
     }
     assert state["codesCheckedThisSession"] is False
@@ -1815,3 +1819,238 @@ def test_makeAlertsEmitter_carriesTheAcknowledgedIds(tmp_path: Path) -> None:
     assert written["entries"][0]["acknowledged"] is True
     onDisk = json.loads((tmp_path / "states" / "alerts").read_text(encoding="utf-8"))
     assert onDisk == written
+
+
+# ------------------------------------------------------- the SYSTEM source
+
+
+_SYS_T0 = "2026-10-22T15:00:00Z"
+_SYS_T1 = "2026-10-22T15:00:02Z"
+_PI_REASON = "CPU 85.0 °C, limit 80 °C."
+
+
+def _systemStatus(members: list[dict[str, str]], ts: str = _SYS_T0) -> dict[str, Any]:
+    """The slice of a system-status payload the arbiter reads: ts + verdict."""
+    return {"ts": ts, "verdict": {"issueCount": len(members), "members": members}}
+
+
+def _buildSys(arbiter: aa.AlertsArbiter, **kw: Any) -> dict[str, Any]:
+    return aa.buildAlertsState(
+        arbiter.episodes(), None, _NOW, dataSource="real", bootId="b7",
+        codeSource=arbiter.codeSource(), systemSource=arbiter.systemSource(),
+        acknowledgedIds=kw.get("acknowledgedIds", ()),
+    )
+
+
+def test_system_piMember_isOneInertWatchEntry() -> None:
+    """VC: verdict members [pi] -> entry system:pi:watch; sources.system assessed."""
+    arbiter = _arbiter()
+
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+    state = _buildSys(arbiter)
+
+    assert state["sources"]["system"] == {"assessed": True}
+    (entry,) = state["entries"]
+    assert set(entry) == _ENTRY_KEYS
+    assert entry == {
+        "id": "system:pi:watch",
+        "source": "system",
+        "key": "pi",
+        "tier": "watch",
+        "title": "PI OVER LIMIT",
+        "sentence": _PI_REASON,
+        "directive": None,
+        "value": None,
+        "unit": None,
+        "last": None,
+        "stale": False,
+        "firstSeenTs": _SYS_T0,
+        "lastSeenTs": _SYS_T0,
+        "active": True,
+        "acknowledged": False,
+        "codeStatus": None,
+        "round": None,
+    }
+
+
+def test_system_emptyVerdict_noEntries_assessedTrue() -> None:
+    arbiter = _arbiter()
+
+    arbiter.observeSystemStatus(_systemStatus([]))
+    state = _buildSys(arbiter)
+
+    assert state["sources"]["system"] == {"assessed": True}
+    assert state["entries"] == []
+
+
+def test_system_notReadUntilAVerdictIsHandedIn() -> None:
+    arbiter = _arbiter()
+    assert arbiter.systemSource() == {"assessed": False, "reason": "not_read"}
+
+    arbiter.observeSystemStatus(None)  # a failed first write: nothing read yet
+
+    assert arbiter.systemSource() == {"assessed": False, "reason": "not_read"}
+    assert _buildSys(arbiter)["sources"]["system"] == {"assessed": False, "reason": "not_read"}
+
+
+def test_system_buildWithoutSystemSource_isNotRead() -> None:
+    state = aa.buildAlertsState([], None, _NOW, dataSource=None, bootId="b7")
+
+    assert state["sources"]["system"] == {"assessed": False, "reason": "not_read"}
+    assert state["sources"]["data"] == {"assessed": False, "reason": "not_built"}
+
+
+def test_system_titleTable_isIrisWords_atMost21Chars() -> None:
+    assert aa.SYSTEM_TITLES == {
+        "bt": "BLUETOOTH NOT LINKED",
+        "adapter": "ADAPTER NOT ANSWERING",
+        "capture": "DATA FEED STALLED",
+        "wifi": "WIFI NOT READ",
+        "pi": "PI OVER LIMIT",
+    }
+    assert all(len(title) <= 21 for title in aa.SYSTEM_TITLES.values())
+
+
+def test_system_titleTable_coversEveryVerdictMemberKey() -> None:
+    from pi.splash.system_status_emitter import VERDICT_MEMBER_ORDER
+
+    assert set(aa.SYSTEM_TITLES) == set(VERDICT_MEMBER_ORDER)
+
+
+def test_system_everyMember_isWatch_neverStop_neverTakesOver_neverCodeAlert() -> None:
+    arbiter = _arbiter()
+    members = [{"key": k, "reason": f"reason {k}"} for k in aa.SYSTEM_TITLES]
+
+    arbiter.observeSystemStatus(_systemStatus(members))
+    state = _buildSys(arbiter)
+
+    assert len(state["entries"]) == len(aa.SYSTEM_TITLES)
+    assert {e["tier"] for e in state["entries"]} == {"watch"}
+    assert state["takeover"] is None
+    assert state["codeAlert"] is None
+    assert state["icon"] == {"state": "watch", "count": 5, "pulse": False}
+    assert [e["sentence"] for e in state["entries"] if e["key"] == "wifi"] == ["reason wifi"]
+
+
+def test_system_memberClears_entryIsRemoved_notListedInactive() -> None:
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+
+    arbiter.observeSystemStatus(_systemStatus([], ts=_SYS_T1))
+    state = _buildSys(arbiter)
+
+    assert state["entries"] == []
+    assert state["sources"]["system"] == {"assessed": True}
+
+
+def test_system_reasonChangesMidEpisode_idAndFirstSeenUnchanged() -> None:
+    """Atlas A2: firstSeenTs stays; lastSeenTs advances to each payload's ts."""
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+
+    arbiter.observeSystemStatus(
+        _systemStatus([{"key": "pi", "reason": "Throttling now. CPU slowed."}], ts=_SYS_T1)
+    )
+    (entry,) = _buildSys(arbiter)["entries"]
+
+    assert entry["id"] == "system:pi:watch"
+    assert entry["firstSeenTs"] == _SYS_T0
+    assert entry["lastSeenTs"] == _SYS_T1
+    assert entry["sentence"] == "Throttling now. CPU slowed."
+
+
+def test_system_aNoneHandOff_keepsTheCachedVerdict_stillAssessed() -> None:
+    """Atlas A3: a failed system-status write changes nothing held."""
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+    before = _buildSys(arbiter)
+
+    arbiter.observeSystemStatus(None)
+    arbiter.observeSystemStatus({"ts": _SYS_T1})  # no verdict: not a read
+
+    assert _buildSys(arbiter) == before
+
+
+def test_system_unknownMemberKey_skippedWithOneWarning(caplog: pytest.LogCaptureFixture) -> None:
+    """Atlas A5: a key not in the title table makes no entry; one WARNING."""
+    arbiter = _arbiter()
+    payload = _systemStatus([{"key": "gps", "reason": "x"}, {"key": "pi", "reason": _PI_REASON}])
+
+    with caplog.at_level(logging.WARNING, logger="pi.obdii.alerts_arbiter"):
+        arbiter.observeSystemStatus(payload)
+        arbiter.observeSystemStatus(payload)
+
+    assert [e["id"] for e in _buildSys(arbiter)["entries"]] == ["system:pi:watch"]
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and "gps" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+
+
+def test_system_ordersWithLiveEntries_beforeStoredCodes() -> None:
+    """Atlas A1: system ranks with engine (then newest firstSeenTs), before code."""
+    arbiter = _arbiter()
+    arbiter.observeDtc({
+        "checkedAtTs": "2026-10-22T16:00:00Z",
+        "source": {"dtc": {"available": True}},
+        "codes": [{
+            "code": "P0400", "status": "stored", "severity": "watch",
+            "title": "EGR FLOW (P0400)", "sentence": "s", "firstSeenTs": "2026-10-22T16:00:00Z",
+        }],
+    })
+    battery = {
+        "value": 11.8, "unit": "V", "ts": "2026-10-22T14:00:00Z", "stale": False,
+        "band": _band("red"), "last": None,
+    }
+    arbiter.observe({"params": {"BATTERY_V": battery}}, dataSource="real", database=None)
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+
+    ids = [e["id"] for e in _buildSys(arbiter)["entries"]]
+
+    # Newest first among the live (system 15:00 before battery 14:00); the code
+    # is newer than both yet stored, so last.
+    assert ids == ["system:pi:watch", "engine:BATTERY_V:watch", "code:P0400:watch"]
+
+
+def test_system_ackedEntry_staysListedAcknowledged_byItsEpisode(tmp_path: Path) -> None:
+    """877-c-1: acked per S108 G1 {bootId, firstSeenTs}; an active watch stays
+    listed, acknowledged, and a new episode (new firstSeenTs) is unacked."""
+    from pi.obdii.alerts_ack_store import AlertsAckStore
+
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+    store = AlertsAckStore(str(tmp_path / "alerts-ack.json"))
+    assert store.acknowledge({"system:pi:watch": _SYS_T0}, bootId="b7", ackedAt=_SYS_T0)
+
+    acked = store.matchingIds(arbiter.episodes(), bootId="b7")
+    (entry,) = _buildSys(arbiter, acknowledgedIds=acked)["entries"]
+    assert entry["acknowledged"] is True and entry["active"] is True
+
+    arbiter.observeSystemStatus(_systemStatus([], ts=_SYS_T1))
+    arbiter.observeSystemStatus(
+        _systemStatus([{"key": "pi", "reason": _PI_REASON}], ts="2026-10-22T15:00:04Z")
+    )
+    assert store.matchingIds(arbiter.episodes(), bootId="b7") == frozenset()
+
+
+def test_system_writesNoAlertLogRow(db: Any) -> None:
+    """Atlas A6: a system episode is never recorded."""
+    arbiter = _arbiter()
+
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+    arbiter.observe(_obdLive(None), dataSource="real", database=db)
+
+    assert _alertRows(db) == []
+
+
+def test_makeAlertsEmitter_carriesTheSystemSource(tmp_path: Path) -> None:
+    emit = aa.makeAlertsEmitter(str(tmp_path / "states"))
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_systemStatus([]))
+
+    written = emit(
+        arbiter.episodes(), None, nowUtc=_NOW, dataSource="real", bootId="b7",
+        systemSource=arbiter.systemSource(),
+    )
+
+    assert written["sources"]["system"] == {"assessed": True}

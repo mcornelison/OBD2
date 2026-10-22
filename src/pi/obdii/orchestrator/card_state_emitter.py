@@ -124,6 +124,9 @@
 #               |              | uptime per tick); limit from pi.health.limits.
 # 2026-10-22    | Rex (US-877-b)| capture-health emits BEFORE system-status and
 #               |              | its returned payload feeds the verdict (P6).
+# 2026-10-22    | Rex (US-877-c)| the system-status payload is handed to the
+#               |              | alerts arbiter; every alerts emit passes
+#               |              | systemSource=arbiter.systemSource().
 # ================================================================================
 ################################################################################
 
@@ -1002,6 +1005,9 @@ class CardStateEmitterMixin:
             bootId=bootId,
             codeSource=arbiter.codeSource(),
             acknowledgedIds=acked,
+            # US-877-c: the cached verdict rides every emit, so an ack rebuild
+            # never drops the system entries or the source.
+            systemSource=arbiter.systemSource(),
         )
         if store is not None and isinstance(payload, dict):
             sources = payload.get("sources") or {}
@@ -1837,6 +1843,9 @@ class CardStateEmitterMixin:
     def _emitSystemStatusState(self, captureHealth: dict[str, Any] | None = None) -> None:
         """Gather truthful link/sync/power/drive readings + emit system-status.
 
+        US-877-c: the payload the emit returned is handed to the alerts arbiter
+        (``observeSystemStatus``) -- the SYSTEM source's only input.
+
         Args:
             captureHealth: US-877-b: the payload ``_emitCaptureHealthState``
                 returned THIS tick (Atlas P6), for the verdict; None when it
@@ -1852,7 +1861,7 @@ class CardStateEmitterMixin:
         distanceKm, distanceSinceTs, distanceEndTs, distancePartial = (
             self._gatherTripWindow()
         )
-        emitter(
+        payload = emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
             syncRows=self._lastSyncRows,
@@ -1899,6 +1908,11 @@ class CardStateEmitterMixin:
             # US-877-b: the verdict's capture input, as written this tick.
             captureHealth=captureHealth,
         )
+        # US-877-c: the verdict reaches the alerts arbiter IN-PROCESS, before
+        # this tick's alerts emit; only here, never from emitNow (a pure rebuild).
+        arbiter = self._alertsArbiter
+        if arbiter is not None:
+            arbiter.observeSystemStatus(payload)
 
     def _gatherPiHealth(self) -> dict[str, Any] | None:
         """The US-877-a ``pi`` block: the sampler's cached reads + uptime now.

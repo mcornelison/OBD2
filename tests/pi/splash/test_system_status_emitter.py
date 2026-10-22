@@ -35,6 +35,8 @@
 #               |              | block's normalisation + its emit forwarding.
 # 2026-10-22    | Rex (US-877-b)| the exact pin gains `verdict`; the verdict's
 #               |              | members, rules, exact reasons and forwarding.
+# 2026-10-22    | Rex (US-877-c)| the emit returns the payload it wrote (None on
+#               |              | a failed write).
 # ================================================================================
 ################################################################################
 
@@ -1599,3 +1601,41 @@ def test_orchestratorEmit_forwardsTheCaptureHealthItWasHanded():
 
     assert composer.calls[0]["captureHealth"] is handed
     assert composer.calls[1]["captureHealth"] is None
+
+
+# ---------------------------------------------------------------------------
+# US-877-c -- the emit returns what it wrote, for the alerts arbiter.
+# ---------------------------------------------------------------------------
+
+
+def test_emitter_returnsThePayloadItWrote(tmp_path):
+    """Given a states dir, When the emit fires, Then it returns the very
+    payload on disk -- the in-process hand-off to the alerts arbiter."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=60, nowIsoFn=lambda: _NOW
+    )
+
+    returned = emit(
+        obdLinkState=OBD_RECONNECTING, obdRetries=0, syncLastOkTs=None, syncRows=0,
+        syncPending=None, powerSource="external", driveState="idle", driveId=None,
+        piHealth={"overLimit": ["cpuTemp"], "cpuTempC": 85.0, "cpuTempLimitC": 80},
+    )
+
+    written = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert returned == written
+    assert {"key": "pi", "reason": "CPU 85.0 °C, limit 80 °C."} in returned["verdict"]["members"]
+
+
+def test_emitter_returnsNone_whenTheWriteFailed(tmp_path):
+    blocker = tmp_path / "states"
+    blocker.write_text("a file where the states dir should be", encoding="utf-8")
+    emit = makeSystemStatusEmitter(str(blocker), syncStaleThresholdS=60, nowIsoFn=lambda: _NOW)
+
+    returned = emit(
+        obdLinkState=OBD_RECONNECTING, obdRetries=0, syncLastOkTs=None, syncRows=0,
+        syncPending=None, powerSource="external", driveState="idle", driveId=None,
+    )
+
+    assert returned is None

@@ -6063,8 +6063,8 @@ the one provider of the warnings page: the page renders it and derives nothing (
 - An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
   handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
   `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource,
-  acknowledgedIds=())` is pure over them (`acknowledgedIds` is US-897-c's; empty leaves
-  the output unchanged);
+  acknowledgedIds=(), systemSource=None)` is pure over them (`acknowledgedIds` is
+  US-897-c's; empty leaves the output unchanged; `systemSource` is US-877-c's);
   `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
 - Built in its own try/except (`_initializeAlertsProducer`); when
   `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
@@ -6081,13 +6081,15 @@ codeAlert, entries}`.
     (Iris contract names).
   - `engine: {assessed}` -- true only when obd-live carries a FRESH COOLANT_TEMP reading
     (Q14). Engine off, stale or absent is false.
-  - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
+  - `system` (US-877-c): `{assessed: true}` once a system-status verdict was handed in this
+    boot, else `{assessed: false, reason: 'not_read'}` (the SYSTEM source, below).
+  - `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
 - **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
   stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus, round}` (`codeStatus`
   is `stored` | `pending` on a code entry, null on an engine one; `round` is `floor` |
   `ceil` on the battery entry, null on every other, US-897-d), ALREADY ORDERED (B5): tier
-  `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
-  newest `firstSeenTs`.
+  `stop > watch > minor > unrated`, then live (`engine`, and `system` tied with it,
+  US-877-c A1) before stored (`code`), then newest `firstSeenTs`, then id.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
     new id. `acknowledged` is true when this boot's ack store matches the entry's
     episode (US-897-c, below). An acknowledged entry that is no longer active is not
@@ -6197,6 +6199,33 @@ legacy AlertManager owns that section (config.json).
   too (Mode 04 wipes them): relevant = status in {stored, pending} AND severity != `na`,
   one entry per code, and an unread pending set (`pendingCheckedAtTs` null) is refused as
   `pending_not_read` (the chain is below, US-407).
+
+**The SYSTEM source** (US-877-c; Atlas Warnings s5 + P7, RULINGS 2026-10-22 A1-A6; Iris
+2026-10-19 words):
+- **Input**: the system-status payload handed IN-PROCESS (`AlertsArbiter.observeSystemStatus`).
+  `makeSystemStatusEmitter`'s emit returns the payload it wrote (None on a failed write);
+  `CardStateEmitterMixin._emitSystemStatusState` hands it over -- and ONLY it: `emitNow()` never
+  observes. System-status emits before the alerts step of the same tick, so the tick publishes
+  this tick's verdict. The arbiter CACHES the members as its own episodes, and every alerts
+  emit (the tick and `emitNow`) passes `systemSource=arbiter.systemSource()` through the one
+  call in `_publishAlertsState`, so an ack rebuild never drops a system entry or the source.
+- **Entries**: one per `verdict.members[]`, id `system:<key>:watch`, tier `watch` -- NEVER stop,
+  so a system entry never takes over, never pulses and is never in `codeAlert`; it counts
+  toward the icon. Title from the arbiter's table (`SYSTEM_TITLES`): bt `BLUETOOTH NOT LINKED`,
+  adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, wifi `WIFI NOT READ`, pi
+  `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
+  `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
+  A key not in the table is skipped with one WARNING per key (A5).
+- **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
+  the member's reason changes; `lastSeenTs` advances to each payload's `ts` (A2). A member that
+  leaves the verdict is REMOVED (a watch is never "listed until acked"). Acks follow G1
+  `{bootId, firstSeenTs}`; an acked system entry stays listed, `acknowledged: true`.
+- A None hand-off (failed system-status write) or a payload with no verdict keeps the cached
+  members and stays assessed (A3). An orchestrator restart re-alerts them with a new
+  `firstSeenTs`: they are not seeded (A4). No `alert_log` row (A6).
+- **Page**: in the codes-read nothing-found state, `carousel.js warningsQuietView` prints
+  `System checks not read yet.` while `sources.system.assessed` is false, then `Data checks are
+  not built yet.` while `sources.data.assessed` is false (both `tone: 'secondary'`).
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.

@@ -48,6 +48,8 @@
 # 2026-10-22    | Rex (US-877-b)| the always-present `verdict` {issueCount,
 #               |              | members}: the pure buildSystemVerdict, fed the
 #               |              | published blocks + this tick's capture-health.
+# 2026-10-22    | Rex (US-877-c)| emit returns the payload it wrote (None on a
+#               |              | failed write) for the alerts arbiter.
 # ================================================================================
 ################################################################################
 
@@ -913,7 +915,7 @@ def makeSystemStatusEmitter(
     *,
     syncStaleThresholdS: float,
     nowIsoFn: Callable[[], str] | None = None,
-) -> Callable[..., None]:
+) -> Callable[..., dict | None]:
     """Build the system-status emit callable owned by the orchestrator (A-3).
 
     The returned callable takes the live link / sync / power / drive readings,
@@ -928,7 +930,8 @@ def makeSystemStatusEmitter(
         nowIsoFn: Injected clock for ``ts`` (default UTC now, second resolution).
 
     Returns:
-        The emit callable.
+        The emit callable. It returns the payload it wrote, or None when the
+        write failed (US-877-c: the alerts arbiter is handed it in-process).
     """
     nowFn = nowIsoFn or (lambda: datetime.now(UTC).strftime(_ISO_FMT))
     target = os.path.join(statesDir, SYSTEM_STATUS_FILENAME)
@@ -967,7 +970,7 @@ def makeSystemStatusEmitter(
         syncNotCounted: list[str] | None = None,
         piHealth: dict | None = None,
         captureHealth: dict | None = None,
-    ) -> None:
+    ) -> dict | None:
         try:
             nowIso = nowFn()
             syncStale = isSyncStaleWhileDriving(
@@ -1017,5 +1020,7 @@ def makeSystemStatusEmitter(
                 "never blocks the orchestrator)",
                 exc,
             )
+            return None
+        return payload
 
     return emit

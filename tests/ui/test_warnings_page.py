@@ -35,6 +35,10 @@
 # 2026-10-21    | Ralph (Rex)  | US-897-d -- MOVED PIN: a battery episode carries the
 #               |              | provider's round (its side); every fixture entry
 #               |              | gains `round` (rewritten by running this file).
+# 2026-10-22    | Ralph (Rex)  | US-877-c -- 'System checks not read yet.' then 'Data
+#               |              | checks are not built yet.', one per unassessed
+#               |              | source; every alerts fixture's sources.system is
+#               |              | {assessed: false, reason: 'not_read'}.
 # ================================================================================
 ################################################################################
 
@@ -348,7 +352,9 @@ def test_activeCountExcludesClearedEntries():
 
 # --- US-898-b2: say only what was checked ------------------------------------
 
-NOT_BUILT = "System and data checks are not built yet."
+# US-877-c (Iris 2026-10-19): one line per unassessed source, System first.
+SYSTEM_NOT_READ = "System checks not read yet."
+DATA_NOT_BUILT = "Data checks are not built yet."
 
 
 @_NODE_ONLY
@@ -361,7 +367,8 @@ def test_checkedClean_isTheStorysExample():
         "state": "none", "mark": None, "head": "NO WARNINGS",
         "lines": [
             {"text": "Codes read at 10:02. Engine checks clear.", "tone": "primary"},
-            {"text": NOT_BUILT, "tone": "secondary"},
+            {"text": SYSTEM_NOT_READ, "tone": "secondary"},
+            {"text": DATA_NOT_BUILT, "tone": "secondary"},
         ],
     }
 
@@ -371,7 +378,25 @@ def test_engineNotAssessed_dropsTheEngineClause():
     view = _page(_fixture("system-data-not-assessed"))
     assert _fixture("system-data-not-assessed")["sources"]["engine"]["assessed"] is False
     assert [line["text"] for line in view["quiet"]["lines"]] == [
-        "Codes read at 5:20.", NOT_BUILT,
+        "Codes read at 5:20.", SYSTEM_NOT_READ, DATA_NOT_BUILT,
+    ]
+
+
+def test_systemDataNotAssessedFixture_systemIsNotReadAndDataNotBuilt():
+    """US-877-c: before a verdict is read the provider says system not_read."""
+    sources = _fixture("system-data-not-assessed")["sources"]
+    assert sources["system"] == {"assessed": False, "reason": "not_read"}
+    assert sources["data"] == {"assessed": False, "reason": "not_built"}
+
+
+@_NODE_ONLY
+def test_systemAssessed_dropsOnlyTheSystemLine():
+    """US-877-c: a read verdict drops 'System checks not read yet.'; the data
+    line stays (it is still not built), and no 'clear' is claimed for system."""
+    payload = _fixture("checked-clean")
+    payload["sources"]["system"] = {"assessed": True}
+    assert [line["text"] for line in _page(payload)["quiet"]["lines"]] == [
+        "Codes read at 3:02. Engine checks clear.", DATA_NOT_BUILT,
     ]
 
 
@@ -386,13 +411,15 @@ def test_systemAndDataBothAssessed_dropsTheNotBuiltLine():
 
 
 @_NODE_ONLY
-@pytest.mark.parametrize("which", ["system", "data"])
-def test_eitherSourceUnassessed_keepsTheNotBuiltLine(which: str):
+@pytest.mark.parametrize(
+    ("which", "line"), [("system", SYSTEM_NOT_READ), ("data", DATA_NOT_BUILT)]
+)
+def test_eitherSourceUnassessed_keepsItsOwnLine(which: str, line: str):
     payload = _fixture("checked-clean")
     payload["sources"]["system"] = {"assessed": True}
     payload["sources"]["data"] = {"assessed": True}
     del payload["sources"][which]
-    assert _page(payload)["quiet"]["lines"][-1]["text"] == NOT_BUILT
+    assert [x["text"] for x in _page(payload)["quiet"]["lines"][1:]] == [line]
 
 
 @_NODE_ONLY
@@ -778,7 +805,7 @@ def test_dom_checkedClean_noneNoWarningsAndTheNotBuiltLine():
     assert re.fullmatch(r"codes read \d{1,2}:02", meta), meta
     assert _textsByClass(surface, "warn-quiet-head") == ["NO WARNINGS"]
     lines = _textsByClass(surface, "warn-quiet-line")
-    assert len(lines) == 2 and lines[1] == NOT_BUILT
+    assert len(lines) == 3 and lines[1:] == [SYSTEM_NOT_READ, DATA_NOT_BUILT]
     assert re.fullmatch(r"Codes read at \d{1,2}:02\. Engine checks clear\.", lines[0]), lines[0]
     assert _rowPaths(surface) == [] and surface.pathsByClass("warn-more") == []
 
@@ -807,7 +834,7 @@ def test_dom_898_3_systemDataNotAssessed_neverPairedWithClear():
         if "clear" in text:
             assert "system" not in text and "data" not in text, text
             assert "System" not in text, text
-    assert NOT_BUILT in _textsByClass(surface, "warn-quiet-line")
+    assert _textsByClass(surface, "warn-quiet-line")[1:] == [SYSTEM_NOT_READ, DATA_NOT_BUILT]
     assert "Engine checks clear." not in " ".join(_cardElementTexts(surface))
 
 

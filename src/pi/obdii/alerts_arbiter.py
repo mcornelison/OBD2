@@ -41,6 +41,12 @@
 #                                episode's side: 'floor' low / 'ceil' high, else
 #                                null) and the page rounds last. _towardBreach
 #                                deleted (Atlas RULED 2026-10-20/21).
+# 2026-10-22    | Rex (US-877-c) | SYSTEM source: observeSystemStatus (in-process,
+#                                from the system-status emit) makes one WATCH per
+#                                verdict member (Iris titles, the member's reason
+#                                verbatim), removed when it clears; systemSource()
+#                                and buildAlertsState(systemSource=) -- not_read
+#                                until a verdict was read; system ranks with engine.
 # ================================================================================
 ################################################################################
 
@@ -117,6 +123,7 @@ ALERT_TYPE_COOLANT_STOP_CLEAR = "coolant_stop_clear"
 
 SOURCE_ENGINE = "engine"
 SOURCE_CODE = "code"
+SOURCE_SYSTEM = "system"
 
 TIER_STOP = "stop"
 TIER_WATCH = "watch"
@@ -128,9 +135,10 @@ ICON_WATCH = "watch"
 ICON_NOT_CHECKED = "not_checked"
 ICON_NONE = "none"
 
-# B5 order: tier first, then live (engine) before stored (code).
+# B5 order: tier first, then live (engine, system) before stored (code). System
+# ties engine (Atlas RULED 2026-10-22 A1): newest firstSeenTs, then id, decide.
 _TIER_RANK = {TIER_STOP: 0, TIER_WATCH: 1, TIER_MINOR: 2, TIER_UNRATED: 3}
-_SOURCE_RANK = {SOURCE_ENGINE: 0, SOURCE_CODE: 1}
+_SOURCE_RANK = {SOURCE_ENGINE: 0, SOURCE_SYSTEM: 0, SOURCE_CODE: 1}
 
 # R28: the server rejects rows from these sources, so the Pi never writes them.
 _NO_RECORD_SOURCES = frozenset({"replay", "physics_sim"})
@@ -195,6 +203,20 @@ CODE_UNRATED_SENTENCE = "Severity unknown. Get it diagnosed."
 CODE_PENDING_TITLE_SUFFIX = " · pending"
 CODE_STATUS_STORED = "stored"
 CODE_STATUS_PENDING = "pending"
+
+# SYSTEM entries (US-877-c): one WATCH per member of the system-status verdict,
+# never stop. Titles by member key, Iris 2026-10-19 (verbatim, <= 21 chars); the
+# sentence is the member's own reason, copied -- the page composes nothing. A key
+# not in this table is skipped with one WARNING (Atlas RULED 2026-10-22 A5).
+SYSTEM_TITLES = {
+    "bt": "BLUETOOTH NOT LINKED",
+    "adapter": "ADAPTER NOT ANSWERING",
+    "capture": "DATA FEED STALLED",
+    "wifi": "WIFI NOT READ",
+    "pi": "PI OVER LIMIT",
+}
+SYSTEM_REASON_NOT_READ = "not_read"
+DATA_REASON_NOT_BUILT = "not_built"
 
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -412,6 +434,13 @@ class AlertsArbiter:
         self._codeSource: dict[str, Any] = {"assessed": False, "checkedAtTs": None}
         # checkedAtTs of the newest dtc payload whose codes were applied (G1).
         self._codeAppliedAt: datetime | None = None
+        # US-877-c: the system entries, keyed by verdict member, from the last
+        # system-status payload handed in. Written on the run loop, read by the
+        # ack route too: their own lock, the _codeLock precedent.
+        self._systemLock = threading.Lock()
+        self._system: dict[str, AlertEpisode] = {}
+        self._systemRead = False
+        self._systemUnknownWarned: set[str] = set()
         for entry in seedEntries:
             self._seed(entry)
 
@@ -423,12 +452,80 @@ class AlertsArbiter:
             rpm = self._rpm
         with self._codeLock:
             codes = list(self._codes.values())
-        return [e for e in (self._coolant, self._battery, rpm) if e is not None] + codes
+        with self._systemLock:
+            system = list(self._system.values())
+        return [e for e in (self._coolant, self._battery, rpm) if e is not None] + codes + system
 
     def codeSource(self) -> dict[str, Any]:
         """``sources.code`` -- ``{assessed, checkedAtTs}`` of the last dtc payload."""
         with self._codeLock:
             return dict(self._codeSource)
+
+    def systemSource(self) -> dict[str, Any]:
+        """``sources.system`` -- assessed once a verdict was read this boot."""
+        with self._systemLock:
+            if self._systemRead:
+                return {"assessed": True}
+        return {"assessed": False, "reason": SYSTEM_REASON_NOT_READ}
+
+    # -------------------------------------------------------------- system
+
+    def observeSystemStatus(self, payload: Mapping[str, Any] | None) -> None:
+        """Take the system-status payload its emit just wrote (US-877-c).
+
+        Handed IN-PROCESS by ``_emitSystemStatusState`` only -- never by
+        ``emitNow``, which stays a pure rebuild. Each verdict member is one
+        active WATCH, id ``system:<key>:watch``; a member that left the verdict
+        is REMOVED (a watch is never 'listed until acked'). ``firstSeenTs`` is
+        the payload ``ts`` of the episode's first verdict and stays put while
+        the member's reason changes; ``lastSeenTs`` advances to each payload's
+        ``ts`` (Atlas A2). A None or verdict-less payload (a failed write) keeps
+        what is held, still assessed (A3). No alert_log row (A6).
+
+        Args:
+            payload: The system-status payload written, or None when none was.
+        """
+        if not isinstance(payload, Mapping):
+            return
+        verdict = payload.get("verdict")
+        members = verdict.get("members") if isinstance(verdict, Mapping) else None
+        if not isinstance(members, list):
+            return
+        ts = payload.get("ts")
+        ts = ts if isinstance(ts, str) and ts else None
+        with self._systemLock:
+            updated: dict[str, AlertEpisode] = {}
+            for member in members:
+                if not isinstance(member, Mapping):
+                    continue
+                key = member.get("key")
+                reason = member.get("reason")
+                if not isinstance(key, str) or not isinstance(reason, str):
+                    continue
+                title = SYSTEM_TITLES.get(key)
+                if title is None:
+                    if key not in self._systemUnknownWarned:
+                        self._systemUnknownWarned.add(key)
+                        logger.warning(
+                            "states/alerts: system verdict member %r has no title -- skipped",
+                            key,
+                        )
+                    continue
+                previous = self._system.get(key)
+                updated[key] = AlertEpisode(
+                    source=SOURCE_SYSTEM,
+                    key=key,
+                    tier=TIER_WATCH,
+                    title=title,
+                    sentence=reason,
+                    directive=None,
+                    unit=None,
+                    firstSeenTs=ts if previous is None else previous.firstSeenTs,
+                    lastSeenTs=ts,
+                    active=True,
+                )
+            self._system = updated
+            self._systemRead = True
 
     # --------------------------------------------------------------- codes
 
@@ -911,7 +1008,7 @@ class AlertsArbiter:
 
 
 def _sortKey(episode: AlertEpisode) -> tuple[int, int, float, str]:
-    """B5: tier, then live before stored, then NEWEST firstSeenTs, then id."""
+    """B5: tier, then live (engine, system) before stored, then NEWEST firstSeenTs, then id."""
     newest = float("inf")
     if isinstance(episode.firstSeenTs, str):
         try:
@@ -990,6 +1087,7 @@ def buildAlertsState(
     bootId: str,
     codeSource: Mapping[str, Any] | None = None,
     acknowledgedIds: Iterable[str] = (),
+    systemSource: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the states/alerts payload (Atlas s2 shape; pure).
 
@@ -1002,6 +1100,8 @@ def buildAlertsState(
         codeSource: ``AlertsArbiter.codeSource()``; None -> unassessed.
         acknowledgedIds: The ids the ack store matches for this boot and this
             episode (US-897-c). Empty (the default) publishes nothing acked.
+        systemSource: ``AlertsArbiter.systemSource()`` (US-877-c); None ->
+            ``{assessed: false, reason: 'not_read'}``.
 
     Returns:
         ``{ts, dataSource, bootId, sources, codesCheckedThisSession,
@@ -1027,6 +1127,9 @@ def buildAlertsState(
             "assessed": codeSource.get("assessed") is True,
             "checkedAtTs": codeSource.get("checkedAtTs"),
         }
+    system: dict[str, Any] = {"assessed": False, "reason": SYSTEM_REASON_NOT_READ}
+    if isinstance(systemSource, Mapping) and systemSource.get("assessed") is True:
+        system = {"assessed": True}
     takeover = None
     firstActive = next((entry for entry in entries if entry["active"]), None)
     if firstActive is not None and firstActive["tier"] == TIER_STOP:
@@ -1044,8 +1147,8 @@ def buildAlertsState(
         "sources": {
             "code": dict(code),
             "engine": {"assessed": _freshCoolant(obdLive) is not None},
-            "system": {"assessed": False, "reason": "not_built"},
-            "data": {"assessed": False, "reason": "not_built"},
+            "system": system,
+            "data": {"assessed": False, "reason": DATA_REASON_NOT_BUILT},
         },
         "codesCheckedThisSession": code["assessed"],
         "checkedAtTs": code["checkedAtTs"],
@@ -1087,7 +1190,8 @@ def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
 
     Returns:
         ``emit(episodes, obdLive, *, nowUtc, dataSource, bootId, codeSource,
-        acknowledgedIds)`` writing the payload atomically and returning it.
+        acknowledgedIds, systemSource)`` writing the payload atomically and
+        returning it.
         Best-effort by contract: a failure is logged, never raised, and
         returns None.
     """
@@ -1104,11 +1208,13 @@ def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
         bootId: str,
         codeSource: Mapping[str, Any] | None = None,
         acknowledgedIds: Iterable[str] = (),
+        systemSource: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         try:
             payload = buildAlertsState(
                 episodes, obdLive, nowUtc, dataSource=dataSource, bootId=bootId,
                 codeSource=codeSource, acknowledgedIds=acknowledgedIds,
+                systemSource=systemSource,
             )
             boot_state_emitter.ensureStatesDir(statesDir)
             boot_state_emitter.writeStateAtomic(target, payload)
