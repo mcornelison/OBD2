@@ -801,6 +801,8 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # US-876-c: the new top-level `link` block, its three layers (checked below).
 # US-876-d: NO delta -- link.adapter fills keys US-876-c already publishes and
 #           the builder gains no input (the provider feeds the existing `link`).
+# US-876-e: NO delta -- link.bt likewise fills keys US-876-c already publishes
+#           (the BT sampler feeds the existing `link`; no new builder input).
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
     "sync": {"lastOkTs", "rows", "pending", "stale"},

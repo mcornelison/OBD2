@@ -5143,7 +5143,7 @@ collapsed into one another:
 | Layer | Fact | Where it is read | Gates capture? |
 |---|---|---|---|
 | **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
-| **Bluetooth-connected** | the RFCOMM link to the dongle is up | **no `ConnectionStatus` field reads it yet** (US-876-e adds the BT observation; until then `system-status.link.bt` is not read). `ConnectionStatus.connected` is **not** this fact: it is python-OBD's `is_connected()`, i.e. status `CAR_CONNECTED` — an ECU-at-connect fact (Atlas MEASURED; corrected in US-876-c) | **no** — up on a parked car |
+| **Bluetooth-connected** | the RFCOMM link to the dongle is up | *(built, US-876-e)* `bluetoothctl info <MAC>` **`Connected:`** — `bluetooth_helper.readConnectedState`, sampled every 5 s off the card tick by `BtConnectedSampler` → `system-status.link.bt` (no `ConnectionStatus` field). `ConnectionStatus.connected` is **not** this fact: it is python-OBD's `is_connected()`, i.e. status `CAR_CONNECTED` — an ECU-at-connect fact (Atlas MEASURED; corrected in US-876-c) | **no** — up on a parked car |
 | **Adapter-answered** | the dongle's ELM answered (status ELM Connected or better at a connect attempt, or any answered read on a held session, ATRV included) | `ConnectionStatus.adapterAnswered` (US-876-d) → `system-status.link.adapter` | **no** — the ELM answers with the key out |
 | **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
 
@@ -7447,7 +7447,26 @@ that raises and releases BT reads `connecting`, never `retrying`.
   up: stale evidence is no evidence). A status with no adapter fields
   (`--simulate`, stubs) is null; an unreadable `getStatus()` follows the ECU's
   unread rule. Key off at home (ARCH-061): adapter `up`, ecu `connecting`.
-- **bt**: not read until US-876-e.
+- **bt (live, US-876-e; Atlas L3, E1–E5, G1)** — up means **bluez holds the
+  connection**: `bluetoothctl info <MAC>` `Connected:` (beside
+  `parseBondState`), parsed by `bluetooth_helper.parseConnectedState` and read
+  by `readConnectedState` on its **own 2 s** subprocess timeout
+  (`BLUETOOTHCTL_CONNECTED_TIMEOUT_S`; the bond read's 5 s cap is untouched).
+  `BtConnectedSampler` runs it every **5 s on its own daemon thread**, never on
+  the 2 s tick, and exits when the orchestrator's `_shutdownEvent` is set; the
+  tick reads only its latest `{reading, ts}` sample (`ts` = the sample time;
+  the layer's `ts` = its last transition). Precedence (E4): unreadable
+  (timeout, missing tool, garbage) → **null**, never down; `Connected: yes` →
+  up regardless of Paired; `Device <MAC> not available` or `Paired: no` →
+  **down** (nothing to reconnect to), dated the sample; `Connected: no` → the
+  shared rule (connecting / retrying, down only by C2). A sample older than
+  15 s (3 × the cadence, E2) → null. MAC: `connection.macAddress`, else
+  `pi.bluetooth.macAddress`, gated by `isMacAddress` — an rfcomm path, no MAC,
+  the `--simulate` MAC (or a `--simulate` run), or a host with no
+  `_shutdownEvent` → null and **no sampler thread**. Key off at home (Atlas
+  MEASURED: Paired/Bonded yes, Connected no) → `connecting`, or `retrying`
+  after an up with the ECU (E3: that honest state's verdict membership is
+  US-877-b's).
 - **`down` (RE-HUNT C2)** needs no retry authority: none of the three retry
   threads (US-301 heartbeat, recovery loop, post-failure heartbeat) alive, no
   connect in flight (`isConnectInFlight()`), and the link not held

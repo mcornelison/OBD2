@@ -109,6 +109,9 @@
 # 2026-10-22    | Rex (US-876-d)| link.adapter live from the connection's adapter
 #               |              | observation (own tracker, G1 via link.ecu); one
 #               |              | status read + one C2 verdict per tick.
+# 2026-10-22    | Rex (US-876-e)| link.bt live from the off-tick bluetoothctl
+#               |              | sampler (started on first use for a usable MAC;
+#               |              | stale / unreadable -> null; absent -> down).
 # ================================================================================
 ################################################################################
 
@@ -1862,13 +1865,13 @@ class CardStateEmitterMixin:
         """Gather the US-876-c link chain ``{bt, adapter, ecu}`` (Atlas L6).
 
         The ECU layer is live from ``ConnectionStatus.reachability``, the
-        adapter from the connection's adapter observation (US-876-d). Both
-        come from ONE status read and share one retry-authority verdict
-        (D2: the adapter's down is the ECU's C2 rule). BT is not read until
-        US-876-e gives it an observation.
+        adapter from the connection's adapter observation (US-876-d), BT from
+        the off-tick bluetoothctl sampler (US-876-e). One status read and one
+        retry-authority verdict serve all three (D2: a not-up layer's down is
+        the ECU's C2 rule).
         """
         from common.time.helper import toCanonicalIso
-        from pi.splash.system_status_emitter import LINK_UP, unreadLinkLayer
+        from pi.splash.system_status_emitter import LINK_UP
 
         conn = getattr(self, "_connection", None)
         status = None
@@ -1880,13 +1883,105 @@ class CardStateEmitterMixin:
         nowTs = toCanonicalIso(self._linkNowUtc())
         noAuthoritySinceTs = self._linkNoAuthoritySinceTs(conn, status, nowTs)
         ecu = self._gatherEcuLinkLayer(status, nowTs, noAuthoritySinceTs)
+        ecuUp = ecu["state"] == LINK_UP
         return {
-            "bt": unreadLinkLayer(),
+            "bt": self._gatherBtLinkLayer(nowTs, noAuthoritySinceTs, ecuUp=ecuUp),
             "adapter": self._gatherAdapterLinkLayer(
-                status, nowTs, noAuthoritySinceTs, ecuUp=ecu["state"] == LINK_UP
+                status, nowTs, noAuthoritySinceTs, ecuUp=ecuUp
             ),
             "ecu": ecu,
         }
+
+    def _gatherBtLinkLayer(
+        self, nowTs: str, noAuthoritySinceTs: str | None, *, ecuUp: bool
+    ) -> dict[str, str | None]:
+        """The BT layer: bluetoothctl 'Connected:' (US-876-e; Atlas L3, E2, E4, G1).
+
+        Reads ONLY the sampler's latest sample -- bluetoothctl never runs on
+        this tick. No sampler (no usable MAC), no sample yet, an unreadable
+        sample (timeout, missing tool, garbage) or one older than
+        ``BT_CONNECTED_STALE_AFTER_S`` publishes the layer null, never down
+        and never retrying. Connected is up regardless of Paired; an absent
+        device (not available / Paired: no) is down -- bluez has nothing to
+        reconnect to -- dated the sample; Connected no follows the shared
+        rule (connecting / retrying, down only by the C2 verdict). The
+        up-this-session flag counts only an up while link.ecu was up (G1).
+
+        Args:
+            nowTs: The publish instant (canonical UTC).
+            noAuthoritySinceTs: The C2 verdict, shared with the ECU layer.
+            ecuUp: Whether link.ecu is up on this same tick.
+        """
+        from pi.obdii.bluetooth_helper import (
+            BT_ABSENT,
+            BT_CONNECTED,
+            BT_CONNECTED_STALE_AFTER_S,
+        )
+        from pi.splash.system_status_emitter import unreadLinkLayer
+
+        sampler = self._btConnectedSampler()
+        if sampler is None:
+            return unreadLinkLayer()
+        tracker = self._linkTracker("_btLinkTracker")
+        sample = sampler.latest()
+        if (
+            sample is None
+            or sample.reading is None
+            or self._linkNowS() - sample.monoS > BT_CONNECTED_STALE_AFTER_S
+        ):
+            return tracker.markUnread()
+        connected = sample.reading == BT_CONNECTED
+        return tracker.observe(
+            observedUp=connected,
+            observedTs=sample.ts,
+            nowTs=nowTs,
+            noAuthoritySinceTs=sample.ts if sample.reading == BT_ABSENT else noAuthoritySinceTs,
+            chainComplete=ecuUp,
+            lastOkTs=sample.ts if connected else None,
+        )
+
+    def _btConnectedSampler(self) -> Any:
+        """The BT sampler, started on first use for a usable MAC (US-876-e).
+
+        MAC source: ``connection.macAddress``, else ``pi.bluetooth.macAddress``,
+        gated by ``isMacAddress`` -- an rfcomm path, no MAC or the --simulate
+        MAC (Atlas E1) starts nothing, and neither does a --simulate run. The
+        thread waits on the host's ``_shutdownEvent`` (E5); a host without
+        one (the stub composers) starts nothing rather than a thread nobody
+        can stop. Every attribute is read through ``getattr``.
+
+        Returns:
+            The running sampler (or a test's stand-in), or None.
+        """
+        sampler = getattr(self, "_btSampler", None)
+        if sampler is not None:
+            return sampler
+        from pi.obdii.bluetooth_helper import BtConnectedSampler, isMacAddress
+
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        if shutdownEvent is None or bool(getattr(self, "_simulate", False)):
+            return None
+        mac = getattr(getattr(self, "_connection", None), "macAddress", None)
+        if not mac:
+            btConfig = ((getattr(self, "_config", None) or {}).get("pi") or {}).get(
+                "bluetooth"
+            ) or {}
+            mac = btConfig.get("macAddress")
+        if not isinstance(mac, str) or not isMacAddress(mac):
+            return None
+        from common.time.helper import toCanonicalIso
+
+        sampler = BtConnectedSampler(
+            mac,
+            stopEvent=shutdownEvent,
+            subprocessRunner=getattr(self, "_btConnectedRunner", None),
+            clock=self._linkNowS,
+            wallClockIso=lambda: toCanonicalIso(self._linkNowUtc()),
+        )
+        sampler.start()
+        self._btSampler = sampler
+        logger.info("link: BT-connected sampler started | mac=%s", mac)
+        return sampler
 
     def _linkTracker(self, attr: str) -> LinkLayerTracker:
         """This layer's session tracker, created on first use (stub hosts too)."""

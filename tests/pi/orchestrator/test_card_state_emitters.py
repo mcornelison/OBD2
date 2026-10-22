@@ -26,6 +26,8 @@
 #               |              | from reachability, retry authority (C2) + hold.
 # 2026-10-22    | Ralph (Rex)  | US-876-d -- link.adapter from the connection's
 #               |              | adapter observation (VCs 1-2, G1, D2, D5).
+# 2026-10-22    | Ralph (Rex)  | US-876-e -- link.bt from the BT sampler (VCs
+#               |              | 1-2, E2, E4, G1, MAC sources, off-tick thread).
 # ================================================================================
 ################################################################################
 
@@ -1247,10 +1249,17 @@ def _linkOrch(tmp_path, clocks, *, heartbeat=True):
     orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
     orch._linkClock = lambda: clocks.mono
     orch._linkWallClock = lambda: clocks.wall
+    # US-876-e: this MAC would start the BT sampler once a test gives the host
+    # a _shutdownEvent; the double keeps it from ever spawning bluetoothctl.
+    orch._btConnectedRunner = _noBluetoothctl
     if heartbeat:
         orch._reconnectHeartbeatThread = _AliveThread()
     orch._initializeCardStateEmitters()
     return orch, conn
+
+
+def _noBluetoothctl(cmd, **kwargs):
+    raise FileNotFoundError(cmd[0])
 
 
 def _emitLink(orch, tmp_path):
@@ -1722,3 +1731,297 @@ def test_link_adapter_getStatusRaisingAfterAnUp_isRetrying(tmp_path):
     clocks.advance(2)
 
     assert _emitLink(orch, tmp_path)["adapter"]["state"] == "retrying"
+
+
+# ---------------------------------------------------------------------------
+# US-876-e -- link.bt: bluetoothctl 'Connected:', sampled off the tick.
+# ---------------------------------------------------------------------------
+
+_BT_MAC = "00:04:3E:85:0D:FB"
+_BT_INFO_CONNECTED = f"Device {_BT_MAC} (public)\n\tPaired: yes\n\tConnected: yes\n"
+
+
+class _FakeBtSampler:
+    """Stands in for the sampler thread: the provider only ever calls latest()."""
+
+    def __init__(self):
+        self.sample = None
+
+    def latest(self):
+        return self.sample
+
+
+def _btSample(clocks, reading):
+    from pi.obdii.bluetooth_helper import BtConnectedSample
+
+    return BtConnectedSample(reading=reading, ts=_isoOf(clocks.wall), monoS=clocks.mono)
+
+
+def _btOrch(tmp_path, clocks, *, heartbeat=True):
+    """A provider over a real ObdConnection with a scripted BT sampler."""
+    orch, conn = _linkOrch(tmp_path, clocks, heartbeat=heartbeat)
+    sampler = _FakeBtSampler()
+    orch._btSampler = sampler
+    return orch, conn, sampler
+
+
+def test_link_bt_connectedYes_isUp_datedTheSample(tmp_path):
+    """VC 1: bluetoothctl info shows 'Connected: yes' -> link.bt up, ts and
+    lastOkTs the sample's time (never the tick)."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks)
+    sampledAt = clocks.wall
+    sampler.sample = _btSample(clocks, BT_CONNECTED)
+    clocks.advance(2)
+
+    assert _emitLink(orch, tmp_path)["bt"] == {
+        "state": "up", "ts": _isoOf(sampledAt), "lastOkTs": _isoOf(sampledAt),
+    }
+
+
+def test_link_bt_timeout_isNull_neverDown_evenAfterAnUp(tmp_path):
+    """VC 2: bluetoothctl timed out (2 s) -> link.bt {null, null} -- never
+    down, and not retrying either, even after an up with the ECU."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED
+
+    clocks = _LinkClocks()
+    orch, conn, sampler = _btOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)
+    assert _emitLink(orch, tmp_path)["bt"]["state"] == "up"
+
+    clocks.advance(5)
+    sampler.sample = _btSample(clocks, None)
+
+    assert _emitLink(orch, tmp_path)["bt"] == _LINK_NULL
+
+
+@pytest.mark.parametrize("label", ["not-available", "paired-no"])
+def test_link_bt_absentDevice_isDown_datedTheSample(tmp_path, label):
+    """'Device <MAC> not available' / 'Paired: no' (both parse to absent) ->
+    down, with a retry thread alive: bluez says there is nothing to reconnect."""
+    from pi.obdii.bluetooth_helper import BT_ABSENT
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks, heartbeat=True)
+    sampledAt = clocks.wall
+    sampler.sample = _btSample(clocks, BT_ABSENT)
+    clocks.advance(2)
+
+    assert _emitLink(orch, tmp_path)["bt"] == {
+        "state": "down", "ts": _isoOf(sampledAt), "lastOkTs": None,
+    }
+
+
+def test_link_bt_connectedNo_beforeTheEcuAnswers_isConnecting_afterIsRetrying(tmp_path):
+    """G1 (the Atlas key-off example): 'Connected: no' reads connecting until
+    BT has been up WHILE the ECU was up; after that it reads retrying."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED, BT_NOT_CONNECTED
+
+    clocks = _LinkClocks()
+    orch, conn, sampler = _btOrch(tmp_path, clocks)
+    states = []
+
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+    clocks.advance(5)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)  # up, ECU still silent
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+    clocks.advance(5)
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+
+    obd = _LinkObd()
+    conn.obd = obd
+    clocks.advance(5)
+    _ecuRead(conn, obd, null=False)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)  # up with the ECU
+    states.append(_emitLink(orch, tmp_path)["bt"]["state"])
+    clocks.advance(5)
+    droppedAt = clocks.wall
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    retrying = _emitLink(orch, tmp_path)["bt"]
+
+    assert states == ["connecting", "up", "connecting", "up"]
+    assert retrying["state"] == "retrying"
+    assert retrying["ts"] == _isoOf(droppedAt)
+
+
+def test_link_bt_connectedNo_withNoRetryAuthority_isDownByTheSharedC2Rule(tmp_path):
+    """'Connected: no' is down only by the shared C2 verdict (after the hold)."""
+    from pi.obdii.bluetooth_helper import BT_NOT_CONNECTED
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks, heartbeat=False)
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    first = _emitLink(orch, tmp_path)
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC)
+    sampler.sample = _btSample(clocks, BT_NOT_CONNECTED)
+    later = _emitLink(orch, tmp_path)
+
+    assert first["bt"]["state"] == "connecting"
+    assert later["bt"]["state"] == "down"
+    assert later["ecu"]["state"] == "down"
+
+
+def test_link_bt_sampleOlderThan15s_isNull(tmp_path):
+    """E2: a sample older than 3 x the 5 s cadence -> all null (the sampler is
+    dead or wedged); at exactly 15 s it still stands."""
+    from pi.obdii.bluetooth_helper import BT_CONNECTED, BT_CONNECTED_STALE_AFTER_S
+
+    clocks = _LinkClocks()
+    orch, _conn, sampler = _btOrch(tmp_path, clocks)
+    sampler.sample = _btSample(clocks, BT_CONNECTED)
+
+    clocks.advance(BT_CONNECTED_STALE_AFTER_S)
+    atBound = _emitLink(orch, tmp_path)["bt"]["state"]
+    clocks.advance(1)
+    stale = _emitLink(orch, tmp_path)["bt"]
+
+    assert BT_CONNECTED_STALE_AFTER_S == 15
+    assert atBound == "up"
+    assert stale == _LINK_NULL
+
+
+def test_link_bt_noSampleYet_isNull(tmp_path):
+    """Before the sampler's first sample lands the layer is not read."""
+    clocks = _LinkClocks()
+    orch, _conn, _sampler = _btOrch(tmp_path, clocks)
+
+    assert _emitLink(orch, tmp_path)["bt"] == _LINK_NULL
+
+
+class _BtRunner:
+    """A bluetoothctl double for the real sampler thread."""
+
+    def __init__(self, stdout):
+        import threading
+
+        self.stdout = stdout
+        self.calls = []
+        self.threads = []
+        self.called = threading.Event()
+
+    def __call__(self, cmd, **kwargs):
+        import subprocess
+        import threading
+
+        self.calls.append(list(cmd))
+        self.threads.append(threading.current_thread())
+        self.called.set()
+        return subprocess.CompletedProcess(cmd, 0, stdout=self.stdout, stderr="")
+
+
+def _stopSampler(orch):
+    orch._shutdownEvent.set()
+    sampler = getattr(orch, "_btSampler", None)
+    if sampler is not None:
+        sampler.thread.join(timeout=5.0)
+        assert not sampler.thread.is_alive()
+
+
+def test_link_bt_realSampler_samplesOffTheTickThread_andStopsOnShutdown(tmp_path):
+    """The provider starts ONE daemon sampler for the connection's MAC; every
+    bluetoothctl call runs on it (never the tick thread); a tick only reads
+    its latest sample; _shutdownEvent stops it (E5)."""
+    import threading
+    import time
+
+    from pi.obdii.bluetooth_helper import BT_CONNECTED_SAMPLE_INTERVAL_S
+
+    conn = SimpleNamespace(macAddress=_BT_MAC, getStatus=lambda: None)
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._shutdownEvent = threading.Event()
+    runner = _BtRunner(_BT_INFO_CONNECTED)
+    orch._btConnectedRunner = runner
+    orch._initializeCardStateEmitters()
+    try:
+        _emitLink(orch, tmp_path)
+        sampler = orch._btSampler
+        assert runner.called.wait(timeout=5.0)
+        deadline = time.monotonic() + 5.0
+        while sampler.latest() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        callsBefore = len(runner.calls)
+        bt = _emitLink(orch, tmp_path)["bt"]
+        callsDuringTick = len(runner.calls) - callsBefore
+        sameSampler = orch._btSampler is sampler
+    finally:
+        _stopSampler(orch)
+
+    assert bt["state"] == "up"
+    assert sameSampler
+    assert callsDuringTick == 0
+    assert runner.calls[0] == ["bluetoothctl", "info", _BT_MAC]
+    assert set(runner.threads) == {sampler.thread}
+    assert threading.current_thread() not in runner.threads
+    assert sampler.thread.daemon is True
+    assert sampler._intervalS == BT_CONNECTED_SAMPLE_INTERVAL_S
+
+
+def test_link_bt_configuredMac_usedWhenTheConnectionHasNone(tmp_path):
+    """MAC source: connection.macAddress, else pi.bluetooth.macAddress."""
+    import threading
+
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    config["pi"]["bluetooth"] = {"macAddress": _BT_MAC}
+    orch = _FakeOrch(config)
+    orch._shutdownEvent = threading.Event()
+    runner = _BtRunner(_BT_INFO_CONNECTED)
+    orch._btConnectedRunner = runner
+    orch._initializeCardStateEmitters()
+    try:
+        _emitLink(orch, tmp_path)
+        assert runner.called.wait(timeout=5.0)
+    finally:
+        _stopSampler(orch)
+
+    assert runner.calls[0] == ["bluetoothctl", "info", _BT_MAC]
+
+
+@pytest.mark.parametrize(
+    ("connMac", "configMac", "simulate", "withShutdownEvent"),
+    [
+        (None, None, False, True),
+        ("/dev/rfcomm0", _BT_MAC, False, True),
+        ("SIMULATED:00:11:22:33:44:55", _BT_MAC, False, True),
+        (None, _BT_MAC, True, True),
+        (_BT_MAC, None, False, False),
+    ],
+    ids=["no-mac", "rfcomm-path", "simulate-mac", "simulate-run", "stub-host-no-event"],
+)
+def test_link_bt_noUsableMac_startsNoSampler_andIsNull(
+    tmp_path, connMac, configMac, simulate, withShutdownEvent
+):
+    """No MAC, an rfcomm path, the --simulate MAC (Atlas E1) or a host with
+    no _shutdownEvent to stop it -> link.bt null and NO sampler thread."""
+    import threading
+
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    if configMac is not None:
+        config["pi"]["bluetooth"] = {"macAddress": configMac}
+    conn = None
+    if connMac is not None:
+        conn = SimpleNamespace(macAddress=connMac, getStatus=lambda: None)
+    orch = _FakeOrch(config, connection=conn)
+    orch._simulate = simulate
+    if withShutdownEvent:
+        orch._shutdownEvent = threading.Event()
+    runner = _BtRunner(_BT_INFO_CONNECTED)
+    orch._btConnectedRunner = runner
+    orch._initializeCardStateEmitters()
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    bt = _emitLink(orch, tmp_path)["bt"]
+
+    assert bt == _LINK_NULL
+    assert getattr(orch, "_btSampler", None) is None
+    assert "bt-connected-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )
+    assert runner.calls == []

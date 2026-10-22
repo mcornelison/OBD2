@@ -22,6 +22,9 @@
 #                                readBondState / ensureTrusted: the runtime half of
 #                                the durable-bond story that scripts/pair_obdlink.sh
 #                                only ever wrote at pair time.
+# 2026-10-22    | Rex (US-876-e)| parseConnectedState / readConnectedState (own
+#                                2 s timeout) / BtConnectedSampler: the link
+#                                chain's BT layer, sampled every 5 s off-tick.
 # ================================================================================
 ################################################################################
 
@@ -52,6 +55,8 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -83,6 +88,25 @@ BLUETOOTHCTL_CMD = "bluetoothctl"
 # (Atlas, boot 7c6aafaa: `info` 5.013 s with it, 0.0079 s without, complete
 # output either way).  The WRITE commands still carry `--timeout` unchanged.
 BLUETOOTHCTL_TIMEOUT_S = 5
+
+# US-876-e: the BT-connected read's OWN subprocess timeout. `info` measured
+# 7 ms (Atlas); 2 s bounds a wedged bluez well inside the 5 s sample cadence.
+# Deliberately a separate constant: the bond read's 5 s cap above is pinned.
+BLUETOOTHCTL_CONNECTED_TIMEOUT_S = 2
+
+# US-876-e: the sampler's cadence, and the age past which a sample no longer
+# stands (E2: 3 x the cadence -- the sampler is dead or wedged).
+BT_CONNECTED_SAMPLE_INTERVAL_S = 5.0
+BT_CONNECTED_STALE_AFTER_S = 3 * BT_CONNECTED_SAMPLE_INTERVAL_S
+
+# US-876-e: what one `bluetoothctl info <MAC>` says about the BT connection.
+# An unreadable reply is None, never one of these.
+#   connected    = 'Connected: yes' (whatever Paired says).
+#   notConnected = 'Connected: no' on a device bluez knows and has paired.
+#   absent       = 'Device <MAC> not available', or 'Paired: no'.
+BT_CONNECTED = "connected"
+BT_NOT_CONNECTED = "notConnected"
+BT_ABSENT = "absent"
 
 
 # ================================================================================
@@ -407,6 +431,189 @@ def readBondState(
         logger.debug("bond-state read failed (%s): %s", _formatCommand(cmd), exc)
         return BondState()
     return parseBondState(result.stdout or '')
+
+
+# ================================================================================
+# US-876-e -- the BT-connected reading (the link chain's Bluetooth layer)
+# ================================================================================
+
+_CONNECTED_RE = re.compile(r'^\s*Connected:\s*(yes|no)\s*$', re.MULTILINE)
+_NOT_AVAILABLE_RE = re.compile(r'Device\s+\S+\s+not available')
+
+
+def parseConnectedState(infoOutput: str) -> str | None:
+    """Parse ``bluetoothctl info <MAC>`` output into a BT-connected reading.
+
+    A sibling of :func:`parseBondState`. Precedence (Atlas E4): 'Connected:
+    yes' is connected regardless of Paired; then 'not available' or 'Paired:
+    no' is absent; then 'Connected: no' is not connected. A reply naming none
+    of those is unreadable -- None, never absent.
+
+    Args:
+        infoOutput: Raw (possibly ANSI-coloured) bluetoothctl output.
+
+    Returns:
+        ``BT_CONNECTED`` / ``BT_ABSENT`` / ``BT_NOT_CONNECTED``, or None.
+    """
+    plain = _ANSI_RE.sub('', infoOutput or '')
+    connected = _CONNECTED_RE.search(plain)
+    if connected is not None and connected.group(1) == 'yes':
+        return BT_CONNECTED
+    paired = _BOND_FLAG_RE['paired'].search(plain)
+    if _NOT_AVAILABLE_RE.search(plain) or (paired is not None and paired.group(1) == 'no'):
+        return BT_ABSENT
+    if connected is not None:
+        return BT_NOT_CONNECTED
+    return None
+
+
+def readConnectedState(
+    macAddress: str,
+    subprocessRunner: SubprocessRunner | None = None,
+) -> str | None:
+    """Read whether bluez holds a BT connection to ``macAddress`` (US-876-e).
+
+    Best-effort and non-raising, like :func:`readBondState`, but on its own
+    2 s timeout. A timeout, a missing ``bluetoothctl`` (the dev box) or any
+    other raise is None: not read, never absent. A value that is not a MAC
+    (an rfcomm path, the --simulate MAC) runs nothing and is None.
+
+    Args:
+        macAddress: Target Bluetooth MAC.
+        subprocessRunner: Optional subprocess-runner override for testing.
+
+    Returns:
+        The :func:`parseConnectedState` reading, or None when nothing was read.
+    """
+    if not isMacAddress(macAddress):
+        return None
+    runner = subprocessRunner or _defaultRunner
+    cmd = [BLUETOOTHCTL_CMD, 'info', macAddress]
+    try:
+        result = runner(
+            cmd,
+            timeout=BLUETOOTHCTL_CONNECTED_TIMEOUT_S,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+        )
+    except Exception as exc:  # noqa: BLE001 -- a link probe must never raise
+        logger.debug("bt-connected read failed (%s): %s", _formatCommand(cmd), exc)
+        return None
+    return parseConnectedState(result.stdout or '')
+
+
+@dataclass(frozen=True)
+class BtConnectedSample:
+    """One BT-connected sample (US-876-e).
+
+    Attributes:
+        reading: The :func:`readConnectedState` result (None = not read).
+        ts: Canonical-UTC time the sample was taken.
+        monoS: Monotonic seconds at the sample, for the staleness bound.
+    """
+
+    reading: str | None
+    ts: str
+    monoS: float
+
+
+class _StopEvent(Protocol):
+    """The slice of :class:`threading.Event` the sampler waits on."""
+
+    def is_set(self) -> bool:
+        ...
+
+    def wait(self, timeout: float | None = None) -> bool:
+        ...
+
+
+def _wallClockIso() -> str:
+    """Aware UTC now as canonical ISO -- the default sample stamp."""
+    from datetime import UTC, datetime
+
+    from common.time.helper import toCanonicalIso
+
+    return toCanonicalIso(datetime.now(UTC))
+
+
+class BtConnectedSampler:
+    """Samples :func:`readConnectedState` every 5 s on its own daemon thread.
+
+    The system-status tick (every 2 s) only reads :meth:`latest`, so a slow or
+    wedged bluetoothctl can never stall it (US-876-e). The loop samples, then
+    waits the cadence on ``stopEvent`` -- the orchestrator's shutdown event --
+    and exits as soon as it is set.
+    """
+
+    def __init__(
+        self,
+        macAddress: str,
+        *,
+        stopEvent: _StopEvent,
+        subprocessRunner: SubprocessRunner | None = None,
+        clock: Callable[[], float] | None = None,
+        wallClockIso: Callable[[], str] | None = None,
+        intervalS: float = BT_CONNECTED_SAMPLE_INTERVAL_S,
+    ) -> None:
+        """
+        Args:
+            macAddress: The bonded dongle's MAC.
+            stopEvent: Set to stop the loop (the orchestrator's _shutdownEvent).
+            subprocessRunner: Optional subprocess-runner override for testing.
+            clock: Monotonic seconds; defaults to :func:`time.monotonic`.
+            wallClockIso: Canonical-UTC now; defaults to the system clock.
+            intervalS: Seconds between samples.
+
+        Raises:
+            ValueError: If ``macAddress`` isn't in MAC format.
+        """
+        if not isMacAddress(macAddress):
+            raise ValueError(
+                f"BtConnectedSampler requires a MAC address, got: {macAddress!r}"
+            )
+        self._macAddress = macAddress
+        self._stopEvent = stopEvent
+        self._runner = subprocessRunner
+        self._clock = clock or time.monotonic
+        self._wallClockIso = wallClockIso or _wallClockIso
+        self._intervalS = intervalS
+        self._lock = threading.Lock()
+        self._latest: BtConnectedSample | None = None
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start the sampling loop on a daemon thread."""
+        self.thread = threading.Thread(
+            target=self.run, name="bt-connected-sampler", daemon=True
+        )
+        self.thread.start()
+
+    def run(self) -> None:
+        """Sample, then wait the cadence, until the stop event is set."""
+        while not self._stopEvent.is_set():
+            self.sampleOnce()
+            if self._stopEvent.wait(self._intervalS):
+                return
+
+    def sampleOnce(self) -> BtConnectedSample:
+        """Take one sample now and make it the latest.
+
+        Returns:
+            The sample just taken.
+        """
+        reading = readConnectedState(self._macAddress, subprocessRunner=self._runner)
+        sample = BtConnectedSample(
+            reading=reading, ts=self._wallClockIso(), monoS=float(self._clock())
+        )
+        with self._lock:
+            self._latest = sample
+        return sample
+
+    def latest(self) -> BtConnectedSample | None:
+        """The most recent sample, or None before the first."""
+        with self._lock:
+            return self._latest
 
 
 def ensureTrusted(
