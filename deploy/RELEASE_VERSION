@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.10",
-  "theme": "V0.30 warnings page",
-  "description": "Pi-only (server unchanged since V0.30.6). Sprint 108 (#121): warnings icon on every page, ALERTS card lists the provider's entries (honest empty / not-checked states, scroll cue), parked code detail, POST /alerts-ack (acks for this boot), live coolant STOP takeover (PULL OVER) from states/alerts, TROUBLE CODES screen while parked; old DTC takeover + ribbon deleted."
+  "version": "V0.30.11",
+  "theme": "V0.30 system providers",
+  "description": "Pi-only (server unchanged since V0.30.6). Sprint 109 (#124): system-status link chain BT/adapter/ECU, WiFi, last data stored + rows waiting, Pi health with sourced limits, verdict feeding the alerts SYSTEM source. Sprint 111 (#122): clear gate counts pending, battery rounding, deploy installs a changed rfcomm-bind unit (no restart)."
 }
