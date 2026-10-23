@@ -28,6 +28,9 @@
 # 2026-10-18    | Rex (US-890-f) | Initial -- SINCE RESET reset flow.
 # 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: parked is states/gear (P/N);
 #               |              | the DOM boots serve a parked or moving car.
+# 2026-10-22    | Rex (US-923) | MOVED PIN: the reset follows the provider's
+#               |              | resetAllowed, not engineParked; 'park to reset'
+#               |              | retired for 'slow to reset' / 'speed unknown'.
 # ================================================================================
 ################################################################################
 
@@ -69,11 +72,16 @@ pytestmark = pytest.mark.skipif(
 FIXTURE_NAMES = [
     "parked-reset-available", "reset-refused-driving", "reset-write-fails",
     "reset-unknown-504", "reset-confirm-timeout",
+    # US-923 (fuel spec s7): the gate as published.
+    "reset-allowed-true", "reset-allowed-driving", "reset-allowed-speed-unknown",
+    "reset-allowed-missing",
 ]
 
 HINT = "hold to reset"
 RESETTING = "resetting…"
-PARK = "park to reset"
+# US-923 MOVED PIN: 'park to reset' is retired (fuel spec s4.3/s4.6).
+SLOW = "slow to reset"
+SPEED_UNKNOWN = "speed unknown"
 FAILED = "couldn't reset"
 UNCONFIRMED = "couldn't confirm"
 OLD_FIGURE = "≈24.6"
@@ -95,7 +103,8 @@ def _read(name: str, label: str) -> dict[str, Any]:
 
 # Runs a sequence of reducer events through carousel.js and returns, after each
 # one, the state and the MPG row view -- the view built from the LATEST read the
-# sequence has seen, the parked flag last given, and the injected window.
+# sequence has seen, that read's own gate (US-923: fuelResetAllowed, exactly as
+# the shipped tick passes it), and the injected window.
 _SEQUENCE = """
 const args = JSON.parse(require("fs").readFileSync(0, "utf-8"));
 if (args.stale !== undefined) globalThis.DISPLAY_STALE = args.stale;
@@ -103,23 +112,21 @@ const c = require(args.js);
 const confirmSec = c.resolveFuelResetConfirmSec(globalThis.DISPLAY_STALE);
 let state = c.fuelResetInit();
 let read = args.read;
-let parked = args.parked;
 const out = [];
 for (const ev of args.events) {
   if (ev.read !== undefined) read = ev.read;
-  if (ev.parked !== undefined) parked = ev.parked;
-  const e = Object.assign({}, ev, {confirmSec: confirmSec, parked: parked});
+  const e = Object.assign({}, ev, {confirmSec: confirmSec, allowed: c.fuelResetAllowed(read)});
   if (e.type === "yes") e.read = read;
   state = c.fuelResetNext(state, e);
-  out.push({state: state, view: c.fuelMpgResetView(read, state, parked, confirmSec)});
+  out.push({state: state, view: c.fuelMpgResetView(read, state, confirmSec)});
 }
 process.stdout.write(JSON.stringify(out));
 """
 
 
-def _run(events: list[dict[str, Any]], read: Any, parked: bool = True,
+def _run(events: list[dict[str, Any]], read: Any,
          stale: Any = STALE) -> list[dict[str, Any]]:
-    args: dict[str, Any] = {"js": _JS, "events": events, "read": read, "parked": parked}
+    args: dict[str, Any] = {"js": _JS, "events": events, "read": read}
     if stale is not None:
         args["stale"] = stale
     proc = subprocess.run(
@@ -198,20 +205,45 @@ def test_holdTime_isTwoSeconds_withProgressFromLongPressProgress():
     assert json.loads(proc.stdout) == [2000, 0.5, 1]
 
 
-def test_parked_showsTheHint_andTheHoldIsLive():
-    step = _run([{"type": "read"}], _read("parked-reset-available", "before"))[0]
+@pytest.mark.parametrize("name", ["parked-reset-available", "reset-allowed-true"])
+def test_gateOpen_showsTheHint_andTheHoldIsLive(name: str):
+    """MOVED PIN (US-923): the hint follows resetAllowed.value === true."""
+    label = _fixture(name)["reads"][0]["label"]
+    step = _run([{"type": "read"}], _read(name, label))[0]
     assert _since(step) == (OLD_FIGURE, "", HINT)
     assert step["view"]["reset"] == {"pressable": True, "confirm": False}
 
 
-def test_validation_moving_holdGivesNoHintAndNoConfirm():
-    """Validation: moving, long-press SINCE RESET 3 s -> no hint, no confirm."""
-    steps = _run([{"type": "read"}, {"type": "hold"}],
-                 _read("parked-reset-available", "before"), parked=False)
+@pytest.mark.parametrize(
+    "name", ["reset-allowed-driving", "reset-allowed-speed-unknown", "reset-allowed-missing"])
+def test_validation_gateClosed_holdGivesNoHintNoConfirmNoWord(name: str):
+    """MOVED PIN (US-923, was the 'moving' case): {false, driving}, {false,
+    speed_unknown} and a missing block -> no hint, no confirm, and no standing
+    refusal word (spec s4.3: the words are POST outcomes only)."""
+    steps = _run([{"type": "read"}, {"type": "hold"}], _read(name, "read"))
     for step in steps:
         assert _since(step) == (OLD_FIGURE, "", "")
         assert step["view"]["reset"] == {"pressable": False, "confirm": False}
     assert steps[-1]["state"]["phase"] == "idle"
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [{"value": "true", "reason": None}, {"value": 1, "reason": None}, {"value": None},
+     {}, None, "true", True, [True]],
+    ids=["string-true", "one", "null-value", "empty", "null", "string", "bare-true", "list"],
+)
+def test_onlyAStrictTrueInsideAnObject_offersTheReset(gate: Any):
+    read = json.loads(json.dumps(_read("reset-allowed-true", "read")))
+    read["resetAllowed"] = gate
+    step = _run([{"type": "read"}], read)[0]
+    assert step["view"]["reset"]["pressable"] is False
+    assert _since(step)[2] == ""
+
+
+def test_anUnreadableFile_offersNoReset():
+    for read in (None, "garbage", []):
+        assert _run([{"type": "read"}], read)[0]["view"]["reset"]["pressable"] is False
 
 
 def test_hold_opensTheConfirm_andNo_changesNothing():
@@ -222,8 +254,10 @@ def test_hold_opensTheConfirm_andNo_changesNothing():
     assert steps[2]["state"] == steps[0]["state"]
 
 
-def test_theCarMovingUnderAnOpenConfirm_withdrawsIt():
-    steps = _run([{"type": "hold"}, {"type": "read", "parked": False}],
+def test_theGateClosingUnderAnOpenConfirm_withdrawsIt():
+    """MOVED PIN (US-923): the confirm is withdrawn by a read whose gate closed."""
+    steps = _run([{"type": "hold"},
+                  {"type": "read", "read": _read("reset-allowed-driving", "read")}],
                  _read("parked-reset-available", "before"))
     assert steps[0]["view"]["reset"]["confirm"] is True
     assert steps[1]["view"]["reset"] == {"pressable": False, "confirm": False}
@@ -291,10 +325,18 @@ def test_confirmWindow_followsTheInjectedValue():
     assert _since(steps[3]) == ("--", RESETTING, "")
 
 
-def test_validation_409Driving_latestProviderValue_plusParkToReset():
+def test_validation_409Driving_latestProviderValue_plusSlowToReset():
+    """MOVED PIN (US-923): 409 driving reads 'slow to reset' (was 'park to reset')."""
     fx = _fixture("reset-refused-driving")
     steps = _run(_confirmed(fx["response"]), _read("reset-refused-driving", "before"))
-    assert _since(steps[2]) == (OLD_FIGURE, "", PARK)
+    assert _since(steps[2]) == (OLD_FIGURE, "", SLOW)
+
+
+def test_409SpeedUnknown_latestProviderValue_plusSpeedUnknown():
+    """US-923: the predicate's other reason reaches the glass as its own word."""
+    answer = {"status": 409, "body": {"ok": False, "reason": "speed_unknown"}}
+    steps = _run(_confirmed(answer), _read("reset-refused-driving", "before"))
+    assert _since(steps[2]) == (OLD_FIGURE, "", SPEED_UNKNOWN)
 
 
 @pytest.mark.parametrize("case", sorted(_fixture("reset-write-fails")["responses"]))
@@ -331,7 +373,7 @@ def test_theOutcomeRendersTheLatestRead_neverACachedValue():
     steps = _run(_confirmed(fx["response"]) + [{"type": "read", "read": newer,
                                                 "nowMs": _T0 + 2000}],
                  _read("reset-refused-driving", "before"))
-    assert _since(steps[3]) == ("≈25.0", "", PARK)
+    assert _since(steps[3]) == ("≈25.0", "", SLOW)
 
 
 def test_anOutcome_isNeverTheHint_andAHoldAfterItStillWorks():
@@ -348,9 +390,34 @@ def test_yesWithoutAnOpenConfirm_doesNothing():
     assert _since(steps[0]) == (OLD_FIGURE, "", HINT)
 
 
-@pytest.mark.parametrize("text", [HINT, RESETTING, PARK, FAILED, UNCONFIRMED])
+@pytest.mark.parametrize("text", [HINT, RESETTING, SLOW, SPEED_UNKNOWN, FAILED, UNCONFIRMED])
 def test_everyResetText_isAtMost16Chars(text: str):
     assert len(text) <= 16
+
+
+def test_parkToReset_appearsNowhere():
+    """US-923 (fuel spec AC 8): the word is retired, comments included."""
+    assert "park to reset" not in open(_JS, encoding="utf-8").read()
+
+
+_RESET_FUNCTIONS = ("fuelResetAllowed", "fuelResetAnswer", "fuelResetNext",
+                    "fuelMpgResetView", "fuelResetOverlay")
+
+
+@pytest.mark.parametrize("name", _RESET_FUNCTIONS)
+def test_theResetCode_readsNoSpeedGearOrParkedState(name: str):
+    """US-923 grep gate (fuel spec AC 8): the page computes no gate of its own."""
+    body = rh._fnBody(open(_JS, encoding="utf-8").read(), name)
+    assert not re.search(r"SPEED|speed\b|gear|[Pp]arked", body), body
+
+
+def test_theShippedTick_gatesTheResetOnTheReadsOwnResetAllowed():
+    """Every fuel-reset call site passes fuelResetAllowed(...), never
+    engineParked (which stays the gate for Clear, the tap and Settings)."""
+    src = open(_JS, encoding="utf-8").read()
+    for call in re.finditer(r"fuel(?:ResetNext|ResetOverlay|MpgResetView)\([^;]*", src):
+        assert "engineParked" not in call.group(0), call.group(0)
+    assert len(re.findall(r"allowed: fuelResetAllowed\(lastFuelEconomy\)", src)) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +494,8 @@ def _movingCar() -> dict[str, Any]:
 
 
 _HOLD_PARKED = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}]
+# US-923: the provider refusing, for the boots that need the gate closed.
+_GATE_DRIVING = {"/fuel-economy": _read("reset-allowed-driving", "read")}
 _HOLD_2S = [{"pointer": {"id": "fuel-since-reset", "type": "pointerdown"}},
             {"advanceMs": 2100, "flush": 2},
             {"pointer": {"id": "fuel-since-reset", "type": "pointerup"}}]
@@ -481,20 +550,42 @@ def _boot(steps: list[dict[str, Any]], car: dict[str, Any],
 
 
 def test_dom_shipsTheConfirmHidden_andTheSlotNotPressable():
-    dom = _boot([{"flush": 4}], _movingCar())
+    dom = _boot([{"flush": 4}], _movingCar(), routes=_GATE_DRIVING)
     assert not _confirmOpen(dom)
     assert _byId(dom["tree"], "fuel-since-reset")["attrs"]["data-pressable"] == "false"
 
 
-def test_dom_validation_moving_threeSecondHold_noHintNoConfirm():
+@pytest.mark.parametrize(
+    "gate", ["reset-allowed-driving", "reset-allowed-speed-unknown", "reset-allowed-missing"])
+def test_dom_validation_gateClosed_threeSecondHold_noHintNoConfirm(gate: str):
+    """MOVED PIN (US-923): a PARKED car whose provider says no still offers
+    nothing -- the page reads the gate, never engineParked."""
     steps = _HOLD_PARKED + [
         {"pointer": {"id": "fuel-since-reset", "type": "pointerdown"}},
         {"advanceMs": 3000, "flush": 3},
         {"pointer": {"id": "fuel-since-reset", "type": "pointerup"}}, {"flush": 1}]
-    dom = _boot(steps, _movingCar())
+    dom = _boot(steps, _parkedCar(), routes={"/fuel-economy": _read(gate, "read")})
     assert _glass(dom) == (OLD_FIGURE, "", "")
     assert not _confirmOpen(dom)
     assert not any(f["url"] == "/fuel-reset" for f in dom["fetches"])
+
+
+def test_dom_validation_slowRollingInGear_isOffered_andAHoldOpensTheConfirm():
+    """US-923 (CIO 2026-10-22): rolling <= 5 mph in gear 3 the provider allows
+    it, and the page offers it although engineParked is false."""
+    dom = _boot(_HOLD_PARKED + _HOLD_2S, _movingCar(),
+                routes={"/fuel-economy": _read("reset-allowed-true", "read")})
+    assert _glass(dom) == (OLD_FIGURE, "", HINT)
+    assert _confirmOpen(dom)
+
+
+def test_dom_theGateClosingUnderAnOpenConfirm_withdrawsIt():
+    steps = _HOLD_PARKED + _HOLD_2S + [
+        {"setRoutes": {"/fuel-economy": _read("reset-allowed-driving", "read")}},
+        {"advanceMs": 1000, "flush": 2}]
+    dom = _boot(steps, _parkedCar())
+    assert not _confirmOpen(dom)
+    assert _glass(dom) == (OLD_FIGURE, "", "")
 
 
 def test_dom_parked_showsTheHint_andAHoldOpensTheConfirm():
@@ -566,10 +657,11 @@ def test_dom_200_noMatchingRead_pastTheWindow_couldntConfirm():
 
 @pytest.mark.parametrize(
     ("answer", "line"),
-    [(_fixture("reset-refused-driving")["response"], PARK),
+    [(_fixture("reset-refused-driving")["response"], SLOW),
+     ({"status": 409, "body": {"ok": False, "reason": "speed_unknown"}}, SPEED_UNKNOWN),
      (_fixture("reset-write-fails")["responses"]["no-channel-503"], FAILED),
      (_fixture("reset-unknown-504")["response"], UNCONFIRMED)],
-    ids=["409-driving", "503", "504"],
+    ids=["409-driving", "409-speed-unknown", "503", "504"],
 )
 def test_dom_refusals_paintTheLatestValue_plusTheOutcome(answer: dict[str, Any], line: str):
     steps = _HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-yes"}, {"flush": 2}]

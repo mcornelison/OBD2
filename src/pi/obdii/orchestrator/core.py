@@ -81,6 +81,9 @@
 #               |              | restart seed of that set survives the init.
 # 2026-10-22    | Rex (US-916) | _lastSyncOkTsIso is gone: system-status reads
 #               |              | lastOkTs from sync_log.last_ok_at.
+# 2026-10-22    | Rex (US-923) | The fuel reset re-checks _fuelResetAllowed (the
+#               |              | published predicate) in place of "recording ->
+#               |              | driving"; a refusal returns its reason.
 # ================================================================================
 ################################################################################
 
@@ -1112,9 +1115,15 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         ``fuel_since_reset.reset`` on the table alone -- that would leave the
         watermark behind and the next persist would write pre-reset fuel back.
 
-        While a drive is recording (``_gatherDriveState``) the request is
-        refused with reason ``driving`` and nothing changes. Every outcome is
-        published, refusals included, and the request is always consumed.
+        US-923 (Atlas C1/C3): the gate is ``_fuelResetAllowed`` -- the SAME
+        ``fuel_reset_gate.resetAllowed`` the card tick publishes for the page,
+        over the live readings at service time (raw gear P/N, or a fresh SPEED
+        <= ``pi.fuel.resetMaxSpeedKph``). A refusal returns the predicate's own
+        reason (``driving`` / ``speed_unknown``) and nothing changes, so the
+        page word and the outcome cannot disagree. A mid-recording reset at
+        walking pace is allowed: ``resetSinceReset`` moves the watermark under
+        ``_fuelLock`` and thisDrive is untouched. Every outcome is published,
+        refusals included, and the request is always consumed.
 
         Returns:
             True when a request was found and answered (either way), else False.
@@ -1136,8 +1145,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         ok = False
         reason: str | None
         resetAtTs: str | None = None
-        if self._gatherDriveState()[0] == "recording":
-            reason = "driving"
+        gate = self._fuelResetAllowed()
+        if gate["value"] is not True:
+            reason = gate["reason"]
         else:
             try:
                 # The card emitter's aware-UTC clock seam (datetime.now(UTC)).

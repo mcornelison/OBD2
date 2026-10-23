@@ -23,6 +23,8 @@
 # 2026-10-22    | Ralph (Rex)  | US-511-b -- MOVED PIN: parked is states/gear; lock
 #               |              | words 'stop to clear' / 'gear unknown'; the F2
 #               |              | KOEO regression and the fail-closed gear cases.
+# 2026-10-22    | Rex (US-923) | Clear stays parked-only while the MPG reset is
+#               |              | offered at 5 km/h in gear 3.
 # ================================================================================
 ################################################################################
 
@@ -471,6 +473,27 @@ def test_minorOpenParked_thenTheCarPullsAway_theClearLocksStopToClear():
     got = _readClear(after)
     assert got["buttonPaints"] and got["disabled"] is True, got
     assert got["reason"] == "moving" and got["label"] == _LABEL_MOVING, got
+
+
+@_needsNode
+def test_slowRollingInGear3_theMpgResetIsOffered_butClearStaysParkedOnly():
+    """
+    US-923 VC: Clear at a fresh SPEED 5 km/h in gear 3 -> refused. The provider
+    allows the MPG reset there (resetAllowed true), and the page offers it, but
+    Clear stays on engineParked: one page, two gates, neither borrowing the other.
+    """
+    slow = {"/fuel-economy": {"thisDrive": None, "sinceReset": None, "ts": None,
+                              "recent": None,
+                              "resetAllowed": {"value": True, "reason": None}}}
+    routes = {**_routes(_minorAlone()), **slow}
+    # The reset is offered only with a real confirm window injected (fail closed).
+    after = rh.runDashboard(routes=routes, steps=[*_OPEN_DETAIL, *_PULL_AWAY], nowMs=_NOW_MS,
+                            displayStale={"fuelResetConfirmSec": 6})
+    surface = rh.dashboardSurface(after["tree"])
+    got = _readClear(after)
+    assert got["disabled"] is True and got["label"] == _LABEL_MOVING, got
+    slot = surface.pathById("fuel-since-reset")
+    assert slot is not None and slot[-1]["attrs"]["data-pressable"] == "true"
 
 
 @_needsNode

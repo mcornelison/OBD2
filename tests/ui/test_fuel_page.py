@@ -1315,6 +1315,8 @@ def _buildFuelEconomy(inputs: dict[str, Any], nowIso: str) -> dict[str, Any]:
     US-890-e: ``inputs.recent`` is the RecentWindow's sums ``{airG, km,
     mafSamples}``; ``recentPublished: false`` records a provider from before
     the field existed, so the stored payload has no ``recent`` key.
+    US-923: ``inputs.resetAllowed`` is the orchestrator's gate verdict
+    ``{value, reason}``; absent, the payload has no ``resetAllowed`` key.
     """
     from dataclasses import replace
 
@@ -1336,6 +1338,7 @@ def _buildFuelEconomy(inputs: dict[str, Any], nowIso: str) -> dict[str, Any]:
         distanceSinceTs=inputs["distanceSinceTs"], nowUtc=_awareUtc(nowIso),
         staleSec=float(DEFAULTS["pi.display.stale.obdLiveSec"]), sinceReset=inputs["sinceReset"],
         recent=None if recentIn is None else fee.RecentSnapshot(**recentIn),
+        resetAllowed=inputs.get("resetAllowed"),
     )
     if inputs.get("recentPublished") is False:
         del payload["recent"]

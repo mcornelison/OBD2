@@ -127,6 +127,10 @@
 # 2026-10-22    | Rex (US-877-c)| the system-status payload is handed to the
 #               |              | alerts arbiter; every alerts emit passes
 #               |              | systemSource=arbiter.systemSource().
+# 2026-10-22    | Rex (US-923) | _emitGearState caches the GearReading WITH the
+#               |              | _gearNowS it was derived at; _fuelResetAllowed is
+#               |              | fuel_reset_gate.resetAllowed over the deriver's
+#               |              | own readings, published in states/fuel-economy.
 # ================================================================================
 ################################################################################
 
@@ -340,6 +344,12 @@ class CardStateEmitterMixin:
     _gearStateEmitter: Any = None
     _lastSpeedReading: Any = None
     _lastRpmReading: Any = None
+    # US-923 (Atlas Rule 13 GAP 1): the GearReading _emitGearState last
+    # published and the _gearNowS it was derived at -- the MPG reset gate's
+    # parked input. Cached, never re-derived: a second deriver.update would
+    # advance the debounce. The time lets the gate age a stale P out.
+    _lastGearReading: Any = None
+    _lastGearAtS: float | None = None
     # US-661: the `ltft-trend` producer. CLASS defaults for the same reason as
     # the gear pair above. Its own cadence -- the trend is a MULTI-DRIVE signal
     # that cannot change more than once per drive, and recomputing it on the 2 s
@@ -1238,14 +1248,45 @@ class CardStateEmitterMixin:
         # Park needs the link actually LINKED.
         linkHealthy = obdAvailable and linkState == OBD_LINKED
 
-        emitter(
-            deriver.update(
-                speed=self._lastSpeedReading,
-                rpm=self._lastRpmReading,
-                nowS=self._gearNowS(),
-                linkHealthy=linkHealthy,
+        nowS = self._gearNowS()
+        reading = deriver.update(
+            speed=self._lastSpeedReading,
+            rpm=self._lastRpmReading,
+            nowS=nowS,
+            linkHealthy=linkHealthy,
+        )
+        # US-923: the MPG reset gate reads THIS reading, never a second update.
+        self._lastGearReading, self._lastGearAtS = reading, nowS
+        emitter(reading)
+
+    def _fuelResetAllowed(self) -> dict[str, Any]:
+        """The ONE MPG-reset predicate over the deriver's own readings (US-923).
+
+        Both callers use it: the card tick publishes it in states/fuel-economy
+        and ``_maybeServiceFuelResetRequest`` re-checks it when a POST lands, on
+        the SAME clock (``_gearNowS``, the one ``Reading.tsS`` is stamped on --
+        Atlas GAP 2) and the same freshness window as ``_parkOpinion``
+        (``pi.gear.maxAgeSec``). With ``pi.gear.enabled`` false no SPEED is
+        cached, so the gate answers ``speed_unknown``: fail closed.
+
+        Returns:
+            ``{"value": bool, "reason": None | "driving" | "speed_unknown"}``.
+        """
+        from common.config.validator import DEFAULTS
+        from pi.obdii.fuel_reset_gate import resetAllowed
+        from pi.obdii.gear_derivation import DEFAULT_MAX_AGE_S
+
+        pi = self._config.get("pi", {}) or {}
+        maxAgeS = float((pi.get("gear", {}) or {}).get("maxAgeSec", DEFAULT_MAX_AGE_S))
+        maxKph = float(
+            (pi.get("fuel", {}) or {}).get(
+                "resetMaxSpeedKph", DEFAULTS["pi.fuel.resetMaxSpeedKph"]
             )
         )
+        gear = None
+        if self._lastGearReading is not None and self._lastGearAtS is not None:
+            gear = (self._lastGearReading, self._lastGearAtS)
+        return resetAllowed(gear, self._lastSpeedReading, self._gearNowS(), maxAgeS, maxKph)
 
     def _emitInitialDtcState(self) -> None:
         """Write the boot-time honest `dtc` state (dtcAvailable=False).
@@ -1723,6 +1764,7 @@ class CardStateEmitterMixin:
             staleSec=self._fuelStaleSec,
             sinceReset=self._fuelSinceReset,
             recent=recent,
+            resetAllowed=self._fuelResetAllowed(),
         )
 
     def _fuelTotals(

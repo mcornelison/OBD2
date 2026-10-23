@@ -6564,8 +6564,8 @@ Atlas Q19: one poll loop, never a copy per route): it writes
 `loadFuelResetTimeoutSec`; short because the server is single-threaded and the wait
 blocks every GET) for `fuel-reset-outcome.json` carrying the SAME `requestId`.
 eclipse-obd services it from `runLoop` in `_maybeServiceFuelResetRequest`, right after
-`_maybeServiceDtcClearRequest`: the request is consumed first; while `_gatherDriveState`
-says `recording` it writes `{ok: false, reason: "driving"}` and changes nothing;
+`_maybeServiceDtcClearRequest`: the request is consumed first; when the US-923 gate
+(below) refuses it writes `{ok: false, reason: <the gate's reason>}` and changes nothing;
 otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
 `fuel_since_reset.reset` directly) and writes `{ok: true, resetAtTs}` (`reason
 "unavailable"` with no fuel producer or database). Status mapping, copied from
@@ -6573,6 +6573,36 @@ otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
 or the request cannot be written), 409 refused (`reason` in the body), 504 no outcome in
 time (`ok: null`; the request is withdrawn), 200 `{ok: true, resetAtTs}`. The next
 `states/fuel-economy` then carries `sinceReset` totals 0 and that `resetAtTs`.
+
+**MPG reset gate -- one predicate (US-923; CIO 2026-10-22, Atlas C1-C5).** The reset is
+allowed parked OR slow rolling in any gear, decided ONCE by the pure
+`src/pi/obdii/fuel_reset_gate.resetAllowed(gearReading, speedReading, nowS, maxAgeS,
+maxKph) -> {value, reason}`: allowed when the RAW derived gear is `P` or `N` (no 8 s hold,
+for the reset only -- C2), or when SPEED is fresh within `maxAgeS` and `<= maxKph`;
+refused `driving` (not parked, fresh SPEED over the limit) or `speed_unknown` (not
+parked, SPEED missing / stale) -- C4. Inputs are the deriver's own in-process readings,
+no obd-live read and no second speed reading: `_emitGearState` caches the `GearReading`
+it published WITH the `_gearNowS` it was derived at as `(_lastGearReading,
+_lastGearAtS)` (never a second `deriver.update`), and a cached reading older than
+`maxAgeS` is ABSENT, so a stale P never allows a reset at speed (Rule 13 GAP 1); SPEED is
+`_lastSpeedReading`. `maxAgeS` is `pi.gear.maxAgeSec` (the same freshness rule as
+`_parkOpinion`); `maxKph` is `pi.fuel.resetMaxSpeedKph` (validator default 8, finite >
+0: 4.97 mph, the largest whole km/h at or under 5 mph -- C5). `nowS` is `_gearNowS()` on
+BOTH paths (GAP 2; the UTC seam `_obdLiveNowUtc` stamps only `resetAtTs`).
+`CardStateEmitterMixin._fuelResetAllowed` is the one caller of the predicate: the card
+tick publishes it as `states/fuel-economy.resetAllowed {value, reason}`, and
+`_maybeServiceFuelResetRequest` re-checks the SAME call at service time in place of the
+retired "recording -> driving" refusal, returning the predicate's reason (409 through
+`states_http_server`, unchanged pass-through) -- so the page word and the outcome cannot
+disagree. A mid-recording reset is allowed (C3): `resetSinceReset` moves the watermark
+under `_fuelLock`, it is serviced before the card emit in the same loop, and `thisDrive`
+is untouched. The page renders the gate and computes none: `carousel.js`
+`fuelResetAllowed(read)` (strict `value === true`; anything else, a missing block
+included, fails closed) drives the `hold to reset` hint and the long-press; a 409
+`driving` / `speed_unknown` shows `slow to reset` / `speed unknown` as the outcome line
+(`park to reset` is retired). Clear, the code-row tap and Settings stay on
+`engineParked` (US-511-b). With `pi.gear.enabled` false no SPEED is cached and the gate
+answers `speed_unknown`.
 
 **`POST /alerts-ack` (US-897-c; Atlas s3, Q20-Q27).** Acknowledges `states/alerts`
 entries for THIS boot (the store is under `states/alerts` above). Body `{ids: [string,
@@ -6949,7 +6979,8 @@ so once the dongle linked nothing parked-only ever unlocked (F2, confirmed on th
 car). The debounce's input is now `gearParked(lastGear)` — the deriver's `P`/`N`,
 which since US-511-a mean *stopped* — and the reducer, thresholds (8 s / 3 s) and
 fail-closed start are unchanged. The shipped consumers keep reading
-`engineParked.parked`: the code-row tap, the fuel reset hold/hint, the Clear
+`engineParked.parked`: the code-row tap, the fuel reset hold/hint (until US-923
+moved it to the provider's `states/fuel-economy.resetAllowed`), the Clear
 button (`clearButtonView`), the TROUBLE CODES screen (`codeAlertView`) and the
 Engine codes tap (`engineStatusView`). **Lock words (Atlas B2; warnings spec
 :190-195, system 4.7.2):** `clearButtonView(data, parked, gearKnown)` replaces

@@ -1,6 +1,5 @@
 {
   "description": "The reset did not happen, for each refusal the server can return: 503 (no states channel / could not publish), 409 reason 'unavailable' (no since-reset store) and 409 reason 'reset failed: ...' (the write raised). Each shows the latest provider value + 'couldn't reset'; the raw text goes to the log only. Read built by the REAL buildFuelEconomyState.",
-  "parked": true,
   "responses": {
     "no-channel-503": {
       "status": 503,
@@ -37,6 +36,10 @@
           "fuel_l": 39.39,
           "distance_km": 412.0,
           "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -48,7 +51,11 @@
           "resetAtTs": "2026-10-01T12:00:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     }
   ]

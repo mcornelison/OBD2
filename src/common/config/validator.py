@@ -187,6 +187,8 @@
 #                                throttling 80-85 C, 80 = onset); finite,
 #                                0 < x < 125. A DEFAULT only -- never an
 #                                overlay key.
+# 2026-10-22    | Rex (US-923)  | pi.fuel.resetMaxSpeedKph 8 (Atlas C5, CIO
+#                                2026-10-22 <= 5 mph); finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -940,6 +942,11 @@ DEFAULTS: dict[str, Any] = {
     # outcome. eclipse-states-http is single-threaded, so the wait blocks every
     # GET the kiosk makes -- keep it short.
     'pi.fuel.resetTimeoutSec': 5,
+    # US-923 (Atlas C5): the since-reset MPG reset is allowed parked (gear P/N)
+    # or at a fresh SPEED at or under this many km/h in any gear.
+    # 4.97 mph -- the largest whole km/h at or under 5 mph (CIO 2026-10-22: speed
+    # <= 5 = slow rolling in any gear). SPEED decodes in whole km/h; 9 = 5.59 mph.
+    'pi.fuel.resetMaxSpeedKph': 8,
     # US-890-e: states/fuel-economy recent -- MPG over the newest windowSec as a
     # ratio of sums (Spool 2026-10-14, pm/inbox 2026-10-14-from-spool-S104-Fuel-
     # page-...-MPG-last-30s-ratio-of-sums-null-rules.md section 2). 30 s measured
@@ -2165,8 +2172,8 @@ class ConfigValidator:
         """Validate the pi.fuel.* keys (US-881-b).
 
         stoichAfr, densityGPerL, minMiles, persistSec (US-881-c),
-        resetTimeoutSec (US-881-d) and the three recent* keys (US-890-e) are
-        finite numbers > 0; the two
+        resetTimeoutSec (US-881-d), the three recent* keys (US-890-e) and
+        resetMaxSpeedKph (US-923) are finite numbers > 0; the two
         percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
         An absent key is skipped (a custom defaults set may not supply it).
 
@@ -2179,6 +2186,7 @@ class ConfigValidator:
         for name in (
             'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec',
             'recentWindowSec', 'recentMinMiles', 'recentMinMafSamples',
+            'resetMaxSpeedKph',
         ):
             key = f'pi.fuel.{name}'
             val = self._getNestedValue(config, key)

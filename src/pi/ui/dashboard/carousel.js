@@ -4689,7 +4689,10 @@
 
   // --- US-890-f the SINCE RESET reset (F-127, spec s4.3) ---------------------
   //
-  // Parked only: hold SINCE RESET ~2 s, confirm "Reset average MPG?", then a
+  // US-923: offered only while the PROVIDER's gate says so --
+  // states/fuel-economy.resetAllowed.value === true (orchestrator
+  // fuel_reset_gate, re-checked when the POST lands). The page computes no gate
+  // of its own. Then: hold SINCE RESET ~2 s, confirm "Reset average MPG?", then a
   // token-gated POST /fuel-reset, then show the RE-READ stored value (F-126
   // honest write, never optimistic). The page never caches an "old value": the
   // slot always renders the LATEST states/fuel-economy read plus an outcome
@@ -4702,14 +4705,26 @@
   // Every outcome text is <= 16 characters, the MPG row's fit rule (s4.6).
   var FUEL_RESET_HINT = "hold to reset";
   var FUEL_RESET_RESETTING = "resetting…";
+  // US-923: the two gate refusals keep the provider's code as their key (fuel
+  // spec s4.3/s4.6, Iris UIDEV-012 I4): driving -> "slow to reset" (at 5 mph
+  // the reset works, so not "park"/"stop"); speed_unknown -> "speed unknown".
   var FUEL_RESET_OUTCOME_TEXT = {
-    park: "park to reset",
+    driving: "slow to reset",
+    speed_unknown: "speed unknown",
     failed: "couldn't reset",
     unconfirmed: "couldn't confirm",
   };
-  // The one refusal that means "move the car first" (core.py
-  // _maybeServiceFuelResetRequest); every other 409 reason is a failed reset.
-  var FUEL_RESET_DRIVING_REASON = "driving";
+  // The refusals that come from the gate (fuel_reset_gate.resetAllowed's
+  // reasons, via core.py _maybeServiceFuelResetRequest); every other 409
+  // reason is a failed reset.
+  var FUEL_RESET_GATE_REASONS = { driving: true, speed_unknown: true };
+
+  // The gate as published: only a strict true offers the reset. false, null,
+  // a missing block or an unreadable file all fail closed (spec s4.3).
+  function fuelResetAllowed(fuelEconomyData) {
+    var gate = isObj(fuelEconomyData) ? fuelEconomyData.resetAllowed : null;
+    return isObj(gate) && gate.value === true;
+  }
 
   // pi.display.stale.fuelResetConfirmSec, injected per request as
   // window.DISPLAY_STALE.fuelResetConfirmSec (the imuSec pattern). There is NO
@@ -4747,19 +4762,22 @@
       return state;
     }
     state.phase = "idle";
-    if (status === 409 && b.reason === FUEL_RESET_DRIVING_REASON) state.outcome = "park";
+    var gateRefusal = status === 409 && typeof b.reason === "string" &&
+      Object.prototype.hasOwnProperty.call(FUEL_RESET_GATE_REASONS, b.reason);
+    if (gateRefusal) state.outcome = b.reason;
     else if (status === 409 || status === 503 || status === 401) state.outcome = "failed";
     else state.outcome = "unconfirmed";
     return state;
   }
 
   // Advance the reset by one event. Pure; the clock arrives on the event.
-  //   {type: "hold", parked, confirmSec}      the 2 s hold completed
+  // `allowed` is fuelResetAllowed(the latest read) -- the provider's gate.
+  //   {type: "hold", allowed, confirmSec}     the 2 s hold completed
   //   {type: "no"}                            confirm -> No (changes nothing)
   //   {type: "yes", read}                     confirm -> Yes
   //   {type: "answer", status, body, nowMs}   the POST answered
   //   {type: "failure"}                       the POST never answered
-  //   {type: "read", read, parked, nowMs, confirmSec}   one tick's read
+  //   {type: "read", read, allowed, nowMs, confirmSec}   one tick's read
   function fuelResetNext(prev, ev) {
     var s = isObj(prev) && typeof prev.phase === "string" ? {
       phase: prev.phase, outcome: prev.outcome, baselineTs: prev.baselineTs,
@@ -4767,7 +4785,7 @@
     } : fuelResetInit();
     var type = isObj(ev) ? ev.type : null;
     if (type === "hold") {
-      if (s.phase === "idle" && ev.parked === true && typeof ev.confirmSec === "number") {
+      if (s.phase === "idle" && ev.allowed === true && typeof ev.confirmSec === "number") {
         s.phase = "confirm";
       }
       return s;
@@ -4799,8 +4817,8 @@
     }
     if (type !== "read") return s;
     var ts = fuelSinceResetTs(ev.read);
-    if (s.phase === "confirm" && ev.parked !== true) {
-      // The car moved under an open confirm: withdraw it.
+    if (s.phase === "confirm" && ev.allowed !== true) {
+      // The gate closed under an open confirm (the car sped up): withdraw it.
       s.phase = "idle";
     } else if (s.phase === "awaiting") {
       if (ts !== null && ts === s.resetAtTs) {
@@ -4819,16 +4837,19 @@
     return s;
   }
 
-  // The MPG row with the reset applied to SINCE RESET.
-  function fuelMpgResetView(fuelEconomyData, resetState, parked, confirmSec) {
-    return fuelResetOverlay(fuelMpgView(fuelEconomyData), resetState, parked, confirmSec);
+  // The MPG row with the reset applied to SINCE RESET, gated by the same read.
+  function fuelMpgResetView(fuelEconomyData, resetState, confirmSec) {
+    return fuelResetOverlay(
+      fuelMpgView(fuelEconomyData), resetState, fuelResetAllowed(fuelEconomyData), confirmSec
+    );
   }
 
   // Apply the reset to a fuelMpgView. `sinceReset.line` is the slot's outcome /
   // hint line; `reset` says whether the hold is live and the confirm is open.
-  function fuelResetOverlay(view, resetState, parked, confirmSec) {
+  // `allowed` is fuelResetAllowed(read): the hint and the hold follow it alone.
+  function fuelResetOverlay(view, resetState, allowed, confirmSec) {
     var s = isObj(resetState) && typeof resetState.phase === "string" ? resetState : fuelResetInit();
-    var offered = parked === true && typeof confirmSec === "number";
+    var offered = allowed === true && typeof confirmSec === "number";
     var slot = view.sinceReset;
     slot.line = "";
     if (s.phase === "posting" || s.phase === "awaiting") {
@@ -5315,6 +5336,7 @@
     fuelResetInit: fuelResetInit,
     fuelResetNext: fuelResetNext,
     fuelMpgResetView: fuelMpgResetView,
+    fuelResetAllowed: fuelResetAllowed,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -7301,8 +7323,10 @@
       // US-890-f: the SINCE RESET reset (spec s4.3). `fuelReset` is the
       // fuelResetNext state and `lastFuelEconomy` the LATEST states/fuel-economy
       // read; Yes and the POST's answer repaint from them between ticks, so
-      // "resetting…" shows from Yes. Parked is `engineParked` -- the ONE US-511
-      // debounce, so the hint and the CHECK ENGINE tap can never disagree.
+      // "resetting…" shows from Yes. US-923: the gate is the provider's
+      // `resetAllowed` on that same read (fuelResetAllowed) -- never
+      // engineParked, which stays the gate for Clear, the code-row tap and
+      // Settings only.
       var fuelReset = fuelResetInit();
       var lastFuelEconomy = null;
       var fuelSinceResetEl = document.getElementById("fuel-since-reset");
@@ -7314,7 +7338,7 @@
       function paintFuelMpg() {
         renderFuelMpg(
           fuelCard,
-          fuelMpgResetView(lastFuelEconomy, fuelReset, engineParked.parked, fuelConfirmSec())
+          fuelMpgResetView(lastFuelEconomy, fuelReset, fuelConfirmSec())
         );
       }
       if (fuelSinceResetEl) {
@@ -7356,11 +7380,12 @@
             }
             if (!isLongPressComplete(elapsed, FUEL_RESET_HOLD_MS)) return;
             fuelHoldClear();
-            // Honour only what is on the glass right now: the car may have
-            // moved during the hold.
+            // Honour only what is on the glass right now: the gate may have
+            // closed during the hold.
             if (fuelSinceResetEl.getAttribute("data-pressable") !== "true") return;
             fuelReset = fuelResetNext(fuelReset, {
-              type: "hold", parked: engineParked.parked, confirmSec: fuelConfirmSec(),
+              type: "hold", allowed: fuelResetAllowed(lastFuelEconomy),
+              confirmSec: fuelConfirmSec(),
             });
             paintFuelMpg();
           }, 50);
@@ -8274,15 +8299,16 @@
         );
         // US-890-d: the MPG row from states/fuel-economy alone. US-890-f: the
         // read also advances the reset (match / confirm window / a landed
-        // reset), against the same parked signal and this tick's one clock.
+        // reset), against that read's own gate (US-923) and this tick's one
+        // clock.
         lastFuelEconomy = await stateOnce("fuel-economy");
         fuelReset = fuelResetNext(fuelReset, {
-          type: "read", read: lastFuelEconomy, parked: engineParked.parked,
+          type: "read", read: lastFuelEconomy, allowed: fuelResetAllowed(lastFuelEconomy),
           nowMs: nowMs, confirmSec: fuelConfirmSec(),
         });
         renderFuelMpg(fuelCard, fuelResetOverlay(
           fuelMpgView(await stateOnce("fuel-economy")),
-          fuelReset, engineParked.parked, fuelConfirmSec()
+          fuelReset, fuelResetAllowed(lastFuelEconomy), fuelConfirmSec()
         ));
         // US-896-b: the NAV trip from the SAME system-status every other
         // surface on this tick read (cached); the page does no time arithmetic.
