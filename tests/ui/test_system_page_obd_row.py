@@ -40,6 +40,8 @@
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-f): the count's level is
 #               |              | `issues` (AC 7), and a parked verdict tap opens
 #               |              | the Pi detail with the version chip.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-895-a): SETTINGS › on the verdict
+#               |              | line in every state, so '--' reads '--SETTINGS ›'.
 # ================================================================================
 ################################################################################
 
@@ -763,7 +765,8 @@ def test_thePage_aNonMemberSentenceIsNeverAmber():
 def test_thePage_unreadableSystemStatus_isTheVerdictTwoHyphens_neverAllOk():
     surface = _render(None, parked=False)
     card = _systemCard(surface)
-    assert _text(card) == "--"
+    # MOVED PIN (US-895-a): SETTINGS › sits on the verdict line in every state.
+    assert _text(card) == "--SETTINGS ›"
     assert surface.pathsByClass("sys-row") == []
     verdict = surface.pathsByClass("sys-verdict")[0]
     assert verdict[-1]["attrs"]["data-level"] == "unavailable"
@@ -776,7 +779,8 @@ def test_thePage_aFileThatVanishes_dropsBackToTwoHyphens():
         status, parked=False,
         steps=[{"setRoutes": {"/system-status": None}}, {"flush": 4}],
     )
-    assert _text(_systemCard(surface)) == "--"
+    # MOVED PIN (US-895-a): SETTINGS › sits on the verdict line in every state.
+    assert _text(_systemCard(surface)) == "--SETTINGS ›"
 
 
 @_needsNode

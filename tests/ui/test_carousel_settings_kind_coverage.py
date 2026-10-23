@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-09-22    | Rex (US-421)   | Initial -- kind coverage, scanner self-test,
 #               |                | Off/On for every declared spec.
+# 2026-10-23    | Rex (US-895-a) | MOVED PIN: the 'steps' kind declares its own
+#               |                | choices; 'seconds' is gone.
 # ================================================================================
 ################################################################################
 """US-421: the renderer branches only on settings kinds that actually exist."""
@@ -100,10 +102,18 @@ def test_everyDeclaredSpec_rendersTheTwoChoiceControl():
     """
     Given: every spec the band declares
     When: its choices are built
-    Then: the same two-choice Off/On control. `seconds` shares it correctly --
-        auto-rotate is DERIVED from autoRotateS > 0 -- so this is not residue
+    Then: a `bool` spec gets the two-choice Off/On control, and a `steps` spec
+        its own declared steps (US-895-a)
     """
+    # MOVED PIN (US-895-a): auto-rotate moved from kind 'seconds' (Off/On) to
+    # kind 'steps' -- its choices are its declared Off · 5 s ... 30 s.
     for spec in _view("settingsSpecs"):
+        if spec["kind"] == "steps":
+            assert _view("settingsChoices", spec) == [
+                {"value": v, "label": "Off" if v == 0 else f"{v} s"} for v in spec["steps"]
+            ], spec["key"]
+            continue
+        assert spec["kind"] == "bool", spec["key"]
         assert _view("settingsChoices", spec) == [
             {"value": False, "label": "Off"},
             {"value": True, "label": "On"},

@@ -1,0 +1,165 @@
+{
+  "description": "AC 8: a drive recording in 3rd -> locked, 'stop to change'; the in-flight write (calibration On, sent while parked) answers with the recorded real 200 and still ends 'saved' on the locked glass.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "recording",
+      "driveId": 212,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      }
+    },
+    "gear": {
+      "available": true,
+      "gear": 3,
+      "reason": "engaged"
+    },
+    "settings": {
+      "pi.display.carousel.autoRotateS": 0,
+      "pi.calibration.mode": false,
+      "pi.analysis.triggerAfterDrive": false
+    },
+    "settings-write": {
+      "key": "pi.calibration.mode",
+      "value": true
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "recording",
+        "driveId": 212,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 0,
+        "members": []
+      }
+    },
+    "gear": {
+      "available": true,
+      "gear": 3,
+      "reason": "engaged",
+      "ts": "2026-10-22T23:10:00Z"
+    },
+    "settings": {
+      "pi.display.carousel.autoRotateS": {
+        "found": true,
+        "value": 0
+      },
+      "pi.calibration.mode": {
+        "found": true,
+        "value": false
+      },
+      "pi.analysis.triggerAfterDrive": {
+        "found": true,
+        "value": false
+      }
+    },
+    "settings-write": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "key": "pi.calibration.mode",
+        "value": true
+      }
+    }
+  }
+}

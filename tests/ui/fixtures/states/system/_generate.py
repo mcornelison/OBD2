@@ -51,6 +51,9 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-f: the three Pi fixtures the story names
 #               |              | (pi-hot, pi-multi-limit, two-issues), the pi
 #               |              | block from pi_health.buildPiHealthBlock.
+# 2026-10-23    | Ralph (Rex)  | US-895-a: the five settings-* fixtures (gear
+#               |              | from buildGearState; band-state stub + a
+#               |              | recorded real /settings response).
 # ================================================================================
 ################################################################################
 
@@ -85,12 +88,15 @@ from pi.network.wifi_reader import (  # noqa: E402
     WIFI_REASON_NMCLI_ABSENT,
     WIFI_REASON_READ_FAILED,
 )
+from pi.obdii import gear_derivation as gd  # noqa: E402
 from pi.obdii.capture_health import (  # noqa: E402
     DEFAULT_STALL_SECONDS,
     REASON_NEVER_WRITTEN,
     buildCaptureFeedsState,
     buildCaptureHealthState,
 )
+from pi.obdii.gear_derivation import GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.splash.battery_health_emitter import (  # noqa: E402
     VERDICT_GOOD,
     buildBatteryHealthState,
@@ -564,6 +570,149 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     ),
 }
 
+# --- US-895-a: the Settings lock (spec s4.7.2, AC 8/9, s7) -------------------
+# Each is a system-status payload (the page under the band) plus the states/gear
+# payload from buildGearState(GearReading(...)) -- the ONE parked fact's input.
+# The 8 s hold itself is never a static fixture: tests/ui/test_settings_lock.py
+# drives the clock over these (7 s locked, 8 s unlocked).
+#
+# TEST-ONLY STUBS (allowed for settings-* fixtures, acceptance): `settings` is
+# the band-state stub -- the window.DISPLAY_SETTINGS {found, value} blob the
+# state server injects -- and `settings-write` is a RECORDED response of the
+# REAL _handleSettingsWrite (a StatesHttpServer over a temp config, below),
+# {status, body}; never a hand-typed body.
+_GEAR_NEUTRAL = {"available": True, "gear": gd.GEAR_NEUTRAL, "reason": gd.REASON_NEUTRAL}
+_SETTINGS_STORED = {
+    "pi.display.carousel.autoRotateS": 0,
+    "pi.calibration.mode": False,
+    "pi.analysis.triggerAfterDrive": False,
+}
+# The config the recorded writes run against: the stored values above, so a
+# re-read returns exactly what the band stub says is stored.
+_SETTINGS_CONFIG = {
+    "deviceId": "fixture-pi",
+    "pi": {
+        "display": {"carousel": {"autoRotateS": 0}},
+        "calibration": {"mode": False},
+        "analysis": {"triggerAfterDrive": False},
+    },
+}
+_SETTINGS_TOKEN = "fixture-token-0123456789abcdefghijklmnopqrstuv"
+
+SETTINGS_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
+    "settings-locked-hold": (
+        "AC 8: stopped, engine idling, gear N read for under 8 s (inside the "
+        "hold) -> the band is readable and locked, '🔒 view only — stop to "
+        "change'. Replaces settings-locked-idling: an idling car at rest is "
+        "parked once the hold completes.",
+        {"system-status": _systemInputs(_upChain()), "gear": _GEAR_NEUTRAL,
+         "settings": _SETTINGS_STORED},
+    ),
+    "settings-locked-gear-unknown": (
+        "AC 8: states/gear unavailable (link_down) -> locked, '🔒 view only — "
+        "gear unknown': no driver action is sure to unlock it.",
+        {"system-status": _systemInputs(_link(
+            _layer("connecting"), _layer("connecting"), _layer("connecting"),
+        )),
+         "gear": {"available": False, "gear": None, "reason": gd.REASON_LINK_DOWN},
+         "settings": _SETTINGS_STORED},
+    ),
+    "settings-parked-idling": (
+        "AC 8: gear N, engine idling, held 8 s -> unlocked with the engine "
+        "running (the hold is driven by the clock, not this file).",
+        {"system-status": _systemInputs(_upChain()), "gear": _GEAR_NEUTRAL,
+         "settings": _SETTINGS_STORED},
+    ),
+    "settings-locked-driving": (
+        "AC 8: a drive recording in 3rd -> locked, 'stop to change'; the "
+        "in-flight write (calibration On, sent while parked) answers with the "
+        "recorded real 200 and still ends 'saved' on the locked glass.",
+        {"system-status": _systemInputs(_upChain(), driveState="recording", driveId=212),
+         "gear": {"available": True, "gear": 3, "reason": gd.REASON_ENGAGED},
+         "settings": _SETTINGS_STORED,
+         "settings-write": {"key": "pi.calibration.mode", "value": True}},
+    ),
+    "settings-write-rejected": (
+        "AC 9: parked; ROTATE PAGES' write is refused -> the recorded real 400 "
+        "from _handleSettingsWrite (an illegal value; the body carries the "
+        "re-read stored 0) -> 'couldn't save' and the stepper snaps back to Off.",
+        {"system-status": _systemInputs(_upChain()), "gear": _GEAR_NEUTRAL,
+         "settings": _SETTINGS_STORED,
+         "settings-write": {"key": "pi.display.carousel.autoRotateS", "value": -1}},
+    ),
+}
+
+
+def _recordSettingsWrite(key: str, value: Any) -> dict[str, Any]:
+    """POST one setting to a REAL StatesHttpServer and record {status, body}.
+
+    Runs the shipped _handleSettingsWrite (token gate, overlay validator, the
+    cross-key seam, the re-read) over a temp config holding _SETTINGS_CONFIG,
+    so the recorded body is the server's, byte for byte as JSON.
+    """
+    # Imported here: only the settings-* fixtures need a live server.
+    import tempfile
+    import threading
+    import urllib.error
+    import urllib.request
+
+    from pi.splash.states_http_server import StatesHttpServer
+
+    with tempfile.TemporaryDirectory() as tmp:
+        configPath = os.path.join(tmp, "config.json")
+        with open(configPath, "w", encoding="utf-8") as fh:
+            json.dump(_SETTINGS_CONFIG, fh)
+        statesDir = os.path.join(tmp, "states")
+        assetsDir = os.path.join(tmp, "assets")
+        os.mkdir(statesDir)
+        os.mkdir(assetsDir)
+        server = StatesHttpServer(
+            statesDir=statesDir, token=_SETTINGS_TOKEN, host="127.0.0.1", port=0,
+            assetsDir=assetsDir, configPath=configPath,
+        )
+        thread = threading.Thread(target=server.serveForever, daemon=True)
+        thread.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.actualPort}/settings",
+                data=json.dumps({"key": key, "value": value}).encode("utf-8"),
+                method="POST",
+            )
+            request.add_header("Content-Type", "application/json")
+            request.add_header("X-Splash-Token", _SETTINGS_TOKEN)
+            try:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    status, raw = response.status, response.read()
+            except urllib.error.HTTPError as err:
+                status, raw = err.code, err.read()
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+    return {"status": status, "body": json.loads(raw.decode("utf-8"))}
+
+
+def _buildSettingsFixture(name: str) -> dict[str, Any]:
+    description, inputs = SETTINGS_FIXTURES[name]
+    gear = inputs["gear"]
+    payloads: dict[str, Any] = {
+        "system-status": buildSystemStatusState(**inputs["system-status"], captureHealth=None),
+        "gear": buildGearState(
+            GearReading(gear["available"], gear["gear"], gear["reason"]), nowIso=NOW
+        ),
+        "settings": {key: {"found": True, "value": v} for key, v in inputs["settings"].items()},
+    }
+    if "settings-write" in inputs:
+        write = inputs["settings-write"]
+        payloads["settings-write"] = _recordSettingsWrite(write["key"], write["value"])
+    return {
+        "description": description,
+        "now": NOW,
+        "zone": ZONE,
+        "inputs": _jsonable(inputs),
+        "payloads": payloads,
+    }
+
+
 # The documented exception: a generated payload with its verdict removed.
 VERDICT_ABSENT = "verdict-absent"
 _VERDICT_ABSENT_FROM = "all-ok-driving"
@@ -605,6 +754,8 @@ def buildFixture(name: str) -> dict[str, Any]:
         fixture["description"] = _VERDICT_ABSENT_DESCRIPTION
         fixture["payloads"]["system-status"].pop("verdict")
         return fixture
+    if name in SETTINGS_FIXTURES:
+        return _buildSettingsFixture(name)
     description, inputs = FIXTURES[name]
     payloads: dict[str, Any] = {}
     capture = None
@@ -627,7 +778,7 @@ def buildFixture(name: str) -> dict[str, Any]:
 
 
 def fixtureNames() -> list[str]:
-    return [*FIXTURES, VERDICT_ABSENT]
+    return [*FIXTURES, VERDICT_ABSENT, *SETTINGS_FIXTURES]
 
 
 def render(fixture: dict[str, Any]) -> str:

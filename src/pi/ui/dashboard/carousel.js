@@ -2238,14 +2238,28 @@
   // "restart" US-532 shipped was true but useless, because the unit the operator
   // would reach for (states-http, the only one this band talks to) is the wrong
   // one. Name the service or the label does not help anybody.
+  //
+  // US-895-a (spec s4.7, Iris I13): every row names its `section` (DISPLAY
+  // then SYSTEM, drawn in this order) and its label is UPPER CASE -- the
+  // Michroma subset has no lower case. AUTO-ROTATE is kind "steps" (Atlas
+  // A8/B10): a stepper over its declared `steps`, 0 = Off (US-541-a), the
+  // CIO-approved Off · 5 s · 8 s · 10 s · 15 s · 30 s.
   var SETTINGS_SPECS = [
-    { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
-      kind: "seconds", apply: "reload" },
-    { key: "pi.calibration.mode", label: "Calibration mode",
-      kind: "bool", apply: "capture-restart" },
-    { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
-      kind: "bool", apply: "capture-restart" },
+    { key: "pi.display.carousel.autoRotateS", label: "ROTATE PAGES",
+      section: "DISPLAY", kind: "steps", steps: [0, 5, 8, 10, 15, 30],
+      apply: "reload" },
+    { key: "pi.calibration.mode", label: "CALIBRATION MODE",
+      section: "SYSTEM", kind: "bool", apply: "capture-restart" },
+    { key: "pi.analysis.triggerAfterDrive", label: "ANALYZE EACH DRIVE",
+      section: "SYSTEM", kind: "bool", apply: "capture-restart" },
   ];
+
+  // US-895-a (spec s4.7.2, mirroring clearButtonView(data, parked, gearKnown)):
+  // the one line at the top of a locked band. The word follows the CURRENT
+  // raw gear, not the debounced state; neither says "moving" (the lock also
+  // holds in the 8 s hold and with the gear unknown).
+  var SETTINGS_LOCK_STOP = "🔒 view only — stop to change";
+  var SETTINGS_LOCK_GEAR_UNKNOWN = "🔒 view only — gear unknown";
 
   var SETTINGS_PENDING_NOTE = "saving…";
 
@@ -2266,7 +2280,9 @@
       out.push({
         key: spec.key,
         label: spec.label,
+        section: spec.section,
         kind: spec.kind,
+        steps: spec.steps ? spec.steps.slice() : null,
         apply: spec.apply,
         // Derived from one mapping, never written per row: a future `apply` flip
         // then cannot leave a stale note contradicting it.
@@ -2314,11 +2330,77 @@
   // shape is a property OF a spec -- a future kind that needs a different
   // control adds a branch here, and the coverage guard makes sure it is a kind
   // the table actually declares.
+  // US-895-a: kind "steps" is that branch -- its choices are the spec's own
+  // declared steps, labelled as the stepper shows them.
   function settingsChoices(spec) {
+    if (spec && spec.kind === "steps") {
+      var steps = settingsSteps(spec);
+      var out = [];
+      for (var i = 0; i < steps.length; i++) {
+        out.push({ value: steps[i], label: settingsStepLabel(steps[i]) });
+      }
+      return out;
+    }
     return [
       { value: false, label: "Off" },
       { value: true, label: "On" },
     ];
+  }
+
+  // A steps spec's declared values, ascending; anything else declares none.
+  function settingsSteps(spec) {
+    var steps = spec && Array.isArray(spec.steps) ? spec.steps : [];
+    var out = [];
+    for (var i = 0; i < steps.length; i++) {
+      if (typeof steps[i] === "number" && isFinite(steps[i])) out.push(steps[i]);
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  // 0 is Off (US-541-a; mono `Off`, matching the switches, Iris I11); any
+  // other value -- a declared step or a stored off-step one -- is its seconds.
+  function settingsStepLabel(value) {
+    return value === 0 ? "Off" : String(value) + " s";
+  }
+
+  // The value one tap moves a steps row to, or null when there is none (an
+  // end, whose control is hidden, or an unknown value: nothing to step from).
+  // ONE rule covers on-step and off-step values alike (Iris I11): the nearest
+  // declared step strictly beyond the stored value in the tap's direction --
+  // so a hand-edited 12 goes + to 15 and - to 10, and - from 5 s is Off.
+  function settingsStepNext(spec, value, direction) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    var steps = settingsSteps(spec);
+    if (direction > 0) {
+      for (var i = 0; i < steps.length; i++) if (steps[i] > value) return steps[i];
+    } else if (direction < 0) {
+      for (var j = steps.length - 1; j >= 0; j--) if (steps[j] < value) return steps[j];
+    }
+    return null;
+  }
+
+  // US-895-a (spec s4.7.2): the band's lock, from the module's ONE parked
+  // fact (currentParked: the debounced `parked`, the raw `gearKnown`). Only a
+  // strict true unlocks; locked, the line's word follows the raw gear.
+  function settingsLockView(parked, gearKnown) {
+    if (parked === true) return { locked: false, note: null };
+    return {
+      locked: true,
+      note: gearKnown === true ? SETTINGS_LOCK_STOP : SETTINGS_LOCK_GEAR_UNKNOWN,
+    };
+  }
+
+  // The band as a whole: its sections in SETTINGS_SPECS order (DISPLAY then
+  // SYSTEM), and the lock.
+  function settingsBandView(parked, gearKnown) {
+    var sections = [];
+    for (var i = 0; i < SETTINGS_SPECS.length; i++) {
+      if (sections.indexOf(SETTINGS_SPECS[i].section) < 0) {
+        sections.push(SETTINGS_SPECS[i].section);
+      }
+    }
+    var lock = settingsLockView(parked, gearKnown);
+    return { sections: sections, locked: lock.locked, note: lock.note };
   }
 
   // US-878-c (Atlas B13): one entry of the injected settings blob. The server
@@ -2337,19 +2419,19 @@
   // Render one settings row from its EFFECTIVE value. `known:false` means the
   // server could not resolve a value -- rendered Unknown, never Off: "Off" is a
   // claim about stored state, and we were told there isn't one (honest
-  // instrument). GAP 3a: auto-rotate is DERIVED from autoRotateS > 0; no
+  // instrument). GAP 3a: auto-rotate is the one autoRotateS key (0 = off); no
   // separate autoRotate bool exists on this side either.
+  // US-895-a: a steps row shows its stored seconds EXACTLY, on a step or off
+  // one ('12 s'); a value the overlay could never store (negative, not a
+  // finite number) is Unknown.
   function settingsRowView(spec, value) {
     var kind = spec ? spec.kind : null;
     var known = false;
     var on = null;
     var display = "Unknown";
-    if (kind === "seconds") {
-      known = typeof value === "number" && isFinite(value);
-      if (known) {
-        on = value > 0;
-        display = on ? "On" : "Off";
-      }
+    if (kind === "steps") {
+      known = typeof value === "number" && isFinite(value) && value >= 0;
+      if (known) display = settingsStepLabel(value);
     } else if (kind === "bool") {
       known = typeof value === "boolean";
       if (known) {
@@ -2379,15 +2461,13 @@
     return view.on === choiceValue;
   }
 
-  // The value to PERSIST for a chosen control state. GAP 3a: auto-rotate off
-  // writes 0 and on writes the shipped interval, so both directions round-trip
-  // through the one autoRotateS key. Booleans are coerced to REAL booleans --
+  // The value to PERSIST for a chosen control state. US-895-a: a steps row
+  // writes the chosen seconds through its one key (0 = Off), so every step
+  // round-trips through autoRotateS. Booleans are coerced to REAL booleans --
   // the overlay's validator takes bool only, so a truthy string would 400.
   function settingsWriteValue(spec, desired) {
     if (!spec) return null;
-    if (spec.kind === "seconds") {
-      return desired ? CAROUSEL_DEFAULTS.autoRotateS : 0;
-    }
+    if (spec.kind === "steps") return desired;
     return !!desired;
   }
 
@@ -5753,6 +5833,9 @@
     settingsApplyStates: settingsApplyStates,
     settingsReloadNeeded: settingsReloadNeeded,
     settingsChoices: settingsChoices,
+    settingsStepNext: settingsStepNext,
+    settingsLockView: settingsLockView,
+    settingsBandView: settingsBandView,
     settingsRowView: settingsRowView,
     settingsEntry: settingsEntry,
     settingsChoiceActive: settingsChoiceActive,
@@ -5931,7 +6014,27 @@
         line.appendChild(chevron);
         line.onclick = function () { openSysDetail("pi"); };
       }
+      appendSysSettings(line);
       body.appendChild(line);
+    }
+
+    // US-895-a (spec s3, s4.7.2): SETTINGS › on the verdict line, in EVERY
+    // state -- it only navigates (R5, like the Warnings icon), and the band it
+    // opens carries the lock. It clicks the ⋮ itself, so the two entries are
+    // one open path and can never differ. Its tap stops at the link: the
+    // verdict line under it opens the Pi detail.
+    function appendSysSettings(line) {
+      var link = document.createElement("span");
+      link.className = "sys-settings";
+      link.setAttribute("role", "button");
+      link.setAttribute("tabindex", "0");
+      link.textContent = "SETTINGS ›";
+      link.addEventListener("click", function (e) {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        var menuBtn = document.getElementById("menu-btn");
+        if (menuBtn) menuBtn.click();
+      });
+      line.appendChild(link);
     }
 
     // s4.1: the Pi line -- one amber mono line under the verdict, the `pi`
@@ -7687,6 +7790,10 @@
       // borrowing the service-control confirm would train the operator to
       // dismiss the modal that guards a service stop (Iris §4).
       function postSetting(spec, desired, render, currentValue) {
+        // US-895-a (spec s4.7.2): while not parked a tap does NOTHING -- no
+        // write, no `saving…`. Asked here, the one write path, so no control
+        // can reach the route around it (`disabled` alone is a paint).
+        if (settingsLock().locked) return;
         // The pending paint keeps the value we already know is stored -- it must
         // not show the REQUESTED one, which is the optimistic success Iris ruled
         // out wearing a nicer label.
@@ -7726,57 +7833,133 @@
           });
       }
 
+      // US-895-a (spec s4.7.2) -- the band's lock, from the module's ONE
+      // parked fact (currentParked), never gearParked or the tick's debounce.
+      // `settingsRepaints` holds one repaint per row of the band as last
+      // built, so the parked edge repaints IN PLACE: no reload, no close.
+      var settingsLockEl = document.getElementById("settings-lock");
+      var settingsRepaints = [];
+
+      function settingsLock() {
+        var fact = currentParked();
+        return settingsLockView(fact.parked, fact.gearKnown);
+      }
+
+      function paintSettingsLock(lock) {
+        if (settingsList) settingsList.setAttribute("data-locked", String(lock.locked));
+        if (settingsLockEl) {
+          settingsLockEl.textContent = lock.note || "";
+          settingsLockEl.hidden = !lock.locked;
+        }
+      }
+
+      // The accessor's edge callback (it fires on a change of parked OR
+      // gearKnown, so the line's word follows the raw gear too). Each row
+      // repaints from ITS OWN last state: a write in flight keeps `saving…`,
+      // and its answer still lands through the same render.
+      onParkedChange(function () {
+        paintSettingsLock(settingsLock());
+        for (var i = 0; i < settingsRepaints.length; i++) settingsRepaints[i]();
+      });
+
       function buildSettings() {
         if (!settingsList) return;
         settingsList.textContent = "";
+        settingsRepaints = [];
+        var fact = currentParked();
+        var band = settingsBandView(fact.parked, fact.gearKnown);
+        paintSettingsLock(band);
         var specs = settingsSpecs();
-        for (var i = 0; i < specs.length; i++) {
-          (function (spec) {
-            var row = document.createElement("div");
-            row.className = "set-row";
-            var name = document.createElement("span");
-            name.className = "set-name";
-            name.textContent = spec.label;
-            row.appendChild(name);
-            var note = document.createElement("span");
-            note.className = "set-apply";
-            row.appendChild(note);
-            var controls = document.createElement("div");
-            controls.className = "set-controls";
-            row.appendChild(controls);
-
-            var choices = settingsChoices(spec);
-
-            // The ONE paint path for this row. Built with textContent (no
-            // innerHTML) so a config value can never become markup.
-            function render(value, statusNote) {
-              var view = settingsRowView(spec, value);
-              note.textContent = statusNote
-                ? view.applyNote + " · " + statusNote
-                : view.applyNote;
-              controls.textContent = "";
-              for (var c = 0; c < choices.length; c++) {
-                (function (choice) {
-                  var btn = document.createElement("button");
-                  btn.className = "set-btn tap-target";
-                  btn.textContent = choice.label;
-                  btn.setAttribute(
-                    "aria-pressed",
-                    String(settingsChoiceActive(view, choice.value))
-                  );
-                  btn.addEventListener("click", function () {
-                    postSetting(spec, choice.value, render, view.value);
-                  });
-                  controls.appendChild(btn);
-                })(choices[c]);
-              }
-            }
-
-            // US-878-c: a not-found entry is null here, i.e. Unknown.
-            render(settingsEntry(settingsSource, spec.key).value, "");
-            settingsList.appendChild(row);
-          })(specs[i]);
+        for (var s = 0; s < band.sections.length; s++) {
+          var title = document.createElement("h4");
+          title.className = "set-section";
+          title.textContent = band.sections[s];
+          settingsList.appendChild(title);
+          for (var i = 0; i < specs.length; i++) {
+            if (specs[i].section === band.sections[s]) buildSettingsRow(specs[i]);
+          }
         }
+      }
+
+      function buildSettingsRow(spec) {
+        var row = document.createElement("div");
+        row.className = "set-row";
+        row.setAttribute("data-key", spec.key);
+        var name = document.createElement("span");
+        name.className = "set-name";
+        name.textContent = spec.label;
+        row.appendChild(name);
+        var note = document.createElement("span");
+        note.className = "set-apply";
+        row.appendChild(note);
+        var controls = document.createElement("div");
+        controls.className = "set-controls";
+        row.appendChild(controls);
+
+        var choices = settingsChoices(spec);
+        // This row's last painted value + status note, kept per key so the
+        // lock's repaint never drops a pending or settled note.
+        var state = { value: null, note: "" };
+
+        function stepButton(view, direction, locked) {
+          // Locked: no − / + at all; at an end, that end's is hidden.
+          var next = settingsStepNext(spec, view.value, direction);
+          if (locked || next === null) return;
+          var btn = document.createElement("button");
+          btn.className =
+            "set-step " + (direction < 0 ? "set-step-minus" : "set-step-plus") + " tap-target";
+          btn.textContent = direction < 0 ? "−" : "+";
+          btn.addEventListener("click", function () {
+            postSetting(spec, next, render, view.value);
+          });
+          controls.appendChild(btn);
+        }
+
+        // The ONE paint path for this row. Built with textContent (no
+        // innerHTML) so a config value can never become markup.
+        function render(value, statusNote) {
+          state.value = value;
+          state.note = statusNote || "";
+          var view = settingsRowView(spec, value);
+          var locked = settingsLock().locked;
+          note.textContent = statusNote
+            ? view.applyNote + " · " + statusNote
+            : view.applyNote;
+          controls.textContent = "";
+          if (spec.kind === "steps") {
+            stepButton(view, -1, locked);
+            var shown = document.createElement("span");
+            shown.className = "set-value";
+            shown.textContent = view.display;
+            controls.appendChild(shown);
+            stepButton(view, 1, locked);
+            return;
+          }
+          for (var c = 0; c < choices.length; c++) {
+            (function (choice) {
+              var btn = document.createElement("button");
+              btn.className = "set-btn tap-target";
+              btn.textContent = choice.label;
+              btn.setAttribute(
+                "aria-pressed",
+                String(settingsChoiceActive(view, choice.value))
+              );
+              // Locked: readable, inert (spec s4.7.2); postSetting refuses too.
+              if (locked) btn.disabled = true;
+              btn.addEventListener("click", function () {
+                postSetting(spec, choice.value, render, view.value);
+              });
+              controls.appendChild(btn);
+            })(choices[c]);
+          }
+        }
+
+        settingsRepaints.push(function () {
+          render(state.value, state.note);
+        });
+        // US-878-c: a not-found entry is null here, i.e. Unknown.
+        render(settingsEntry(settingsSource, spec.key).value, "");
+        settingsList.appendChild(row);
       }
 
       if (menuBtn) {

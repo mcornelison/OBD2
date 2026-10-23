@@ -568,9 +568,12 @@
        powerwatch Stop is rendered disabled (safe-shutdown guard, F-7). A ✕
        (back) is always present so the menu never traps the operator. -->
   <div id="setup-menu" hidden role="dialog" aria-label="System Setup">
+    <!-- US-895-a (spec s4.7, I13): this head is the top bar while the band is
+         open (the overlay covers #topbar): '‹ BACK' left, 'SETTINGS' in the
+         page-name slot. Same #menu-close, so every way out is unchanged. -->
     <header class="menu-head">
-      <span class="menu-title">System Setup</span>
-      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">✕</button>
+      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">‹ BACK</button>
+      <span class="menu-title">SETTINGS</span>
     </header>
     <!-- US-532 (F-126) Settings band -- Iris Option B, CIO-chosen 2026-08-03.
          Deliberately the FIRST section: safe, non-destructive preferences sit
@@ -583,8 +586,12 @@
          apply-state its consumer actually earned; auto-rotate reloads the page
          itself, because the states-http restart it would otherwise need is
          polkit-denied. -->
+    <!-- US-895-a (spec s4.7.2): readable but LOCKED until parked (gear P/N
+         held 8 s). #settings-lock is the one line at the top of a locked band;
+         JS fills it from settingsLockView and repaints it on the parked edge.
+         JS also draws the DISPLAY / SYSTEM section heads inside the list. -->
     <section class="menu-section">
-      <h3 class="menu-section-title">Settings</h3>
+      <p id="settings-lock" class="settings-lock" hidden></p>
       <div id="settings-list"><!-- JS fills setting rows (effective values) --></div>
       <p class="settings-foot">Saved on the Pi · survives deploys &amp; reboots</p>
     </section>

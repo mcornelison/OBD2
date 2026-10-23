@@ -7034,6 +7034,33 @@ and `states_http_server` gain no parked check. Pinned by
 `tests/ui/test_warnings_code_detail.py` (the KOEO F2 regression and the
 fail-closed gear cases) and `tests/ui/test_carousel_parked_debounce.py`.
 
+**The Settings band is a parked-only consumer too (US-895-a, F-126; system spec
+4.7, 4.7.2; Atlas A1/A8/B10, Iris I11/I13).** It reads the fact ONLY through the
+module accessor US-894-b added — `currentParked()` `{parked (debounced), gearKnown
+(raw)}` — never `gearParked` (that would skip the 8 s hold) or `engineParked`.
+`settingsLockView(parked, gearKnown)` mirrors `clearButtonView`: only a strict
+`parked === true` unlocks; locked, the one line at the top of the band (`#settings-lock`)
+is *"🔒 view only — stop to change"* when `gearKnown`, else *"🔒 view only — gear
+unknown"* (no word says *moving* or *engine off to change*). Locked, the band stays
+readable at its stored values: segments `disabled` in `--text-tertiary` (the active one
+keeps a tertiary outline), steppers draw no `−`/`+`, and `postSetting` — the one write
+path — refuses (no write, no `saving…`). The lock repaints **in place** on the
+accessor's edge callback (`onParkedChange`); each row repaints from its own last
+`{value, note}`, so a write in flight across the edge still ends `saved` / `couldn't
+save`. The band opens from the ⋮ (unchanged: always visible, long-press free of any
+parked gate, US-659) and from **SETTINGS ›** on the System verdict line, shown in every
+state, which calls `menuBtn.click()` — one open path. Layout: `SETTINGS_SPECS` rows carry
+a `section` (DISPLAY then SYSTEM, heads in `--accent`) and UPPER-CASE labels; the overlay
+head reads `‹ BACK` / `SETTINGS` (it covers the top bar); the list scrolls with a visible
+scrollbar. **Auto-rotate is kind `steps`** (the `seconds` kind is deleted): declared
+`steps` 0 (`Off`) · 5 · 8 · 10 · 15 · 30 s, the stored seconds shown exactly (`12 s`),
+and `settingsStepNext` moves to the nearest declared step beyond the stored value in the
+tap's direction (12 → + 15 / − 10; − from 5 s → Off; an end hides its control); the
+write is the chosen seconds through the same `autoRotateS` key. No new
+`OVERRIDABLE_KEYS` entry. Pinned by `tests/ui/test_settings_lock.py` over the
+generated `tests/ui/fixtures/states/system/settings-*` fixtures (the 8 s hold is
+driven by the clock: 7 s locked, 8 s unlocked).
+
 **Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
 mean *the car is stopped*, which is what lets parked-only controls read them
 (system spec 4.7.2). `GearDeriver._parkOpinion` (`src/pi/obdii/gear_derivation.py`)
