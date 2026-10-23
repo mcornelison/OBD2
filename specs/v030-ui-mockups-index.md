@@ -27,6 +27,6 @@
 | 9 | Warnings + top-bar icon | A · Ranked list, scrolling | `v030-warnings-page-design.md` | https://claude.ai/artifact/1hZxFmhcUM8rY5onGu8eXU | `2026-10-12-v030-warnings-page.html` |
 | 9-OEM | Warnings + icon + PULL OVER + key-on CODE ALERT + code detail and clear lock, **OEM skin, v3 to the merged spec** (2026-10-22: S108–S111 folds; UIDEV-011: parked = gear `P`/`N`, `stop to clear` / `gear unknown`; repo copy `specs/v030-warnings-page-oem.html` is canonical) | A | `v030-warnings-page-design.md` | https://claude.ai/artifact/KKE2HvXZmUZJDPFP6SrRhk | `2026-10-15-v030-warnings-page-oem.html` |
 | — | Visual style (4 directions) | 2 · 90s Mitsubishi OEM | `v030-frame-and-style-design.md` | https://claude.ai/artifact/Eeuc311nAqoR5JFa5axvcT | `2026-10-13-v030-style-directions.html` |
-| — | Boot + shutdown storyboard | as approved | `v030-boot-shutdown-design.md` | https://claude.ai/artifact/HfQ1QVUq7N9EbBunrSF4hi | `2026-10-13-v030-boot-shutdown.html` |
+| — | Boot + shutdown storyboard | as approved 10-13; **words and WARNING image superseded by the spec (UIDEV-014): build from the spec + `assets/boot/warning-480x320.png`** | `v030-boot-shutdown-design.md` | https://claude.ai/artifact/HfQ1QVUq7N9EbBunrSF4hi | `2026-10-13-v030-boot-shutdown.html` |
 
-Last updated by `uideveloper/UIDEV-013-s110-words` (2026-10-22). The earlier "UIDEV-001 not yet merged" line was stale: UIDEV-001 merged on 2026-10-13.
+Last updated by `uideveloper/UIDEV-014-boot-shutdown-refresh` (2026-10-23). The earlier "UIDEV-001 not yet merged" line was stale: UIDEV-001 merged on 2026-10-13.
