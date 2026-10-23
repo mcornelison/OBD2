@@ -122,6 +122,8 @@
 #               |              | time; F2 is FIXED (the emitter publishes
 #               |              | `no_codes`) and re-recorded; pending_not_read
 #               |              | pinned on the panel and at the action path.
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: parked is states/gear (P/N),
+#               |              | so _routes serves a parked gear route too.
 # ================================================================================
 ################################################################################
 
@@ -149,7 +151,7 @@ from pi.obdii.alerts_arbiter import AlertsArbiter, buildAlertsState  # noqa: E40
 from pi.splash import dtc_clear  # noqa: E402
 from pi.splash.dtc_emitter import buildDtcState  # noqa: E402
 from pi.splash.dtc_severity_table import loadP1xxxSeverityTable  # noqa: E402
-from tests.ui.test_carousel_kebab_always_visible import _parked  # noqa: E402
+from tests.ui.test_carousel_kebab_always_visible import _gearParked, _parked  # noqa: E402
 
 _NODE = shutil.which("node")
 
@@ -269,7 +271,8 @@ _UNREAD = dict(available=False, reason="not read yet")
 # MOVED PIN (US-898-b1): the code rows are the ALERTS card's, built from
 # states/alerts; a CODE row's tap opens the detail from the states/dtc feed.
 # MOVED PIN (US-898-c): the tap opens it only while PARKED -- the US-511
-# debounce needs idle held >= 8 s, so the virtual clock is advanced first.
+# debounce needs the parked gear held >= 8 s (US-511-b; was idle), so the
+# virtual clock is advanced first.
 _NOW_MS = 1_788_000_000_000
 _OPEN_DETAIL = [
     {"flush": 4},
@@ -294,7 +297,12 @@ def _alertsFor(dtcState: Any) -> dict[str, Any]:
 
 
 def _routes(dtcState: Any) -> dict[str, Any]:
-    return {"/dtc": dtcState, "/alerts": _alertsFor(dtcState), "/system-status": _parked()}
+    # MOVED PIN (US-511-b): parked is the GEAR (P or N, Atlas B1), not
+    # system-status `idle`, so every render also serves a parked states/gear.
+    return {
+        "/dtc": dtcState, "/alerts": _alertsFor(dtcState), "/system-status": _parked(),
+        "/gear": _gearParked(),
+    }
 
 
 def _clearGateReason(dtcState: Any) -> str:

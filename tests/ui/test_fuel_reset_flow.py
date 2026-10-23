@@ -26,6 +26,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-18    | Rex (US-890-f) | Initial -- SINCE RESET reset flow.
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: parked is states/gear (P/N);
+#               |              | the DOM boots serve a parked or moving car.
 # ================================================================================
 ################################################################################
 
@@ -50,6 +52,8 @@ import render_harness as rh  # noqa: E402
 
 from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
     _driving,
+    _gearMoving,
+    _gearParked,
     _parked,
 )
 from tests.ui.test_engine_page import _classes, _ms, _textOf  # noqa: E402
@@ -411,7 +415,17 @@ def test_aRealCanonicalStamp_confirmsEndToEnd():
 # 5. The shipped DOM
 # ---------------------------------------------------------------------------
 
-# Parked is the US-511 debounce: idle must be HELD for parkedOnS (8 s).
+# Parked is the US-511 debounce: the parked GEAR must be HELD for parkedOnS (8 s).
+# MOVED PIN (US-511-b): parked is states/gear (P or N), not system-status idle,
+# so each boot serves a whole car -- its system-status AND its gear.
+def _parkedCar() -> dict[str, Any]:
+    return {"/system-status": _parked(), "/gear": _gearParked()}
+
+
+def _movingCar() -> dict[str, Any]:
+    return {"/system-status": _driving(), "/gear": _gearMoving()}
+
+
 _HOLD_PARKED = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}]
 _HOLD_2S = [{"pointer": {"id": "fuel-since-reset", "type": "pointerdown"}},
             {"advanceMs": 2100, "flush": 2},
@@ -459,16 +473,15 @@ def _confirmOpen(dom: dict[str, Any]) -> bool:
     return _shown(_byId(dom["tree"], "fuel-reset-confirm"))
 
 
-def _boot(steps: list[dict[str, Any]], system: Any, routes: dict[str, Any] | None = None,
-          stale: Any = STALE) -> dict[str, Any]:
-    allRoutes = {"/system-status": system,
-                 "/fuel-economy": _read("parked-reset-available", "before")}
+def _boot(steps: list[dict[str, Any]], car: dict[str, Any],
+          routes: dict[str, Any] | None = None, stale: Any = STALE) -> dict[str, Any]:
+    allRoutes = {**car, "/fuel-economy": _read("parked-reset-available", "before")}
     allRoutes.update(routes or {})
     return rh.runDashboard(routes=allRoutes, nowMs=_T0, steps=steps, displayStale=stale)
 
 
 def test_dom_shipsTheConfirmHidden_andTheSlotNotPressable():
-    dom = _boot([{"flush": 4}], _driving())
+    dom = _boot([{"flush": 4}], _movingCar())
     assert not _confirmOpen(dom)
     assert _byId(dom["tree"], "fuel-since-reset")["attrs"]["data-pressable"] == "false"
 
@@ -478,14 +491,14 @@ def test_dom_validation_moving_threeSecondHold_noHintNoConfirm():
         {"pointer": {"id": "fuel-since-reset", "type": "pointerdown"}},
         {"advanceMs": 3000, "flush": 3},
         {"pointer": {"id": "fuel-since-reset", "type": "pointerup"}}, {"flush": 1}]
-    dom = _boot(steps, _driving())
+    dom = _boot(steps, _movingCar())
     assert _glass(dom) == (OLD_FIGURE, "", "")
     assert not _confirmOpen(dom)
     assert not any(f["url"] == "/fuel-reset" for f in dom["fetches"])
 
 
 def test_dom_parked_showsTheHint_andAHoldOpensTheConfirm():
-    dom = _boot(_HOLD_PARKED + _HOLD_2S, _parked())
+    dom = _boot(_HOLD_PARKED + _HOLD_2S, _parkedCar())
     assert _glass(dom) == (OLD_FIGURE, "", HINT)
     assert _confirmOpen(dom)
     assert _textOf(_byId(dom["tree"], "fuel-reset-confirm")).startswith("Reset average MPG?")
@@ -497,7 +510,7 @@ def test_dom_aHoldShorterThanTwoSeconds_opensNothing():
         {"advanceMs": 1500, "flush": 2},
         {"pointer": {"id": "fuel-since-reset", "type": "pointerup"}},
         {"advanceMs": 1000, "flush": 2}]
-    assert not _confirmOpen(_boot(steps, _parked()))
+    assert not _confirmOpen(_boot(steps, _parkedCar()))
 
 
 def test_dom_aHoldThatMoves_isCancelled():
@@ -505,11 +518,11 @@ def test_dom_aHoldThatMoves_isCancelled():
         {"pointer": {"id": "fuel-since-reset", "type": "pointerdown"}},
         {"pointer": {"id": "fuel-since-reset", "type": "pointermove", "x": 40}},
         {"advanceMs": 2100, "flush": 2}]
-    assert not _confirmOpen(_boot(steps, _parked()))
+    assert not _confirmOpen(_boot(steps, _parkedCar()))
 
 
 def test_dom_no_closesTheConfirm_andPostsNothing():
-    dom = _boot(_HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-no"}, {"flush": 1}], _parked())
+    dom = _boot(_HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-no"}, {"flush": 1}], _parkedCar())
     assert not _confirmOpen(dom)
     assert _glass(dom) == (OLD_FIGURE, "", HINT)
     assert not any(f["url"] == "/fuel-reset" for f in dom["fetches"])
@@ -518,7 +531,7 @@ def test_dom_no_closesTheConfirm_andPostsNothing():
 def test_dom_yes_showsResettingAtOnce_andPostsWithTheToken():
     """'resetting…' from Yes: the POST's answer has not been read yet."""
     fx = _fixture("parked-reset-available")
-    dom = _boot(_HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-yes"}], _parked(),
+    dom = _boot(_HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-yes"}], _parkedCar(),
                 routes={"/fuel-reset": {"__status": 200, "__body": fx["response"]["body"]}})
     assert _glass(dom) == ("--", RESETTING, "")
     assert not _confirmOpen(dom)
@@ -533,11 +546,11 @@ def test_dom_200_holdsResettingUntilTheMatchingRead_thenShowsThatRead():
         {"advanceMs": 2000, "flush": 2},
     ]
     routes = {"/fuel-reset": {"__status": 200, "__body": fx["response"]["body"]}}
-    mid = _boot(steps, _parked(), routes=routes)
+    mid = _boot(steps, _parkedCar(), routes=routes)
     assert _glass(mid) == ("--", RESETTING, "")
     done = _boot(steps + [{"setRoutes": {"/fuel-economy": _read("parked-reset-available",
                                                                   "after")}},
-                          {"advanceMs": 1000, "flush": 2}], _parked(), routes=routes)
+                          {"advanceMs": 1000, "flush": 2}], _parkedCar(), routes=routes)
     assert _glass(done) == ("--", "too short yet", HINT)
 
 
@@ -546,7 +559,7 @@ def test_dom_200_noMatchingRead_pastTheWindow_couldntConfirm():
     steps = _HOLD_PARKED + _HOLD_2S + [
         {"click": "fuel-reset-yes"}, {"flush": 2},
         {"advanceMs": CONFIRM_SEC * 1000 + 500, "flush": 2}]
-    dom = _boot(steps, _parked(),
+    dom = _boot(steps, _parkedCar(),
                 routes={"/fuel-reset": {"__status": 200, "__body": fx["response"]["body"]}})
     assert _glass(dom) == (OLD_FIGURE, "", UNCONFIRMED)
 
@@ -560,7 +573,7 @@ def test_dom_200_noMatchingRead_pastTheWindow_couldntConfirm():
 )
 def test_dom_refusals_paintTheLatestValue_plusTheOutcome(answer: dict[str, Any], line: str):
     steps = _HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-yes"}, {"flush": 2}]
-    dom = _boot(steps, _parked(),
+    dom = _boot(steps, _parkedCar(),
                 routes={"/fuel-reset": {"__status": answer["status"], "__body": answer["body"]}})
     assert _glass(dom) == (OLD_FIGURE, "", line)
 
@@ -571,12 +584,12 @@ def test_dom_504_thenTheLandedRead_showsTheNewTotal():
         {"click": "fuel-reset-yes"}, {"flush": 2},
         {"setRoutes": {"/fuel-economy": _read("reset-unknown-504", "after")}},
         {"advanceMs": 2000, "flush": 2}]
-    dom = _boot(steps, _parked(),
+    dom = _boot(steps, _parkedCar(),
                 routes={"/fuel-reset": {"__status": 504, "__body": fx["response"]["body"]}})
     assert _glass(dom) == ("--", "too short yet", HINT)
 
 
 def test_dom_unservedPage_noInjectedWindow_offersNoReset():
-    dom = _boot(_HOLD_PARKED + _HOLD_2S, _parked(), stale=None)
+    dom = _boot(_HOLD_PARKED + _HOLD_2S, _parkedCar(), stale=None)
     assert _glass(dom) == (OLD_FIGURE, "", "")
     assert not _confirmOpen(dom)

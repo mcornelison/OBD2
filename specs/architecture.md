@@ -6907,8 +6907,9 @@ panel. A hysteresis debounce now sits between the flag and the menu policy:
 
 | Fact | Owner | Contract |
 |------|-------|----------|
-| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Unchanged. Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. |
-| Debounced "is the vehicle parked?" | `parkedNext(prev, rawIdle, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs idle held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs idle held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). |
+| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. **Since US-511-b it is the home-nav input only (`updateHomeNav`); no parked consumer reads it.** |
+| Raw "is the vehicle parked?" (US-511-b) | `gearParked(gearData)` | `isObj(gearData) && gearData.available === true && (gear === 'P' \|\| gear === 'N')`, strict string compare, on the tick's one `states/gear` read (`lastGear`, no second fetch). Fails closed: no gear file, unreadable, `available` not strictly true, or any other gear is *not* parked; `pi.gear.enabled` false writes no gear file, so every parked-only control stays locked. |
+| Debounced "is the vehicle parked?" | `parkedNext(prev, rawParked, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs the raw parked fact held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs it held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). Fed `gearParked(lastGear)` (US-511-b; was `carouselIdle(sysData)`). |
 | Menu policy | `menuAccess(parked)` | Applies policy **only**. `tapVisible = parked === true`; `longPress` stays unconditional. |
 
 **The thresholds are asymmetric on purpose.** Offering a single tap into a
@@ -6941,6 +6942,24 @@ idle-SSOT one and needs an Atlas ruling. `parkedOnS`/`parkedOffS` join the same
 positive-only rule, so `parkedOnS: 0` falls back to the default rather than
 silently deleting the debounce. Pinned by
 `tests/ui/test_carousel_parked_debounce.py`.
+
+**Every parked-only control reads one fact: the gear is P or N (US-511-b,
+F-124; Atlas B1-B4).** `system-status.idle` means *never connected this boot*,
+so once the dongle linked nothing parked-only ever unlocked (F2, confirmed on the
+car). The debounce's input is now `gearParked(lastGear)` — the deriver's `P`/`N`,
+which since US-511-a mean *stopped* — and the reducer, thresholds (8 s / 3 s) and
+fail-closed start are unchanged. The shipped consumers keep reading
+`engineParked.parked`: the code-row tap, the fuel reset hold/hint, the Clear
+button (`clearButtonView`), the TROUBLE CODES screen (`codeAlertView`) and the
+Engine codes tap (`engineStatusView`). **Lock words (Atlas B2; warnings spec
+:190-195, system 4.7.2):** `clearButtonView(data, parked, gearKnown)` replaces
+only an `ok` gate when `parked` is not strictly true — `gearKnown` (the
+*current raw* `states/gear` has `available === true`) → `moving`, *"🔒 CLEAR
+CODES — stop to clear"*; otherwise `parked_unknown`, *"🔒 CLEAR CODES — gear
+unknown"*. No label contains *moving*. Server unchanged (Atlas B3): `dtc_clear`
+and `states_http_server` gain no parked check. Pinned by
+`tests/ui/test_warnings_code_detail.py` (the KOEO F2 regression and the
+fail-closed gear cases) and `tests/ui/test_carousel_parked_debounce.py`.
 
 **Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
 mean *the car is stopped*, which is what lets parked-only controls read them
@@ -7169,7 +7188,9 @@ deliberate, named copy loss, alongside US-510's locked parked-screen navigation
 footer (the ⋮ affordance it taught is untouched and still in the top bar).
 
 The retirement is **display-only**: `carouselIdle` / `parkedNext` remain the
-parked SSOT for the auto-rotate pause and the ⋮ reveal, and
+parked SSOT for the auto-rotate pause and the ⋮ reveal (US-511-b: `parkedNext`
+is now fed `gearParked(states/gear)`, and `carouselIdle` is the home-nav input
+only), and
 `tests/ui/test_carousel_idle_face_retirement.py` pins that separation so a future
 edit cannot re-couple them. (Two different things in `carousel.js` are spelled
 *idle* -- the parked SSOT and the retired face -- which is precisely why the
@@ -8212,7 +8233,7 @@ frame is `TIER_COLOR_VAR[codeAlert.tier]` (the PULL OVER map), set as the inline
 custom property `--code-alert-frame`.
 
 **When.** Null — not drawn — unless `engineParked.parked` is strictly true (the
-US-511 debounce; it starts not-parked, so the screen appears ≥ 8 s after boot, Iris
+US-511 debounce, fed by the gear P/N since US-511-b; it starts not-parked, so the screen appears ≥ 8 s after boot, Iris
 U6) **and** `takeover` is null (PULL OVER > CODE ALERT: with both set only PULL OVER
 is drawn, and the code alert returns once the takeover clears). Not being drawn is
 not a dismiss: it posts nothing and the screen returns when parked, until dismissed.
@@ -8735,7 +8756,8 @@ each: this drive's history, then the status row.
   count is not read). That line is a tap to the
   Alerts card ONLY while parked: `data-tap="true"` + `role="button"` from the
   US-511 `parkedNext` debounce (its first consumer since TD-us659), advanced
-  once per tick from the same system-status; moving, it carries no tap target.
+  once per tick from the tick's states/gear (`gearParked`, US-511-b; was
+  system-status idle); moving, it carries no tap target.
   No O2 SENSORS tile until US-891 (Iris G-3). Fixtures:
   `tests/ui/fixtures/states/engine/{cold-start-history, fan-cycle-history,
   coolant-dwell-fired, bucket-worst-band, history-gap, history-trimmed-2h,

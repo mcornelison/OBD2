@@ -2106,8 +2106,12 @@
   // changed" -- it reads as a broken panel. This inserts a HYSTERESIS debounce
   // between the flag and the menu policy:
   //
-  //   not parked -> parked      idle held TRUE  for >= parkedOnS  (8 s)
-  //   parked -> not parked      idle held FALSE for >= parkedOffS (3 s)
+  //   not parked -> parked      raw parked held TRUE  for >= parkedOnS  (8 s)
+  //   parked -> not parked      raw parked held FALSE for >= parkedOffS (3 s)
+  //
+  // US-511-b: the raw input is now gearParked(states/gear) -- gear P or N --
+  // not the `idle` flag (which means "never connected this boot" and so never
+  // unlocked anything after the first connect). The reducer is unchanged.
   //
   // THE TWO THRESHOLDS DIFFER ON PURPOSE. Offering a single tap into a service
   // stop is a convenience and can afford to be slow; WITHDRAWING it once the
@@ -2131,17 +2135,34 @@
     return { parked: false, raw: false, sinceMs: null };
   }
 
-  // Advance the signal by one observation. `prev` is the last state, `rawIdle`
-  // the emitter's flag for THIS poll, `nowMs` the tick clock.
-  function parkedNext(prev, rawIdle, nowMs, cfg) {
+  // US-511-b (Atlas B1, spec v030-system-page-design 4.7.2): the RAW parked
+  // fact is the derived gear -- P or N -- and nothing else. The deriver's P
+  // already means stopped (US-511-a: fresh RPM 0 AND fresh SPEED 0), so this
+  // reads the one fact rather than computing a second one. It replaced
+  // carouselIdle as the reducer's input: system-status `idle` means "never
+  // connected this boot", so after the first connect nothing parked-only ever
+  // unlocked (F2, confirmed on the car). Fails closed: no gear file, an
+  // unreadable one, `available` not strictly true, or any other gear (an
+  // engaged gear is a number) is NOT parked.
+  function gearParked(gearData) {
+    return (
+      isObj(gearData) &&
+      gearData.available === true &&
+      (gearData.gear === "P" || gearData.gear === "N")
+    );
+  }
+
+  // Advance the signal by one observation. `prev` is the last state,
+  // `rawParked` gearParked() for THIS poll, `nowMs` the tick clock.
+  function parkedNext(prev, rawParked, nowMs, cfg) {
     var state =
       isObj(prev) && typeof prev.parked === "boolean"
         ? { parked: prev.parked, raw: prev.raw === true, sinceMs: prev.sinceMs }
         : parkedInit();
-    // Only a strict `true` is idle. carouselIdle already applies this rule
+    // Only a strict `true` is parked. gearParked already applies this rule
     // upstream; re-applying it means the reducer cannot be broken by a second
     // caller that hands it a raw payload field instead.
-    var raw = rawIdle === true;
+    var raw = rawParked === true;
     // A hold is a MEASURED duration. With no readable clock there is no
     // measurement, so return the state completely untouched -- including the
     // reading. Recording the reading without a timestamp would let the NEXT
@@ -2950,9 +2971,13 @@
     // US-919 (Iris 2026-10-20, verbatim): no Mode 07 answered, so the pending
     // set Mode 04 would also wipe was never read. One fact, no tier, no "yet".
     pending_not_read: "🔒 CLEAR CODES — pending codes haven’t been read",
-    // US-898-c (Iris 2026-10-19): the lock is engineParked, which also holds
-    // an idling car and the 8 s hold, so it says what unlocks it.
-    moving: "🔒 CLEAR CODES — engine off to clear",
+    // US-511-b (Atlas B2; spec warnings :190-195, system 4.7.2 :326-328): the
+    // lock is engineParked, now fed by the gear (P or N), so an idling car
+    // in N unlocks it -- "engine off" was no longer what unlocks it.
+    moving: "🔒 CLEAR CODES — stop to clear",
+    // US-511-b: the gear itself is unknown (no states/gear, or `available` not
+    // true), so "stop" would claim a fact nobody has.
+    parked_unknown: "🔒 CLEAR CODES — gear unknown",
   };
 
   // Re-derive the clear gate from the raw codes (the display mirror of the
@@ -3015,12 +3040,19 @@
   // is asked only when the gate is otherwise `ok`, so a permanent reason
   // (WATCH, STOP, UNRATED, sync, session lock) wins over `moving` -- a WATCH
   // code never implies that turning the engine off unlocks it.
-  function clearButtonView(data, parked) {
+  //
+  // US-511-b (Atlas B2): `gearKnown` is whether the CURRENT raw states/gear is
+  // available (strict true), not the debounced state -- so the word follows
+  // the gear under the operator: an unknown gear says 'parked_unknown', a
+  // known one that is not (yet) held parked says 'moving'.
+  function clearButtonView(data, parked, gearKnown) {
     var reason = clearGateReason(data);
     if (reason === "no_codes") {
       return { visible: false, enabled: false, reason: reason, label: null };
     }
-    if (reason === "ok" && parked !== true) reason = "moving";
+    if (reason === "ok" && parked !== true) {
+      reason = gearKnown === true ? "moving" : "parked_unknown";
+    }
     return {
       visible: true,
       enabled: reason === "ok",
@@ -5303,6 +5335,7 @@
     exceedsMoveCancel: exceedsMoveCancel,
     parkedInit: parkedInit,
     parkedNext: parkedNext,
+    gearParked: gearParked,
     appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
@@ -7256,7 +7289,7 @@
       // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
       // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
       // first consumer since TD-us659), advanced once per tick from the same
-      // system-status every other surface reads; the render sets data-tap from
+      // states/gear the Driving card reads (US-511-b); the render sets data-tap from
       // it, and the handler honours only what is on the glass right now.
       var engineParked = parkedInit();
       var engineCodes = document.getElementById("engine-codes");
@@ -7790,7 +7823,9 @@
       // the button follows the codes and engineParked under the operator.
       function renderClearButton(dtcData) {
         if (!clearBtn) return;
-        var view = clearButtonView(dtcData, engineParked.parked);
+        var view = clearButtonView(
+          dtcData, engineParked.parked, isObj(lastGear) && lastGear.available === true
+        );
         // US-491: the zone is now a bordered, LABELLED card, so it must go with
         // the button -- an empty "CLEAR CODES" box on a nothing-to-clear detail
         // is a new visual regression. The GATE is untouched: visibility still
@@ -8209,7 +8244,9 @@
         // US-889-c: the scroll half -- this drive's history from
         // states/engine-history alone, and the status row from the same cached
         // obd-live, its codes tap gated on the debounced parked signal.
-        engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        // US-511-b: fed from THIS tick's states/gear (lastGear, read above --
+        // no second fetch), never from system-status idle.
+        engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
         // moves the dismiss on first (a codeAlert-null re-read settles it).

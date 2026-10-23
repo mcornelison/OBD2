@@ -15,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-21    | Ralph (Rex)  | Initial -- US-919 one predicate, one table.
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: moving reads 'stop to clear'
+#               |              | over a known gear; 'gear unknown' otherwise.
 # ================================================================================
 ################################################################################
 
@@ -42,9 +44,12 @@ _needsNode = pytest.mark.skipif(
 )
 
 # The page labels (carousel.js CLEAR_REASON_LABEL). pending_not_read is Iris's
-# 2026-10-20 text, verbatim from the story; moving is US-898-c's.
+# 2026-10-20 text, verbatim from the story.
+# MOVED PIN (US-511-b, Atlas B2): moving is 'stop to clear' (was 'engine off
+# to clear'), and an unknown gear has its own word.
 _LABEL_PENDING_NOT_READ = "🔒 CLEAR CODES — pending codes haven’t been read"
-_LABEL_MOVING = "🔒 CLEAR CODES — engine off to clear"
+_LABEL_MOVING = "🔒 CLEAR CODES — stop to clear"
+_LABEL_GEAR_UNKNOWN = "🔒 CLEAR CODES — gear unknown"
 
 
 def _map(fn: str, argLists: list[list[Any]]) -> list[Any]:
@@ -110,18 +115,29 @@ def test_pendingUnread_buttonIsVisibleDisabledAndSaysPendingNotRead(parked: bool
 
 
 @_needsNode
-def test_pendingRead_moving_readsEngineOffToClear_onlyOverOk():
+def test_pendingRead_moving_readsStopToClear_onlyOverOk():
     """
+    MOVED PIN (US-511-b): was ..._readsEngineOffToClear_onlyOverOk.
+
     Given: a stored MINOR synced, pending read, no lock
-    When: the page builds the Clear button while moving, and while parked
-    Then: moving -> 'engine off to clear' (moving over ok only); parked -> ok.
+    When: the page builds the Clear button while moving (gear known), with the
+          gear unknown, and while parked
+    Then: moving -> 'stop to clear'; unknown -> 'gear unknown' (both over ok
+          only); parked -> ok.
     """
-    moving, parked = _map(
-        "clearButtonView", [[_storedMinor(READ_TS), False], [_storedMinor(READ_TS), True]]
+    moving, unknown, parked = _map(
+        "clearButtonView",
+        [
+            [_storedMinor(READ_TS), False, True],
+            [_storedMinor(READ_TS), False, False],
+            [_storedMinor(READ_TS), True, True],
+        ],
     )
 
     assert moving["reason"] == "moving" and moving["label"] == _LABEL_MOVING, moving
     assert moving["enabled"] is False, moving
+    assert unknown["reason"] == "parked_unknown", unknown
+    assert unknown["label"] == _LABEL_GEAR_UNKNOWN and unknown["enabled"] is False, unknown
     assert parked["reason"] == "ok" and parked["enabled"] is True, parked
 
 

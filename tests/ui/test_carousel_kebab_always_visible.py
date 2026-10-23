@@ -75,6 +75,9 @@
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-659: pin the removal of the ⋮
 #               |              | visibility gate, and the long-press it leaves
 #               |              | as the only protection.
+# 2026-10-22    | Ralph (Rex)  | US-511-b -- gear-route helpers (_gearParked /
+#               |              | _gearNeutral / _gearMoving / _gearAbsent) beside
+#               |              | the system-status builders, which are unchanged.
 # ================================================================================
 ################################################################################
 
@@ -96,6 +99,9 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
 
 import render_harness as rh  # noqa: E402
 
+from pi.obdii import gear_derivation as gd  # noqa: E402
+from pi.obdii.gear_derivation import GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.splash.system_status_emitter import buildSystemStatusState  # noqa: E402
 
 _NODE = shutil.which("node")
@@ -160,6 +166,39 @@ def _driving() -> dict:
     payload = _systemStatus(obdAvailable=True, driveState="recording", driveId=51)
     assert payload["idle"] is False, "fixture drifted -- this is meant to be the driving pole"
     return payload
+
+
+# US-511-b (Atlas B1): every parked-only control now reads states/gear -- P or N
+# is parked -- not system-status `idle`. These build the gear route from the
+# SHIPPED producer types (GearReading -> buildGearState), never by hand. The
+# system-status builders above are left as they are: US-659 tests use them for
+# `idle`, which still drives the home nav.
+_GEAR_NOW_ISO = "2026-08-31T15:45:52Z"
+
+
+def _gear(gear: Any, reason: str, *, available: bool = True) -> dict:
+    """A states/gear payload from the shipped builder."""
+    return buildGearState(GearReading(available, gear, reason), nowIso=_GEAR_NOW_ISO)
+
+
+def _gearParked() -> dict:
+    """P -- fresh RPM 0 AND fresh SPEED 0 (US-511-a): stopped, KOEO."""
+    return _gear(gd.GEAR_PARK, gd.REASON_PARK)
+
+
+def _gearNeutral() -> dict:
+    """N -- idling, stopped."""
+    return _gear(gd.GEAR_NEUTRAL, gd.REASON_NEUTRAL)
+
+
+def _gearMoving() -> dict:
+    """An engaged gear (an int, never a string): the car is moving."""
+    return _gear(3, gd.REASON_ENGAGED)
+
+
+def _gearAbsent(reason: str) -> dict:
+    """A typed absence: the gear is unknown, so it is not parked."""
+    return _gear(None, reason, available=False)
 
 
 # Every state the acquisition chain can hand the panel, keyed by CAUSE so a

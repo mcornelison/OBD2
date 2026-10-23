@@ -37,6 +37,8 @@
 #               |              | clear gate takes engineParked.parked.
 # 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN: the Mode-04 gate pin's states
 #               |              | carry a pendingCheckedAtTs (pending was read).
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: renderClearButton passes the
+#               |              | current raw gear's availability (lock word).
 # ================================================================================
 ################################################################################
 
@@ -340,7 +342,13 @@ def test_clearZone_isHiddenWhenThereIsNothingToClear():
     assert "clearZone.hidden = !view.visible" in block
     # MOVED PIN (US-898-c): the gate is fed the detail's own states/dtc read
     # and the parked signal.
-    assert "clearButtonView(dtcData, engineParked.parked)" in block
+    # MOVED PIN (US-511-b, Atlas B2): plus whether the CURRENT raw gear is
+    # known, which picks the lock word.
+    assert re.search(
+        r"clearButtonView\(\s*dtcData, engineParked\.parked, "
+        r"isObj\(lastGear\) && lastGear\.available === true\s*\)",
+        block,
+    )
 
 
 def test_clearZoneHidden_actuallyRemovesItFromFlow():

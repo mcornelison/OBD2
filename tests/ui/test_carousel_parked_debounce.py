@@ -22,6 +22,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- US-511 debounced parked signal.
+# 2026-10-22    | Ralph (Rex)  | US-511-b -- MOVED PIN: the feed is gearParked
+#               |              | (states/gear P or N), not carouselIdle; the
+#               |              | accessor's fail-closed cases.
 # ================================================================================
 ################################################################################
 
@@ -425,4 +428,63 @@ def test_theDebounceHasOneConsumer_theEngineCodesTap():
         f"parkedNext( appears {calls} times -- expected exactly 2 (its own "
         "definition and the US-889-c Engine codes tap). A consumer changed; re-pin it."
     )
-    assert "engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);" in js
+    # MOVED PIN (US-511-b, Atlas B1): the feed is the gear, not system-status
+    # idle ('never connected this boot', so nothing unlocked after a connect).
+    assert "engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);" in js
+    assert "parkedNext(engineParked, carouselIdle(" not in js
+
+
+# ---------------------------------------------------------------------------
+# US-511-b (Atlas B1) -- gearParked, the ONE accessor for the raw parked fact:
+# states/gear available AND gear P or N (strict string compare). Fails closed.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "gear",
+    [
+        {"available": True, "gear": "P", "reason": "park"},
+        {"available": True, "gear": "N", "reason": "neutral"},
+    ],
+    ids=["P", "N"],
+)
+def test_gearParked_availablePOrN_isParked(gear: dict):
+    assert _view("gearParked", gear) is True
+
+
+@pytest.mark.parametrize(
+    "gear",
+    [
+        None,
+        "P",
+        [],
+        {},
+        {"available": True, "gear": 3, "reason": "engaged"},
+        {"available": True, "gear": 1, "reason": "engaged"},
+        {"available": True, "gear": "p", "reason": "park"},
+        {"available": True, "gear": "R", "reason": "park"},
+        {"available": True, "gear": None, "reason": "park"},
+        {"available": "true", "gear": "P", "reason": "park"},
+        {"available": 1, "gear": "N", "reason": "neutral"},
+        {"gear": "P", "reason": "park"},
+        {"available": False, "gear": "P", "reason": "park"},
+        {"available": False, "gear": None, "reason": "engine_off_rolling"},
+        {"available": False, "gear": None, "reason": "link_down"},
+    ],
+    ids=[
+        "no-file", "string", "array", "empty", "gear-3", "gear-1", "lowercase-p",
+        "unknown-letter", "gear-null", "available-string", "available-number",
+        "available-absent", "available-false-P", "engine_off_rolling", "link_down",
+    ],
+)
+def test_gearParked_anythingElse_isNotParked(gear: object):
+    assert _view("gearParked", gear) is False
+
+
+def test_gearParked_heldThroughTheReducer_parksOnlyAfterParkedOnS():
+    """VC 6: page load with gear P -> not parked until 8 s have passed."""
+    p = {"available": True, "gear": "P", "reason": "park"}
+    raw = _view("gearParked", p)
+    assert _parked([(raw, _T0), (raw, _T0 + _ON_MS - 1), (raw, _T0 + _ON_MS)]) == [
+        False, False, True,
+    ]

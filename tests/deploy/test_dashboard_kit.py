@@ -42,6 +42,9 @@
 #                               takeover and the ribbon's absence.
 # 2026-10-21    | Ralph (Rex)  | US-919 -- MOVED PIN: the US-407 clear-logic fixture
 #                               carries a pendingCheckedAtTs (pending was read).
+# 2026-10-22    | Ralph (Rex)  | US-511-b -- MOVED PIN: clearButtonView's third input
+#                               is whether the raw gear is known: 'stop to clear'
+#                               (moving) vs 'gear unknown' (parked_unknown).
 # ================================================================================
 ################################################################################
 
@@ -1234,10 +1237,15 @@ const ok = c.clearButtonView(dtc([code('minor', 'P0443')]), true);
 assert.strictEqual(ok.visible, true, 'clearable -> button visible');
 assert.strictEqual(ok.enabled, true, 'S-6 ok -> enabled');
 assert.strictEqual(ok.reason, 'ok');
-const mv = c.clearButtonView(dtc([code('minor', 'P0443')]), false);
+// MOVED PIN (US-511-b): the third input is whether the raw gear is known.
+const mv = c.clearButtonView(dtc([code('minor', 'P0443')]), false, true);
 assert.strictEqual(mv.enabled, false, 'not parked -> disabled');
 assert.strictEqual(mv.reason, 'moving');
-assert.ok(/engine off to clear/.test(mv.label) && !/moving/i.test(mv.label), 'lock label');
+assert.ok(/stop to clear/.test(mv.label) && !/moving/i.test(mv.label), 'lock label');
+const gu = c.clearButtonView(dtc([code('minor', 'P0443')]), false, false);
+assert.strictEqual(gu.enabled, false, 'gear unknown -> disabled');
+assert.strictEqual(gu.reason, 'parked_unknown');
+assert.ok(/gear unknown/.test(gu.label) && !/moving/i.test(gu.label), 'gear-unknown label');
 
 // --- S-6/S-10 display mirror: a STOP present -> disabled, IGNORES clearGate --
 const sev = c.clearButtonView(dtc([code('minor', 'P0443'), code('stop', 'P0301')]), true);
