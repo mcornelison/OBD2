@@ -7533,6 +7533,35 @@ retry count — no publish field); a parked tap on the verdict opens the US-509
 drill. `#version-chip` shows in the drill (the future Pi detail's line) and
 never in a row's detail (Iris I8).
 
+**DATA row (US-894-c, spec §4.3, §4.6; Atlas A4, Iris I3/I4/W3).** The second
+row (`dataRowView(data, captureData)`), replacing the SYNC / DRIVE / CAPTURE
+tiles (`syncTile` / `driveTile` / `captureTile` and their drill rows are gone).
+**Value** = the capture word, then ` · synced <when>`: `stalled` (amber) **if
+and only if** a `capture` verdict member exists — the member comes from
+`feeds.*.state` alone; otherwise from `capture-health`'s top-level `state`:
+`ok` → `recording` (green), `idle` → `idle`, a member-less top-level `stalled`
+→ `no rows` (`reason` `never_written`) or `stopped` (`--text-secondary`, never
+`stalled`, never counted), absent / `unknown` → `--` (tertiary). `<when>` is
+`sync.lastOkTs` against the payload's `ts`, in local time: the same day → the
+time (`6:42 PM`), the day before → `yesterday` with **no time**, older →
+`Oct 12`; null → ` · no sync on record`. **Sentence** (` · ` joined): the
+`capture` member's `reason` verbatim (amber), else `all 4 feeds writing` /
+`not driving` / `capture not read yet`, or for `no rows` / `stopped` a cause
+only from the fact that carries it — `ECU not answering` only while `link.ecu`
+is `down` / `retrying` / `connecting`, otherwise `no row logged this session` /
+`last row <age>` (`lastRowSecondsAgo` through the `agoText` vocabulary); then
+`away from home` only when `wifi.home === false`; then `n rows waiting`
+(`fmtThousands`, `1 row waiting`; a non-empty `notCounted` puts `+` on the
+number: `12,345+ rows waiting`; null → `rows not read`, never 0); then
+`n event rows` only when `edrRowsWaiting` > 0. The parked **DATA detail**
+(`dataDetailView`) lists each feed (OBD, light, IMU, UPS) `writing` / `stalled`
+/ `idle` / `--` with its `lastSampleSecondsAgo` as a freshness age (`N s ago`,
+`999+ s ago`, `--` undated), then last data stored (full `fmtStamp`), rows
+waiting, event rows, `not counted: <table>, …` and at home `yes` / `no` /
+`unknown`. **The top-bar sync glyph is neutral** (`syncGlyphState(data)`):
+`sync.stale` has no verdict member (Atlas P9, Iris I4), so the glyph is amber
+only while a `sync` member exists (US-917).
+
 **Top-bar link indicator = the three-layer link chain (US-894-a, spec
 `specs/v030-system-page-design.md` §4.2.1).** The single `BT` glyph is retired
 (with `btGlyphState`). `#glyph-bt` keeps its slot, id and title and holds one
@@ -7561,7 +7590,7 @@ orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
 reusing the boot-state primitives). Schema (spec §7):
 
 ```json
-{ "sync": {"lastOkTs":"…","rows":1204,"pending":null,"stale":false,
+{ "sync": {"lastOkTs":"…","stale":false,
            "rowsWaiting":0,"edrRowsWaiting":0,"notCounted":["…"]},
   "power": {"source":"external","reasons":{}},
   "wifi": {"state":"up","ssid":"…","rssiDbm":-55,"home":true,"ts":"…"},
@@ -7728,7 +7757,7 @@ its link, it never manages it):
 Every key always present; null = not read, never 0:
 
 ```json
-"sync": {"lastOkTs": "2026-10-22T08:00:00Z", "rows": 12, "pending": null,
+"sync": {"lastOkTs": "2026-10-22T08:00:00Z",
          "stale": false, "rowsWaiting": 0, "edrRowsWaiting": 1771,
          "notCounted": ["profiles", "startup_log", "vehicle_info"]}
 ```
@@ -7738,8 +7767,8 @@ Every key always present; null = not read, never 0:
   words it **"last data stored"**, never "last contact". It survives a restart
   (it lives in obd.db) and advances on every stored push, powerwatch's key-off
   drain (`forcePush`) included. Null until the first ok push after deploy.
-  `_recordSyncOutcome` no longer stamps a time (it still caches `rows` and
-  re-anchors the altitude).
+  `_recordSyncOutcome` no longer stamps a time and caches no row count; it
+  re-anchors the altitude (US-518).
 - **`rowsWaiting`** = `pi.sync.backlog.countOutstandingRows` — the push's own
   predicate, never a second counter — with the shutdown drain's EDR exclusion;
   **`edrRowsWaiting`** = the same count over `EDR_SYNC_TABLES` only, reported
@@ -7747,7 +7776,10 @@ Every key always present; null = not read, never 0:
   be read (a partial count is never published).
 - **`notCounted`** = the snapshot tables (`SNAPSHOT_TABLES` + `SNAPSHOT_SYNC`),
   sorted: named, never folded into a count.
-- **`pending`** is kept, null (S110 retires it with the page).
+- **`rows` and `pending` are retired (US-894-c, Atlas P7).** Neither key is
+  published; `buildSystemStatusState` / `emit()` take no `syncRows` /
+  `syncPending`, and the orchestrator holds no `_lastSyncRows`. The backlog is
+  `rowsWaiting`, never a last-batch count.
 - **Read.** `backlog.readSyncHealth(dbPath)` — read-only opens, 1 s busy
   timeout, never migrates (a sync_log without `last_ok_at` → `lastOkTs` null,
   no raise). The orchestrator reads it from `_database.dbPath` at most every

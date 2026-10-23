@@ -77,8 +77,7 @@ def _sys(runMode: str | None = "live") -> dict:
     payload = buildSystemStatusState(
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs="2026-10-14T12:00:00Z",
-        syncRows=10,
-        syncPending=None,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         driveState="recording",

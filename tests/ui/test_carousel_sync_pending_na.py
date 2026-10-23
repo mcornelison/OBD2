@@ -3,20 +3,16 @@
 # Purpose/Description: US-564 instance A, DISPLAY half. `syncTile` independently
 #   re-defaulted a null pending count to 0 (`s.pending == null ? 0 : s.pending`),
 #   so fixing only the emitter would have shipped green while the panel still
-#   read "0 pending". This file pins the render; the emitter half is pinned in
+#   read "0 pending". This file pinned the render; the emitter half is pinned in
 #   tests/pi/splash/test_sync_pending_unmeasured.py.
 #
-#   Both directions are pinned: null renders as an em-dash AND a real count still
-#   renders as a number. A tile that showed "—" unconditionally would satisfy the
-#   first assertion and be just as useless as the one it replaced.
-#
-#   US-559 MOVED THE SUBJECT, NOT THE RULE. The counts left the tile's detail
-#   line (which now carries the sync stamp alone, CIO 2026-08-20) for the tile's
-#   own `counts` field, which the System drill-down renders. Every assertion
-#   below therefore reads `counts` where it used to read `detail`. The
-#   null-honesty contract US-564 established is completely unchanged -- deleting
-#   these pins because their field was renamed would have quietly retired the
-#   guard on the defect they exist for.
+#   MOVED PIN (US-894-c, Atlas P7, spec s4.3): `sync.pending` / `sync.rows` and
+#   the SYNC tile are retired. The rule US-564 established is UNCHANGED and now
+#   guards the count that replaced them -- the DATA row's `sync.rowsWaiting`:
+#   a null count reads `rows not read`, NEVER `0 rows waiting`, and a measured
+#   count (zero included) still reads as its number. Both directions stay
+#   pinned: a row that said `rows not read` unconditionally would satisfy the
+#   first and be as useless as the one it replaced.
 # Author: Rex (US-564)
 # Creation Date: 2026-08-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -28,10 +24,13 @@
 # 2026-08-21    | Rex (US-564) | Initial -- null -> NA, measured counts unchanged.
 # 2026-08-21    | Rex (US-559) | Re-point detail -> counts; the counts moved to
 #               |              | the drill-down. Same rule, new field.
+# 2026-10-23    | Rex (US-894-c)| MOVED PIN: the tile and sync.pending are
+#               |              | retired; the same rule on the DATA row's
+#               |              | rowsWaiting (row + detail).
 # ================================================================================
 ################################################################################
 
-"""US-564 fixture tests for carousel.js syncTile null-honesty (via node)."""
+"""US-564 null-honesty, now on the DATA row's rowsWaiting (via node)."""
 
 import json
 import os
@@ -39,11 +38,6 @@ import shutil
 import subprocess
 
 import pytest
-
-# The tile renders U+2014 EM DASH. Spelled as an escape, never a literal:
-# this file has to survive being written and re-read on a Windows SMB share
-# where a raw em-dash has already been mangled once.
-EM_DASH = "—"
 
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
@@ -54,126 +48,67 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _view(fn: str, arg):
-    """Evaluate one carousel.js export against a fixture via the node probe.
-
-    Decodes the probe's stdout as UTF-8 EXPLICITLY. The shared helper in the
-    sibling tests/ui files passes ``text=True``, which on Windows decodes with
-    the ANSI code page -- so a rendered em-dash comes back as mojibake and an
-    assertion on it fails while the printed message still LOOKS right. It has
-    never bitten because no existing tests/ui assertion contains a non-ASCII
-    glyph; this file's do. (TD-084.)
-    """
+def _call(fn: str, *args):
+    """Evaluate one carousel.js export via the node probe, decoded as UTF-8
+    explicitly (TD-084: `text=True` decodes with the ANSI code page)."""
     proc = subprocess.run(
-        [_NODE, _PROBE, fn, json.dumps(arg)],
+        [_NODE, _PROBE, fn, *(json.dumps(a) for a in args)],
         capture_output=True,
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
     return json.loads(proc.stdout.decode("utf-8"))
 
 
-def _sync(**overrides):
-    payload = {"lastOkTs": "2026-08-21T11:00:00Z", "rows": 120, "pending": None, "stale": False}
-    payload.update(overrides)
-    return payload
+def _status(**sync):
+    block = {
+        "lastOkTs": "2026-08-21T11:00:00Z", "stale": False,
+        "rowsWaiting": None, "edrRowsWaiting": None, "notCounted": None,
+    }
+    block.update(sync)
+    return {"sync": block, "verdict": {"issueCount": 0, "members": []},
+            "ts": "2026-08-21T12:00:00Z"}
 
 
-class TestNullPendingNeverRendersAsZero:
-    """The panel must not claim an all-clear on data safety it never measured."""
-
-    def test_syncTile_nullPending_rendersAnEmDashNotZero(self):
-        """
-        Given: the emitter reporting no measured pending count
-        When: the sync tile renders
-        Then: the counts line says "— pending", never "0 pending"
-        """
-        tile = _view("syncTile", _sync(pending=None))
-
-        assert EM_DASH + " pending" in tile["counts"]
-        assert "0 pending" not in tile["counts"]
-
-    def test_syncTile_missingPendingKey_alsoRendersAnEmDash(self):
-        """
-        Given: a payload from an OLDER Pi that omits the key entirely
-        When: the tile renders
-        Then: still an em-dash. `undefined == null` is true in JS, so the same
-              branch covers it -- pinned because a deploy skew between Pi and
-              dashboard assets is a real state this project has been in.
-        """
-        payload = _sync()
-        payload.pop("pending")
-        tile = _view("syncTile", payload)
-
-        assert EM_DASH + " pending" in tile["counts"]
-
-    def test_syncTile_measuredCount_stillRendersTheNumber(self):
-        """
-        Given: a real measured pending count
-        When: the tile renders
-        Then: the number appears. Without this, a tile hard-coded to "—" would
-              pass every other assertion here.
-        """
-        tile = _view("syncTile", _sync(pending=7))
-
-        assert "7 pending" in tile["counts"]
-
-    def test_syncTile_measuredZero_stillRendersZero(self):
-        """
-        Given: a count that was measured and genuinely is zero
-        When: the tile renders
-        Then: "0 pending". The fix removes an UNMEASURED zero; a measured one is
-              real news and must stay sayable.
-        """
-        tile = _view("syncTile", _sync(pending=0))
-
-        assert "0 pending" in tile["counts"]
-
-    def test_syncTile_nullRows_alsoRendersAnEmDash(self):
-        """
-        Given: a null row count (the same coercion, one expression away)
-        When: the tile renders
-        Then: an em-dash. Left as `? 0` it would be the identical defect sitting
-              beside the one being fixed -- the sweep-the-consumer-copies rule.
-        """
-        tile = _view("syncTile", _sync(rows=None))
-
-        assert EM_DASH + " rows" in tile["counts"]
+def _sentence(payload) -> str:
+    return _call("dataRowView", payload, None)["sentence"]
 
 
-class TestTileStructureIsUnchanged:
-    """The null-honesty change must not alter the tile's level or shape."""
+class TestNullRowsWaitingNeverRendersAsZero:
+    def test_nullRowsWaiting_readsRowsNotRead_neverZero(self):
+        sentence = _sentence(_status(rowsWaiting=None))
+        assert "rows not read" in sentence
+        assert "0 rows waiting" not in sentence
 
-    def test_syncTile_nullPending_isStillAnOkTileWhenNotStale(self):
-        """
-        Given: a healthy, non-stale sync with an unmeasured pending count
-        When: the tile renders
-        Then: the level stays "ok". An unmeasured COUNT is not a sync FAULT --
-              inflating it to amber would be the opposite lie, and would train
-              the operator to ignore the amber that means something.
-        """
-        tile = _view("syncTile", _sync(pending=None, stale=False))
+    def test_missingRowsWaitingKey_alsoReadsRowsNotRead(self):
+        payload = _status()
+        del payload["sync"]["rowsWaiting"]
+        assert "rows not read" in _sentence(payload)
 
-        assert tile["level"] == "ok"
-        assert tile["value"] == "OK"
+    @pytest.mark.parametrize("junk", ["12", True, -3])
+    def test_aNonCount_readsRowsNotRead(self, junk):
+        assert "rows not read" in _sentence(_status(rowsWaiting=junk))
 
-    def test_syncTile_staleStillWinsWithANullPending(self):
-        """
-        Given: a stale-while-driving sync and an unmeasured pending count
-        When: the tile renders
-        Then: STALE/amber, unchanged. The stale flag is the load-bearing
-              un-backed-up-data signal and this story must not disturb it.
-        """
-        tile = _view("syncTile", _sync(pending=None, stale=True))
+    def test_measuredCount_stillRendersTheNumber(self):
+        assert "4,820 rows waiting" in _sentence(_status(rowsWaiting=4820))
 
-        assert tile["value"] == "STALE"
-        assert tile["level"] == "amber"
+    def test_measuredZero_stillRendersZero(self):
+        """A measured zero is real news and must stay sayable."""
+        sentence = _sentence(_status(rowsWaiting=0))
+        assert "0 rows waiting" in sentence
+        assert "rows not read" not in sentence
 
-    def test_syncTile_nonObject_isStillUnavailable(self):
-        """
-        Given: no sync payload at all
-        When: the tile renders
-        Then: the pre-existing unavailable tile, untouched
-        """
-        tile = _view("syncTile", None)
+    def test_nullEventRows_printsNothing_neverZero(self):
+        sentence = _sentence(_status(rowsWaiting=5, edrRowsWaiting=None))
+        assert "event row" not in sentence
 
-        assert tile["level"] == "unavailable"
+
+class TestTheDetailCarriesTheSameRule:
+    def test_detail_nullCounts_readUnread_neverZero(self):
+        detail = _call("dataDetailView", _status(), None)
+        assert detail["rowsWaiting"] == "rows not read"
+        assert detail["eventRows"] == "--"
+
+    def test_detail_measuredZeros_readZero(self):
+        detail = _call("dataDetailView", _status(rowsWaiting=0, edrRowsWaiting=0), None)
+        assert detail["rowsWaiting"] == "0"
+        assert detail["eventRows"] == "0"

@@ -244,15 +244,17 @@ class TestNeverBreaksSync:
     def test_syncOutcomeTileStillStamped(self, stubApiKey) -> None:
         """The US-480-a sync tile must not regress behind the new hook.
 
-        MOVED PIN (US-916): the hook caches the row count only; the tile's
-        lastOkTs is sync_log.last_ok_at, so no time is stamped here any more.
+        MOVED PIN (US-916): the tile's lastOkTs is sync_log.last_ok_at, so no
+        time is stamped here any more.
+        MOVED PIN (US-894-c): sync.rows is retired (Atlas P7), so the hook
+        caches no row count either -- it still runs, and still re-anchors.
         """
-        orch, _spy = _orchWithSpy(_baseConfig(), raises=True)
-        orch._lastSyncRows = -1
+        orch, spy = _orchWithSpy(_baseConfig(), raises=True)
 
         orch._maybeTriggerIntervalSync()
 
-        assert orch._lastSyncRows == 0
+        assert spy.calls == 1
+        assert not hasattr(orch, "_lastSyncRows")
         assert not hasattr(orch, "_lastSyncOkTsIso")
 
 

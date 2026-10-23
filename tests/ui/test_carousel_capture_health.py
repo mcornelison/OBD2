@@ -3,22 +3,20 @@
 # Purpose/Description: US-688 (F-138) -- the SURFACE. The story's end state is
 #   "the operator is told -- ON THE DASHBOARD, not only in a log", and a
 #   producer whose output nothing renders is this project's most-repeated
-#   defect (US-494/495/498/630, and US-687-b hit its mirror image one story
-#   ago: "P" was decided correctly and painted as `--`).
+#   defect (US-494/495/498/630, US-687-b).
 #
-#   THE CAPTURE VERDICT LANDS ON THE SYSTEM STATUS CARD, in all three places
-#   that card speaks at once, because they are all derived from one tile map:
-#   the 2x2+1 grid, the one-glance SUMMARY line, and the US-509 drill-down. A
-#   tile that reached the summary but not the grid would print
-#   "SYSTEM . 1 ISSUE" over five healthy-looking tiles, so the grid entry is
-#   asserted alongside the summary rather than assumed from it.
-#
-#   🔴 AND THE LEVEL IS THE WHOLE DESIGN. `stalled` must rank as an ISSUE (it
-#   is the alert) while `idle` must rank NEUTRAL -- neutral is the bucket
-#   DRIVE=IDLE already occupies precisely so the commonest state on this car
-#   (parked, key off) cannot make green unreachable. Get that backwards and the
-#   card cries wolf every time the CIO switches the engine off, which is how an
-#   alert stops being read.
+#   MOVED PIN (US-894-c, spec s4.3, Atlas A4, Iris W3): the CAPTURE tile is
+#   retired. The capture verdict now lands on the System page's DATA row, read
+#   from states/capture-health, and the rules the tile carried survive there:
+#     - stalled is the ALERT -- but it is now the provider's `capture` verdict
+#       MEMBER (from feeds.*.state, ECU up), never the page's own ranking: the
+#       value reads `stalled` (amber) IF AND ONLY IF the member exists;
+#     - idle (the car's power off) is never an issue: `idle`, neutral, and the
+#       commonest state this car is in cannot make the page cry wolf;
+#     - a member-less top-level stall reads `no rows` / `stopped`, neutral --
+#       never `stalled`, never counted;
+#     - an absent, unknown or unrecognised payload reads `--`, never healthy;
+#     - no snake_case token reaches the panel.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-09-08
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -30,10 +28,12 @@
 # 2026-09-08    | Rex (US-688) | Initial -- the capture tile, its level ranking,
 #               |              | and its route into summary + drill-down.
 # 2026-10-13    | Rex (US-873) | The System card ignores the additive feeds block.
+# 2026-10-23    | Rex (US-894-c)| MOVED PIN: the tile is retired; the same rules
+#               |              | on the DATA row (A4: stalled iff a member).
 # ================================================================================
 ################################################################################
 
-"""US-688: the capture-health verdict rendered on the System Status card."""
+"""US-688 / US-894-c: the capture-health verdict on the System page's DATA row."""
 
 import json
 import os
@@ -51,6 +51,7 @@ _JS = os.path.join(
 pytestmark = pytest.mark.skipif(_NODE is None, reason="node not on PATH")
 
 _STALL_S = 60.0
+_CAPTURE_MEMBER = {"key": "capture", "reason": "OBD feed stalled."}
 
 
 def _view(fn: str, *args: object) -> object:
@@ -66,12 +67,8 @@ def _view(fn: str, *args: object) -> object:
 
 
 def _capture(state: str, **kw) -> dict:
-    """A states/capture-health payload in the shape the REAL emitter writes.
-
-    Keys copied from `capture_health.buildCaptureHealthState`; the producer
-    suite pins that shape, so the two files agree by construction rather than
-    by a hand-written fixture drifting from its emitter.
-    """
+    """A states/capture-health payload in the shape the REAL emitter writes
+    (keys from `capture_health.buildCaptureHealthState`)."""
     payload = {
         "state": state,
         "lastRowSecondsAgo": 1.0,
@@ -83,136 +80,115 @@ def _capture(state: str, **kw) -> dict:
     return payload
 
 
-def _sys(**kw) -> dict:
-    """A fully HEALTHY system-status payload.
-
-    Healthy on purpose: every test below is about what the CAPTURE fact does to
-    the card, and a baseline that already carried an issue would let a summary
-    assertion pass for a reason that has nothing to do with capture.
-    """
+def _sys(*members: dict, ecu: str = "up", **kw) -> dict:
+    """A HEALTHY system-status payload; `members` go into its verdict."""
+    layer = {"state": "up", "ts": "2026-09-08T11:00:00Z", "lastOkTs": None}
     data = {
-        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
-        "obdLink": {"state": "linked", "retries": 0},
-        "sync": {"lastOkTs": "2026-09-08T11:59:00Z", "rows": 10,
-                 "pending": None, "stale": False},
+        "sync": {"lastOkTs": "2026-09-08T11:59:00Z", "stale": False,
+                 "rowsWaiting": 0, "edrRowsWaiting": 0, "notCounted": []},
         "power": {"source": "external", "reasons": {}},
         "drive": {"state": "recording", "driveId": 69, "lastDrive": None},
+        "link": {"bt": dict(layer), "adapter": dict(layer),
+                 "ecu": dict(layer, state=ecu)},
         "idle": False,
         "source": {
             "obd": {"available": True, "reason": None},
             "wifi": {"available": True, "reason": None},
         },
-        "wifi": {"state": "up", "ssid": "x", "rssiDbm": -50},
+        "wifi": {"state": "up", "ssid": "x", "rssiDbm": -50, "home": True},
+        "verdict": {"issueCount": len(members), "members": list(members)},
         "ts": "2026-09-08T12:00:00Z",
     }
     data.update(kw)
     return data
 
 
-# ------------------------------------------------------------------- the tile
+def _row(system: dict, capture: object) -> dict:
+    return _view("dataRowView", system, capture)
 
 
-class TestTheCaptureTile:
-    """The four states each get a distinct, human-readable tile."""
+# ------------------------------------------------------------- the capture word
 
-    def test_captureTile_stalled_isAnIssueLevel(self) -> None:
+
+class TestTheCaptureWord:
+    """Each capture state gets a distinct word and look on the DATA row."""
+
+    def test_stalled_withTheMember_isTheAmberAlert(self) -> None:
         """
-        Given: capture has written nothing while the car is powered
-        When: the tile is built
-        Then: it renders at an ISSUE level, not neutral and not unavailable
-
-        THE ALERT. `down` is the only level that makes `systemSummary` count
-        this as an issue; unavailable would merely block green, which is not
-        the same as telling the operator something is wrong.
+        Given: the provider counted a `capture` member (a feed stalled, ECU up)
+        When: the DATA row is built
+        Then: `stalled`, amber, and the member's reason verbatim as the sentence
         """
-        tile = _view("captureTile", _capture("stalled", lastRowSecondsAgo=None,
-                                             reason="never_written"))
+        row = _row(_sys(_CAPTURE_MEMBER), _capture("ok"))
 
-        assert tile["level"] == "down"
-        assert tile["label"] == "CAPTURE"
+        assert (row["word"], row["look"], row["level"]) == ("stalled", "amber", "amber")
+        assert row["sentence"].startswith("OBD feed stalled.")
 
-    def test_captureTile_ok_isOk(self) -> None:
+    def test_ok_isRecording(self) -> None:
+        row = _row(_sys(), _capture("ok"))
+
+        assert (row["word"], row["look"]) == ("recording", "ok")
+        assert row["sentence"].startswith("all 4 feeds writing")
+
+    def test_idle_isNeutralNeverAnIssue(self) -> None:
         """
-        Given: rows are landing
-        When: the tile is built
-        Then: level `ok`
+        🔴 THE NUISANCE-ALARM GUARD. The car's power is off, no rows expected:
+        `idle`, never amber -- a parked Eclipse is the commonest state there is.
         """
-        assert _view("captureTile", _capture("ok"))["level"] == "ok"
+        row = _row(_sys(), _capture("idle", lastRowSecondsAgo=None))
 
-    def test_captureTile_idle_isNeutralNeverAnIssue(self) -> None:
+        assert (row["word"], row["look"], row["level"]) == ("idle", "secondary", "secondary")
+        assert row["sentence"].startswith("not driving")
+
+    @pytest.mark.parametrize("payload", [
+        None,
+        _capture("unknown", lastRowSecondsAgo=None, reason="logger_absent"),
+        _capture("wedged"),
+    ])
+    def test_absentUnknownOrUnrecognised_isNoDataNeverHealthy(self, payload) -> None:
+        """A dark producer, an undecided state or a token never taught: `--`,
+        tertiary -- never `recording`, never amber."""
+        row = _row(_sys(), payload)
+
+        assert (row["word"], row["look"]) == ("--", "tertiary")
+        assert row["sentence"].startswith("capture not read yet")
+
+    def test_topLevelStall_withNoMember_isNeverStalled(self) -> None:
         """
-        Given: the car's power is off, so no rows are expected
-        When: the tile is built
-        Then: level `neutral`
-
-        🔴 THE NUISANCE-ALARM GUARD. `neutral` is the bucket DRIVE=IDLE already
-        occupies, and its comment in carousel.js states the reason out loud:
-        counting it as a fault would make green unreachable in the commonest
-        state there is. A parked Eclipse is exactly that state, and this car
-        spends most of its life in it.
+        W3 / A4: the logger silent past the window but no member (the ECU is up
+        and no feed stalled) -> `stopped`, neutral, and the age it names.
         """
-        tile = _view("captureTile", _capture("idle", lastRowSecondsAgo=None))
+        row = _row(_sys(), _capture("stalled", lastRowSecondsAgo=300.0, reason="stalled"))
 
-        assert tile["level"] == "neutral"
+        assert (row["word"], row["look"], row["level"]) == ("stopped", "secondary", "secondary")
+        assert row["sentence"].startswith("last row 5 min ago")
 
-    def test_captureTile_unknown_isUnavailableNotAnIssue(self) -> None:
-        """
-        Given: capture health could not be determined
-        When: the tile is built
-        Then: `unavailable` -- blocks green without raising an alarm
-        """
-        tile = _view("captureTile", _capture("unknown", lastRowSecondsAgo=None,
-                                             reason="logger_absent"))
+    def test_neverWritten_saysSoRatherThanPrintingAnAge(self) -> None:
+        """`lastRowSecondsAgo` is null: `no rows`, and no fabricated age --
+        `0` is the exact inversion of the truth a naive `age || 0` produces."""
+        row = _row(_sys(), _capture("stalled", lastRowSecondsAgo=None,
+                                    reason="never_written"))
 
-        assert tile["level"] == "unavailable"
+        assert row["word"] == "no rows"
+        assert row["sentence"].startswith("no row logged this session")
+        assert "ago" not in row["sentence"]
 
-    def test_captureTile_absentPayload_isUnavailable(self) -> None:
-        """
-        Given: no capture-health payload at all (producer dark, or fetch failed)
-        When: the tile is built
-        Then: `unavailable`, never `ok`
+    @pytest.mark.parametrize("ecu", ["down", "retrying", "connecting"])
+    def test_memberlessStall_withTheEcuSilent_namesTheEcu(self, ecu) -> None:
+        """A cause is named only from the fact that carries it (A4)."""
+        row = _row(_sys(ecu=ecu), _capture("stalled", lastRowSecondsAgo=300.0,
+                                           reason="stalled"))
 
-        An absent producer must not be able to paint capture healthy. Same rule
-        `sysLevelRank` applies to an unrecognised level.
-        """
-        assert _view("captureTile", None)["level"] == "unavailable"
+        assert row["word"] == "stopped"
+        assert row["sentence"].startswith("ECU not answering")
 
-    def test_captureTile_unrecognisedState_isUnavailableNotOk(self) -> None:
-        """
-        Given: a state token this renderer has never been taught
-        When: the tile is built
-        Then: `unavailable` -- a future producer state cannot default to green
-        """
-        assert _view("captureTile", _capture("wedged"))["level"] == "unavailable"
+    @pytest.mark.parametrize("ecu", ["up", None])
+    def test_memberlessStall_withTheEcuUpOrUnread_namesNoCause(self, ecu) -> None:
+        """Never `ECU not answering` with the ECU up (a cold boot would be a lie)."""
+        row = _row(_sys(ecu=ecu), _capture("stalled", lastRowSecondsAgo=None,
+                                           reason="never_written"))
 
-    def test_captureTile_stalledNamesTheAgeItIsComplainingAbout(self) -> None:
-        """
-        Given: capture stalled with a real last-row age
-        When: the tile is built
-        Then: the detail names the age
-
-        A bare "NO DATA" is not actionable. "no rows for 90s" tells the operator
-        whether this just happened or has been true all drive.
-        """
-        tile = _view("captureTile", _capture("stalled", lastRowSecondsAgo=90.0,
-                                             reason="stalled"))
-
-        assert "90" in tile["detail"]
-
-    def test_captureTile_neverWrittenSaysSoRatherThanPrintingAnAge(self) -> None:
-        """
-        Given: capture stalled having NEVER written a row
-        When: the tile is built
-        Then: the detail says so and prints no fabricated age
-
-        `lastRowSecondsAgo` is null here. "no rows for 0s" would be the exact
-        inversion of the truth, and it is the shape a naive `age || 0` produces.
-        """
-        tile = _view("captureTile", _capture("stalled", lastRowSecondsAgo=None,
-                                             reason="never_written"))
-
-        assert "0" not in tile["detail"]
-        assert tile["detail"].strip() != ""
+        assert "ECU" not in row["sentence"]
 
 
 # ---------------------------------------------------------------- no raw tokens
@@ -232,37 +208,19 @@ class TestNoInternalTokensReachTheDriver:
             ("ok", None),
         ],
     )
-    def test_captureTile_rendersNoSnakeCaseToken(self, state, reason) -> None:
-        """
-        Given: every (state, reason) pair the producer can emit
-        When: the tile is built
-        Then: no underscore appears in any rendered string
+    def test_dataRow_rendersNoSnakeCaseToken(self, state, reason) -> None:
+        """Swept over the producer's WHOLE vocabulary (checked below)."""
+        payload = _capture(state, reason=reason, lastRowSecondsAgo=None)
+        row = _row(_sys(), payload)
+        detail = _view("dataDetailView", _sys(), payload)
 
-        Swept over the producer's WHOLE vocabulary rather than the interesting
-        members, so a reason added later without a phrase fails here instead of
-        appearing on the panel. US-687-a's equivalent sweep read a hand-written
-        tuple and expired within a week -- this list is checked against the
-        module's constants by the test below.
-        """
-        tile = _view("captureTile", _capture(state, reason=reason,
-                                             lastRowSecondsAgo=None))
-
-        for field in ("value", "detail", "label"):
-            assert "_" not in tile[field], (
-                f"raw token leaked to the panel in {field}: {tile[field]!r}"
-            )
+        for field in ("word", "tail", "sentence", "label"):
+            assert "_" not in row[field], f"raw token leaked in {field}: {row[field]!r}"
+        assert "_" not in json.dumps([f["state"] for f in detail["feeds"]])
 
     def test_theSweepCoversEveryReasonTheProducerCanEmit(self) -> None:
-        """
-        Given: the reason vocabulary the PRODUCER actually defines
-        When: it is compared against the sweep above
-        Then: every one is covered
-
-        The guard on the guard. Discovered by introspection over the module
-        rather than copied, so a new reason cannot be added to the producer
-        without this failing -- which is precisely the expiry US-687-b had to
-        repair one story after US-687-a wrote it.
-        """
+        """The guard on the guard: the producer's reason vocabulary, by
+        introspection, equals the sweep above."""
         from src.pi.obdii import capture_health as ch
 
         produced = {
@@ -276,132 +234,28 @@ class TestNoInternalTokensReachTheDriver:
         )
 
 
-# ------------------------------------------------- into summary and drill-down
+# ------------------------------------------------------------ onto the page
 
 
-class TestItReachesTheCard:
-    """The tile must actually be wired into the card's three surfaces."""
+class TestItReachesThePage:
+    """The DATA row is wired into the page view; the tile is gone."""
 
-    def test_systemStatusView_carriesTheCaptureTile(self) -> None:
-        """
-        Given: a healthy system and a stalled capture
-        When: the card view is built
-        Then: `tiles.capture` exists
+    def test_systemStatusView_carriesTheDataRow_andNoCaptureTile(self) -> None:
+        view = _view("systemStatusView", _sys(_CAPTURE_MEMBER), _capture("ok"))
 
-        The grid is hand-listed in `renderSystemStatusCard`, so this is what
-        stops a capture verdict from being decided and then dropped on the
-        floor -- the exact defect US-687-b caught one story ago.
-        """
-        view = _view("systemStatusView", _sys(), _capture("stalled",
-                                                          lastRowSecondsAgo=None,
-                                                          reason="never_written"))
+        assert [r["key"] for r in view["rows"]] == ["obd", "data"]
+        assert view["rows"][1]["word"] == "stalled"
+        assert "capture" not in view["tiles"]
+        assert "drive" not in view["tiles"]
+        assert all(r["label"] != "CAPTURE" for r in view["drill"]["rows"])
 
-        assert view["tiles"]["capture"]["level"] == "down"
-
-    def test_systemStatusView_stalledCaptureIsTheWorstDrillRow(self) -> None:
-        """
-        Given: EVERY other source healthy, and capture stalled
-        When: the card view is built
-        Then: CAPTURE is the first (worst) row behind the verdict
-
-        MOVED PIN (US-894-b): this pinned the retired `SYSTEM · 1 ISSUE`
-        summary. The page counts nothing now -- a capture ISSUE is the
-        provider's `capture` verdict member (spec s4.1) -- so what survives on
-        the page side is that the stalled tile is not lost: it leads the drill.
-        """
-        view = _view("systemStatusView", _sys(), _capture("stalled",
-                                                          lastRowSecondsAgo=None,
-                                                          reason="never_written"))
-
-        assert "summary" not in view
-        assert view["drill"]["rows"][0]["label"] == "CAPTURE"
-        assert view["drill"]["rows"][0]["level"] == "down"
-
-    def test_systemStatusView_stalledCaptureIsListedInTheDrillDown(self) -> None:
-        """
-        Given: a stalled capture on an otherwise healthy system
-        When: the card view is built
-        Then: the drill-down is tappable and lists CAPTURE
-
-        The summary is a count; the drill-down is where the operator reads what
-        to do about it. A headline that opens an overlay not mentioning capture
-        is the dead end US-509 removed.
-        """
-        view = _view("systemStatusView", _sys(), _capture("stalled",
-                                                          lastRowSecondsAgo=None,
-                                                          reason="never_written"))
-
-        assert view["drill"]["tappable"] is True
-        labels = [r["label"] for r in view["drill"]["rows"]]
-        assert "CAPTURE" in labels
-
-    def test_systemStatusView_healthyCaptureKeepsTheCardGreen(self) -> None:
-        """
-        Given: everything healthy including capture
-        When: the card view is built
-        Then: SYSTEM . OK, and capture is NOT listed
-
-        The non-vacuity pair for the issue test. Without it, an implementation
-        that reported an issue unconditionally would pass every assertion above.
-        """
-        view = _view("systemStatusView", _sys(), _capture("ok"))
-
-        # MOVED PIN (US-894-b): the `SYSTEM · OK` summary is retired.
-        labels = [r["label"] for r in view["drill"]["rows"]]
-        assert "CAPTURE" not in labels
-
-    def test_systemStatusView_idleCaptureDoesNotBlockGreen(self) -> None:
-        """
-        Given: the car is switched off -- capture idle, but the rest still green
-        When: the card view is built
-        Then: still SYSTEM . OK, and capture is not listed
-
-        🔴 THE NEGATIVE CASE AT THE PANEL. The story's "must NOT fire on a
-        normal parked Pi" is a claim about what the OPERATOR SEES, so it is
-        asserted here and not only at the producer. An implementation that
-        ranked idle as `unavailable` would turn every key-off into
-        "SYSTEM . 1 UNAVAILABLE" -- quieter than an alarm, and still wrong.
-        """
-        view = _view("systemStatusView", _sys(), _capture("idle",
-                                                          lastRowSecondsAgo=None))
-
-        # MOVED PIN (US-894-b): the `SYSTEM · OK` summary is retired.
-        labels = [r["label"] for r in view["drill"]["rows"]]
-        assert "CAPTURE" not in labels
-
-    def test_systemStatusView_withNoCaptureArgument_isUnchanged(self) -> None:
-        """
-        Given: a caller that passes no capture payload (the pre-US-688 shape)
-        When: the card view is built
-        Then: no capture tile, and the card still summarises the other four
-
-        Backward compatibility asserted rather than assumed: every existing
-        test and every other call site passes one argument, and this story must
-        not make the card unavailable for them.
-        """
+    def test_systemStatusView_withNoCaptureArgument_readsNotYetRead(self) -> None:
+        """A caller that passes no capture payload still gets the page: the
+        DATA row says capture was not read, never a healthy word."""
         view = _view("systemStatusView", _sys())
 
-        assert view["tiles"].get("capture") is None
-        # MOVED PIN (US-894-b): the summary is retired; the page still builds.
-        assert view["verdict"]["text"] in ("ALL OK", "--")
-        assert view["rows"][0]["key"] == "obd"
-
-
-# ----------------------------------------------------------------- the grid
-
-
-class TestTheGridRendersIt:
-    """MOVED PIN (US-894-b): the 2x2 grid is retired (spec s3 layout A). The
-    capture tile stays in the view (it feeds the drill) until the DATA row
-    lands (US-894-c); meanwhile the page paints no tile and counts nothing, so
-    the old contradiction -- a count over tiles that do not show it -- cannot
-    arise."""
-
-    def test_theSystemPagePaintsNoTileGrid(self) -> None:
-        src = open(_JS, encoding="utf-8").read()
-
-        assert "appendTile(grid" not in src
-        assert '"sys-grid"' not in src
+        assert view["rows"][1]["word"] == "--"
+        assert view["verdict"]["text"] == "ALL OK"
 
 
 # ------------------------------------------------- US-873: the additive feeds
@@ -416,21 +270,14 @@ def _feedCases() -> dict:
         return json.load(fh)
 
 
-class TestTheFeedsBlockIsAdditive:
-    """US-873 (Iris S-8): the System card ignores the new `feeds` block."""
+class TestTheFeedsBlockIsAdditiveToTheRow:
+    """US-873 (Iris S-8): the ROW never reads `feeds` -- its `stalled` comes from
+    the provider's member, which is the one reader of the feeds (A4). The
+    DATA detail is where the feeds are shown."""
 
     @pytest.mark.parametrize("case", sorted(_feedCases()))
-    def test_systemStatusView_sameOutputWithAndWithoutFeeds(self, case: str) -> None:
-        """
-        Given: a fixture capture-health payload, and the same payload with
-               its `feeds` block removed (the pre-US-873 shape)
-        When: the System card view and the capture tile are built from each
-        Then: the rendered output is identical
-        """
+    def test_dataRow_sameWithAndWithoutFeeds(self, case: str) -> None:
         withFeeds = _feedCases()[case]["payload"]
         preChange = {k: v for k, v in withFeeds.items() if k != "feeds"}
 
-        assert _view("systemStatusView", _sys(), withFeeds) == _view(
-            "systemStatusView", _sys(), preChange
-        )
-        assert _view("captureTile", withFeeds) == _view("captureTile", preChange)
+        assert _row(_sys(), withFeeds) == _row(_sys(), preChange)

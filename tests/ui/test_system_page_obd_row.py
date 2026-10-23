@@ -149,8 +149,7 @@ def _payload(
     }
     return buildSystemStatusState(
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=None,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         driveState=driveState,
@@ -199,9 +198,12 @@ _STORY_FIXTURES = {
 
 
 def test_theFixtureDirectoryHoldsExactlyThisStorysFixtures():
+    # MOVED PIN (US-894-c): the directory is shared by the page's stories; it
+    # holds exactly what the generator builds, and this story's set is in it
+    # (the DATA set is pinned exactly by tests/ui/test_system_page_data_row.py).
     names = {f[:-5] for f in os.listdir(_FIXTURE_DIR) if f.endswith(".json")}
-    assert names == _STORY_FIXTURES
-    assert set(_generator().fixtureNames()) == _STORY_FIXTURES
+    assert names == set(_generator().fixtureNames())
+    assert _STORY_FIXTURES <= names
 
 
 @pytest.mark.parametrize("name", sorted(_STORY_FIXTURES))
@@ -695,7 +697,8 @@ def test_thePage_rendersTheVerdictLineAndTheObdRow_neverATile():
     classes = " ".join(_allText(card))
     assert "tile" not in re.findall(r"[\w-]+", classes)
     rows = surface.pathsByClass("sys-row")
-    assert len(rows) == 1
+    # MOVED PIN (US-894-c): the DATA row follows the OBD row.
+    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data"]
     steps = surface.pathsByClass("obd-step")
     assert [p[-1]["attrs"]["data-state"] for p in steps] == ["ok", "ok", "neutral"]
     assert [_text(p[-1]) for p in steps] == ["BT", "ADAPTER", "ECU"]
@@ -791,7 +794,8 @@ def test_parked_theObdRowOpensTheObdDetail_inSysDetail_withoutTheVersionChip():
         _status("bt-connecting"), parked=True,
         steps=[{"clickNth": {"selector": ".sys-row", "index": 0}}, {"flush": 1}],
     )
-    assert len(surface.pathsByClass("sys-chevron")) == 2  # verdict + OBD row
+    # MOVED PIN (US-894-c): verdict + OBD row + DATA row.
+    assert len(surface.pathsByClass("sys-chevron")) == 3
     detail = surface.pathById("sys-detail")
     assert detail[-1]["attrs"].get("hidden") is None, "the OBD detail did not open"
     assert _text(surface.pathById("sys-detail-head")[-1]) == "OBD"

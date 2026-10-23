@@ -5,8 +5,6 @@
   "inputs": {
     "system-status": {
       "syncLastOkTs": "2026-10-22T22:55:12Z",
-      "syncRows": 0,
-      "syncPending": null,
       "syncStale": false,
       "syncRowsWaiting": 0,
       "syncEdrRowsWaiting": 0,
@@ -44,8 +42,6 @@
     "system-status": {
       "sync": {
         "lastOkTs": "2026-10-22T22:55:12Z",
-        "rows": 0,
-        "pending": null,
         "stale": false,
         "rowsWaiting": 0,
         "edrRowsWaiting": 0,

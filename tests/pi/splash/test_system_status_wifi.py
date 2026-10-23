@@ -44,7 +44,8 @@ from src.pi.splash.system_status_emitter import buildSystemStatusState, deriveWi
 
 _BASE = dict(
     # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
-    syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+    # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
+    syncLastOkTs=None, syncStale=False,
     powerSource="unknown",
     driveState="idle", driveId=None, nowIso="2026-08-28T00:00:00Z",
 )

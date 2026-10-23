@@ -141,8 +141,7 @@ def _systemStatus(
     return buildSystemStatusState(
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs="2026-08-31T15:45:22Z",
-        syncRows=1204,
-        syncPending=0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         driveState=driveState,

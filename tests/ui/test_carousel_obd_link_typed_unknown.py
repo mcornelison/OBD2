@@ -263,7 +263,9 @@ def _obdRow(payload: Any) -> dict:
     """The System page's OBD row as the operator sees it (MOVED PIN, US-894-b:
     was the retired OBD LINK tile)."""
     surface = _surface(payload)
-    rows = surface.pathsByClass("sys-row")
+    # MOVED PIN (US-894-c): the DATA row follows; this reads the OBD row.
+    rows = [p for p in surface.pathsByClass("sys-row")
+            if p[-1]["attrs"].get("data-row") == "obd"]
     assert len(rows) == 1, "no OBD row in the rendered DOM"
     assert surface.rendered(rows[0]), "the OBD row is in the DOM but not displayed"
     sentence = surface.pathsByClass("sys-row-sentence")[0]
@@ -758,7 +760,8 @@ def test_aLiveCarStillPaintsTheLink_soTheAbsencesAboveAreNotUnconditional(tmp_pa
     payload = _emit(tmp_path, connection=_allCauses()["linked"])
     assert payload["source"]["obd"]["available"] is True
     live = buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="recording", driveId=1,
         nowIso="2026-08-31T15:46:00Z",
         link={layer: {"state": "up", "ts": "2026-08-31T15:45:00Z", "lastOkTs": None}

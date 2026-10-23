@@ -160,8 +160,7 @@ def _systemStatus(**overrides: Any) -> dict:
     """
     args: dict[str, Any] = {
         "syncLastOkTs": _FRESH_SYNC,
-        "syncRows": 1204,
-        "syncPending": 0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         "syncStale": False,
         "powerSource": "external",
         "driveState": "idle",
@@ -267,7 +266,9 @@ def _obdRow(payload: Any) -> dict:
     on and the colour the first step actually resolves to.
     """
     surface = _surface(payload)
-    rows = surface.pathsByClass("sys-row")
+    # MOVED PIN (US-894-c): the DATA row follows; this reads the OBD row.
+    rows = [p for p in surface.pathsByClass("sys-row")
+            if p[-1]["attrs"].get("data-row") == "obd"]
     assert len(rows) == 1, f"the System page paints {len(rows)} rows, not the OBD row"
     path = rows[0]
     assert surface.rendered(path), "the OBD row is in the DOM but not displayed"

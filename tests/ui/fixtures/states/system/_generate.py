@@ -40,10 +40,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-b System page OBD-row fixtures.
+# 2026-10-23    | Ralph (Rex)  | US-894-c: the DATA-row fixtures (capture + sync);
+#               |              | syncRows / syncPending retired from the inputs.
 # ================================================================================
 ################################################################################
 
-"""Generate the US-894-b System page fixtures from the real builders."""
+"""Generate the US-894-b/c System page fixtures from the real builders."""
 
 from __future__ import annotations
 
@@ -63,6 +65,7 @@ for _root in (_REPO_ROOT, _SRC):
 
 from pi.obdii.capture_health import (  # noqa: E402
     DEFAULT_STALL_SECONDS,
+    REASON_NEVER_WRITTEN,
     buildCaptureFeedsState,
     buildCaptureHealthState,
 )
@@ -90,12 +93,13 @@ def _link(bt: dict, adapter: dict, ecu: dict) -> dict:
     return {"bt": bt, "adapter": adapter, "ecu": ecu}
 
 
-def _systemInputs(link: dict, *, driveState: str = "idle", driveId: int | None = None) -> dict:
-    """A parked-at-home system-status input set; each fixture overrides the link."""
-    return {
+def _systemInputs(
+    link: dict, *, driveState: str = "idle", driveId: int | None = None, **overrides: Any
+) -> dict:
+    """A parked-at-home system-status input set; each fixture overrides the link
+    and, for the DATA fixtures, any other builder input by keyword."""
+    inputs = {
         "syncLastOkTs": "2026-10-22T22:55:12Z",
-        "syncRows": 0,
-        "syncPending": None,
         "syncStale": False,
         "syncRowsWaiting": 0,
         "syncEdrRowsWaiting": 0,
@@ -111,6 +115,42 @@ def _systemInputs(link: dict, *, driveState: str = "idle", driveId: int | None =
         "wifiTs": NOW,
         "piHealth": None,
         "link": link,
+    }
+    inputs.update(overrides)
+    return inputs
+
+
+def _upChain() -> dict:
+    """All three layers up since _FIRST_UP -- the ECU up, so a stalled feed
+    is a capture member (system_status_emitter.buildSystemVerdict)."""
+    return _link(
+        _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
+        _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
+        _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
+    )
+
+
+def _capture(
+    lastRowSecondsAgo: float | None,
+    *,
+    freshnessReason: str | None = None,
+    obd: float | None = 0.4,
+    light: float | None = 0.9,
+    imu: float | None = 0.1,
+    ups: float | None = 4.0,
+) -> dict:
+    """Capture-health emit inputs on external power; each feed's last-sample
+    age is given (None = the feed produced nothing this process)."""
+    samples = {
+        name: (_FIRST_UP if age is not None else None, age)
+        for name, age in (("obd", obd), ("light", light), ("imu", imu), ("ups", ups))
+    }
+    return {
+        "lastRowSecondsAgo": lastRowSecondsAgo,
+        "freshnessReason": freshnessReason,
+        "powerSource": "external",
+        "stallSeconds": DEFAULT_STALL_SECONDS,
+        "feedSamples": samples,
     }
 
 
@@ -232,6 +272,97 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
         {"system-status": _systemInputs(_link(
             _layer("down"), _layer("down"), _layer(None),
         ))},
+    ),
+    # --- US-894-c: the DATA row (spec s4.3, s7) ---------------------------
+    "capture-stalled": (
+        "Recording, the ECU up, the OBD feed and the logger both silent past "
+        "the stall window -> the capture member, 1 ISSUE, DATA value "
+        "'stalled' amber, the sentence is the member's reason verbatim.",
+        {
+            "system-status": _systemInputs(
+                _upChain(), driveState="recording", driveId=212,
+                syncRowsWaiting=482,
+            ),
+            "capture-health": _capture(75.0, obd=75.0),
+        },
+    ),
+    "away-from-home": (
+        "Recording on another network, weak -> 'away from home', rows "
+        "waiting, neutral and uncounted (ALL OK).",
+        {
+            "system-status": _systemInputs(
+                _upChain(), driveState="recording", driveId=212,
+                wifiSsid="Starbucks WiFi", wifiRssiDbm=-75, wifiHome=False,
+                syncLastOkTs="2026-10-22T13:02:40Z", syncRowsWaiting=3880,
+            ),
+            "capture-health": _capture(0.4),
+        },
+    ),
+    "rows-not-counted": (
+        "At home with snapshot tables named in notCounted -> "
+        "'12,345+ rows waiting' on the row (the + on the number), the "
+        "tables by name in the DATA detail, never folded into the count.",
+        {
+            "system-status": _systemInputs(
+                _upChain(), syncRowsWaiting=12345, syncEdrRowsWaiting=1771,
+                syncNotCounted=["profiles", "startup_log", "vehicle_info"],
+            ),
+            "capture-health": _capture(0.4),
+        },
+    ),
+    "capture-stalled-ecu-silent": (
+        "A4: top-level stalled (rows once, none in the window), the ECU down "
+        "-> no member, 'stopped' in --text-secondary, 'ECU not answering', "
+        "ALL OK.",
+        {
+            "system-status": _systemInputs(_link(
+                _layer("up", lastOkTs=_EARLIER), _layer("up", lastOkTs=_EARLIER),
+                _layer("down", lastOkTs=_FIRST_UP),
+            )),
+            "capture-health": _capture(300.0, obd=300.0),
+        },
+    ),
+    "capture-never-written-ecu-up": (
+        "A4 VC 1 / W3: a cold boot -- the logger has written no row, the ECU "
+        "up, no stalled feed -> 'no rows', 'no row logged this session', "
+        "0 members, no ECU words.",
+        {
+            "system-status": _systemInputs(_upChain()),
+            "capture-health": _capture(
+                None, freshnessReason=REASON_NEVER_WRITTEN, obd=None,
+            ),
+        },
+    ),
+    "capture-ups-feed-stalled": (
+        "A4 VC 2: top-level ok, the UPS feed stalled, the ECU up -> 'stalled' "
+        "amber, 'UPS feed stalled.', 1 member; the amber sits on the UPS feed "
+        "in the detail.",
+        {
+            "system-status": _systemInputs(_upChain(), driveState="recording", driveId=212),
+            "capture-health": _capture(0.4, ups=140.0),
+        },
+    ),
+    "sync-days-old": (
+        "I3: the last data stored ten days ago -> 'synced Oct 12', never a "
+        "bare time; the full stamp is in the detail.",
+        {
+            "system-status": _systemInputs(
+                _upChain(), syncLastOkTs="2026-10-12T19:40:00Z", syncRowsWaiting=91234,
+            ),
+            "capture-health": _capture(0.4),
+        },
+    ),
+    "sync-stale-glyph": (
+        "I4: recording with sync.stale and no member -> the sync glyph "
+        "neutral, ALL OK; last stored the local day before -> 'synced "
+        "yesterday', no time on the row.",
+        {
+            "system-status": _systemInputs(
+                _upChain(), driveState="recording", driveId=212, syncStale=True,
+                syncLastOkTs="2026-10-21T22:59:00Z", syncRowsWaiting=6120,
+            ),
+            "capture-health": _capture(0.4),
+        },
     ),
 }
 

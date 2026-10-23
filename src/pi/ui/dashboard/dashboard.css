@@ -660,6 +660,17 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .sys-row[data-level="amber"] .sys-row-sentence { color: var(--amber-warn); }
+/* US-894-c DATA row (s4.3): the capture word in its own look, then a neutral
+   ` · synced <when>`; the sentence is one span per part, so only a member's
+   reason is amber and the counts beside it stay neutral (s4.0). */
+.sys-row-word { color: var(--text-tertiary); }
+.sys-row-word[data-state="ok"]        { color: var(--green-ok); }
+.sys-row-word[data-state="secondary"] { color: var(--text-secondary); }
+.sys-row-word[data-state="tertiary"]  { color: var(--text-tertiary); }
+.sys-row-word[data-state="amber"]     { color: var(--amber-warn); }
+.sys-row-tail { color: var(--text-secondary); }
+.sys-row-part[data-level="secondary"] { color: var(--text-secondary); }
+.sys-row-part[data-level="amber"]     { color: var(--amber-warn); }
 /* The OBD chain (s4.2): outlined steps, the look on each step's data-state. A
    step the provider did not read is DASHED (AC 4), never the solid `down`. */
 .obd-join { color: var(--text-tertiary); }

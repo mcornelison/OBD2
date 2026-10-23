@@ -4,8 +4,6 @@
   "zone": "America/Chicago",
   "inputs": {
     "syncLastOkTs": null,
-    "syncRows": 0,
-    "syncPending": null,
     "syncStale": false,
     "syncRowsWaiting": null,
     "syncEdrRowsWaiting": null,
@@ -22,8 +20,6 @@
   "system-status": {
     "sync": {
       "lastOkTs": null,
-      "rows": 0,
-      "pending": null,
       "stale": false,
       "rowsWaiting": null,
       "edrRowsWaiting": null,

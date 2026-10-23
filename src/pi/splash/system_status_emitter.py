@@ -50,6 +50,8 @@
 #               |              | published blocks + this tick's capture-health.
 # 2026-10-22    | Rex (US-877-c)| emit returns the payload it wrote (None on a
 #               |              | failed write) for the alerts arbiter.
+# 2026-10-23    | Rex (US-894-c)| sync.rows and sync.pending are RETIRED (Atlas
+#               |              | P7): the syncRows / syncPending inputs go too.
 # ================================================================================
 ################################################################################
 
@@ -617,8 +619,6 @@ def deriveWifiState(
 def buildSystemStatusState(
     *,
     syncLastOkTs: str | None,
-    syncRows: int,
-    syncPending: int | None,
     syncStale: bool,
     powerSource: str,
     driveState: str,
@@ -654,12 +654,6 @@ def buildSystemStatusState(
     Args:
         syncLastOkTs: When the server last STORED data: max(sync_log.last_ok_at)
             (US-916), canonical UTC; None when none is stored.
-        syncRows: Rows synced in the last successful batch.
-        syncPending: Rows captured but not yet synced, or None when no caller
-            actually measures it (US-564). None is carried through to the display
-            as a typed NA -- it must never be coerced to 0 here or below, because
-            "0 pending" is an all-clear on data safety and an unmeasured
-            all-clear is the exact defect class this project keeps finding.
         syncStale: Whether the last sync is stale-while-driving (caller policy;
             see ``isSyncStaleWhileDriving``). The display renders amber when True.
         powerSource: ``external`` (USB/car) or ``battery`` (running on the UPS),
@@ -769,9 +763,9 @@ def buildSystemStatusState(
         powerReasons["source"] = powerSourceReason
     state = {
         "sync": {
+            # US-894-c (Atlas P7): `rows` and `pending` are retired -- the
+            # backlog is rowsWaiting below, never a last-batch count.
             "lastOkTs": syncLastOkTs,
-            "rows": syncRows,
-            "pending": syncPending,
             "stale": syncStale,
             # US-916: transported verbatim; null = not read, never 0.
             "rowsWaiting": syncRowsWaiting,
@@ -932,8 +926,6 @@ def makeSystemStatusEmitter(
     def emit(
         *,
         syncLastOkTs: str | None,
-        syncRows: int,
-        syncPending: int | None,
         powerSource: str,
         driveState: str,
         driveId: int | None,
@@ -969,8 +961,6 @@ def makeSystemStatusEmitter(
             )
             payload = buildSystemStatusState(
                 syncLastOkTs=syncLastOkTs,
-                syncRows=syncRows,
-                syncPending=syncPending,
                 syncStale=syncStale,
                 powerSource=powerSource,
                 powerSourceReason=powerSourceReason,

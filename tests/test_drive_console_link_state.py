@@ -39,7 +39,8 @@ from tools.imu.drive_console import ecuLinkState  # noqa: E402
 
 def _status(ecu: str | None) -> dict:
     return buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None,
         nowIso="2026-10-23T07:30:00Z",
         link={"ecu": {"state": ecu, "ts": "2026-10-23T07:29:00Z" if ecu else None,

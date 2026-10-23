@@ -697,44 +697,6 @@
     return nowMs - startedAtMs;
   }
 
-  // Sync tile: stale-while-driving -> amber (I-4); otherwise ok. The emitter
-  // owns the stale DECISION (no green-when-broken); the tile renders it.
-  function syncTile(s) {
-    if (!isObj(s)) {
-      // No counts to carry: nothing was measured and nothing was even offered.
-      // An em-dash pair here would invent a diagnostics line for a source that
-      // never reported (the fabrication one layer up from US-564's zero).
-      return {
-        label: "SYNC", value: "—", detail: "unavailable",
-        level: "unavailable", counts: "",
-      };
-    }
-    // US-564: a null count renders as an em-dash, NEVER as 0. Both halves of this
-    // had to change together -- the emitter stopped inventing `syncPending=0`
-    // and this line stopped re-inventing it -- because either coercion alone
-    // ships green and the panel still reads "0 pending", which is an all-clear
-    // on whether the drive is backed up that nobody ever measured.
-    var pending = s.pending == null ? "—" : s.pending;
-    var counts = (s.rows == null ? "—" : s.rows) + " rows · " + pending + " pending";
-    // US-559 (CIO placement call, 2026-08-20): the STAMP is what gets read at a
-    // glance, so it takes the tile's one detail line to itself; the counts are
-    // diagnostics you go looking for and move to the System drill-down. They are
-    // still derived HERE, once, and the overlay merely presents `counts` -- a
-    // drill-down that re-derived them could disagree with the card behind it.
-    //
-    // No "last " prefix: the tile is already labelled SYNC, and the prefix cost
-    // characters on a band P-3 had just re-budgeted. `never` stays bare and
-    // unformatted -- an absent sync is the one place a date would be the worst
-    // possible fabrication.
-    var last = s.lastOkTs == null ? "never" : fmtStamp(s.lastOkTs);
-    if (s.stale === true) {
-      // The stamp is MORE load-bearing on this branch, not less: it is the
-      // answer to "how stale?".
-      return { label: "SYNC", value: "STALE", detail: last, level: "amber", counts: counts };
-    }
-    return { label: "SYNC", value: "OK", detail: last, level: "ok", counts: counts };
-  }
-
   // Power tile: running on battery (UPS backup) -> amber; external -> ok.
   function powerTile(p) {
     if (!isObj(p)) {
@@ -825,94 +787,6 @@
     return { label: "LAST STOP", value: word, detail: detail, level: "neutral" };
   }
 
-  // Drive tile: recording -> active (ok); idle -> neutral (no warning, no green).
-  function driveTile(d) {
-    if (!isObj(d)) {
-      return { label: "DRIVE", value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    if (d.state === "recording") {
-      var id = d.driveId == null ? "?" : d.driveId;
-      return { label: "DRIVE", value: "REC", detail: "drive " + id, level: "ok" };
-    }
-    if (d.state === "idle") {
-      return { label: "DRIVE", value: "IDLE", detail: "not recording", level: "neutral" };
-    }
-    return { label: "DRIVE", value: "—", detail: "unavailable", level: "unavailable" };
-  }
-
-  // US-688 -- the CAPTURE tile. `data_logger_last_row_seconds_ago` has gone out
-  // on the Pi's health-check line every 60 s since US-302 and nothing has ever
-  // rendered it; on 2026-09-04 it read `never_written` for two days while a
-  // loose dongle produced zero rows, and a human found it by looking at the
-  // dongle. This is the surface that would have said so.
-  //
-  // 🔴 THE LEVELS ARE THE DESIGN, and two of them are load-bearing:
-  //   stalled -> `down`. The ALERT. Only amber/down are counted as ISSUES by
-  //              systemSummary, so anything softer would block green without
-  //              ever TELLING the operator anything -- which is the defect.
-  //   idle    -> `neutral`. The car's power is off and no rows are EXPECTED.
-  //              Neutral is the bucket DRIVE=IDLE already occupies for exactly
-  //              this reason: a fault reported in the commonest state there is
-  //              (parked) is crying wolf, and an alert that cries wolf is off
-  //              forever. This car spends most of its life parked.
-  // An absent payload or an unrecognised state resolves to `unavailable`, never
-  // to `ok` -- a dark producer must not be able to paint capture healthy.
-  var CAPTURE_REASON_TEXT = {
-    never_written: "no rows since start",
-    stalled: "no rows recently",
-    logger_absent: "no logger",
-    unreadable: "unreadable",
-  };
-
-  function captureDetail(c) {
-    var age = c.lastRowSecondsAgo;
-    var hasAge = typeof age === "number" && isFinite(age) && age >= 0;
-    if (c.state === "stalled") {
-      // An age is only printed when one exists. `never_written` has NO age, and
-      // "no rows for 0s" -- what `age || 0` produces -- is the exact inversion
-      // of the truth it would be standing in for.
-      return hasAge ? "no rows for " + Math.round(age) + "s" : "no rows since start";
-    }
-    if (c.state === "ok") {
-      return hasAge ? "row " + Math.round(age) + "s ago" : "logging";
-    }
-    if (c.state === "idle") return "car off";
-    return captureReasonText(c.reason);
-  }
-
-  // Machine tokens become driver English HERE, at the renderer, so the state
-  // file keeps the exact token for tests, logs and any future consumer. An
-  // unknown token degrades to words (underscores stripped) rather than leaking
-  // snake_case onto a panel read at speed.
-  function captureReasonText(reason) {
-    if (typeof reason !== "string" || reason === "") return "not reported";
-    if (Object.prototype.hasOwnProperty.call(CAPTURE_REASON_TEXT, reason)) {
-      return CAPTURE_REASON_TEXT[reason];
-    }
-    return reason.replace(/_/g, " ");
-  }
-
-  function captureTile(c) {
-    if (!isObj(c)) {
-      return { label: "CAPTURE", value: "—", detail: "unavailable",
-               level: "unavailable" };
-    }
-    if (c.state === "stalled") {
-      return { label: "CAPTURE", value: "NO DATA", detail: captureDetail(c),
-               level: "down" };
-    }
-    if (c.state === "ok") {
-      return { label: "CAPTURE", value: "LOGGING", detail: captureDetail(c),
-               level: "ok" };
-    }
-    if (c.state === "idle") {
-      return { label: "CAPTURE", value: "IDLE", detail: captureDetail(c),
-               level: "neutral" };
-    }
-    return { label: "CAPTURE", value: "—", detail: captureDetail(c),
-             level: "unavailable" };
-  }
-
   // Top-bar glyph states (bound to data-state CSS in dashboard.css).
   //
   // US-894-a (spec s4.2.1, closes US-713 + ARCH-061): the single BT glyph is
@@ -972,9 +846,12 @@
     }
     return looks;
   }
-  function syncGlyphState(s) {
-    if (!isObj(s)) return "neutral";
-    return s.stale === true ? "amber" : "ok";
+  // US-894-c (spec s4.3, Iris I4, Atlas P9): the sync glyph is NEUTRAL. It
+  // used to paint `sync.stale` amber with no verdict member behind it -- an
+  // amber nobody counted, the s4.0 failure. Sync has no member until US-917,
+  // and the glyph goes amber exactly while that member is present.
+  function syncGlyphState(data) {
+    return verdictMemberKeys(data).sync === true ? "amber" : "neutral";
   }
   // US-696 (CIO ruling 2026-09-09): there is NO `powerGlyphState`. The top-bar
   // lightning glyph was removed -- "if I can see the screen the power is on",
@@ -1127,6 +1004,189 @@
   }
 
   // -------------------------------------------------------------------------
+  // US-894-c (spec s4.3, s4.6; Atlas A4, Iris I3/W3) -- the DATA row: capture
+  // and sync on one row, replacing the SYNC / DRIVE / CAPTURE tiles. The
+  // capture word comes from states/capture-health, never from the drive
+  // state; `stalled` comes from the `capture` verdict MEMBER alone (one source
+  // per fact), so the row and the count can never disagree.
+  // -------------------------------------------------------------------------
+
+  // Copies of the provider's vocabulary (pi.obdii.capture_health STATE_* /
+  // REASON_NEVER_WRITTEN / FEED_NAMES), pinned equal by
+  // tests/ui/test_system_page_data_row.py.
+  var CAPTURE_STATE_WORD = { ok: "recording", idle: "idle" };
+  var CAPTURE_STATE_STALLED = "stalled";
+  var CAPTURE_REASON_NEVER_WRITTEN = "never_written";
+  // s4.6 feed order and labels (OBD, light, IMU, UPS).
+  var CAPTURE_FEEDS = [["obd", "OBD"], ["light", "LIGHT"], ["imu", "IMU"], ["ups", "UPS"]];
+  var CAPTURE_FEED_WORD = { ok: "writing", stalled: "stalled", idle: "idle" };
+  var CAPTURE_MEMBER_KEY = "capture";
+  // A4: the ECU states whose fact carries `ECU not answering`. A member-less
+  // stall names that cause only from link.ecu; with the ECU up, or not read,
+  // no cause is printed (on a cold boot it would be false).
+  var DATA_ECU_SILENT_STATES = ["down", "retrying", "connecting"];
+
+  // `n rows waiting`, `1 row waiting`; a `+` on the number itself when tables
+  // were left out of the count (`1+ rows waiting` stays plural). Null is
+  // `rows not read`, never 0.
+  function rowsWaitingText(n, notCounted) {
+    if (typeof n !== "number" || !isFinite(n) || n < 0) return "rows not read";
+    var plus = Array.isArray(notCounted) && notCounted.length > 0 ? "+" : "";
+    return fmtThousands(n) + plus + (n === 1 && plus === "" ? " row waiting" : " rows waiting");
+  }
+
+  // `n event rows` only when > 0; zero, null and junk print nothing.
+  function eventRowsText(n) {
+    if (typeof n !== "number" || !isFinite(n) || n <= 0) return null;
+    return fmtThousands(n) + (n === 1 ? " event row" : " event rows");
+  }
+
+  function sameLocalDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+      && a.getDate() === b.getDate();
+  }
+
+  // s4.3 date rule (Iris I3, UIDEV-010), local time against the payload's own
+  // `ts`: the same day -> the time (`6:42 PM`); the day before -> `yesterday`
+  // with NO time (the time would not fit, and the ellipsis would cut it to a
+  // wrong-looking stub); older -> `Oct 12`. A bare time is only ever today's,
+  // so with no usable `now` the date form is used. Null -> `no sync on
+  // record`; an unparseable stamp is `--`, never a raw string or 1970.
+  function syncWhenText(lastOkTs, nowTs) {
+    if (typeof lastOkTs !== "string") return "no sync on record";
+    if (!ISO_INSTANT.test(lastOkTs)) return "synced " + SYS_NO_DATA;
+    var d = new Date(lastOkTs);
+    if (isNaN(d.getTime())) return "synced " + SYS_NO_DATA;
+    var now = typeof nowTs === "string" && ISO_INSTANT.test(nowTs) ? new Date(nowTs) : null;
+    if (now !== null && !isNaN(now.getTime())) {
+      if (sameLocalDay(d, now)) return "synced " + fmtTimeOfDay(d, false);
+      var yesterday = new Date(now.getTime());
+      yesterday.setDate(yesterday.getDate() - 1);
+      if (sameLocalDay(d, yesterday)) return "synced yesterday";
+    }
+    return "synced " + STAMP_MONTHS[d.getMonth()] + " " + two(d.getDate());
+  }
+
+  // The capture word and its look. s4.0: amber ONLY for the member.
+  function dataCaptureWord(data, captureData) {
+    if (verdictMemberReason(data, [CAPTURE_MEMBER_KEY]) !== null) {
+      return { word: CAPTURE_STATE_STALLED, look: "amber", basis: "member" };
+    }
+    var cap = isObj(captureData) ? captureData : {};
+    if (cap.state === CAPTURE_STATE_STALLED) {
+      // W3: a top-level stall with no member never reads `stalled`.
+      return {
+        word: cap.reason === CAPTURE_REASON_NEVER_WRITTEN ? "no rows" : "stopped",
+        look: "secondary",
+        basis: cap.reason === CAPTURE_REASON_NEVER_WRITTEN ? "noRows" : "stopped",
+      };
+    }
+    if (cap.state === "ok") return { word: CAPTURE_STATE_WORD.ok, look: "ok", basis: "recording" };
+    if (cap.state === "idle") return { word: CAPTURE_STATE_WORD.idle, look: "secondary", basis: "idle" };
+    return { word: SYS_NO_DATA, look: "tertiary", basis: "unread" };
+  }
+
+  // The sentence's first part: the member's reason verbatim, else the
+  // capture state's words; null when a member-less stall has no cause to
+  // name and no age to print.
+  function dataCaptureSentence(data, captureData, capture) {
+    if (capture.basis === "member") {
+      return verdictMemberReason(data, [CAPTURE_MEMBER_KEY]);
+    }
+    if (capture.basis === "recording") return "all 4 feeds writing";
+    if (capture.basis === "idle") return "not driving";
+    if (capture.basis === "unread") return "capture not read yet";
+    if (DATA_ECU_SILENT_STATES.indexOf(linkLayerState(data, "ecu")) !== -1) {
+      return "ECU not answering";
+    }
+    if (capture.basis === "noRows") return "no row logged this session";
+    var age = isObj(captureData) ? captureData.lastRowSecondsAgo : null;
+    if (typeof age !== "number" || !isFinite(age)) return null;
+    return "last row " + agoSecsText(Math.floor(age));
+  }
+
+  // The DATA row: value = the capture word (its own look) + ` · synced
+  // <when>` (neutral); the sentence as parts, so only the member's reason
+  // is amber and the rows waiting beside it stay neutral (s4.0).
+  function dataRowView(data, captureData) {
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
+    var capture = dataCaptureWord(data, captureData);
+    var parts = [];
+    var first = dataCaptureSentence(data, captureData, capture);
+    if (first !== null) {
+      parts.push({ text: first, level: capture.basis === "member" ? "amber" : "secondary" });
+    }
+    // s4.3 (F-155): neutral, never counted; a null home is no word at all.
+    if (wifi.home === false) parts.push({ text: "away from home", level: "secondary" });
+    parts.push({ text: rowsWaitingText(sync.rowsWaiting, sync.notCounted), level: "secondary" });
+    var events = eventRowsText(sync.edrRowsWaiting);
+    if (events !== null) parts.push({ text: events, level: "secondary" });
+    var texts = [];
+    for (var i = 0; i < parts.length; i++) texts.push(parts[i].text);
+    var tail = " · " + syncWhenText(sync.lastOkTs, isObj(data) ? data.ts : null);
+    return {
+      key: "data",
+      label: "DATA",
+      word: capture.word,
+      look: capture.look,
+      tail: tail,
+      value: capture.word + tail,
+      parts: parts,
+      sentence: texts.join(" · "),
+      level: capture.basis === "member" ? "amber" : "secondary",
+    };
+  }
+
+  // The DATA detail (s4.6, parked): per feed its word and freshness age
+  // (`lastSampleSecondsAgo` -- lastRowSecondsAgo is top-level only), then
+  // sync: last data stored (full stamp), rows waiting, event rows, the
+  // uncounted tables by name, and at home. A stalled feed is amber only while
+  // the `capture` member exists (the member's amber sits on the feed).
+  function dataDetailView(data, captureData) {
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
+    var feeds = isObj(captureData) && isObj(captureData.feeds) ? captureData.feeds : {};
+    var member = verdictMemberReason(data, [CAPTURE_MEMBER_KEY]) !== null;
+    var rows = [];
+    for (var i = 0; i < CAPTURE_FEEDS.length; i++) {
+      var name = CAPTURE_FEEDS[i][0];
+      var feed = isObj(feeds[name]) ? feeds[name] : {};
+      var known = typeof feed.state === "string"
+        && Object.prototype.hasOwnProperty.call(CAPTURE_FEED_WORD, feed.state);
+      var look = "tertiary";
+      if (feed.state === "ok") look = "ok";
+      else if (feed.state === CAPTURE_STATE_STALLED) look = member ? "amber" : "secondary";
+      else if (feed.state === "idle") look = "secondary";
+      var age = freshAgeText(feed.lastSampleSecondsAgo);
+      rows.push({
+        feed: name,
+        label: CAPTURE_FEEDS[i][1],
+        state: known ? CAPTURE_FEED_WORD[feed.state] : SYS_NO_DATA,
+        look: look,
+        age: age === null ? SYS_NO_DATA : age,
+      });
+    }
+    var events = sync.edrRowsWaiting;
+    var notCounted = Array.isArray(sync.notCounted) && sync.notCounted.length > 0
+      ? "not counted: " + sync.notCounted.join(", ") : null;
+    var row = dataRowView(data, captureData);
+    return {
+      head: "DATA",
+      feeds: rows,
+      lastStored: typeof sync.lastOkTs === "string" ? fmtStamp(sync.lastOkTs) : "no sync on record",
+      rowsWaiting: typeof sync.rowsWaiting === "number" && isFinite(sync.rowsWaiting)
+        && sync.rowsWaiting >= 0 ? fmtThousands(sync.rowsWaiting) : "rows not read",
+      eventRows: typeof events === "number" && isFinite(events) && events >= 0
+        ? fmtThousands(events) : SYS_NO_DATA,
+      notCounted: notCounted,
+      atHome: wifi.home === true ? "yes" : wifi.home === false ? "no" : "unknown",
+      sentence: row.sentence,
+      level: row.level,
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // US-894-b (Atlas B9 + A1 2026-10-22) -- THE parked fact for the System page.
   // ONE module-level accessor: `parked` is the tick's DEBOUNCED engineParked
   // (gear P/N held 8 s, US-511-b) and `gearKnown` the RAW `states/gear`
@@ -1261,10 +1321,8 @@
   function systemDiagnostics(tiles, data) {
     var diags = [];
     if (!isObj(tiles)) return diags;
-    var sync = tiles.sync;
-    if (isObj(sync) && typeof sync.counts === "string" && sync.counts !== "") {
-      diags.push({ key: "sync", label: sync.label, text: sync.counts });
-    }
+    // US-894-c: the SYNC counts line is gone with syncTile and the retired
+    // sync.rows / sync.pending; the DATA row and its detail carry the backlog.
     // Built from the payload the card was rendered from -- one read, so the
     // overlay can never contradict it. Listed on every REAL card, including
     // when the verdict is absent: the absence is itself the fact worth reading
@@ -1336,25 +1394,21 @@
   // is the first row, and the rows not yet built are absent. The obdLink tile
   // is gone with the block it read (Atlas A2/P6). `tiles` now only feed the
   // drill-down behind the verdict until their rows land (US-894-c/e/f).
+  //
+  // US-894-c: the DATA row is the second row; the SYNC / DRIVE / CAPTURE
+  // tiles and their drill rows are gone (the drill keeps POWER until US-894-e).
   function systemStatusView(data, captureData) {
     if (!isObj(data)) return null;
     var tiles = {
-      sync: syncTile(data.sync),
       power: powerTile(data.power),
-      drive: driveTile(data.drive),
     };
-    // Only present when a payload was actually fetched. An UNDEFINED tile is
-    // skipped by the drill's row builder, so "the producer is dark" lists no
-    // capture row rather than one permanently reading unavailable.
-    if (captureData !== undefined && captureData !== null) {
-      tiles.capture = captureTile(captureData);
-    }
     return {
       // s4.1: the provider's count, never the page's.
       verdict: systemVerdictView(data),
-      rows: [obdRowView(data)],
-      // s4.6: the OBD row's detail, from the SAME read.
+      rows: [obdRowView(data), dataRowView(data, captureData)],
+      // s4.6: the rows' details, from the SAME read.
       obdDetail: obdDetailView(data),
+      dataDetail: dataDetailView(data, captureData),
       // US-509: the drill-down behind the verdict -- one read of the state
       // file feeds the page AND the overlay.
       drill: systemDrill(tiles, data),
@@ -1362,7 +1416,8 @@
       glyphs: {
         // US-894-a: the link chain ignores source.obd (s4.2.1).
         bt: linkChainGlyph(data),
-        sync: syncGlyphState(data.sync),
+        // US-894-c (I4): neutral without a `sync` member.
+        sync: syncGlyphState(data),
         wifi: wifiGlyphState(data),
       },
       ts: typeof data.ts === "string" ? data.ts : null,
@@ -1495,14 +1550,20 @@
     var now = Date.parse(nowTs);
     var then = Date.parse(thenTs);
     if (isNaN(now) || isNaN(then)) return "age unknown";
-    var secs = Math.floor((now - then) / 1000);
+    return agoSecsText(Math.floor((now - then) / 1000));
+  }
+
+  // agoText's words for an age already in whole seconds (US-894-c: the DATA
+  // row's `last row <age>` is capture-health's lastRowSecondsAgo, an age, not
+  // an instant). floor(secs / 86400) is ageDays' floor for the same span.
+  function agoSecsText(secs) {
     // A FUTURE instant means clock skew, not a negative age. The Pi has no RTC
     // battery and boots before NTP settles, so a stamp ahead of `now` is a
     // routine transient -- "-5 min ago" would be a visible nonsense.
     if (secs < 60) return "just now";
     if (secs < 3600) return Math.floor(secs / 60) + " min ago";
     if (secs < 86400) return Math.floor(secs / 3600) + " h ago";
-    return ageText(ageDays(nowTs, thenTs));
+    return ageText(Math.floor(secs / 86400));
   }
 
   // The stale-green guard line (F-9). ALWAYS produced so a GREEN verdict can
@@ -4142,6 +4203,16 @@
     return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
 
+  // The S105 M7 freshness age as one helper (spec s4.5 I6): floor, clamped at
+  // 0 (a future ts is clock skew), `N s ago` with a space, capped at `999+`.
+  // Null when there is no age -- an undated reading shows no age. The Motion
+  // UPDATED cell and the DATA detail's feeds both read it.
+  function freshAgeText(ageSec) {
+    if (typeof ageSec !== "number" || isNaN(ageSec)) return null;
+    var shown = Math.max(0, Math.floor(ageSec));
+    return (shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown)) + " s ago";
+  }
+
   function healthCell(value, tone, sub) {
     return { value: value, tone: tone, sub: sub === undefined ? null : sub };
   }
@@ -4152,9 +4223,7 @@
   function motionUpdatedCell(data, nowMs, staleSec) {
     var age = readAgeSec(data, nowMs);
     if (age === null) return healthCell("--", "none", MOTION_NO_TIMESTAMP_TEXT);
-    var shown = Math.max(0, Math.floor(age));
-    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
-    return healthCell(text + " s ago", age > staleSec ? "warn" : "plain");
+    return healthCell(freshAgeText(age), age > staleSec ? "warn" : "plain");
   }
 
   // Only a boolean is a verdict. Absent: the provider's own reason when it
@@ -5465,9 +5534,7 @@
     feedObserved: feedObserved,
     feedWaitedMs: feedWaitedMs,
     LOADING_GRACE_MS: LOADING_GRACE_MS,
-    syncTile: syncTile,
     powerTile: powerTile,
-    driveTile: driveTile,
     linkChainGlyph: linkChainGlyph,
     LINK_CHAIN_LAYERS: LINK_CHAIN_LAYERS,
     LINK_STATE_LOOK: LINK_STATE_LOOK,
@@ -5486,7 +5553,13 @@
     systemDiagnostics: systemDiagnostics,
     systemDrill: systemDrill,
     systemStatusView: systemStatusView,
-    captureTile: captureTile,
+    dataRowView: dataRowView,
+    dataDetailView: dataDetailView,
+    syncWhenText: syncWhenText,
+    freshAgeText: freshAgeText,
+    CAPTURE_STATE_WORD: CAPTURE_STATE_WORD,
+    CAPTURE_FEEDS: CAPTURE_FEEDS,
+    CAPTURE_FEED_WORD: CAPTURE_FEED_WORD,
     priorShutdownTile: priorShutdownTile,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
@@ -5716,11 +5789,37 @@
       main.className = "sys-row-main";
       var value = document.createElement("div");
       value.className = "sys-row-value";
-      appendObdChain(value, row.steps);
+      if (row.steps) {
+        appendObdChain(value, row.steps);
+      } else {
+        // US-894-c: a word in its own look, then a neutral tail.
+        var word = document.createElement("span");
+        word.className = "sys-row-word";
+        word.setAttribute("data-state", row.look);
+        word.textContent = row.word;
+        value.appendChild(word);
+        var tail = document.createElement("span");
+        tail.className = "sys-row-tail";
+        tail.textContent = row.tail;
+        value.appendChild(tail);
+      }
       main.appendChild(value);
       var sentence = document.createElement("span");
       sentence.className = "sys-row-sentence";
-      sentence.textContent = row.sentence;
+      if (row.parts) {
+        // US-894-c: one span per part, each on its own level, so a member's
+        // reason is amber and the counts beside it are not (s4.0). The ` · `
+        // lives inside the span it introduces.
+        for (var p = 0; p < row.parts.length; p++) {
+          var part = document.createElement("span");
+          part.className = "sys-row-part";
+          part.setAttribute("data-level", row.parts[p].level);
+          part.textContent = (p > 0 ? " · " : "") + row.parts[p].text;
+          sentence.appendChild(part);
+        }
+      } else {
+        sentence.textContent = row.sentence;
+      }
       main.appendChild(sentence);
       el.appendChild(main);
       if (tappable) {
@@ -5812,6 +5911,10 @@
         renderObdDetail(bodyEl, view);
         return;
       }
+      if (sysDetailKind === "data") {
+        renderDataDetail(bodyEl, view);
+        return;
+      }
       var head = document.getElementById("sys-detail-head");
       // The head repeats the LINE THE OPERATOR TAPPED verbatim (the verdict).
       if (head) head.textContent = view && view.verdict ? view.verdict.text : "";
@@ -5894,6 +5997,62 @@
         el.appendChild(lastOk);
         bodyEl.appendChild(el);
       }
+      var sentence = document.createElement("div");
+      sentence.className = "detail-card obd-detail-sentence";
+      sentence.setAttribute("data-level", detail.level);
+      sentence.textContent = detail.sentence;
+      bodyEl.appendChild(sentence);
+    }
+
+    // s4.6 DATA detail: per feed its word (in its look) and freshness age,
+    // then the sync facts, then the row's sentence in full. A view that is
+    // gone shows every value unread.
+    function appendDataFact(bodyEl, label, text, cls) {
+      var el = document.createElement("div");
+      el.className = "detail-card data-fact-row" + (cls ? " " + cls : "");
+      var head = document.createElement("span");
+      head.className = "sys-diag-label";
+      head.textContent = label;
+      var value = document.createElement("span");
+      value.className = "sys-diag-text";
+      value.textContent = text;
+      el.appendChild(head);
+      el.appendChild(value);
+      bodyEl.appendChild(el);
+    }
+
+    function renderDataDetail(bodyEl, view) {
+      var detail = view && view.dataDetail ? view.dataDetail : dataDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      for (var i = 0; i < detail.feeds.length; i++) {
+        var feed = detail.feeds[i];
+        var el = document.createElement("div");
+        el.className = "detail-card data-feed-row";
+        el.setAttribute("data-feed", feed.feed);
+        var rowHead = document.createElement("div");
+        rowHead.className = "sys-issue-head";
+        var label = document.createElement("span");
+        label.className = "sys-issue-label";
+        label.textContent = feed.label;
+        var state = document.createElement("span");
+        state.className = "sys-row-word data-feed-state";
+        state.setAttribute("data-state", feed.look);
+        state.textContent = feed.state;
+        rowHead.appendChild(label);
+        rowHead.appendChild(state);
+        el.appendChild(rowHead);
+        var age = document.createElement("span");
+        age.className = "obd-layer-fact";
+        age.textContent = "last row " + feed.age;
+        el.appendChild(age);
+        bodyEl.appendChild(el);
+      }
+      appendDataFact(bodyEl, "LAST DATA STORED", detail.lastStored);
+      appendDataFact(bodyEl, "ROWS WAITING", detail.rowsWaiting);
+      appendDataFact(bodyEl, "EVENT ROWS WAITING", detail.eventRows);
+      if (detail.notCounted !== null) appendDataFact(bodyEl, "NOT COUNTED", detail.notCounted);
+      appendDataFact(bodyEl, "AT HOME", detail.atHome);
       var sentence = document.createElement("div");
       sentence.className = "detail-card obd-detail-sentence";
       sentence.setAttribute("data-level", detail.level);

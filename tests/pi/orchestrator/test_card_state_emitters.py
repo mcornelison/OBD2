@@ -212,7 +212,6 @@ def test_maybeEmit_linkedCar_recording_writesRealSystemStatus(tmp_path):
     )
     orch._initializeCardStateEmitters()
     orch._lastSyncOkTsIso = "2026-07-21T19:40:00Z"
-    orch._lastSyncRows = 12
 
     assert orch._maybeEmitCardStates() is True
     ss = _readState(tmp_path, "system-status")
@@ -224,7 +223,8 @@ def test_maybeEmit_linkedCar_recording_writesRealSystemStatus(tmp_path):
     assert ss["drive"]["state"] == "recording"
     assert ss["idle"] is False
     assert ss["power"]["source"] == "external"
-    assert ss["sync"]["rows"] == 12
+    # MOVED PIN (US-894-c): sync.rows / sync.pending are retired (Atlas P7).
+    assert "rows" not in ss["sync"] and "pending" not in ss["sync"]
 
 
 def test_maybeEmit_noConnection_parked_idleTrueTypedNa(tmp_path):
@@ -311,15 +311,18 @@ def test_maybeEmit_cadenceGate_secondCallNotDue(tmp_path):
     assert orch._maybeEmitCardStates() is False  # not due yet
 
 
-def test_recordSyncOutcome_cachesTimestampAndRows(tmp_path):
-    """The sync-trigger hook caches the row count for the tile.
+def test_recordSyncOutcome_cachesNeitherTimestampNorRows(tmp_path):
+    """The sync-trigger hook caches nothing for the page.
 
     MOVED PIN (US-916): it no longer stamps a time -- lastOkTs is
     sync_log.last_ok_at (Atlas gap ruling 916-6).
+    MOVED PIN (US-894-c): nor a row count -- sync.rows is retired (Atlas P7);
+    the hook stays for the US-518 altitude re-anchor.
     """
     orch = _FakeOrch(_config(tmp_path))
+    before = orch._lastSyncRows
     orch._recordSyncOutcome(7)
-    assert orch._lastSyncRows == 7
+    assert orch._lastSyncRows == before
     assert orch._lastSyncOkTsIso is None
 
 

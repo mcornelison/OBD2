@@ -322,8 +322,7 @@ def test_buildSystemStatusState_refusesAReasonBesideAResolvedSource():
     state = buildSystemStatusState(
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=None,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         powerSourceReason=REASON_POWER_SOURCE_UNREADABLE,
@@ -343,8 +342,6 @@ def test_buildSystemStatusState_unknownWithNoReasonStaysSilentRatherThanGuessing
 
     state = buildSystemStatusState(
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=None,
         syncStale=False,
         powerSource="unknown",
         driveState="idle",

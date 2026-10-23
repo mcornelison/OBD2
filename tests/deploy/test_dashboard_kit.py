@@ -342,12 +342,19 @@ assert.strictEqual(rv.rows[0].sentence, 'Link dropped. Retrying.', 'member reaso
 assert.strictEqual(rv.verdict.text, '1 ISSUE', 'the provider counted it');
 assert.strictEqual(rv.glyphs.bt.bt, 'amber', 'BT dot amber on a bt member');
 
-// I-4: a stale-while-driving sync -> sync tile amber + sync glyph amber.
+// I-4: a stale-while-driving sync is SHOWN, never counted.
+// MOVED PIN (US-894-c, spec s4.3 Iris I4, Atlas P9): the SYNC tile is retired
+// and `sync.stale` has no verdict member, so the glyph is neutral (amber only
+// with a `sync` member, US-917); the DATA row carries the stamp.
 const stale = JSON.parse(JSON.stringify(reconn));
 stale.sync.stale = true;
 const sv = c.systemStatusView(stale);
-assert.strictEqual(sv.tiles.sync.level, 'amber', 'stale sync tile amber');
-assert.strictEqual(sv.glyphs.sync, 'amber', 'sync glyph amber when stale');
+assert.strictEqual(sv.tiles.sync, undefined, 'the SYNC tile is retired');
+assert.strictEqual(sv.glyphs.sync, 'neutral', 'stale sync glyph neutral without a member');
+assert.ok(/synced /.test(sv.rows[1].value), 'the DATA row carries the stamp');
+const counted = JSON.parse(JSON.stringify(stale));
+counted.verdict.members.push({key: 'sync', reason: 'x'});
+assert.strictEqual(c.systemStatusView(counted).glyphs.sync, 'amber', 'amber with a sync member');
 
 // F-1 (honest-instrument): a fully-degraded underlying state NEVER renders a
 // green/ok tile or glyph.
@@ -363,7 +370,8 @@ const dv = c.systemStatusView(degraded);
 // MOVED PIN (US-894-b): the down link is the OBD row's amber BT step.
 assert.strictEqual(dv.rows[0].steps[0], 'amber', 'down link not ok');
 assert.notStrictEqual(dv.verdict.level, 'ok', 'a counted link is never ALL OK');
-assert.strictEqual(dv.tiles.sync.level, 'amber', 'stale sync not ok');
+// MOVED PIN (US-894-c): no SYNC tile; a never-stored sync is no green claim.
+assert.ok(/no sync on record$/.test(dv.rows[1].value), 'never stored -> no sync on record');
 assert.strictEqual(dv.tiles.power.level, 'amber', 'battery power not ok');
 // US-696 dropped `glyphs.power` -- the tile assertion directly above is now
 // where a degraded supply is caught, so F-1 keeps both of its halves.

@@ -159,8 +159,7 @@ def _systemStatus(**overrides: Any) -> dict:
     args: dict[str, Any] = {
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": "2026-09-10T14:19:40Z",
-        "syncRows": 1204,
-        "syncPending": 0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         "syncStale": False,
         "powerSource": "external",
         "driveState": "idle",
@@ -277,7 +276,8 @@ def test_glyphView_carriesTheOtherThreeStates_andNoPowerKey():
 
     assert sorted(view["glyphs"]) == ["bt", "sync", "wifi"]
     assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
-    assert view["glyphs"]["sync"] == "ok"
+    # MOVED PIN (US-894-c, I4): the sync glyph is neutral without a member.
+    assert view["glyphs"]["sync"] == "neutral"
 
 
 # ---------------------------------------------------------------------------

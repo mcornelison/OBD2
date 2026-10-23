@@ -87,8 +87,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
     state = buildSystemStatusState(
         # MOVED PIN (US-894-b): obdLink and its two parameters are retired.
         syncLastOkTs=_SYNC_OK,
-        syncRows=1204,
-        syncPending=0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         driveState="recording",
@@ -100,7 +99,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         # US-916: rowsWaiting / edrRowsWaiting / notCounted are always keys;
         # null when not read (a caller that passes none read nothing).
         "sync": {
-            "lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False,
+            # MOVED PIN (US-894-c): no `rows` / `pending` (Atlas P7).
+            "lastOkTs": _SYNC_OK, "stale": False,
             "rowsWaiting": None, "edrRowsWaiting": None, "notCounted": None,
         },
         # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
@@ -160,8 +160,6 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
     outside the chain -- nothing here can read 'linked'."""
     state = buildSystemStatusState(
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=12,
         syncStale=True,
         powerSource="battery",
         driveState="idle",
@@ -199,8 +197,6 @@ def test_buildSystemStatusState_lastDriveKey_isPresentInEveryShape():
     """
     baseKwargs = {
         "syncLastOkTs": _SYNC_OK,
-        "syncRows": 1,
-        "syncPending": 0,
         "syncStale": False,
         "powerSource": "external",
         "nowIso": _NOW,
@@ -241,8 +237,6 @@ def test_buildSystemStatusState_lastDrive_isVerbatimAndDistinctFromDriveId():
     summary = {"driveId": 27, "startedAtTs": _SYNC_OK}
     state = buildSystemStatusState(
         syncLastOkTs=_SYNC_OK,
-        syncRows=0,
-        syncPending=0,
         syncStale=False,
         powerSource="battery",
         driveState="idle",
@@ -267,8 +261,6 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
     MOVED PIN (US-894-b): the obdLink block it used to blank is retired."""
     state = buildSystemStatusState(
         syncLastOkTs=_SYNC_OK,
-        syncRows=10,
-        syncPending=0,
         syncStale=False,
         powerSource="external",
         driveState="idle",
@@ -280,7 +272,8 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
     assert "obdLink" not in state
     assert state["source"]["obd"] == {"available": False, "reason": "OBD: off"}
     # Other sources are unaffected (one truth per SOURCE).
-    assert state["sync"]["rows"] == 10
+    # MOVED PIN (US-894-c): sync.rows is retired; the sync block still rides.
+    assert state["sync"]["lastOkTs"] == _SYNC_OK
     # US-668: was assert state["power"]["mode"] == "wall". The
     # operator-declared mode is gone; the SENSED source is the
     # surviving power fact and the one worth asserting here.
@@ -301,8 +294,6 @@ def test_buildSystemStatusState_idle_trueOnlyWhenObdAbsentAndNotRecording():
     recording. The emitter owns both inputs so the display never re-derives it."""
     state = buildSystemStatusState(
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=0,
         syncStale=False,
         powerSource="external",
         driveState="idle",
@@ -318,8 +309,6 @@ def test_buildSystemStatusState_idle_falseWhenObdAvailable():
     (Iris AC-4: idle flips false the moment the OBD source wakes)."""
     state = buildSystemStatusState(
         syncLastOkTs=_SYNC_OK,
-        syncRows=0,
-        syncPending=0,
         syncStale=False,
         powerSource="external",
         driveState="idle",
@@ -336,8 +325,6 @@ def test_buildSystemStatusState_idle_falseWhileRecording():
     on the driveState half of the SSOT."""
     state = buildSystemStatusState(
         syncLastOkTs=_SYNC_OK,
-        syncRows=5,
-        syncPending=0,
         syncStale=False,
         powerSource="external",
         driveState="recording",
@@ -416,8 +403,6 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
 
     emit(
         syncLastOkTs=_SYNC_OK,
-        syncRows=10,
-        syncPending=4,
         powerSource="external",
         driveState="recording",
         driveId=27,
@@ -427,7 +412,8 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
         (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
     )
     assert "obdLink" not in written  # MOVED PIN (US-894-b): retired
-    assert written["sync"]["pending"] == 4
+    # MOVED PIN (US-894-c): sync.pending is retired (Atlas P7).
+    assert "pending" not in written["sync"] and "rows" not in written["sync"]
     assert written["sync"]["stale"] is True  # recording + 120s-old sync > 60s
     assert written["drive"] == {
         "state": "recording",
@@ -463,8 +449,6 @@ def test_emitter_forwardsLastDrive_verbatimThroughTheJsonRoundTrip(tmp_path):
 
     emit(
         syncLastOkTs=_SYNC_OK,
-        syncRows=10,
-        syncPending=0,
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -491,8 +475,6 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
     # Must not raise.
     emit(
         syncLastOkTs=_SYNC_OK,
-        syncRows=1,
-        syncPending=0,
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -532,8 +514,6 @@ def test_buildSystemStatusState_runMode_isCarriedVerbatim():
     US-668 retired and pi.power.mode still owns."""
     state = buildSystemStatusState(
         syncLastOkTs=_SYNC_OK,
-        syncRows=1,
-        syncPending=0,
         syncStale=False,
         powerSource="external",
         driveState="recording",
@@ -559,8 +539,6 @@ def test_emitter_forwardsRunMode_throughTheJsonRoundTrip(tmp_path):
 
     emit(
         syncLastOkTs=_SYNC_OK,
-        syncRows=1,
-        syncPending=0,
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -646,7 +624,7 @@ _SINCE = "2026-06-30T19:19:00Z"  # 23 min before _NOW
 
 def _drive(**kwargs) -> dict:
     return buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="recording", driveId=27,
         nowIso=_NOW, **kwargs,
     )["drive"]
@@ -700,7 +678,7 @@ def test_emitter_forwardsElapsedAndPartial_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        syncLastOkTs=_SYNC_OK,
         powerSource="external", driveState="idle", driveId=None,
         distanceKm=19.96, distanceSinceTs=_SINCE,
         distanceEndTs="2026-06-30T19:49:00Z", distancePartial=True,
@@ -885,7 +863,7 @@ def test_buildSystemStatusState_link_isPublished_everyLayerAndKeyPresent():
     ecu = {"state": LINK_UP, "ts": _T0, "lastOkTs": _T1}
 
     state = buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         link={"ecu": ecu},
     )
@@ -897,7 +875,7 @@ def test_buildSystemStatusState_link_aNullState_publishesAllThreeNull():
     """A layer whose state is null is not read: ts and lastOkTs are null too,
     whatever the caller passed beside it (available = state != null)."""
     state = buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         link={"ecu": {"state": None, "ts": _T0, "lastOkTs": _T1}},
     )
@@ -911,7 +889,7 @@ def test_buildSystemStatusState_link_notBlanked_whenObdSourceUnavailable():
     ecu = {"state": LINK_CONNECTING, "ts": _T0, "lastOkTs": None}
 
     state = buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         obdAvailable=False, obdUnavailableReason="never connected",
         link={"ecu": ecu},
@@ -930,7 +908,7 @@ def test_emitter_forwardsLink_throughTheJsonRoundTrip(tmp_path):
     ecu = {"state": LINK_RETRYING, "ts": _T0, "lastOkTs": _T0}
 
     emit(
-        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        syncLastOkTs=_SYNC_OK,
         powerSource="external", driveState="idle", driveId=None,
         link={"ecu": ecu},
     )
@@ -963,7 +941,7 @@ _WIFI_TS = "2026-06-30T19:41:40Z"
 
 def _wifiState(**wifi):
     return buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         **wifi,
     )
@@ -1039,7 +1017,7 @@ def test_emitter_forwardsWifi_andItsThresholds_throughTheJsonRoundTrip(tmp_path)
     )
 
     emit(
-        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        syncLastOkTs=_SYNC_OK,
         powerSource="external", driveState="idle", driveId=None,
         wifiAvailable=True, wifiUnavailableReason=None, wifiSsid="DeathStarWiFi",
         wifiRssiDbm=-65, wifiHome=True, wifiTs=_WIFI_TS,
@@ -1078,13 +1056,14 @@ def test_orchestratorEmit_stubComposer_wifiNotRead_defaultThresholds():
 
 def test_sync_backlogFields_areTransportedVerbatim_zeroIsNotNull():
     state = buildSystemStatusState(
-        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=_SYNC_OK, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         syncRowsWaiting=0, syncEdrRowsWaiting=1771,
         syncNotCounted=["profiles", "vehicle_info"],
     )
     assert state["sync"] == {
-        "lastOkTs": _SYNC_OK, "rows": 0, "pending": None, "stale": False,
+        # MOVED PIN (US-894-c): no `rows` / `pending` (Atlas P7).
+        "lastOkTs": _SYNC_OK, "stale": False,
         "rowsWaiting": 0, "edrRowsWaiting": 1771,
         "notCounted": ["profiles", "vehicle_info"],
     }
@@ -1096,7 +1075,7 @@ def test_emitter_forwardsTheSyncBacklog_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        syncLastOkTs=_SYNC_OK,
         powerSource="external", driveState="idle", driveId=None,
         syncRowsWaiting=120, syncEdrRowsWaiting=None, syncNotCounted=["profiles"],
     )
@@ -1122,7 +1101,8 @@ def test_orchestratorEmit_stubComposer_noDatabase_syncFieldsNull():
     assert call["syncRowsWaiting"] is None
     assert call["syncEdrRowsWaiting"] is None
     assert call["syncNotCounted"] is None
-    assert call["syncPending"] is None
+    # MOVED PIN (US-894-c): the orchestrator passes no syncRows / syncPending.
+    assert "syncPending" not in call and "syncRows" not in call
 
 
 # ---------------------------------------------------------------------------
@@ -1141,7 +1121,7 @@ _PI_BLOCK = {
 
 def _piState(piHealth):
     return buildSystemStatusState(
-        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        syncLastOkTs=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         piHealth=piHealth,
     )
@@ -1180,7 +1160,7 @@ def test_emitter_forwardsPiHealth_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        syncLastOkTs=None, syncRows=0, syncPending=None,
+        syncLastOkTs=None,
         powerSource="external", driveState="idle", driveId=None,
         piHealth=dict(_PI_BLOCK),
     )
@@ -1495,7 +1475,7 @@ def test_verdict_vc2_wifiNotRead_ecuConnecting_isZeroIssues():
 
 def _verdictState(**kw):
     base = {
-        "syncLastOkTs": None, "syncRows": 0, "syncPending": None, "syncStale": False,
+        "syncLastOkTs": None, "syncStale": False,
         "powerSource": "external", "driveState": "recording", "driveId": 7,
         "nowIso": _NOW,
     }
@@ -1540,7 +1520,7 @@ def test_emitter_forwardsCaptureHealth_theVerdictShipsInTheFile(tmp_path):
     )
 
     emit(
-        syncLastOkTs=None, syncRows=0, syncPending=None,
+        syncLastOkTs=None,
         powerSource="external", driveState="recording", driveId=7,
         link=_chain(), captureHealth=_capture(obd="stalled"),
     )
@@ -1577,8 +1557,8 @@ def test_emitter_returnsThePayloadItWrote(tmp_path):
     )
 
     returned = emit(
-        syncLastOkTs=None, syncRows=0,
-        syncPending=None, powerSource="external", driveState="idle", driveId=None,
+        syncLastOkTs=None,
+        powerSource="external", driveState="idle", driveId=None,
         piHealth={"overLimit": ["cpuTemp"], "cpuTempC": 85.0, "cpuTempLimitC": 80},
     )
 
@@ -1595,8 +1575,8 @@ def test_emitter_returnsNone_whenTheWriteFailed(tmp_path):
     emit = makeSystemStatusEmitter(str(blocker), syncStaleThresholdS=60, nowIsoFn=lambda: _NOW)
 
     returned = emit(
-        syncLastOkTs=None, syncRows=0,
-        syncPending=None, powerSource="external", driveState="idle", driveId=None,
+        syncLastOkTs=None,
+        powerSource="external", driveState="idle", driveId=None,
     )
 
     assert returned is None
