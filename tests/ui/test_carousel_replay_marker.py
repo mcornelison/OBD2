@@ -75,8 +75,6 @@ def _sys(runMode: str | None = "live") -> dict:
     ``runMode=None`` deletes the key, modelling an older emitter.
     """
     payload = buildSystemStatusState(
-        obdLinkState="linked",
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs="2026-10-14T12:00:00Z",
         syncRows=10,

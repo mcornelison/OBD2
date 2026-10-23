@@ -697,25 +697,6 @@
     return nowMs - startedAtMs;
   }
 
-  // OBD link tile: linked -> ok; reconnecting -> amber (I-033 visibility, the
-  // operator SEES the retry); down -> red; missing/unknown -> unavailable.
-  function obdLinkTile(o) {
-    if (!isObj(o)) {
-      return { label: "OBD LINK", value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    if (o.state === "linked") {
-      return { label: "OBD LINK", value: "LINKED", detail: "", level: "ok" };
-    }
-    if (o.state === "reconnecting") {
-      var d = "retry " + (o.retries == null ? 0 : o.retries);
-      return { label: "OBD LINK", value: "RECONNECTING", detail: d, level: "amber" };
-    }
-    if (o.state === "down") {
-      return { label: "OBD LINK", value: "DOWN", detail: "no signal", level: "down" };
-    }
-    return { label: "OBD LINK", value: "—", detail: "unavailable", level: "unavailable" };
-  }
-
   // Sync tile: stale-while-driving -> amber (I-4); otherwise ok. The emitter
   // owns the stale DECISION (no green-when-broken); the tile renders it.
   function syncTile(s) {
@@ -796,7 +777,7 @@
   //
   // LEVEL IS ALWAYS `neutral`, including UNGRACEFUL. The verdict is HISTORY:
   // it describes a shutdown that already happened, not a live fault. An amber
-  // tile would hold the card at "SYSTEM · 1 ISSUE" for the whole session over
+  // tile would hold the card at one issue for the whole session over
   // something no longer happening -- the crying-wolf failure the US-509 row
   // floor already refuses for DRIVE=IDLE.
   // -------------------------------------------------------------------------
@@ -1007,105 +988,199 @@
   // makes that signal unactionable.
 
   // -------------------------------------------------------------------------
-  // US-489 (Iris polish P-1) -- the one-glance SUMMARY line. A lossy
-  // compression of the four tiles, which makes it exactly the place a
-  // "green when broken" lie would enter, so honest-instrument F-1 is restated
-  // here at the CARD level: the line is `ok` ONLY when every source is
-  // genuinely good. Presentation-only -- it reads the tiles the card already
-  // renders, never a second read of the state.
+  // US-894-b (spec s3 layout A, s4.1, s4.2) -- the System page is a VERDICT
+  // line plus one row per subsystem. It replaces the US-489 summary line and
+  // the 2x2 tile grid. The verdict is the provider's (system-status.verdict,
+  // S109): the page counts nothing, compares nothing, and composes no reason
+  // text -- a member's reason is printed verbatim.
   // -------------------------------------------------------------------------
 
-  // Display order == grid order, so "the worst source" is always named in a
-  // stable, predictable place.
-  // US-688 appends `capture` LAST: it is the newest source and the grid order
-  // is the drill-down's tie-break order, so putting it anywhere else would
-  // reshuffle four rows the operator has already learned the position of.
-  // Absent from `tiles` when no capture payload was fetched -- both the summary
-  // and the row builder skip a non-object tile, so a caller that passes nothing
-  // gets the exact pre-US-688 card.
-  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive", "capture"];
+  // The one no-data mark (spec s4.4): two hyphens, never an em dash.
+  var SYS_NO_DATA = "--";
+
+  // s4.1: `ALL OK` when the provider counted nothing, `n ISSUE` / `n ISSUES`
+  // otherwise. An absent or malformed verdict is `--`, never ALL OK: ALL OK is
+  // the provider's claim that it looked.
+  function systemVerdictView(data) {
+    var verdict = isObj(data) ? data.verdict : null;
+    var n = isObj(verdict) ? verdict.issueCount : null;
+    if (typeof n !== "number" || !isFinite(n) || n < 0 || Math.floor(n) !== n) {
+      return { text: SYS_NO_DATA, level: "unavailable" };
+    }
+    if (n === 0) return { text: "ALL OK", level: "ok" };
+    return { text: n + (n === 1 ? " ISSUE" : " ISSUES"), level: "amber" };
+  }
+
+  // The OBD row's step labels, chain order (spec s3).
+  var OBD_STEP_LABELS = { bt: "BT", adapter: "ADAPTER", ecu: "ECU" };
+
+  // s4.2 sentence table (Iris I1): the FIRST layer that is not `up` speaks,
+  // looked up by its state -- a lookup on a provider enum, never a comparison
+  // (the LIGHT_REASON_TEXT pattern). `null` is the key for a layer not read;
+  // a state word the provider has not published is no reading either. The
+  // down / retrying words are fallbacks only: under S109 those states make a
+  // verdict member, whose reason speaks instead (obdRowView).
+  var OBD_LAYER_SENTENCE = {
+    bt: {
+      connecting: "Bluetooth trying to link (key off?)",
+      down: "Bluetooth not linked",
+      retrying: "Bluetooth retrying…",
+      "null": "Bluetooth not read yet",
+    },
+    adapter: {
+      connecting: "adapter connecting…",
+      down: "adapter not answering",
+      retrying: "adapter retrying…",
+      "null": "adapter not read yet",
+    },
+    ecu: {
+      connecting: "ECU not answering (key off?)",
+      down: "ECU not answering (key off?)",
+      retrying: "ECU not answering (key off?)",
+      "null": "ECU not read yet",
+    },
+  };
+  var OBD_ALL_UP_SENTENCE = "ECU answering";
+
+  function linkLayerState(data, layer) {
+    var link = isObj(data) && isObj(data.link) ? data.link : {};
+    var block = link[layer];
+    var state = isObj(block) ? block.state : null;
+    return typeof state === "string"
+      && Object.prototype.hasOwnProperty.call(LINK_STATE_LOOK, state) ? state : null;
+  }
+
+  // The reason of the first verdict member whose key is in `keys`, verbatim;
+  // null when none of them is a member (or its reason is not a string).
+  function verdictMemberReason(data, keys) {
+    var verdict = isObj(data) ? data.verdict : null;
+    var members = isObj(verdict) && Array.isArray(verdict.members) ? verdict.members : [];
+    for (var i = 0; i < members.length; i++) {
+      var m = members[i];
+      if (isObj(m) && keys.indexOf(m.key) !== -1 && typeof m.reason === "string") {
+        return m.reason;
+      }
+    }
+    return null;
+  }
+
+  function obdWalkSentence(data) {
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var layer = LINK_CHAIN_LAYERS[i];
+      var state = linkLayerState(data, layer);
+      if (state === "up") continue;
+      var words = OBD_LAYER_SENTENCE[layer];
+      return state !== null && Object.prototype.hasOwnProperty.call(words, state)
+        ? words[state] : words["null"];
+    }
+    return OBD_ALL_UP_SENTENCE;
+  }
+
+  // The OBD row (s4.2): one step look per layer -- the top-bar chain's looks
+  // (linkChainGlyph, so the bar and the row cannot disagree), except that a
+  // layer not read is DASHED here where the bar draws it hollow (AC 4: never
+  // the solid `down` look). The sentence is a member's reason verbatim when
+  // the row has one (amber, it is counted); otherwise the walk above (neutral).
+  function obdRowView(data) {
+    var looks = linkChainGlyph(data);
+    var steps = [];
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var look = looks[LINK_CHAIN_LAYERS[i]];
+      steps.push(look === "hollow" ? "dashed" : look);
+    }
+    var reason = verdictMemberReason(data, LINK_MEMBER_LAYERS);
+    return {
+      key: "obd",
+      label: "OBD",
+      steps: steps,
+      sentence: reason !== null ? reason : obdWalkSentence(data),
+      level: reason !== null ? "amber" : "secondary",
+    };
+  }
+
+  // The OBD detail (s4.6, parked): per layer, THIS session only (ARCH-062) --
+  // the state, since when (the layer's `ts`), and the last success
+  // (`lastOkTs`, S109 publishes it per layer); `--` wherever the provider
+  // published nothing, never a time from an earlier boot. No adapter MAC and
+  // no retry count: neither has a publish field (Atlas A3), so neither line is
+  // drawn.
+  function obdDetailView(data) {
+    var link = isObj(data) && isObj(data.link) ? data.link : {};
+    var row = obdRowView(data);
+    var layers = [];
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var layer = LINK_CHAIN_LAYERS[i];
+      var block = isObj(link[layer]) ? link[layer] : {};
+      var state = linkLayerState(data, layer);
+      layers.push({
+        layer: layer,
+        label: OBD_STEP_LABELS[layer],
+        look: row.steps[i],
+        state: state === null ? SYS_NO_DATA : state,
+        since: state !== null && typeof block.ts === "string"
+          ? fmtStamp(block.ts) : SYS_NO_DATA,
+        lastOk: state !== null && typeof block.lastOkTs === "string"
+          ? fmtStamp(block.lastOkTs) : SYS_NO_DATA,
+      });
+    }
+    return { head: "OBD", layers: layers, sentence: row.sentence, level: row.level };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-894-b (Atlas B9 + A1 2026-10-22) -- THE parked fact for the System page.
+  // ONE module-level accessor: `parked` is the tick's DEBOUNCED engineParked
+  // (gear P/N held 8 s, US-511-b) and `gearKnown` the RAW `states/gear`
+  // available === true -- the same fact clearButtonView(data, parked,
+  // gearKnown) is handed. The tick is its ONLY writer (publishParked). Never
+  // gearParked here: that is the raw per-tick predicate, and reading it would
+  // skip the 8 s hold. Listeners fire on a change of EITHER value.
+  // -------------------------------------------------------------------------
+  var parkedFact = { parked: false, gearKnown: false };
+  var parkedListeners = [];
+
+  function currentParked() {
+    return { parked: parkedFact.parked, gearKnown: parkedFact.gearKnown };
+  }
+
+  function onParkedChange(fn) {
+    if (typeof fn === "function") parkedListeners.push(fn);
+  }
+
+  // Returns true when the fact changed (and the listeners fired). Only a
+  // strict true is parked or known: anything else fails closed.
+  function publishParked(parked, gearKnown) {
+    var next = { parked: parked === true, gearKnown: gearKnown === true };
+    if (next.parked === parkedFact.parked && next.gearKnown === parkedFact.gearKnown) {
+      return false;
+    }
+    parkedFact = next;
+    for (var i = 0; i < parkedListeners.length; i++) {
+      parkedListeners[i](currentParked());
+    }
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // US-509 (F-124) -- the drill-down behind the verdict line (US-894-b: the
+  // summary line and the 2x2 grid it sat over are gone; the drill stays until
+  // US-894-f retires it). The rows are a PRESENTATION of the view's tiles --
+  // no second read, no re-derivation.
+  // -------------------------------------------------------------------------
 
   // Severity rank over the tile-level vocabulary. Three buckets, not two:
   //   ok            -- genuinely good.
-  //   neutral       -- nominal but inactive. DRIVE=IDLE is the only neutral
-  //                    this card produces and it means "not recording", NOT
-  //                    "broken"; counting it as a fault would make green
-  //                    unreachable in the commonest state (key on, no drive
-  //                    started), which is its own dishonesty -- crying wolf.
-  //   unavailable   -- a known-UNKNOWN. Blocks green (never claim OK over a
-  //                    source we cannot read) without raising an alarm.
-  //   amber / down  -- the only ISSUES.
+  //   neutral       -- nominal but inactive (DRIVE=IDLE: "not recording").
+  //   unavailable   -- a known-UNKNOWN.
+  //   amber / down  -- the worst rows, listed first.
   var SYS_LEVEL_RANK = { ok: 0, neutral: 1, unavailable: 2, amber: 3, down: 4 };
-  var SYS_ISSUE_RANK = SYS_LEVEL_RANK.amber;
 
   // A level this mapper has not been taught resolves to `unavailable`, NEVER to
-  // ok -- a future tile level must not be able to paint the card green by
-  // default.
+  // ok -- a future tile level must not be able to drop out of the list.
   function sysLevelRank(level) {
     return Object.prototype.hasOwnProperty.call(SYS_LEVEL_RANK, level)
       ? SYS_LEVEL_RANK[level]
       : SYS_LEVEL_RANK.unavailable;
   }
-
-  function sysNoStateSummary() {
-    return {
-      text: "SYSTEM · UNAVAILABLE",
-      detail: "no system state",
-      level: "unavailable",
-      issues: 0,
-    };
-  }
-
-  // Summarise the four rendered tiles. The ISSUE COUNT is the glanceable fact;
-  // the worst source is NAMED in the detail so the line says what to look at
-  // without the operator reading all four tiles.
-  function systemSummary(tiles) {
-    if (!isObj(tiles)) return sysNoStateSummary();
-    var worst = null;
-    var worstRank = -1;
-    var issues = 0;
-    var unknowns = 0;
-    for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
-      var tile = tiles[SYS_TILE_ORDER[i]];
-      if (!isObj(tile)) continue;
-      var rank = sysLevelRank(tile.level);
-      if (rank >= SYS_ISSUE_RANK) issues++;
-      else if (rank === SYS_LEVEL_RANK.unavailable) unknowns++;
-      if (rank > worstRank) {
-        worstRank = rank;
-        worst = tile;
-      }
-    }
-    if (worst === null) return sysNoStateSummary();
-    var named = worst.label + " · " + worst.value;
-    if (issues > 0) {
-      // `worst` carries the highest rank, so with any issue present it IS an
-      // issue tile -- its level is amber/down and drives the headline hue.
-      return {
-        text: "SYSTEM · " + issues + (issues === 1 ? " ISSUE" : " ISSUES"),
-        detail: named,
-        level: worst.level,
-        issues: issues,
-      };
-    }
-    if (unknowns > 0) {
-      return {
-        text: "SYSTEM · " + unknowns + " UNAVAILABLE",
-        detail: named,
-        level: "unavailable",
-        issues: 0,
-      };
-    }
-    return { text: "SYSTEM · OK", detail: "", level: "ok", issues: 0 };
-  }
-
-  // -------------------------------------------------------------------------
-  // US-509 (F-124) -- the drill-down behind the summary line. The headline is a
-  // lossy compression of four tiles; without this it is a dead end that names a
-  // count and nothing to act on. The rows are a PRESENTATION of the SAME tiles
-  // the grid renders -- no second read, no re-derivation, so the overlay can
-  // never contradict the card behind it.
-  // -------------------------------------------------------------------------
 
   // The listing floor. Deliberately `unavailable`, not `amber`:
   //   * `ok`      -- never listed. A green source in a fault list is a
@@ -1114,10 +1189,9 @@
   //                  card produces and it means "not recording", NOT "broken";
   //                  listing it would report a fault in the commonest state
   //                  there is (key on, no drive started) -- crying wolf.
-  //   * `unavailable` and worse -- listed. The summary reads "SYSTEM · N
-  //                  UNAVAILABLE" in that state, so excluding known-unknowns
-  //                  would make a tappable headline open an EMPTY overlay,
-  //                  which is the exact dead end this story removes.
+  //   * `unavailable` and worse -- listed. Excluding known-unknowns would
+  //                  make a tappable headline open an EMPTY overlay, which is
+  //                  the exact dead end US-509 removed.
   var SYS_ROW_FLOOR = SYS_LEVEL_RANK.unavailable;
 
   // The typed absence for a source that publishes no age at all. No source
@@ -1134,8 +1208,9 @@
     return SYS_NO_AGE;
   }
 
-  // Worst-first rows, one per non-OK source. Ties keep the 2x2 grid order, so
-  // the list never reshuffles between polls under the operator's eyes. Built by
+  // Worst-first rows, one per non-OK source. Ties keep the view's tile order
+  // (US-894-b: SYS_TILE_ORDER went with the grid), so the list never
+  // reshuffles between polls under the operator's eyes. Built by
   // walking the rank buckets top-down rather than sorting, which makes that
   // stability a property of the construction instead of the sort algorithm.
   function systemIssueRows(tiles, data) {
@@ -1143,8 +1218,9 @@
     if (!isObj(tiles)) return rows;
     var rank = SYS_LEVEL_RANK.down;
     for (; rank >= SYS_ROW_FLOOR; rank--) {
-      for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
-        var key = SYS_TILE_ORDER[i];
+      var keys = Object.keys(tiles);
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
         var tile = tiles[key];
         if (!isObj(tile) || sysLevelRank(tile.level) !== rank) continue;
         var freshness = sysRowFreshness();
@@ -1253,37 +1329,34 @@
   // on the same slow tick. It is a separate slot rather than a key inside
   // system-status because the two have different producers -- capture health is
   // the orchestrator's fact about ITSELF, not about a car source -- and the
-  // gear tile already established this shape. Optional: every pre-US-688 call
-  // site passes one argument and gets the four-tile card unchanged.
+  // gear tile already established this shape. Optional: a caller that passes
+  // one argument gets no capture tile.
+  //
+  // US-894-b: the page is `verdict` + `rows` (spec s3 layout A); the OBD row
+  // is the first row, and the rows not yet built are absent. The obdLink tile
+  // is gone with the block it read (Atlas A2/P6). `tiles` now only feed the
+  // drill-down behind the verdict until their rows land (US-894-c/e/f).
   function systemStatusView(data, captureData) {
     if (!isObj(data)) return null;
-    // US-429: the OBD source owns the OBD-link tile + glyph. When the source is
-    // unavailable (car off / wall power), render a typed NA ("OBD: off") rather
-    // than a fabricated or stale link state -- sync/power/drive are their own
-    // sources and stay honest independently (one truth per SOURCE).
-    var obdOff = sourceUnavailable(data, "obd");
-    var obdTile = obdOff
-      ? naTile("OBD LINK", sourceReason(data, "obd"))
-      : obdLinkTile(data.obdLink);
     var tiles = {
-      obdLink: obdTile,
       sync: syncTile(data.sync),
       power: powerTile(data.power),
       drive: driveTile(data.drive),
     };
     // Only present when a payload was actually fetched. An UNDEFINED tile is
-    // skipped by the summary and the row builder alike, so "the producer is
-    // dark" renders as the card that existed before this story rather than as
-    // a fifth tile permanently reading unavailable.
+    // skipped by the drill's row builder, so "the producer is dark" lists no
+    // capture row rather than one permanently reading unavailable.
     if (captureData !== undefined && captureData !== null) {
       tiles.capture = captureTile(captureData);
     }
     return {
-      // US-489: derived from the SAME tiles rendered below, so the headline can
-      // never contradict the grid it summarises.
-      summary: systemSummary(tiles),
-      // US-509: and so is the drill-down behind that headline -- one read of
-      // the state file feeds the grid, the summary AND the overlay.
+      // s4.1: the provider's count, never the page's.
+      verdict: systemVerdictView(data),
+      rows: [obdRowView(data)],
+      // s4.6: the OBD row's detail, from the SAME read.
+      obdDetail: obdDetailView(data),
+      // US-509: the drill-down behind the verdict -- one read of the state
+      // file feeds the page AND the overlay.
       drill: systemDrill(tiles, data),
       tiles: tiles,
       glyphs: {
@@ -5392,7 +5465,6 @@
     feedObserved: feedObserved,
     feedWaitedMs: feedWaitedMs,
     LOADING_GRACE_MS: LOADING_GRACE_MS,
-    obdLinkTile: obdLinkTile,
     syncTile: syncTile,
     powerTile: powerTile,
     driveTile: driveTile,
@@ -5401,7 +5473,14 @@
     LINK_STATE_LOOK: LINK_STATE_LOOK,
     LINK_MEMBER_LAYERS: LINK_MEMBER_LAYERS,
     syncGlyphState: syncGlyphState,
-    systemSummary: systemSummary,
+    systemVerdictView: systemVerdictView,
+    obdRowView: obdRowView,
+    obdDetailView: obdDetailView,
+    OBD_LAYER_SENTENCE: OBD_LAYER_SENTENCE,
+    OBD_ALL_UP_SENTENCE: OBD_ALL_UP_SENTENCE,
+    currentParked: currentParked,
+    onParkedChange: onParkedChange,
+    publishParked: publishParked,
     sysRowFreshness: sysRowFreshness,
     systemIssueRows: systemIssueRows,
     systemDiagnostics: systemDiagnostics,
@@ -5553,94 +5632,132 @@
     // The level drives the colour via [data-level] CSS -- a degraded tile is
     // never green (F-1). Built with textContent (no innerHTML) so emitter values
     // render verbatim, never as markup.
-    // US-489: `withDot` prepends the per-tile status dot. It is OPT-IN because
-    // appendTile is shared with the idle, battery and LTFT cards -- defaulting
-    // it on would restyle three shipped cards from a story scoped to one.
-    function appendTile(parent, tile, withDot) {
+    // US-894-b: the US-489 `withDot` status dot went with the System grid,
+    // its only caller.
+    function appendTile(parent, tile) {
       var el = document.createElement("div");
       el.className = "tile";
       el.setAttribute("data-level", tile.level);
       var label = document.createElement("span");
       label.className = "tile-label";
       label.textContent = tile.label;
-      if (withDot) {
-        // The dot takes no level of its own -- it inherits the tile's
-        // [data-level], so it can never disagree with the value beside it.
-        var head = document.createElement("div");
-        head.className = "tile-head";
-        var dot = document.createElement("span");
-        dot.className = "tile-dot";
-        head.appendChild(dot);
-        head.appendChild(label);
-        el.appendChild(head);
-      }
       var value = document.createElement("span");
       value.className = "tile-value";
       value.textContent = tile.value;
       var detail = document.createElement("span");
       detail.className = "tile-detail";
       detail.textContent = tile.detail;
-      if (!withDot) el.appendChild(label);
+      el.appendChild(label);
       el.appendChild(value);
       el.appendChild(detail);
       parent.appendChild(el);
     }
 
-    function renderSystemStatusCard(card, view, glyphEls) {
-      // US-509: the drill-down is fed by the SAME poll that paints the card, and
-      // an OPEN overlay is repainted with it. A drill-down left frozen on the
-      // snapshot that opened it would keep printing "seen 42s ago" while the
-      // age climbed -- the frozen-instrument fabrication this project names for
-      // the g-dot and the rotate bar, in a third geometry.
-      lastSysView = view;
-      if (sysDetailOpen()) renderSysDetail(view);
-      var body = card.querySelector(".card-body");
-      if (body) {
-        body.textContent = "";
-        // US-489 P-1: the one-glance headline, then the 2x2 grid. Built with
-        // textContent (no innerHTML) so emitter values render verbatim.
-        var summary = document.createElement("div");
-        summary.className = "sys-summary";
-        summary.setAttribute("data-level", view.summary.level);
-        var summaryText = document.createElement("span");
-        summaryText.className = "sys-summary-text";
-        summaryText.textContent = view.summary.text;
-        summary.appendChild(summaryText);
-        if (view.summary.detail) {
-          var summaryDetail = document.createElement("span");
-          summaryDetail.className = "sys-summary-detail";
-          summaryDetail.textContent = view.summary.detail;
-          summary.appendChild(summaryDetail);
-        }
-        // US-509: the headline becomes a control ONLY when there is something
-        // behind it. An always-tappable summary that opens an empty list on a
-        // healthy system is a misleading affordance -- it promises detail the
-        // card does not have. The chevron is part of the same gate, so the
-        // affordance and the behaviour can never disagree.
-        if (view.drill && view.drill.tappable) {
-          summary.classList.add("sys-summary-tappable");
-          summary.setAttribute("role", "button");
-          summary.setAttribute("tabindex", "0");
-          var chevron = document.createElement("span");
-          chevron.className = "sys-summary-chevron";
-          chevron.textContent = "›";
-          summary.appendChild(chevron);
-          summary.onclick = function () { openSysDetail(); };
-        }
-        body.appendChild(summary);
-        var grid = document.createElement("div");
-        grid.className = "sys-grid";
-        appendTile(grid, view.tiles.obdLink, true);
-        appendTile(grid, view.tiles.sync, true);
-        appendTile(grid, view.tiles.power, true);
-        appendTile(grid, view.tiles.drive, true);
-        // US-688. Guarded because the tile is absent whenever no capture-health
-        // payload was fetched. It MUST be painted whenever it exists: the
-        // summary counts it, so a card that summarised it without showing it
-        // would read "SYSTEM · 1 ISSUE" over four healthy-looking tiles.
-        if (view.tiles.capture) appendTile(grid, view.tiles.capture, true);
-        body.appendChild(grid);
+    // US-894-b (spec s3 layout A): the verdict line, then one row per
+    // subsystem. Built with textContent (no innerHTML) so provider values --
+    // a member's reason above all -- render verbatim, never as markup. Rows
+    // are `.sys-row`, never `.tile`.
+    function appendSysVerdict(body, verdict, tappable) {
+      var line = document.createElement("div");
+      line.className = "sys-verdict";
+      line.setAttribute("data-level", verdict.level);
+      var text = document.createElement("span");
+      text.className = "sys-verdict-text";
+      text.textContent = verdict.text;
+      line.appendChild(text);
+      if (tappable) {
+        // s4.1 I9: the ` ›` only while the tap works (parked). A chevron that
+        // leads nowhere is the US-758 failure.
+        line.classList.add("sys-tappable");
+        line.setAttribute("role", "button");
+        line.setAttribute("tabindex", "0");
+        var chevron = document.createElement("span");
+        chevron.className = "sys-chevron";
+        chevron.textContent = " ›";
+        line.appendChild(chevron);
+        line.onclick = function () { openSysDetail("drill"); };
       }
+      body.appendChild(line);
+    }
+
+    // The OBD row's chain: three outlined steps joined by short rules, each
+    // step's look on its own data-state (a null layer is `dashed`, AC 4).
+    function appendObdChain(parent, steps) {
+      var chain = document.createElement("span");
+      chain.className = "obd-chain";
+      for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+        var layer = LINK_CHAIN_LAYERS[i];
+        if (i > 0) {
+          var join = document.createElement("span");
+          join.className = "obd-join";
+          join.textContent = "━";
+          chain.appendChild(join);
+        }
+        var step = document.createElement("span");
+        step.className = "obd-step";
+        step.setAttribute("data-layer", layer);
+        step.setAttribute("data-state", steps[i]);
+        step.textContent = OBD_STEP_LABELS[layer];
+        chain.appendChild(step);
+      }
+      parent.appendChild(chain);
+    }
+
+    function appendSysRow(parent, row, tappable) {
+      var el = document.createElement("div");
+      el.className = "sys-row";
+      el.setAttribute("data-row", row.key);
+      el.setAttribute("data-level", row.level);
+      var label = document.createElement("span");
+      label.className = "sys-row-label";
+      label.textContent = row.label;
+      el.appendChild(label);
+      var main = document.createElement("div");
+      main.className = "sys-row-main";
+      var value = document.createElement("div");
+      value.className = "sys-row-value";
+      appendObdChain(value, row.steps);
+      main.appendChild(value);
+      var sentence = document.createElement("span");
+      sentence.className = "sys-row-sentence";
+      sentence.textContent = row.sentence;
+      main.appendChild(sentence);
+      el.appendChild(main);
+      if (tappable) {
+        el.classList.add("sys-tappable");
+        el.setAttribute("role", "button");
+        el.setAttribute("tabindex", "0");
+        var chevron = document.createElement("span");
+        chevron.className = "sys-chevron";
+        chevron.textContent = "›";
+        el.appendChild(chevron);
+        el.onclick = function () { openSysDetail(row.key); };
+      }
+      parent.appendChild(el);
+    }
+
+    // The page body from a view. Taps are offered only while parked (the ONE
+    // accessor, currentParked); not parked, nothing opens and no chevron shows.
+    function renderSystemBody(card, view) {
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+      var parked = currentParked().parked === true;
+      appendSysVerdict(body, view.verdict, parked && !!view.drill && view.drill.tappable);
+      var rows = document.createElement("div");
+      rows.className = "sys-rows";
+      for (var i = 0; i < view.rows.length; i++) appendSysRow(rows, view.rows[i], parked);
+      body.appendChild(rows);
+    }
+
+    function renderSystemStatusCard(card, view, glyphEls) {
+      // US-509: the detail is fed by the SAME poll that paints the page, and
+      // an OPEN overlay is repainted with it -- never frozen on the snapshot
+      // that opened it.
+      lastSysView = view;
+      lastSysCard = card;
+      if (sysDetailOpen()) renderSysDetail(view);
+      renderSystemBody(card, view);
       paintLinkChain(glyphEls.bt, view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
       // ARCH-007: render the emitter's verdict. The display applies NO
@@ -5649,13 +5766,34 @@
       if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", view.glyphs.wifi);
     }
 
-    // --- US-509 System-Status drill-down overlay (browser only) -------------
+    // s4.1: system-status unreadable -> the verdict is `--`, never ALL OK, and
+    // no row claims a reading. The view is dropped so no tap can open a detail
+    // built from a reading that is gone.
+    function renderSystemUnavailable(card) {
+      lastSysView = null;
+      lastSysCard = card;
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+      appendSysVerdict(body, systemVerdictView(null), false);
+    }
 
-    // The most-recent card view, so a tap on the summary line has rows to show
-    // without a second read of the state file. It is set by the renderer above,
-    // which means the overlay is fed by exactly the same poll that painted the
-    // card -- the two can never drift apart.
+    // US-894-b: a parked edge repaints the page from the last view, so a tap
+    // and its chevron appear (or go) on the edge, not a tick later.
+    function repaintSystemOnParkedEdge() {
+      if (lastSysCard && lastSysView) renderSystemBody(lastSysCard, lastSysView);
+    }
+
+    // --- US-509 System-Status detail overlay (browser only) -----------------
+
+    // The most-recent page view, so a tap has content to show without a second
+    // read of the state file. It is set by the renderer above, which means the
+    // overlay is fed by exactly the same poll that painted the page.
     var lastSysView = null;
+    var lastSysCard = null;
+    // US-894-b: which detail #sys-detail shows -- "drill" (behind the verdict)
+    // or a row's key ("obd"). Every detail renders in the one overlay (I8).
+    var sysDetailKind = "drill";
 
     // Elements are looked up LAZILY rather than captured at init: this renderer
     // lives in the shared render scope (not the browser-only block below), and a
@@ -5665,13 +5803,18 @@
       var bodyEl = document.getElementById("sys-detail-body");
       if (!bodyEl) return;
       bodyEl.textContent = "";
+      // I8: the version chip shows only in the Pi detail. Until that detail
+      // lands (US-894-e/f) the drill behind the verdict -- the line the Pi
+      // detail will be opened from -- keeps it; a row's detail never shows it.
+      var chip = document.getElementById("version-chip");
+      if (chip) chip.hidden = sysDetailKind !== "drill";
+      if (sysDetailKind === "obd") {
+        renderObdDetail(bodyEl, view);
+        return;
+      }
       var head = document.getElementById("sys-detail-head");
-      // The head repeats the LINE THE OPERATOR TAPPED verbatim, rather than
-      // recounting the rows into a second headline. A drill-down whose title
-      // disagrees with the summary that opened it is its own small lie -- and
-      // the counts genuinely differ (the summary counts ISSUES; the list also
-      // carries known-unknowns).
-      if (head) head.textContent = view && view.summary ? view.summary.text : "";
+      // The head repeats the LINE THE OPERATOR TAPPED verbatim (the verdict).
+      if (head) head.textContent = view && view.verdict ? view.verdict.text : "";
       var rows = view && view.drill ? view.drill.rows : [];
       if (!rows.length) {
         // Reachable while the overlay is OPEN and the last fault clears, and --
@@ -5688,19 +5831,18 @@
         var row = rows[i];
         var el = document.createElement("div");
         el.className = "detail-card sys-issue-row";
-        // The row's level came straight off the tile, so the chip colour here
-        // and the grid cell behind the overlay are incapable of disagreeing.
+        // The row's level came straight off the tile.
         el.setAttribute("data-level", row.level);
         var rowHead = document.createElement("div");
         rowHead.className = "sys-issue-head";
         var label = document.createElement("span");
         label.className = "sys-issue-label";
         label.textContent = row.label;
-        var chip = document.createElement("span");
-        chip.className = "sys-issue-chip";
-        chip.textContent = row.value;
+        var chip2 = document.createElement("span");
+        chip2.className = "sys-issue-chip";
+        chip2.textContent = row.value;
         rowHead.appendChild(label);
-        rowHead.appendChild(chip);
+        rowHead.appendChild(chip2);
         el.appendChild(rowHead);
         // Omitted when the view found it only repeated the freshness beside it.
         if (row.reason) {
@@ -5716,6 +5858,47 @@
         bodyEl.appendChild(el);
       }
       renderSysDiagnostics(bodyEl, view && view.drill ? view.drill.diagnostics : []);
+    }
+
+    // s4.6 OBD detail: per layer its state, since when and last success, then
+    // the row's sentence in full (the row ellipsizes it). A view that is gone
+    // (the file went unreadable while open) shows every value as `--`.
+    function renderObdDetail(bodyEl, view) {
+      var detail = view && view.obdDetail ? view.obdDetail : obdDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      for (var i = 0; i < detail.layers.length; i++) {
+        var layer = detail.layers[i];
+        var el = document.createElement("div");
+        el.className = "detail-card obd-layer-row";
+        el.setAttribute("data-layer", layer.layer);
+        var rowHead = document.createElement("div");
+        rowHead.className = "sys-issue-head";
+        var label = document.createElement("span");
+        label.className = "obd-step";
+        label.setAttribute("data-state", layer.look);
+        label.textContent = layer.label;
+        var state = document.createElement("span");
+        state.className = "obd-layer-state";
+        state.textContent = layer.state;
+        rowHead.appendChild(label);
+        rowHead.appendChild(state);
+        el.appendChild(rowHead);
+        var since = document.createElement("span");
+        since.className = "obd-layer-fact";
+        since.textContent = "since " + layer.since;
+        el.appendChild(since);
+        var lastOk = document.createElement("span");
+        lastOk.className = "obd-layer-fact";
+        lastOk.textContent = "last success " + layer.lastOk;
+        el.appendChild(lastOk);
+        bodyEl.appendChild(el);
+      }
+      var sentence = document.createElement("div");
+      sentence.className = "detail-card obd-detail-sentence";
+      sentence.setAttribute("data-level", detail.level);
+      sentence.textContent = detail.sentence;
+      bodyEl.appendChild(sentence);
     }
 
     // US-559: the reference facts, below the faults. Built with textContent (no
@@ -5743,11 +5926,15 @@
       return !!el && el.hidden === false;
     }
 
-    function openSysDetail() {
+    // Opens a detail ONLY while parked (Atlas B9: row and verdict taps), read
+    // at tap time from the one accessor -- a stale listener left on a row
+    // painted while parked cannot open it after the car moves off. The drill
+    // is also gated on having something behind it.
+    function openSysDetail(which) {
       var el = document.getElementById("sys-detail");
-      // Guarded on `tappable` as well as the handler that called it, so a stale
-      // listener left on a recovered card cannot open an empty overlay.
-      if (!el || !lastSysView || !lastSysView.drill.tappable) return;
+      if (!el || !lastSysView || currentParked().parked !== true) return;
+      if (which === "drill" && !lastSysView.drill.tappable) return;
+      sysDetailKind = which;
       renderSysDetail(lastSysView);
       el.hidden = false;
     }
@@ -8175,6 +8362,8 @@
       // the two overlays' escape hatches live together. AC2 -- never traps.
       var sysDetailBack = document.getElementById("sys-detail-back");
       if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
+      // US-894-b: the System page's taps follow the parked fact's edges.
+      onParkedChange(repaintSystemOnParkedEdge);
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -8300,6 +8489,9 @@
                 nd ? nd.label : (card.getAttribute("data-page-name") || "")
               );
             } else if (body && nd) renderNaBody(body, nd.label, nd.reason);
+            // US-894-b (s4.1): the System page's unavailable path is the
+            // verdict `--`, never ALL OK.
+            else if (body && name === "system-status") renderSystemUnavailable(card);
             else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
@@ -8383,6 +8575,9 @@
         // US-511-b: fed from THIS tick's states/gear (lastGear, read above --
         // no second fetch), never from system-status idle.
         engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);
+        // US-894-b: the ONE write of the module's parked fact -- the debounced
+        // value just advanced, and the RAW gear-known fact (Atlas B9 + A1).
+        publishParked(engineParked.parked, isObj(lastGear) && lastGear.available === true);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
         // moves the dismiss on first (a codeAlert-null re-read settles it).

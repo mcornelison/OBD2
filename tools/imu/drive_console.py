@@ -16,6 +16,8 @@
 #               | (ARCH-058)     |
 # 2026-10-15    | Rex (US-649-b) | takeKiosk() follows /etc/eclipse/display-mode:
 #               |                | wayland argv/env via kioskLaunch(); x11 unchanged.
+# 2026-10-23    | Rex (US-894-b) | obdLink is retired from system-status: the
+#               |                | screen's `obd` reads link.ecu.state.
 # ================================================================================
 ################################################################################
 """Run bypass -> master -> bypass from a button, with the PRODUCTION collector.
@@ -382,6 +384,18 @@ def _readJson(path: Path) -> dict | None:  # pragma: no cover
         return None
 
 
+def ecuLinkState(systemStatus: dict | None) -> str | None:
+    """The `obd` the console shows: system-status link.ecu.state (US-894-b).
+
+    obdLink is retired (Atlas A2/P6); the ECU layer of the link chain is the
+    "is the car answering" fact. Anything unreadable is None (not read).
+    """
+    link = (systemStatus or {}).get("link")
+    ecu = link.get("ecu") if isinstance(link, dict) else None
+    state = ecu.get("state") if isinstance(ecu, dict) else None
+    return state if isinstance(state, str) else None
+
+
 def _stateAgeS(state: dict) -> float | None:  # pragma: no cover
     try:
         ts = datetime.strptime(state["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
@@ -564,7 +578,7 @@ class _MagWatch(threading.Thread):  # pragma: no cover -- hardware glue
             self._seen = [(t, h) for t, h in self._seen if now - t <= 15.0]
             vals = [h for _, h in self._seen if h is not None]
             live = None if not self._seen else (len(set(vals)) >= 2)
-            obd = ((_readJson(STATE_SYS) or {}).get("obdLink") or {}).get("state")
+            obd = ecuLinkState(_readJson(STATE_SYS))
             self.snapshot = {"magLive": live, "headingDeg": st.get("headingDeg"),
                              "obd": obd}
             time.sleep(1.0)

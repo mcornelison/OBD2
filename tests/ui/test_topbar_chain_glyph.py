@@ -103,8 +103,6 @@ def _payload(
         for layer, state in (("bt", bt), ("adapter", adapter), ("ecu", ecu))
     }
     return buildSystemStatusState(
-        obdLinkState="linked",
-        obdRetries=0,
         syncLastOkTs=_NOW,
         syncRows=10,
         syncPending=0,

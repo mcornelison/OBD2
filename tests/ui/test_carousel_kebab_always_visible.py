@@ -139,8 +139,6 @@ def _systemStatus(
     operational poles are reached by the inputs that produce them.
     """
     return buildSystemStatusState(
-        obdLinkState="linked" if obdAvailable else "down",
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs="2026-08-31T15:45:22Z",
         syncRows=1204,

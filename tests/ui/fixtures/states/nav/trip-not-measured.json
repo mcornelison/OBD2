@@ -3,8 +3,6 @@
   "now": "2026-10-20T20:12:00Z",
   "zone": "America/Chicago",
   "inputs": {
-    "obdLinkState": "linked",
-    "obdRetries": 0,
     "syncLastOkTs": null,
     "syncRows": 0,
     "syncPending": null,
@@ -22,10 +20,6 @@
     "captureHealth": null
   },
   "system-status": {
-    "obdLink": {
-      "state": "linked",
-      "retries": 0
-    },
     "sync": {
       "lastOkTs": null,
       "rows": 0,

@@ -1,0 +1,223 @@
+{
+  "description": "The all-ok-driving system-status with `verdict` popped (no builder publishes a payload without one) -> the verdict reads '--', never ALL OK.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncRows": 0,
+      "syncPending": null,
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "recording",
+      "driveId": 212,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      }
+    },
+    "capture-health": {
+      "lastRowSecondsAgo": 0.4,
+      "freshnessReason": null,
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": [
+          "2026-10-22T22:41:05Z",
+          0.4
+        ],
+        "light": [
+          "2026-10-22T22:41:05Z",
+          0.9
+        ],
+        "imu": [
+          "2026-10-22T22:41:05Z",
+          0.1
+        ],
+        "ups": [
+          "2026-10-22T22:41:05Z",
+          4.0
+        ]
+      }
+    },
+    "battery-health": {
+      "vcellV": 4.12,
+      "soc": 92,
+      "socCalibrated": false,
+      "crate": null,
+      "charging": false,
+      "draining": false,
+      "restedVcellV": 4.15,
+      "weakEvents30d": 0,
+      "restedHistory": [],
+      "health": "good",
+      "fullChargeReached": true,
+      "runtimeToCutoffS": null,
+      "ambientTempC": null,
+      "lastHealthCheckTs": "2026-10-20T03:00:00Z",
+      "ladder": null,
+      "nowIso": "2026-10-22T23:09:48Z"
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "rows": 0,
+        "pending": null,
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "recording",
+        "driveId": 212,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z"
+    },
+    "capture-health": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.4,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-22T23:10:00Z",
+      "feeds": {
+        "obd": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.4
+        },
+        "imu": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.1
+        },
+        "light": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.9
+        },
+        "ups": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 4.0
+        }
+      }
+    },
+    "battery-health": {
+      "vcellV": 4.12,
+      "soc": 92,
+      "socCalibrated": false,
+      "crate": null,
+      "charging": false,
+      "draining": false,
+      "restedVcellV": 4.15,
+      "weakEvents30d": 0,
+      "restedHistory": [],
+      "health": "good",
+      "fullChargeReached": true,
+      "runtimeToCutoffS": null,
+      "ambientTempC": null,
+      "lastHealthCheckTs": "2026-10-20T03:00:00Z",
+      "timeToFloorS": null,
+      "jobAvgS": null,
+      "jobMaxS": null,
+      "provisional": false,
+      "ladder": null,
+      "reasons": {},
+      "source": {
+        "ups": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:09:48Z"
+    }
+  }
+}

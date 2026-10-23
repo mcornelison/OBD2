@@ -113,8 +113,6 @@ def _realPiPayload(lastDrive: object = "measured") -> dict:
             "startedAtTs": _MEASURED_STARTED_AT,
         }
     return buildSystemStatusState(
-        obdLinkState="down",
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=None,
         syncRows=0,

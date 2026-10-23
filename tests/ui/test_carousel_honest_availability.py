@@ -74,9 +74,12 @@ def _unavailable(name: str, reason: str) -> dict:
 
 
 def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
-    """OBD source unavailable -> the obdLink tile renders NA (<reason>) at the
-    `unavailable` level (never a fabricated/stale LINKED), the glyph goes neutral,
-    and sync/power/drive stay honest independently."""
+    """OBD source unavailable -> nothing on the page claims a link: the OBD row
+    reads its unread chain (dashed, not read yet), the chain glyph is hollow,
+    and sync/power/drive stay honest independently.
+
+    MOVED PIN (US-894-b): the OBD LINK tile's typed NA is retired with the tile;
+    the OBD row reads `link` verbatim and ignores source.obd (spec s4.2)."""
     view = _view(
         "systemStatusView",
         {
@@ -89,9 +92,9 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
             "ts": "2026-07-02T00:00:00Z",
         },
     )
-    assert view["tiles"]["obdLink"]["value"] == "NA"
-    assert view["tiles"]["obdLink"]["detail"] == "OBD: off"
-    assert view["tiles"]["obdLink"]["level"] == "unavailable"
+    assert "obdLink" not in view["tiles"]
+    assert view["rows"][0]["steps"] == ["dashed", "dashed", "dashed"]
+    assert view["rows"][0]["sentence"] == "Bluetooth not read yet"
     # MOVED PIN (US-894-a): glyphs.bt is the link chain, read from `link` and
     # never forced by source.obd; no link published -> three hollow dots.
     assert view["glyphs"]["bt"] == {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
@@ -102,7 +105,8 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
 
 
 def test_systemStatusView_obdAvailable_rendersRealLink():
-    """OBD source available -> the real link state renders (no NA)."""
+    """OBD source available -> the real link state renders (no NA).
+    MOVED PIN (US-894-b): on the OBD row, from `link`."""
     view = _view(
         "systemStatusView",
         {
@@ -116,7 +120,8 @@ def test_systemStatusView_obdAvailable_rendersRealLink():
             "ts": "2026-07-02T00:00:00Z",
         },
     )
-    assert view["tiles"]["obdLink"]["value"] == "LINKED"
+    assert view["rows"][0]["steps"] == ["ok", "ok", "ok"]
+    assert view["rows"][0]["sentence"] == "ECU answering"
     assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
 
 

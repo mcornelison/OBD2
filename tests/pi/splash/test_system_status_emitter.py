@@ -37,6 +37,10 @@
 #               |              | members, rules, exact reasons and forwarding.
 # 2026-10-22    | Rex (US-877-c)| the emit returns the payload it wrote (None on
 #               |              | a failed write).
+# 2026-10-23    | Rex (US-894-b)| MOVED PIN (US-894-b): obdLink + its two builder /
+#               |              | emit parameters are retired (Atlas A2/P6); the
+#               |              | exact pin loses the block and the obdLink
+#               |              | asserts become "absent" asserts.
 # ================================================================================
 ################################################################################
 
@@ -53,9 +57,7 @@ from pi.splash.system_status_emitter import (
     LINK_DOWN,
     LINK_RETRYING,
     LINK_UP,
-    OBD_DOWN,
     OBD_LINKED,
-    OBD_RECONNECTING,
     RUN_MODE_LIVE,
     RUN_MODE_REPLAY,
     RUN_MODE_SIMULATE,
@@ -83,9 +85,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
     When buildSystemStatusState assembles the payload,
     Then it emits exactly the A-3 nested shape with the supplied values."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_RECONNECTING,
-        obdRetries=3,
-        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        # MOVED PIN (US-894-b): obdLink and its two parameters are retired.
         syncLastOkTs=_SYNC_OK,
         syncRows=1204,
         syncPending=0,
@@ -96,7 +96,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         nowIso=_NOW,
     )
     assert state == {
-        "obdLink": {"state": "reconnecting", "retries": 3},
+        # MOVED PIN (US-894-b): no `obdLink` key -- `link` is the link fact.
         # US-916: rowsWaiting / edrRowsWaiting / notCounted are always keys;
         # null when not read (a caller that passes none read nothing).
         "sync": {
@@ -156,11 +156,9 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
 
 
 def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
-    """A down link is serialized faithfully ({state: 'down', retries: 0})
-    -- the emitter never fabricates a 'linked' state."""
+    """MOVED PIN (US-894-b): obdLink is retired, so no link state is published
+    outside the chain -- nothing here can read 'linked'."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_DOWN,
-        obdRetries=0,
         syncLastOkTs=None,
         syncRows=0,
         syncPending=12,
@@ -170,8 +168,7 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
         driveId=None,
         nowIso=_NOW,
     )
-    assert state["obdLink"] == {"state": "down", "retries": 0}
-    assert state["obdLink"]["state"] != OBD_LINKED
+    assert "obdLink" not in state
     assert state["sync"]["lastOkTs"] is None
     assert state["drive"]["driveId"] is None
     # A verbatim `down` link is still an AVAILABLE source (we are talking to /
@@ -201,8 +198,6 @@ def test_buildSystemStatusState_lastDriveKey_isPresentInEveryShape():
     whereas an explicit null is a value the display can test against.
     """
     baseKwargs = {
-        "obdLinkState": OBD_LINKED,
-        "obdRetries": 0,
         "syncLastOkTs": _SYNC_OK,
         "syncRows": 1,
         "syncPending": 0,
@@ -245,8 +240,6 @@ def test_buildSystemStatusState_lastDrive_isVerbatimAndDistinctFromDriveId():
     """
     summary = {"driveId": 27, "startedAtTs": _SYNC_OK}
     state = buildSystemStatusState(
-        obdLinkState=OBD_DOWN,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=0,
         syncPending=0,
@@ -264,17 +257,15 @@ def test_buildSystemStatusState_lastDrive_isVerbatimAndDistinctFromDriveId():
 
 
 # ---------------------------------------------------------------------------
-# US-429 honest-availability -- the OBD source governs the obdLink tile.
+# US-429 honest-availability -- the OBD source's availability (source.obd).
 # ---------------------------------------------------------------------------
 
 
 def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
     """US-429: on wall power / car off the OBD source is unavailable -> the
-    obdLink value is a FRESH typed NULL (never a stale/fabricated link state) and
-    the typed reason travels in source.obd. Sync/power/drive stay independent."""
+    typed reason travels in source.obd. Sync/power/drive stay independent.
+    MOVED PIN (US-894-b): the obdLink block it used to blank is retired."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,  # a stale caller value must NOT leak through
-        obdRetries=5,
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=0,
@@ -286,7 +277,7 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
         obdAvailable=False,
         obdUnavailableReason="OBD: off",
     )
-    assert state["obdLink"] == {"state": None, "retries": 0}
+    assert "obdLink" not in state
     assert state["source"]["obd"] == {"available": False, "reason": "OBD: off"}
     # Other sources are unaffected (one truth per SOURCE).
     assert state["sync"]["rows"] == 10
@@ -309,8 +300,6 @@ def test_buildSystemStatusState_idle_trueOnlyWhenObdAbsentAndNotRecording():
     """idle == parked-and-asleep: OBD source ABSENT (no car) AND no drive
     recording. The emitter owns both inputs so the display never re-derives it."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_DOWN,
-        obdRetries=0,
         syncLastOkTs=None,
         syncRows=0,
         syncPending=0,
@@ -328,8 +317,6 @@ def test_buildSystemStatusState_idle_falseWhenObdAvailable():
     """OBD source present (car awake) -> NOT idle, even with no drive recording
     (Iris AC-4: idle flips false the moment the OBD source wakes)."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=0,
         syncPending=0,
@@ -348,8 +335,6 @@ def test_buildSystemStatusState_idle_falseWhileRecording():
     (Iris AC-4: idle flips false the moment a drive records). Belt-and-suspenders
     on the driveState half of the SSOT."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=5,
         syncPending=0,
@@ -430,8 +415,6 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_RECONNECTING,
-        obdRetries=2,
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=4,
@@ -443,7 +426,7 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
     written = json.loads(
         (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
     )
-    assert written["obdLink"] == {"state": "reconnecting", "retries": 2}
+    assert "obdLink" not in written  # MOVED PIN (US-894-b): retired
     assert written["sync"]["pending"] == 4
     assert written["sync"]["stale"] is True  # recording + 120s-old sync > 60s
     assert written["drive"] == {
@@ -479,8 +462,6 @@ def test_emitter_forwardsLastDrive_verbatimThroughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=0,
@@ -509,8 +490,6 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
 
     # Must not raise.
     emit(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
@@ -552,8 +531,6 @@ def test_buildSystemStatusState_runMode_isCarriedVerbatim():
     Then `runMode` carries it -- and `power` holds no `mode` key, the name
     US-668 retired and pi.power.mode still owns."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
@@ -581,8 +558,6 @@ def test_emitter_forwardsRunMode_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
@@ -671,7 +646,6 @@ _SINCE = "2026-06-30T19:19:00Z"  # 23 min before _NOW
 
 def _drive(**kwargs) -> dict:
     return buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="recording", driveId=27,
         nowIso=_NOW, **kwargs,
@@ -726,7 +700,6 @@ def test_emitter_forwardsElapsedAndPartial_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
         powerSource="external", driveState="idle", driveId=None,
         distanceKm=19.96, distanceSinceTs=_SINCE,
@@ -912,7 +885,6 @@ def test_buildSystemStatusState_link_isPublished_everyLayerAndKeyPresent():
     ecu = {"state": LINK_UP, "ts": _T0, "lastOkTs": _T1}
 
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         link={"ecu": ecu},
@@ -925,7 +897,6 @@ def test_buildSystemStatusState_link_aNullState_publishesAllThreeNull():
     """A layer whose state is null is not read: ts and lastOkTs are null too,
     whatever the caller passed beside it (available = state != null)."""
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         link={"ecu": {"state": None, "ts": _T0, "lastOkTs": _T1}},
@@ -935,19 +906,18 @@ def test_buildSystemStatusState_link_aNullState_publishesAllThreeNull():
 
 
 def test_buildSystemStatusState_link_notBlanked_whenObdSourceUnavailable():
-    """L6 / ARCH-061: source.obd.available false blanks obdLink but NEVER link
-    -- blanking it is the grey this block exists to retire."""
+    """L6 / ARCH-061: source.obd.available false NEVER blanks link -- blanking
+    was the grey this block retired (with obdLink, US-894-b)."""
     ecu = {"state": LINK_CONNECTING, "ts": _T0, "lastOkTs": None}
 
     state = buildSystemStatusState(
-        obdLinkState=OBD_DOWN, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         obdAvailable=False, obdUnavailableReason="never connected",
         link={"ecu": ecu},
     )
 
-    assert state["obdLink"] == {"state": None, "retries": 0}
+    assert "obdLink" not in state  # MOVED PIN (US-894-b): retired
     assert state["link"]["ecu"] == ecu
 
 
@@ -960,7 +930,6 @@ def test_emitter_forwardsLink_throughTheJsonRoundTrip(tmp_path):
     ecu = {"state": LINK_RETRYING, "ts": _T0, "lastOkTs": _T0}
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
         powerSource="external", driveState="idle", driveId=None,
         link={"ecu": ecu},
@@ -994,7 +963,6 @@ _WIFI_TS = "2026-06-30T19:41:40Z"
 
 def _wifiState(**wifi):
     return buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         **wifi,
@@ -1071,7 +1039,6 @@ def test_emitter_forwardsWifi_andItsThresholds_throughTheJsonRoundTrip(tmp_path)
     )
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
         powerSource="external", driveState="idle", driveId=None,
         wifiAvailable=True, wifiUnavailableReason=None, wifiSsid="DeathStarWiFi",
@@ -1111,7 +1078,6 @@ def test_orchestratorEmit_stubComposer_wifiNotRead_defaultThresholds():
 
 def test_sync_backlogFields_areTransportedVerbatim_zeroIsNotNull():
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         syncRowsWaiting=0, syncEdrRowsWaiting=1771,
@@ -1130,7 +1096,6 @@ def test_emitter_forwardsTheSyncBacklog_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
         powerSource="external", driveState="idle", driveId=None,
         syncRowsWaiting=120, syncEdrRowsWaiting=None, syncNotCounted=["profiles"],
@@ -1176,7 +1141,6 @@ _PI_BLOCK = {
 
 def _piState(piHealth):
     return buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
         piHealth=piHealth,
@@ -1216,7 +1180,6 @@ def test_emitter_forwardsPiHealth_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None,
         powerSource="external", driveState="idle", driveId=None,
         piHealth=dict(_PI_BLOCK),
@@ -1532,7 +1495,6 @@ def test_verdict_vc2_wifiNotRead_ecuConnecting_isZeroIssues():
 
 def _verdictState(**kw):
     base = {
-        "obdLinkState": OBD_LINKED, "obdRetries": 0,
         "syncLastOkTs": None, "syncRows": 0, "syncPending": None, "syncStale": False,
         "powerSource": "external", "driveState": "recording", "driveId": 7,
         "nowIso": _NOW,
@@ -1578,7 +1540,6 @@ def test_emitter_forwardsCaptureHealth_theVerdictShipsInTheFile(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None,
         powerSource="external", driveState="recording", driveId=7,
         link=_chain(), captureHealth=_capture(obd="stalled"),
@@ -1616,7 +1577,7 @@ def test_emitter_returnsThePayloadItWrote(tmp_path):
     )
 
     returned = emit(
-        obdLinkState=OBD_RECONNECTING, obdRetries=0, syncLastOkTs=None, syncRows=0,
+        syncLastOkTs=None, syncRows=0,
         syncPending=None, powerSource="external", driveState="idle", driveId=None,
         piHealth={"overLimit": ["cpuTemp"], "cpuTempC": 85.0, "cpuTempLimitC": 80},
     )
@@ -1634,7 +1595,7 @@ def test_emitter_returnsNone_whenTheWriteFailed(tmp_path):
     emit = makeSystemStatusEmitter(str(blocker), syncStaleThresholdS=60, nowIsoFn=lambda: _NOW)
 
     returned = emit(
-        obdLinkState=OBD_RECONNECTING, obdRetries=0, syncLastOkTs=None, syncRows=0,
+        syncLastOkTs=None, syncRows=0,
         syncPending=None, powerSource="external", driveState="idle", driveId=None,
     )
 

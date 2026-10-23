@@ -56,6 +56,10 @@
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): #glyph-bt is the link
 #               |              | chain, read from `link`; the obdLink retry
 #               |              | phase no longer reaches the top bar.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-b): obdLink and the OBD LINK
+#               |              | tile are retired. The panel reads the System
+#               |              | page's OBD row (from `link`); the retry phase is
+#               |              | read at _gatherObdLinkState, which still owns it.
 # ================================================================================
 ################################################################################
 
@@ -88,7 +92,6 @@ from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
 )
 from pi.splash.source_availability import REASON_OBD_OFF  # noqa: E402
 from pi.splash.system_status_emitter import (  # noqa: E402
-    OBD_LINKED,
     SYSTEM_STATUS_FILENAME,
     buildSystemStatusState,
 )
@@ -288,26 +291,18 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _obdTile(payload: Any) -> dict:
-    """The OBD LINK tile as the operator sees it on the 480x320 panel."""
+def _obdRow(payload: Any) -> dict:
+    """The System page's OBD row as the operator sees it (MOVED PIN, US-894-b:
+    was the retired OBD LINK tile)."""
     surface = _surface(payload)
-    path = None
-    for candidate in surface.pathsByClass("tile"):
-        for child in candidate[-1].get("children", []):
-            if "OBD LINK" in _textOf({"children": [child]}):
-                path = candidate
-    assert path is not None, "no OBD LINK tile in the rendered DOM"
-    assert surface.rendered(path), "the OBD LINK tile is in the DOM but not displayed"
-
-    value = ""
-    detail = ""
-    for child in path[-1].get("children", []):
-        classes = (child.get("attrs", {}).get("class") or "").split()
-        if "tile-value" in classes:
-            value = " ".join(_textOf(child))
-        elif "tile-detail" in classes:
-            detail = " ".join(_textOf(child))
-    return {"value": value, "detail": detail}
+    rows = surface.pathsByClass("sys-row")
+    assert len(rows) == 1, "no OBD row in the rendered DOM"
+    assert surface.rendered(rows[0]), "the OBD row is in the DOM but not displayed"
+    sentence = surface.pathsByClass("sys-row-sentence")[0]
+    return {
+        "sentence": " ".join(_textOf(sentence[-1])),
+        "card": " ".join(_textOf(rows[0][-1])),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -346,19 +341,22 @@ def test_theCalibrationFixtureReproducesTheCIOsMeasuredSplit():
 
 
 @_needsNode
-def test_theHarnessActuallyReadsTheChainAndTheTile_negativeControl(tmp_path):
+def test_theHarnessActuallyReadsTheChainAndTheRow_negativeControl(tmp_path):
     """
-    Given: every assertion below fails open if the top bar is unreadable
+    Given: every assertion below fails open if the panel is unreadable
     When: an unmistakably LINKED car is rendered
-    Then: the harness reads a real tile and three real dot states.
+    Then: the harness reads a real OBD row and three real dot states.
 
           MOVED PIN (US-894-a): this read the BT glyph `ok`/GREEN off obdLink.
           The chain reads `link`, which this composing object never fills, so
           its dots read hollow -- read, not absent.
+          MOVED PIN (US-894-b): the OBD LINK tile is retired; the OBD row reads
+          the same unread chain.
     """
     payload = _emit(tmp_path, _allCauses()["linked"])
+    assert payload["source"]["obd"]["available"] is True
     assert _chain(payload) == {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
-    assert _obdTile(payload)["value"] == "LINKED"
+    assert _obdRow(payload)["sentence"] == "Bluetooth not read yet"
 
 
 # ---------------------------------------------------------------------------
@@ -550,18 +548,18 @@ def test_theDriverReadsNeverConnected_notThatTheCarIsOff(tmp_path):
     """
     Given: a car this Pi has never connected to, with the key ON
     When: the SHIPPED dashboard renders what the REAL producer wrote
-    Then: the OBD LINK tile prints "never connected" and never "OBD: off".
+    Then: the state file says "never connected", and nothing on the panel says
+          "OBD: off".
 
-          The driver's half of validationCriterion 2. `naTile` renders
-          `source.obd.reason` VERBATIM, so the producer's word IS the driver's
-          word -- which is why the claim is worth reading off the panel rather
-          than off the state file.
+          MOVED PIN (US-894-b): the OBD LINK tile that printed the reason is
+          retired; the OBD row reads `link` (not read here) and never claims
+          the car is off.
     """
     payload = _emit(tmp_path, connection=_connection(state="disconnected"))
-    tile = _obdTile(payload)
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_NEVER_CONNECTED, tile
-    assert tile["detail"] != REASON_OBD_OFF, tile
+    assert payload["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
+    row = _obdRow(payload)
+    assert row["sentence"] == "Bluetooth not read yet", row
+    assert REASON_OBD_OFF not in row["card"], row
 
 
 def test_theNewWordIsPinnedAsALITERAL_notAsTheConstantItComesFrom(tmp_path):
@@ -659,6 +657,8 @@ def test_theObdLinkRetryPhaseNeverReachesTheTopBar(tmp_path):
 
           The flap's old route to the glyph was obdLink + source.obd. A chain
           that varied here would be reading one of them again.
+          MOVED PIN (US-894-b): obdLink is retired, so the retry phase the
+          samples must vary in is read where it still lives -- the gather.
     """
     samples = {
         f"{name}-{token}": _emit(
@@ -671,7 +671,19 @@ def test_theObdLinkRetryPhaseNeverReachesTheTopBar(tmp_path):
         )
         for token in tokens
     }
-    assert {p["obdLink"]["state"] for p in samples.values()} >= {"reconnecting", "down"}
+    phases = {
+        _Orch(
+            str(tmp_path / f"gather-{name}-{token}"),
+            connection=_connection(state=token, totalConnections=total),
+        )._gatherObdLinkState()[0]
+        for name, total, tokens in (
+            ("never", 0, ("connecting", "disconnected")),
+            ("dropped", 2, ("reconnecting", "disconnected")),
+        )
+        for token in tokens
+    }
+    assert phases >= {"reconnecting", "down"}
+    assert all("obdLink" not in p for p in samples.values())
     chains = {key: _chain(payload) for key, payload in samples.items()}
     hollow = {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
     assert all(chain == hollow for chain in chains.values()), chains
@@ -740,8 +752,6 @@ def test_anAbsenceWithNoSuppliedReasonIsNotGivenTheCarOffClaimOnItsBehalf():
           orchestrator, so this is a live contract and not a hypothetical.
     """
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=_FRESH_SYNC,
         syncRows=10,
@@ -773,8 +783,6 @@ def test_aSuppliedCarOffReasonIsStillHonoured_soThisWasNotABlanketBan():
           deleting the constant's last legitimate use as well.
     """
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_FRESH_SYNC,
         syncRows=10,
         syncPending=0,

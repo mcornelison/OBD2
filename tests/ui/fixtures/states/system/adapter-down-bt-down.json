@@ -1,0 +1,132 @@
+{
+  "description": "I1/I2: Bluetooth down and the adapter down -> the bt member speaks; the adapter step is not amber (BT is the fault).",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncRows": 0,
+      "syncPending": null,
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "down",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "adapter": {
+          "state": "down",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "ecu": {
+          "state": null,
+          "ts": null,
+          "lastOkTs": null
+        }
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "rows": 0,
+        "pending": null,
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "down",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "adapter": {
+          "state": "down",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "ecu": {
+          "state": null,
+          "ts": null,
+          "lastOkTs": null
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "bt",
+            "reason": "Not linked. Check the OBD dongle."
+          }
+        ]
+      }
+    }
+  }
+}

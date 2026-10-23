@@ -40,8 +40,6 @@ _BLOCK = {
     "dataQuality": "full",
 }
 _BASE: dict = {
-    "obdLinkState": "down",
-    "obdRetries": 0,
     # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
     "syncLastOkTs": None,
     "syncRows": 0,

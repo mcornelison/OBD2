@@ -175,6 +175,8 @@
                                   vehicle" chip. The token predates US-510; the
                                   dashboard simply was not pointing at it. */
   --tap-min:        40px;      /* minimum touch target (S-2) */
+  --row-min:        44px;      /* US-894-b: a System page row, a touch target
+                                  when parked (system spec s3, Iris I10) */
 }
 
 /* --- US-495 (F-111): the [hidden] guard -------------------------------------
@@ -618,55 +620,65 @@ html, body {
   color: var(--text-secondary); font-weight: 500; letter-spacing: 0.06em;
 }
 
-/* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
-/* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a
-   2x2 tile grid, and a per-tile status dot. No new data, no new contract.
-   The dot introduces NO new severity vocabulary -- it MIRRORS the
-   `.tile[data-level] .tile-value` mapping above token-for-token, including
-   `down`, which US-488 (TD-067) just swept to WATCH amber ("degraded is not
-   danger"). A red dot here would re-open that debt a sprint after it closed,
-   and would contradict the value sitting beside it. */
-.sys-summary {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 2px 0 6px 0; margin-bottom: 6px;
-  border-bottom: 1px solid var(--surface);
+/* --- US-894-b System page: verdict line + rows (system spec s3 layout A) ---- */
+/* The verdict is the driver-glance element; each row is a label, a value and a
+   one-line sentence. Rows never use `.tile`. Spec AC 11: no literal colour and
+   no px in these rules -- tokens, em and ch only. Amber is a verdict MEMBER's
+   (s4.0): the page paints `amber` only where the view says a member speaks. */
+.sys-verdict {
+  display: flex; align-items: baseline; gap: 0.5em;
+  padding-bottom: 0.25em; border-bottom: 0.0625em solid var(--surface);
 }
-/* Neutral base: an unrecognised level inherits no severity it has not earned. */
-.sys-summary-text {
+.sys-verdict-text {
   font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
-.sys-summary-detail {
-  margin-left: auto; font-size: var(--fs-label); color: var(--text-tertiary);
+.sys-verdict[data-level="ok"] .sys-verdict-text { color: var(--green-ok); }
+.sys-verdict[data-level="amber"] .sys-verdict-text { color: var(--amber-warn); }
+.sys-verdict[data-level="unavailable"] .sys-verdict-text { color: var(--text-tertiary); }
+.sys-tappable { cursor: pointer; }
+.sys-chevron { font-size: var(--fs-label); color: var(--text-tertiary); }
+.sys-row {
+  display: flex; align-items: center; gap: 0.5em;
+  min-height: var(--row-min); box-sizing: border-box;
+  border-bottom: 0.0625em solid var(--surface);
 }
-.sys-summary[data-level="ok"] .sys-summary-text { color: var(--green-ok); }
-.sys-summary[data-level="amber"] .sys-summary-text { color: var(--amber-warn); }
-/* TD-067: a degraded source is WATCH, never the pull-over red. */
-.sys-summary[data-level="down"] .sys-summary-text { color: var(--amber-warn); }
-.sys-summary[data-level="unavailable"] .sys-summary-text {
-  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+.sys-row-label {
+  flex: 0 0 4.5em;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); color: var(--text-secondary);
 }
-/* The 2x2 grid (F-092's original intent). ONLY the System Status card regrids;
-   the battery card and the LTFT card keep the base `.tile`
-   stack above. `:last-child` is spelled out because the base rule zeroes the
-   bottom border there -- without it the final grid cell renders open-sided. */
-.sys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.sys-grid .tile, .sys-grid .tile:last-child {
-  border: 1px solid var(--surface); border-radius: 4px; padding: 6px 8px;
+.sys-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.sys-row-value {
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.tile-head { display: flex; align-items: center; gap: 6px; }
-.tile-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  flex: 0 0 auto; background: var(--text-tertiary);
+/* One line; the ellipsis is the visible sign, the full text is in the detail. */
+.sys-row-sentence {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.tile[data-level="ok"] .tile-dot { background: var(--green-ok); }
-.tile[data-level="amber"] .tile-dot { background: var(--amber-warn); }
-.tile[data-level="down"] .tile-dot { background: var(--amber-warn); }
-.tile[data-level="neutral"] .tile-dot { background: var(--text-secondary); }
-.tile[data-level="unavailable"] .tile-dot { background: var(--text-tertiary); }
-/* US-700: the dot follows the value -- a loading tile with a dead-gray dot
-   beside a live-gray value would contradict itself inside one tile. */
-.tile[data-level="loading"] .tile-dot { background: var(--text-secondary); }
+.sys-row[data-level="amber"] .sys-row-sentence { color: var(--amber-warn); }
+/* The OBD chain (s4.2): outlined steps, the look on each step's data-state. A
+   step the provider did not read is DASHED (AC 4), never the solid `down`. */
+.obd-join { color: var(--text-tertiary); }
+.obd-step {
+  display: inline-block; padding: 0 0.25em;
+  border: 0.0625em solid currentColor; border-radius: 0.2em;
+  color: var(--text-tertiary);
+}
+.obd-step[data-state="ok"]        { color: var(--green-ok); }
+.obd-step[data-state="neutral"]   { color: var(--text-secondary); }
+.obd-step[data-state="secondary"] { color: var(--text-secondary); }
+.obd-step[data-state="tertiary"]  { color: var(--text-tertiary); }
+.obd-step[data-state="amber"]     { color: var(--amber-warn); }
+.obd-step[data-state="dashed"]    { color: var(--text-tertiary); border-style: dashed; }
+/* The OBD detail (s4.6) inside #sys-detail. */
+.obd-layer-state { margin-left: auto; font-size: var(--fs-label); color: var(--text-primary); }
+.obd-layer-fact { font-size: var(--fs-label); color: var(--text-secondary); }
+.obd-detail-sentence { font-size: var(--fs-label); color: var(--text-secondary); }
+.obd-detail-sentence[data-level="amber"] { color: var(--amber-warn); }
 
 /* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
 /* The drain ladder block is appended ONLY when battery-health.draining===true;
@@ -1319,10 +1331,6 @@ html, body {
 .sys-diag-text {
   margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
 }
-/* US-509: the summary line only LOOKS like a control when it is one. */
-.sys-summary-tappable { cursor: pointer; }
-.sys-summary-chevron { font-size: var(--fs-secondary); color: var(--text-tertiary); }
-.sys-summary-tappable .sys-summary-detail { margin-left: auto; }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)

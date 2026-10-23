@@ -44,7 +44,6 @@ from src.pi.splash.system_status_emitter import buildSystemStatusState, deriveWi
 
 _BASE = dict(
     # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
-    obdLinkState="down", obdRetries=0,
     syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
     powerSource="unknown",
     driveState="idle", driveId=None, nowIso="2026-08-28T00:00:00Z",
@@ -119,9 +118,11 @@ class TestTheBlockShapeMatchesTheRuling:
         assert s["source"]["wifi"] == {"available": True, "reason": None}
 
     def test_theExistingSchemaIsUntouched(self):
-        """Adding a source must not disturb the ones the cards already read."""
+        """Adding a source must not disturb the ones the cards already read.
+        MOVED PIN (US-894-b): obdLink is retired from the schema."""
         s = buildSystemStatusState(**_BASE)
-        for key in ("obdLink", "sync", "power", "drive", "idle", "ts"):
+        assert "obdLink" not in s
+        for key in ("sync", "power", "drive", "idle", "ts", "link"):
             assert key in s
         assert s["source"]["obd"]["available"] is True
 

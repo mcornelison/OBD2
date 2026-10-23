@@ -815,8 +815,11 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # US-877-b: the new top-level `verdict` {issueCount, members} (0 and [] in
 #           every trip fixture: nothing read is no issue); the inputs gain its
 #           one builder parameter, captureHealth, null.
+# US-894-b: MOVED PIN (US-894-b) -- `obdLink` is retired (Atlas A2/P6); the
+#           inputs drop its two builder parameters, obdLinkState and
+#           obdRetries. Nothing else moved (checked at regeneration: each new
+#           block == the old one minus obdLink).
 _TRIP_STATUS_KEYS = {
-    "obdLink": {"state", "retries"},
     "sync": {
         "lastOkTs", "rows", "pending", "stale",
         "rowsWaiting", "edrRowsWaiting", "notCounted",
@@ -842,7 +845,7 @@ _TRIP_STATUS_KEYS = {
     "verdict": {"issueCount", "members"},
 }
 _TRIP_LINK_LAYER_KEYS = {"state", "ts", "lastOkTs"}
-_TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
+_TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS", "obdLinkState", "obdRetries"}
 _TRIP_INPUT_KEYS_ADDED = {
     "syncRowsWaiting", "syncEdrRowsWaiting", "syncNotCounted", "piHealth",
     "captureHealth",

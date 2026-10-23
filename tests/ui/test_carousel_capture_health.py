@@ -298,24 +298,24 @@ class TestItReachesTheCard:
 
         assert view["tiles"]["capture"]["level"] == "down"
 
-    def test_systemStatusView_stalledCaptureMakesTheSummaryAnIssue(self) -> None:
+    def test_systemStatusView_stalledCaptureIsTheWorstDrillRow(self) -> None:
         """
         Given: EVERY other source healthy, and capture stalled
         When: the card view is built
-        Then: the summary reports an issue and names CAPTURE
+        Then: CAPTURE is the first (worst) row behind the verdict
 
-        The load-bearing assertion of this whole story. Every other tile is
-        green, so the issue can only have come from capture -- an implementation
-        that added the tile but left it out of SYS_TILE_ORDER passes the test
-        above and fails this one.
+        MOVED PIN (US-894-b): this pinned the retired `SYSTEM · 1 ISSUE`
+        summary. The page counts nothing now -- a capture ISSUE is the
+        provider's `capture` verdict member (spec s4.1) -- so what survives on
+        the page side is that the stalled tile is not lost: it leads the drill.
         """
         view = _view("systemStatusView", _sys(), _capture("stalled",
                                                           lastRowSecondsAgo=None,
                                                           reason="never_written"))
 
-        assert view["summary"]["issues"] == 1
-        assert "ISSUE" in view["summary"]["text"]
-        assert "CAPTURE" in view["summary"]["detail"]
+        assert "summary" not in view
+        assert view["drill"]["rows"][0]["label"] == "CAPTURE"
+        assert view["drill"]["rows"][0]["level"] == "down"
 
     def test_systemStatusView_stalledCaptureIsListedInTheDrillDown(self) -> None:
         """
@@ -346,8 +346,7 @@ class TestItReachesTheCard:
         """
         view = _view("systemStatusView", _sys(), _capture("ok"))
 
-        assert view["summary"]["text"] == "SYSTEM · OK"
-        assert view["summary"]["issues"] == 0
+        # MOVED PIN (US-894-b): the `SYSTEM · OK` summary is retired.
         labels = [r["label"] for r in view["drill"]["rows"]]
         assert "CAPTURE" not in labels
 
@@ -366,7 +365,7 @@ class TestItReachesTheCard:
         view = _view("systemStatusView", _sys(), _capture("idle",
                                                           lastRowSecondsAgo=None))
 
-        assert view["summary"]["text"] == "SYSTEM · OK"
+        # MOVED PIN (US-894-b): the `SYSTEM · OK` summary is retired.
         labels = [r["label"] for r in view["drill"]["rows"]]
         assert "CAPTURE" not in labels
 
@@ -383,32 +382,26 @@ class TestItReachesTheCard:
         view = _view("systemStatusView", _sys())
 
         assert view["tiles"].get("capture") is None
-        assert view["summary"]["text"] == "SYSTEM · OK"
+        # MOVED PIN (US-894-b): the summary is retired; the page still builds.
+        assert view["verdict"]["text"] in ("ALL OK", "--")
+        assert view["rows"][0]["key"] == "obd"
 
 
 # ----------------------------------------------------------------- the grid
 
 
 class TestTheGridRendersIt:
-    """A tile in the summary that is missing from the grid is a contradiction."""
+    """MOVED PIN (US-894-b): the 2x2 grid is retired (spec s3 layout A). The
+    capture tile stays in the view (it feeds the drill) until the DATA row
+    lands (US-894-c); meanwhile the page paints no tile and counts nothing, so
+    the old contradiction -- a count over tiles that do not show it -- cannot
+    arise."""
 
-    def test_renderSystemStatusCard_appendsTheCaptureTile(self) -> None:
-        """
-        Given: the shipped carousel.js source
-        When: the system-status grid construction is read
-        Then: the capture tile is appended alongside the other four
-
-        Asserted against the SOURCE because the grid is built with hand-listed
-        `appendTile` calls, not a loop over SYS_TILE_ORDER -- so adding the tile
-        to the view does NOT put it on the card, and nothing else in this file
-        would notice.
-        """
+    def test_theSystemPagePaintsNoTileGrid(self) -> None:
         src = open(_JS, encoding="utf-8").read()
 
-        assert "appendTile(grid, view.tiles.capture" in src, (
-            "the capture tile reaches the summary but is never painted in the "
-            "grid -- the card would read 'SYSTEM · 1 ISSUE' over four green tiles"
-        )
+        assert "appendTile(grid" not in src
+        assert '"sys-grid"' not in src
 
 
 # ------------------------------------------------- US-873: the additive feeds

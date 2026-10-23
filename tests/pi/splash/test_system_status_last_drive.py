@@ -32,8 +32,6 @@ from pi.splash.system_status_emitter import buildSystemStatusState
 _TS = "2026-08-02T12:00:00Z"
 
 _BASE: dict = {
-    "obdLinkState": "down",
-    "obdRetries": 0,
     # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
     "syncLastOkTs": None,
     "syncRows": 0,

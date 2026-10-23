@@ -320,8 +320,6 @@ def test_buildSystemStatusState_refusesAReasonBesideAResolvedSource():
     from pi.splash.system_status_emitter import buildSystemStatusState
 
     state = buildSystemStatusState(
-        obdLinkState="linked",
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=None,
         syncRows=0,
@@ -344,8 +342,6 @@ def test_buildSystemStatusState_unknownWithNoReasonStaysSilentRatherThanGuessing
     from pi.splash.system_status_emitter import buildSystemStatusState
 
     state = buildSystemStatusState(
-        obdLinkState="linked",
-        obdRetries=0,
         syncLastOkTs=None,
         syncRows=0,
         syncPending=None,

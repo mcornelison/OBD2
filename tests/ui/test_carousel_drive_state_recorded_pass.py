@@ -82,6 +82,14 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idle face LAST DRIVE cases
 #                               retire (LAST DRIVE is on NAV, US-896-b); the
 #                               System card cases stay.
+# 2026-10-23    | Ralph (Rex)  | US-894-b -- MOVED PIN: the 2x2 grid and the
+#                               `SYSTEM · …` summary are retired, and the DRIVE
+#                               tile is not painted until its DATA row lands
+#                               (US-894-c). The DRIVE cases now read the tile the
+#                               VIEW still builds (it feeds the drill), resolve
+#                               its colour through the shipped `.tile` cascade,
+#                               and open the drill from the verdict line
+#                               (parked-only). The summary-count assertions retire.
 # ================================================================================
 ################################################################################
 
@@ -93,6 +101,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -112,6 +121,8 @@ sys.path.insert(
 import render_harness as rh  # noqa: E402
 
 from pi.obdii.drive_summary import SCHEMA_DRIVE_SUMMARY  # noqa: E402
+from pi.obdii.gear_derivation import GEAR_PARK, REASON_PARK, GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
     CardStateEmitterMixin,
 )
@@ -165,8 +176,6 @@ def _systemStatus(**overrides: Any) -> dict:
     the drive block.
     """
     args: dict[str, Any] = {
-        "obdLinkState": "linked",
-        "obdRetries": 0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": _FRESH_SYNC,
         "syncRows": 1204,
@@ -291,7 +300,12 @@ def _emitToStateFile(tmp_path, **kwargs: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _surface(payload: Any, steps: list[dict[str, Any]] | None = None, imu: Any = None):
+def _surface(
+    payload: Any,
+    steps: list[dict[str, Any]] | None = None,
+    imu: Any = None,
+    parked: bool = False,
+):
     """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet.
 
     `imu` is left ABSENT by default, which is the shipped Pi today:
@@ -302,17 +316,27 @@ def _surface(payload: Any, steps: list[dict[str, Any]] | None = None, imu: Any =
     routes: dict[str, Any] = {} if payload is None else {"/system-status": payload}
     if imu is not None:
         routes["/imu"] = imu
-    tree = rh.runDashboard(routes=routes, steps=steps, viewport=PANEL)["tree"]
+    if parked:
+        # US-894-b: System taps are parked-only -- gear P held past the 8 s hold.
+        routes["/gear"] = buildGearState(
+            GearReading(True, GEAR_PARK, REASON_PARK), nowIso=_NOW
+        )
+    tree = rh.runDashboard(
+        routes=routes, steps=steps, viewport=PANEL,
+        nowMs=_NOW_MS if parked else None,
+    )["tree"]
     return rh.dashboardSurface(tree, viewport=PANEL)
 
 
+_NOW_MS = 1788187560000  # _NOW as epoch ms
+
 # The drill-down is rendered only while the overlay is OPEN, so reaching it means
-# TAPPING the summary line the way the operator does. The line is built by
-# carousel.js and carries no id, so it is reached by class via the `clickNth`
-# step US-635 added for exactly this reason.
+# TAPPING the line the way the operator does. MOVED PIN (US-894-b): that line is
+# the verdict (`.sys-verdict`), and the tap only works parked.
 _OPEN_DRILL = [
     {"flush": 4},
-    {"clickNth": {"selector": ".sys-summary", "index": 0}},
+    {"advanceMs": 9000, "flush": 4},
+    {"clickNth": {"selector": ".sys-verdict", "index": 0}},
     {"flush": 1},
 ]
 
@@ -326,47 +350,48 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _tileByLabel(surface, label: str) -> dict | None:
-    """The rendered `.tile` whose own label reads `label`, as the operator sees it.
-
-    Found by its PRINTED LABEL rather than by grid position, so a tile that moved
-    in the layout still resolves and a tile that VANISHED returns None instead of
-    silently matching its neighbour. Returns the printed value/detail, the level
-    the stylesheet is keyed on, and the COLOUR that level actually resolves to --
-    because "not green" is a claim about the panel, and a level token only means
-    not-green while the sheet agrees.
-    """
-    for path in surface.pathsByClass("tile"):
-        printed = _textOf(path[-1])
-        if not printed or printed[0] != label:
-            continue
-        if not surface.rendered(path):
-            continue
-        value = ""
-        detail = ""
-        valuePath = None
-        for child in path[-1].get("children", []):
-            classes = (child.get("attrs", {}).get("class") or "").split()
-            if "tile-value" in classes:
-                value = " ".join(_textOf(child))
-                valuePath = path + [child]
-            elif "tile-detail" in classes:
-                detail = " ".join(_textOf(child))
-        declaration = (
-            surface.winningDeclaration(valuePath, "color") if valuePath else None
-        )
-        return {
-            "value": value,
-            "detail": detail,
-            "level": path[-1].get("attrs", {}).get("data-level"),
-            "colour": declaration[0] if declaration else "",
-            "texts": printed,
-        }
-    return None
+def _viewTile(payload: Any, key: str) -> dict | None:
+    """The view's tile, through the shipped carousel.js (node probe)."""
+    probe = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
+    proc = subprocess.run(
+        [_NODE, probe, "systemStatusView", json.dumps(payload)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)["tiles"].get(key)
 
 
 def _driveTile(payload: Any, **kwargs: Any) -> dict | None:
-    return _tileByLabel(_surface(payload, **kwargs), "DRIVE")
+    """The DRIVE tile as the view builds it, its colour through the shipped
+    `.tile[data-level] .tile-value` cascade.
+
+    MOVED PIN (US-894-b): the tile is no longer painted (the 2x2 grid is
+    retired; the DRIVE fact's row lands in US-894-c), so the printed words are
+    the view's and the colour is resolved on a rendered `.tile` carrying this
+    tile's level -- "not green" stays a claim about the stylesheet.
+    """
+    tile = _viewTile(payload, "drive")
+    if tile is None:
+        return None
+    surface = _surface(payload, **kwargs)
+    valuePath = None
+    for path in surface.pathsByClass("tile"):
+        for child in path[-1].get("children", []):
+            if "tile-value" in (child.get("attrs", {}).get("class") or "").split():
+                valuePath = path + [child]
+                break
+        if valuePath is not None:
+            break
+    assert valuePath is not None, "no rendered .tile to resolve the cascade on"
+    valuePath[-2]["attrs"]["data-level"] = tile["level"]
+    declaration = surface.winningDeclaration(valuePath, "color")
+    return {
+        "value": tile["value"],
+        "detail": tile["detail"],
+        "level": tile["level"],
+        "colour": declaration[0] if declaration else "",
+        "texts": [tile["label"], tile["value"], tile["detail"]],
+    }
 
 
 def _systemCardText(payload: Any, **kwargs: Any) -> list[str]:
@@ -380,7 +405,7 @@ def _systemCardText(payload: Any, **kwargs: Any) -> list[str]:
 
 def _drillRows(payload: Any) -> list[str]:
     """The drill-down's issue rows, as printed, with the overlay OPEN."""
-    surface = _surface(payload, steps=_OPEN_DRILL)
+    surface = _surface(payload, steps=_OPEN_DRILL, parked=True)
     return [
         " ".join(_textOf(path[-1]))
         for path in surface.pathsByClass("sys-issue-row")
@@ -405,13 +430,12 @@ def test_theStylesheetPaintsGreenOnlyForTheOkLevel():
           and a sheet that painted `neutral` green would leave this file passing
           while a parked Pi claimed an active recording.
     """
+    # MOVED PIN (US-894-b): no DRIVE tile is painted; any rendered `.tile`
+    # carries the same `.tile[data-level] .tile-value` cascade.
     surface = _surface(_systemStatus())
-    path = None
-    for candidate in surface.pathsByClass("tile"):
-        printed = _textOf(candidate[-1])
-        if printed and printed[0] == "DRIVE":
-            path = candidate
-    assert path is not None
+    tiles = surface.pathsByClass("tile")
+    assert tiles, "no rendered .tile"
+    path = tiles[0]
     valuePath = None
     for child in path[-1].get("children", []):
         if "tile-value" in (child.get("attrs", {}).get("class") or "").split():
@@ -457,22 +481,19 @@ def test_atlasIdleObservation_paintsIdleNotRecording_andIsNotGreen():
     assert tile["colour"] != GREEN, tile
 
 
-def test_idleIsNominalNotAFault_soTheCardStillReadsSystemOk():
+def test_idleIsNominalNotAFault_theVerdictIsNotMovedByIt():
     """
     Given: a parked Pi with every other source healthy
-    When: the summary line compresses the four tiles
-    Then: it reads SYSTEM . OK.
+    When: the System page renders
+    Then: the verdict reads the provider's ALL OK.
 
-          `neutral` is the third bucket in SYS_LEVEL_RANK and it exists FOR this
-          tile: DRIVE=IDLE means "not recording", not "broken". Ranked as a
-          fault it would make green unreachable in the commonest state there is
-          (key on, no drive started) -- crying wolf, which is its own dishonesty.
-          Nothing pinned that ranking on a rendered card until now.
+          MOVED PIN (US-894-b): this pinned `SYSTEM · OK` from the retired
+          summary's SYS_LEVEL_RANK. The page counts nothing now; DRIVE=IDLE is
+          not a verdict member, so the line stays ALL OK.
     """
     printed = _systemCardText(_systemStatus())
 
-    assert "SYSTEM · OK" in printed, printed
-    assert "IDLE" in printed, printed
+    assert printed[0] == "ALL OK", printed
 
 
 def test_idleIsNeverListedAsAnIssueInTheDrillDown():
@@ -585,12 +606,9 @@ def test_unreadableDriveBlock_blocksTheCardsGreenAndIsListed():
           this file while claiming OK over a source nobody read.
     """
     payload = _withoutDriveBlock()
-    printed = _systemCardText(payload)
-
-    assert "SYSTEM · OK" not in printed, printed
-    assert "SYSTEM · 1 UNAVAILABLE" in printed, printed
-    assert "DRIVE · " + EM_DASH in printed, printed
-
+    # MOVED PIN (US-894-b): the `SYSTEM · 1 UNAVAILABLE` summary is retired --
+    # the page counts nothing. The unread source is still LISTED behind the
+    # verdict, which is the half of this pin that survives.
     rows = _drillRows(payload)
     driveRows = [row for row in rows if "DRIVE" in row]
     assert len(driveRows) == 1, rows

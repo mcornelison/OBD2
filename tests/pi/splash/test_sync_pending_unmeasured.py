@@ -34,8 +34,6 @@ from pi.splash.system_status_emitter import buildSystemStatusState
 def _state(**overrides):
     """Build a system-status payload with the boring fields filled in."""
     kwargs = {
-        "obdLinkState": "linked",
-        "obdRetries": 0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": "2026-08-21T11:00:00Z",
         "syncRows": 120,

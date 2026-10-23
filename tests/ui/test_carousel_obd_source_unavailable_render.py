@@ -71,6 +71,13 @@
 #               |              | the constant-reason finding (I-us637).
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): #glyph-bt is the link
 #               |              | chain; its dots read `link`, not source.obd.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-b): the OBD LINK tile, the
+#               |              | `SYSTEM · …` summary and obdLink are retired. The
+#               |              | panel half now reads the System page's OBD row,
+#               |              | which reads `link` verbatim and ignores
+#               |              | source.obd (spec s4.2); the PRODUCER half -- one
+#               |              | typed reason per cause in source.obd -- is
+#               |              | unchanged and still pinned end to end.
 # ================================================================================
 ################################################################################
 
@@ -148,15 +155,10 @@ def _systemStatus(**overrides: Any) -> dict:
     story records. Every other source is deliberately HEALTHY so that any
     non-green this file observes can only have come from the OBD source.
 
-    MOVED PIN (US-876-a): this fixture used to hand the producer a REAL
-    `obdLastSeenS` it had to blank. That key is gone from system-status; the
-    producer still blanks the whole `obdLink` block to {state: null,
-    retries: 0} when the source is unavailable, and that is pinned below.
+    MOVED PIN (US-894-b): obdLink and its two builder parameters are retired;
+    the payload carries no link state outside `link`.
     """
     args: dict[str, Any] = {
-        "obdLinkState": "down",
-        "obdRetries": 0,
-        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": _FRESH_SYNC,
         "syncRows": 1204,
         "syncPending": 0,
@@ -247,17 +249,6 @@ def _surface(payload: Any, steps: list[dict[str, Any]] | None = None):
     return rh.dashboardSurface(tree, viewport=PANEL)
 
 
-# The drill-down is rendered only while the overlay is OPEN, so reaching it
-# means TAPPING the summary line the way the operator does. The line is built by
-# carousel.js and carries no id, so it is reached by class via the `clickNth`
-# step US-635 added for exactly this reason.
-_OPEN_DRILL = [
-    {"flush": 4},
-    {"clickNth": {"selector": ".sys-summary", "index": 0}},
-    {"flush": 1},
-]
-
-
 def _textOf(node: dict) -> list[str]:
     out: list[str] = []
     for child in node.get("children", []):
@@ -268,57 +259,27 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _tilePathByLabel(surface, label: str) -> list[dict] | None:
-    """The rendered `.tile` whose own label reads `label`.
+def _obdRow(payload: Any) -> dict:
+    """The System page's OBD row as the operator sees it on the 480x320 panel.
 
-    Found by its PRINTED LABEL rather than by grid position, so a tile that
-    moved in the 2x2 layout still resolves and a tile that vanished fails loudly
-    instead of silently matching its neighbour.
-    """
-    for path in surface.pathsByClass("tile"):
-        for child in path[-1].get("children", []):
-            for text in _textOf({"children": [child]}):
-                if text == label:
-                    return path
-    return None
-
-
-def _obdTile(payload: Any) -> dict:
-    """The OBD LINK tile as the operator sees it on the 480x320 panel.
-
-    Returns the printed value/detail, the level the stylesheet is keyed on, and
-    the COLOUR that level actually resolves to -- because "not green" is a claim
-    about the panel, and a level token only means not-green while the sheet
-    agrees.
+    MOVED PIN (US-894-b): was `_obdTile` (the retired OBD LINK tile). Returns
+    the printed sentence, each step's look, the level the stylesheet is keyed
+    on and the colour the first step actually resolves to.
     """
     surface = _surface(payload)
-    path = _tilePathByLabel(surface, "OBD LINK")
-    assert path is not None, "no OBD LINK tile in the rendered DOM"
-    assert surface.rendered(path), "the OBD LINK tile is in the DOM but not displayed"
-
-    texts = _textOf(path[-1])
-    value = ""
-    detail = ""
-    for child in path[-1].get("children", []):
-        classes = (child.get("attrs", {}).get("class") or "").split()
-        if "tile-value" in classes:
-            value = " ".join(_textOf(child))
-        elif "tile-detail" in classes:
-            detail = " ".join(_textOf(child))
-
-    valuePath = None
-    for child in path[-1].get("children", []):
-        if "tile-value" in (child.get("attrs", {}).get("class") or "").split():
-            valuePath = path + [child]
-    declaration = (
-        surface.winningDeclaration(valuePath, "color") if valuePath else None
-    )
+    rows = surface.pathsByClass("sys-row")
+    assert len(rows) == 1, f"the System page paints {len(rows)} rows, not the OBD row"
+    path = rows[0]
+    assert surface.rendered(path), "the OBD row is in the DOM but not displayed"
+    sentence = surface.pathsByClass("sys-row-sentence")[0]
+    steps = surface.pathsByClass("obd-step")
+    colour = surface.winningDeclaration(steps[0], "color")
     return {
-        "value": value,
-        "detail": detail,
+        "sentence": " ".join(_textOf(sentence[-1])),
+        "steps": [step[-1]["attrs"].get("data-state") for step in steps],
         "level": path[-1].get("attrs", {}).get("data-level"),
-        "colour": declaration[0] if declaration else "",
-        "texts": texts,
+        "colour": colour[0] if colour else "",
+        "texts": _textOf(path[-1]),
     }
 
 
@@ -345,6 +306,7 @@ def _chain(payload: Any) -> dict[str, str]:
 
 
 _HOLLOW = {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
+_DASHED = ["dashed", "dashed", "dashed"]
 
 
 def _layers(bt: str | None, adapter: str | None, ecu: str | None) -> dict:
@@ -356,147 +318,102 @@ def _layers(bt: str | None, adapter: str | None, ecu: str | None) -> dict:
 
 # ---------------------------------------------------------------------------
 # NEGATIVE CONTROLS FIRST. Most assertions in this file are absence-shaped
-# ("never green", "no fabricated age"), and every one of them passes vacuously
+# ("never green", "never a reading"), and every one of them passes vacuously
 # if the harness reads nothing at all. A renamed class or a probe crash would
 # turn the whole file green while pinning nothing.
 # ---------------------------------------------------------------------------
 
 
-def test_theHarnessActuallyReadsTheObdTile_negativeControl():
+def test_theHarnessActuallyReadsTheObdRow_negativeControl():
     """
-    Given: every "must not" assertion below fails open if the tile is unreadable
-    When: an unmistakably AVAILABLE, linked OBD source is rendered
-    Then: the harness reads a real value, a real level and a real colour.
+    Given: every "must not" assertion below fails open if the row is unreadable
+    When: an unmistakably live chain is rendered
+    Then: the harness reads a real sentence, real step looks and a real colour.
+
+          MOVED PIN (US-894-b): was the OBD LINK tile's LINKED / ok / green.
     """
-    tile = _obdTile(
-        _systemStatus(obdAvailable=True, obdLinkState="linked")
-    )
-    assert tile["value"] == "LINKED", f"harness read no tile value: {tile!r}"
-    assert tile["level"] == "ok", f"harness read no tile level: {tile!r}"
-    assert tile["colour"] == GREEN, f"harness read no tile colour: {tile!r}"
+    row = _obdRow(_systemStatus(obdAvailable=True, link=_layers("up", "up", "up")))
+    assert row["sentence"] == "ECU answering", row
+    assert row["steps"] == ["ok", "ok", "ok"], row
+    assert row["colour"] == GREEN, row
 
 
-def test_theStylesheetPaintsGreenOnlyForTheOkLevel():
+def test_theStylesheetPaintsGreenOnlyForTheOkStep():
     """
-    Given: this file repeatedly claims the NA tile is "not green"
-    When: the shipped stylesheet is resolved for each tile level in turn
-    Then: `ok` is the ONLY level that resolves to the green token.
+    Given: this file claims an unread chain is "not green"
+    When: the shipped stylesheet is resolved for each step look in turn
+    Then: `ok` is the ONLY look that resolves to the green token.
 
-          Without this, "not green" only means "the token is not the string ok",
-          and a sheet that painted `unavailable` green would leave this file
-          passing while the panel claimed a link it never had.
+          MOVED PIN (US-894-b): was the tile's per-level value colour.
     """
     surface = _surface(_systemStatus())
-    path = _tilePathByLabel(surface, "OBD LINK")
-    assert path is not None
-    valuePath = None
-    for child in path[-1].get("children", []):
-        if "tile-value" in (child.get("attrs", {}).get("class") or "").split():
-            valuePath = path + [child]
-    assert valuePath is not None
-
+    step = surface.pathsByClass("obd-step")[0]
     resolved = {}
-    for level in ("ok", "amber", "down", "neutral", "unavailable"):
-        path[-1]["attrs"]["data-level"] = level
-        declaration = surface.winningDeclaration(valuePath, "color")
-        resolved[level] = declaration[0] if declaration else ""
-
+    for look in ("ok", "neutral", "secondary", "tertiary", "amber", "dashed"):
+        step[-1]["attrs"]["data-state"] = look
+        declaration = surface.winningDeclaration(step, "color")
+        resolved[look] = declaration[0] if declaration else ""
     assert resolved["ok"] == GREEN, resolved
-    greens = [level for level, colour in resolved.items() if colour == GREEN]
+    greens = [look for look, colour in resolved.items() if colour == GREEN]
     assert greens == ["ok"], f"green is reachable from more than `ok`: {resolved}"
 
 
 def test_theSystemCardIsReachableWhileTheObdSourceIsAbsent():
     """
-    Given: `idle` is (not obdAvailable) and not recording -- so EVERY payload in
-           this file sets idle True, and US-542 retired the STANDBY face that
-           idle used to select
+    Given: `idle` is (not obdAvailable) and not recording -- so EVERY default
+           payload in this file sets idle True
     When: that payload is rendered
-    Then: the System Status card is still painted.
-
-          THE WHOLE FILE RESTS ON THIS. If `idle` still routed the panel away
-          from the System card, every "the tile says NA" assertion below would
-          be pinning a surface no operator can reach -- true, and worthless.
-          US-636 is the precedent: an absence test passed there for the wrong
-          nested reason and the mutation was what exposed it, so the reachability
-          is asserted by name rather than inferred from the tile being findable.
+    Then: the System page is still painted, OBD row included.
     """
     payload = _systemStatus()
     assert payload["idle"] is True, "fixture no longer exercises the idle path"
-    assert "OBD LINK" in _systemCardText(payload), (
+    assert "OBD" in _systemCardText(payload), (
         "the System card did not paint while the OBD source was absent"
     )
 
 
 # ---------------------------------------------------------------------------
-# THE RECORDED PASS (validationCriteria 1). Atlas observed source.obd
-# available:false with reason "OBD: off" (punch list 3.1) and believed it
-# correct. It is correct, and this is now evidence rather than a memory.
+# THE PANEL. MOVED PIN (US-894-b): the OBD row reads `link` verbatim and
+# ignores source.obd (spec s4.2; S109 publishes link regardless). An absent
+# source with an unread chain is therefore a row that says it has not read
+# anything -- dashed steps, `not read yet` -- never a link state, and never
+# the solid `down` look. The typed NA tile that printed source.obd's reason is
+# retired with the OBD LINK tile; the reason itself is still published and
+# pinned on the producer half below.
 # ---------------------------------------------------------------------------
 
 
-def test_obdUnavailable_tilePaintsTypedNaOverTheEmittersOwnReason():
-    """
-    Given: THE OBSERVATION THIS STORY RECORDS -- source.obd.available false with
-           reason "OBD: off"
-    When: the shipped dashboard renders it on the 480x320 panel
-    Then: the tile reads NA over that reason, at the `unavailable` level, and is
-          NOT painted green.
-
-          The reason is asserted against REASON_OBD_OFF -- the producer's own
-          constant -- not against the string "OBD: off". A test that hard-codes
-          the words passes after someone changes them, which is the one moment
-          it needed to speak up.
-    """
-    tile = _obdTile(_systemStatus())
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_OFF, tile
-    assert tile["level"] == "unavailable", tile
-    assert tile["colour"] != GREEN, tile
+def test_obdUnavailable_unreadChain_isDashedAndNotReadYet_neverALinkState():
+    row = _obdRow(_systemStatus())
+    assert row["steps"] == _DASHED, row
+    assert row["sentence"] == "Bluetooth not read yet", row
+    assert row["colour"] != GREEN, row
+    text = " ".join(_systemCardText(_systemStatus())).lower()
+    assert "linked" not in text and "down" not in text, text
 
 
-def test_obdUnavailable_theReasonIsPrintedNotJustCarried():
-    """
-    Given: "with its reason" is the story's title, and a reason held in the view
-           object but never painted would satisfy every prior test
-    When: the System card is rendered
-    Then: the reason appears in the card's rendered TEXT.
-    """
-    assert REASON_OBD_OFF in _systemCardText(_systemStatus())
+def test_obdUnavailable_aLiveChainStillRenders_theRowIgnoresSourceObd():
+    """The positive control that the dashed row is not unconditional."""
+    payload = _systemStatus(link=_layers("up", "up", "connecting"))
+    assert payload["source"]["obd"]["available"] is False
+    row = _obdRow(payload)
+    assert row["steps"] == ["ok", "ok", "neutral"], row
+    assert row["sentence"] == "ECU not answering (key off?)", row
 
 
-def test_obdAvailable_rendersTheRealLinkState_soTheNaIsNotUnconditional():
+def test_obdAvailableButBtDown_rendersTheMemberMeasurement_notAnAbsence():
     """
-    Given: "always NA" would pass every assertion above
-    When: the OBD source is AVAILABLE and the link is live
-    Then: the real link state renders and the NA is nowhere on the card.
-    """
-    payload = _systemStatus(obdAvailable=True, obdLinkState="linked")
-    tile = _obdTile(payload)
-    assert tile["value"] == "LINKED", tile
-    # MOVED PIN (US-876-a): no age is published, so a linked tile's detail is
-    # the empty string it always rendered in production.
-    assert tile["detail"] == "", tile
-    assert REASON_OBD_OFF not in _systemCardText(payload)
-
-
-def test_obdAvailableButDown_stillRendersTheMeasurement_notTheAbsence():
-    """
-    Given: a link that DROPPED after a real connection -- the source is present
-           (we are retrying a car we have actually spoken to), the link is not
+    Given: Bluetooth read DOWN (no retry authority) -- a MEASUREMENT
     When: rendered
-    Then: the tile says DOWN, a MEASUREMENT, not the typed NA.
-
-          This is the distinction the whole honest-availability contract turns
-          on, and it is the half a "when in doubt say NA" regression would break
-          silently: an operator who is told NA while the Pi is actively retrying
-          a real car has been denied the one fact that would explain the panel.
+    Then: the BT step is amber with the `bt` member's reason, never the dashed
+          not-read look. MOVED PIN (US-894-b): was the tile's DOWN.
     """
-    tile = _obdTile(
-        _systemStatus(obdAvailable=True, obdLinkState="down", obdRetries=3)
-    )
-    assert tile["value"] == "DOWN", tile
-    assert tile["level"] == "down", tile
+    payload = _systemStatus(obdAvailable=True, link=_layers("down", None, None))
+    member = payload["verdict"]["members"][0]
+    assert member["key"] == "bt"
+    row = _obdRow(payload)
+    assert row["steps"][0] == "amber", row
+    assert row["sentence"] == member["reason"], row
 
 
 def test_obdUnavailable_unreadLinkChainIsHollow_neverDown():
@@ -515,63 +432,39 @@ def test_obdUnavailable_unreadLinkChainIsHollow_neverDown():
     assert _chain(_systemStatus(link=_layers("down", None, None)))["bt"] == "amber"
 
 
-def test_obdUnavailable_summaryNeverClaimsSystemOk():
+def test_theVerdictIsTheProviders_theRetiredSummaryWordsAreGone():
     """
-    Given: the summary line is a LOSSY compression of four tiles, which makes it
-           exactly where a green-when-unread lie enters
-    When: the OBD source is unavailable and every OTHER source is healthy
-    Then: the headline counts the unknown and names the source, and the words
-          SYSTEM OK appear nowhere on the card.
-
-          The other three sources are healthy ON PURPOSE: it means the only
-          thing that can stop this card going green is the OBD source itself.
-    """
-    text = _systemCardText(_systemStatus())
-    assert f"SYSTEM {MIDDLE_DOT} 1 UNAVAILABLE" in text, text
-    assert f"OBD LINK {MIDDLE_DOT} NA" in text, text
-    assert f"SYSTEM {MIDDLE_DOT} OK" not in text, text
-
-
-def test_allSourcesHealthy_summaryDoesSayOk_soTheGuardAboveIsNotVacuous():
-    """
-    Given: "SYSTEM OK is absent" also passes on a card that can never say it
-    When: every source including OBD is healthy
-    Then: the card DOES say SYSTEM OK.
-    """
-    text = _systemCardText(
-        _systemStatus(obdAvailable=True, obdLinkState="linked")
-    )
-    assert f"SYSTEM {MIDDLE_DOT} OK" in text, text
-
-
-# ---------------------------------------------------------------------------
-# THE OVERRIDE. The story's negative case -- "an unavailable source never
-# renders as available-with-no-data" -- in its sharpest form. Every prior
-# fixture zeroed `obdLink` and marked the source unavailable TOGETHER, so a
-# renderer that simply preferred `obdLink` would have passed all of them.
-# ---------------------------------------------------------------------------
-
-
-def test_unavailableSourceBeatsAStaleLinkedBlockSittingBesideIt():
-    """
-    Given: a payload carrying BOTH `source.obd.available: false` AND a stale
-           `obdLink.state: "linked"` with a seen-age -- the shape a producer
-           regression that stopped zeroing the link block would emit
-    When: rendered
-    Then: the tile is the typed NA. The source is the one truth; the stale link
-          block loses.
-
-          This is the property that makes the contract worth anything: without
-          it, honest availability holds only for as long as one producer keeps
-          voluntarily blanking a field the renderer was never told to ignore.
+    MOVED PIN (US-894-b): this pinned `SYSTEM · 1 UNAVAILABLE` over an absent
+    OBD source. The page no longer counts anything (spec s4.1): the verdict is
+    the provider's, and nothing read is no issue -- so the line reads the
+    provider's ALL OK, and none of the retired summary's words survive.
     """
     payload = _systemStatus()
-    payload["obdLink"] = {"state": "linked", "retries": 0}
-    tile = _obdTile(payload)
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_OFF, tile
-    assert "LINKED" not in _systemCardText(payload)
-    assert "seen 4s ago" not in _systemCardText(payload)
+    assert payload["verdict"] == {"issueCount": 0, "members": []}
+    text = _systemCardText(payload)
+    assert text[0] == "ALL OK", text
+    joined = " ".join(text)
+    assert f"SYSTEM {MIDDLE_DOT}" not in joined, joined
+    assert "UNAVAILABLE" not in joined and "NA" not in text, joined
+
+
+def test_aStaleObdLinkBlockSittingBesideAnUnreadChain_isIgnored():
+    """
+    Given: a payload carrying a stale `obdLink.state: "linked"` (a producer
+           regression that brought the retired block back) beside an unread
+           chain
+    When: rendered -- the row AND the top bar
+    Then: neither reads it. The chain is the one link fact.
+
+          MOVED PIN (US-894-b): was "the unavailable source beats the stale
+          linked block" on the tile.
+    """
+    stale = _systemStatus()
+    stale["obdLink"] = {"state": "linked", "retries": 0}
+    assert _chain(stale) == _HOLLOW
+    row = _obdRow(stale)
+    assert row["steps"] == _DASHED, row
+    assert "LINKED" not in " ".join(_systemCardText(stale)).upper()
 
 
 def test_theTopBarChainReadsLinkVerbatim_neitherObdLinkNorSourceObd():
@@ -595,106 +488,63 @@ def test_theTopBarChainReadsLinkVerbatim_neitherObdLinkNorSourceObd():
     assert _chain(live) == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
 
 
-def test_unavailableWithNoReason_stillPrintsAReason_neverABlankDetail():
+def test_unavailableWithNoReason_theProducerStillPublishesAReason():
     """
-    Given: the story's negative case -- an unavailable source ALWAYS carries a
-           reason
-    When: the source block is unavailable with a null reason (the producer's own
-           fallback path, `buildSourceState(False, None)`)
-    Then: the tile still prints a word, and it is the producer's fallback.
+    Given: an unavailable source ALWAYS carries a reason
+    When: the source block is unavailable with a null reason (the producer's
+          own fallback path, `buildSourceState(False, None)`)
+    Then: the published reason is the producer's fallback word, never blank.
 
-          A blank detail line is the failure this guards: it renders as a tile
-          that simply says NA and declines to say why, which is the difference
-          between an instrument reporting an absence and one that has stopped
-          talking.
+          MOVED PIN (US-894-b): the tile that printed it is retired; the
+          producer's half of the guarantee stands.
     """
     payload = _systemStatus()
     payload["source"]["obd"] = buildSourceState(False, None)
     assert payload["source"]["obd"]["reason"] == "unavailable"
-    tile = _obdTile(payload)
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == "unavailable", tile
-    assert tile["detail"] != "", tile
 
 
-def test_unavailableSource_drillRowCarriesTheReasonAndNoFabricatedAge():
-    """
-    Given: the drill-down's freshness column is a SECOND fact on the row,
-           independent of the tile it lists
-    When: the real producer's unavailable payload is rendered and the overlay
-          drawn
-    Then: the row carries the reason and says the age was NOT REPORTED.
-
-          The honesty of that row therefore depends on the PRODUCER zeroing
-          `obdLink`, not on the renderer. Two individually-correct halves with
-          nothing on the join -- so the join is what is asserted, on the real
-          producer's own output.
-    """
-    payload = _systemStatus()
-    surface = _surface(payload, steps=_OPEN_DRILL)
-    rows = [
-        " ".join(_textOf(path[-1]))
-        for path in surface.pathsByClass("sys-issue-row")
-    ]
-    obdRows = [row for row in rows if "OBD LINK" in row]
-    assert len(obdRows) == 1, rows
-    assert REASON_OBD_OFF in obdRows[0], obdRows
-    # Asserted on the RENDERED ROW before the producer field, so a producer that
-    # stops blanking `obdLink` fails here showing the fabricated age it printed
-    # -- the thing the operator would actually read -- rather than as a fixture
-    # complaint about a field.
-    assert "age not reported" in obdRows[0], obdRows
-    assert "seen" not in obdRows[0], obdRows
-    # MOVED PIN (US-876-a): was `obdLink.lastSeenS is None`; the key is gone.
-    assert payload["obdLink"] == {"state": None, "retries": 0}, (
-        "the producer stopped blanking obdLink -- the panel can now print a "
-        "link state for a source nobody read"
-    )
+def test_theProducerPublishesNoObdLinkBlock():
+    """MOVED PIN (US-894-b): was "the producer blanks obdLink"; it is retired."""
+    assert "obdLink" not in _systemStatus()
+    assert "obdLink" not in _systemStatus(obdAvailable=True)
 
 
 # ---------------------------------------------------------------------------
-# THE CHAIN, END TO END. Everything above starts at `buildSystemStatusState`.
-# The fact this story is about is decided one layer UP, and the layer above is
-# where the reason is CHOSEN. US-634's lesson: when a default is load-bearing,
-# exercise the path production actually takes.
+# THE CHAIN, END TO END. The fact this story is about is decided one layer UP
+# from `buildSystemStatusState`, and the layer above is where the reason is
+# CHOSEN. US-634's lesson: when a default is load-bearing, exercise the path
+# production actually takes.
 # ---------------------------------------------------------------------------
 
 
-def test_realOrchestratorWithNoConnection_paintsNaAndTheReasonOnThePanel(tmp_path):
+def test_realOrchestratorWithNoConnection_publishesTheReason_andThePageReadsNoLink(tmp_path):
     """
-    Given: the REAL orchestrator on a bench with no OBD connection at all --
-           Atlas's punch-list 3.1 Pi
+    Given: the REAL orchestrator on a bench with no OBD connection at all
     When: it emits system-status to a real file, and the SHIPPED dashboard reads
           that file
-    Then: the panel paints NA over the reason the orchestrator chose.
+    Then: source.obd carries the reason the orchestrator chose, and the OBD row
+          reads no link (dashed, not read yet).
 
-          Acquisition -> producer -> state file -> renderer -> DOM, in one
-          assertion. No hand-written JSON anywhere in it, so a rename or a
-          re-shape at ANY link fails here.
-
-          RE-RECORDED 2026-08-31 (US-663). This originally expected "OBD: off".
-          It does not any more, and the change is the fix: with no connection
-          object, NOTHING HAS LOOKED at the link, and the car may well be
-          running. The story's pass -- a typed NA painted over the emitter's own
-          reason -- is unchanged and is still what this asserts; only the word
-          moved, and it moved from a guess to a fact.
+          RE-RECORDED 2026-08-31 (US-663): the reason is "not read", not "OBD:
+          off" -- with no connection object, NOTHING HAS LOOKED at the link.
+          MOVED PIN (US-894-b): the panel half reads the OBD row.
     """
     state = _emitToStateFile(tmp_path)
     assert state["source"]["obd"]["available"] is False
     assert state["source"]["obd"]["reason"] == REASON_OBD_LINK_NOT_READ
+    assert "obdLink" not in state
 
-    tile = _obdTile(state)
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_LINK_NOT_READ, tile
-    assert tile["level"] == "unavailable", tile
+    row = _obdRow(state)
+    assert row["steps"] == _DASHED, row
+    assert row["sentence"] == "Bluetooth not read yet", row
 
 
-def test_realOrchestratorWithALiveCar_paintsTheLink_notTheAbsence(tmp_path):
+def test_realOrchestratorWithALiveCar_publishesTheSourceAvailable(tmp_path):
     """
     Given: the REAL orchestrator with a connected car
     When: the same chain runs
-    Then: the panel paints LINKED -- so the test above is pinning the
-          orchestrator's DECISION, not a constant it always writes.
+    Then: the source is AVAILABLE with no reason -- so the test above is pinning
+          the orchestrator's DECISION, not a constant it always writes.
     """
     conn = SimpleNamespace(
         getStatus=lambda: _connectionStatus(
@@ -704,21 +554,15 @@ def test_realOrchestratorWithALiveCar_paintsTheLink_notTheAbsence(tmp_path):
     state = _emitToStateFile(tmp_path, connection=conn)
     assert state["source"]["obd"]["available"] is True
     assert state["source"]["obd"]["reason"] is None
-
-    tile = _obdTile(state)
-    assert tile["value"] == "LINKED", tile
+    assert "obdLink" not in state
 
 
-def test_realOrchestratorWithADroppedButSeenCar_paintsDown_notNa(tmp_path):
+def test_realOrchestratorWithADroppedButSeenCar_keepsTheSourceAvailable(tmp_path):
     """
     Given: the REAL orchestrator with a link that dropped after connecting
     When: the same chain runs
-    Then: the source stays AVAILABLE and the panel paints the DOWN measurement.
-
-          The third branch of `_gatherObdLinkState`, and the one that keeps the
-          typed NA from swallowing a real fault: a car we have spoken to and
-          lost is a MEASUREMENT, and reporting it as "we could not look" would
-          hide a dropped link behind a shrug.
+    Then: the source stays AVAILABLE -- a car we have spoken to and lost is a
+          MEASUREMENT, never "we could not look".
     """
     conn = SimpleNamespace(
         getStatus=lambda: _connectionStatus(
@@ -728,17 +572,10 @@ def test_realOrchestratorWithADroppedButSeenCar_paintsDown_notNa(tmp_path):
     state = _emitToStateFile(tmp_path, connection=conn)
     assert state["source"]["obd"]["available"] is True
 
-    tile = _obdTile(state)
-    assert tile["value"] == "DOWN", tile
-
 
 # ---------------------------------------------------------------------------
 # WAS CHARACTERISATION, NOW VERIFICATION -- the finding (I-us637) was fixed by
-# US-663 on 2026-08-31. These two tests pinned behaviour that was WRONG so that
-# fixing it would fail here on purpose; it did, and they have been re-recorded
-# against the new behaviour. The CASES are unchanged -- the same two causes, the
-# same real acquisition path -- so the history stays legible and neither cause
-# can quietly regress into the other.
+# US-663 on 2026-08-31 and re-recorded against the new behaviour.
 # ---------------------------------------------------------------------------
 
 
@@ -747,18 +584,9 @@ def test_unreadableStatusPublishesItsOwnReason_notAClaimAboutTheCar(
 ):
     """
     Given: `conn.getStatus()` RAISES -- the Pi cannot read its own connection
-    When: the real orchestrator emits and the panel renders
-    Then: the driver is told the LINK is unreadable, not that the car is off.
-
-          RE-RECORDED 2026-08-31 (US-663). This test previously asserted the
-          defect: `card_state_emitter.py` hard-coded REASON_OBD_OFF for all three
-          unavailable causes, so a driver in a RUNNING car whose adapter handle
-          died was told the car was off -- the same collapse US-632 recorded for
-          the battery verdict's bare `unknown`, and the same distinction
-          carousel.js:873 protects for wifi. The producer now carries one word
-          per cause. The inequality below is kept as an assertion rather than
-          dropped: it is the half of the fix that a future refactor could undo
-          without touching the equality above it.
+    When: the real orchestrator emits
+    Then: the published reason says the LINK is unreadable, not that the car is
+          off.
     """
 
     def _raise() -> Any:
@@ -769,9 +597,6 @@ def test_unreadableStatusPublishesItsOwnReason_notAClaimAboutTheCar(
     assert state["source"]["obd"]["reason"] == REASON_OBD_LINK_UNREADABLE
     assert state["source"]["obd"]["reason"] != REASON_OBD_OFF
 
-    tile = _obdTile(state)
-    assert tile["detail"] == REASON_OBD_LINK_UNREADABLE, tile
-
 
 def test_neverLookedAndUnreadableAreDistinguishableInTheStateFile(tmp_path):
     """
@@ -780,17 +605,8 @@ def test_neverLookedAndUnreadableAreDistinguishableInTheStateFile(tmp_path):
           that raised
     Then: the source blocks DIFFER, and they differ in the reason.
 
-          RE-RECORDED 2026-08-31 (US-663). This test previously asserted the two
-          payloads were IDENTICAL, which was the measurement behind I-us637:
-          nobody reading the state file or the panel could tell "nothing has
-          looked yet" from "the Pi lost its own adapter handle". Two faults, two
-          fixes, one word.
-
-          `obdLink` is still identical between them and that is CORRECT, not a
-          leftover: both are absences, so both blank the block. The fact that
-          distinguishes them lives in `source.obd`, which is where US-429 puts
-          one availability truth per source. Asserted explicitly so a future
-          change that started differentiating the blanked block gets noticed.
+          The chain is identical between them and that is CORRECT: both read
+          nothing. MOVED PIN (US-894-b): was the blanked obdLink block.
     """
 
     def _raise() -> Any:
@@ -801,26 +617,4 @@ def test_neverLookedAndUnreadableAreDistinguishableInTheStateFile(tmp_path):
     assert noConn["source"]["obd"] != unreadable["source"]["obd"]
     assert noConn["source"]["obd"]["reason"] == REASON_OBD_LINK_NOT_READ
     assert unreadable["source"]["obd"]["reason"] == REASON_OBD_LINK_UNREADABLE
-    assert noConn["obdLink"] == unreadable["obdLink"]
-
-
-def test_characterisation_absentSourceBlockRendersAMeasurementNotAnAbsence():
-    """
-    Given: `sourceUnavailable()` requires `available === false` EXACTLY, and
-           treats a missing `source` block as AVAILABLE (carousel.js:527, an
-           explicit pre-US-429 backward-compat choice)
-    When: a payload arrives with no source block but a `down` link
-    Then: the panel paints DOWN -- a measurement -- over a source it never
-          confirmed.
-
-          Recorded rather than filed as a defect: every shipped producer writes
-          the block, so this is unreachable today. It is pinned because the
-          default is LOAD-BEARING and invisible -- the same shape as US-633's
-          `stale === true ? amber : ok`, where an else-branch that looked like a
-          fallback turned out to be an affirmative claim.
-    """
-    payload = _systemStatus(obdAvailable=True, obdLinkState="down")
-    del payload["source"]
-    tile = _obdTile(payload)
-    assert tile["value"] == "DOWN", tile
-    assert tile["level"] == "down", tile
+    assert noConn["link"] == unreadable["link"]

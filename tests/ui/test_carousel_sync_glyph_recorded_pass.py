@@ -58,6 +58,14 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-633 punch-list H2 recorded pass +
 #               |              | the green-by-default finding (I-us633).
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-b): the 2x2 grid and the
+#               |              | `SYSTEM · …` summary are retired and the SYNC
+#               |              | tile is not painted until the DATA row lands
+#               |              | (US-894-c). The card-text cases read the tile
+#               |              | the VIEW still builds (it feeds the drill); the
+#               |              | summary's "names SYNC" moves to the drill row;
+#               |              | the characterisation's `SYSTEM · OK` is the
+#               |              | verdict's ALL OK. The glyph cases are unchanged.
 # ================================================================================
 ################################################################################
 
@@ -66,8 +74,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -133,8 +143,6 @@ def _systemStatus(**overrides: Any) -> dict:
     sends the dashboard to the idle face where there is no System card to read.
     """
     args: dict[str, Any] = {
-        "obdLinkState": "linked",
-        "obdRetries": 0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": _FRESH_SYNC,
         "syncRows": 1204,
@@ -207,6 +215,24 @@ def _cardText(payload: Any, steps: list[dict[str, Any]] | None = None) -> list[s
     return []
 
 
+def _syncView(payload: Any) -> dict:
+    """systemStatusView through the shipped carousel.js (node probe)."""
+    probe = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
+    proc = subprocess.run(
+        ["node", probe, "systemStatusView", json.dumps(payload)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def _syncTileText(payload: Any) -> list[str]:
+    """The SYNC tile's words as the view builds them (MOVED PIN, US-894-b:
+    the tile is no longer painted; its row lands in US-894-c)."""
+    tile = _syncView(payload)["tiles"]["sync"]
+    return [t for t in (tile["label"], tile["value"], tile["detail"]) if t]
+
+
 def _textOf(node: dict) -> list[str]:
     out: list[str] = []
     for child in node.get("children", []):
@@ -240,10 +266,11 @@ def test_theHarnessActuallyReadsTheSystemCard_negativeControl():
     """
     Given: the card-text assertions below are also absence-shaped
     When: a healthy payload is rendered
-    Then: the SYNC tile's label is in the card text.
+    Then: the SYNC tile's label is in its text, and the card paints.
     """
-    text = _cardText(_systemStatus())
-    assert "SYNC" in text, f"harness read nothing from the System card: {text!r}"
+    text = _syncTileText(_systemStatus())
+    assert "SYNC" in text, f"harness read nothing from the SYNC tile: {text!r}"
+    assert _cardText(_systemStatus()), "the System card painted nothing"
 
 
 def test_theStylesheetPaintsGreenOnlyForTheOkState():
@@ -311,7 +338,7 @@ def test_syncCard_healthySync_showsOkAndTheStamp():
     Then: the SYNC tile reads OK and carries the last-success stamp, and the
           summary line is not claiming a fault.
     """
-    text = _cardText(_systemStatus())
+    text = _syncTileText(_systemStatus())
     assert "SYNC" in text
     assert "OK" in text
     assert any(t.startswith("Aug 31, 2026") for t in text), text
@@ -377,12 +404,15 @@ def test_syncCard_stale_namesSyncInTheSummaryLine():
     """
     Given: a stale sync while recording
     When: the System card renders
-    Then: the tile reads STALE and the one-glance summary NAMES sync as the
-          unhappy source -- the glyph says "something", the card says "what".
+    Then: the tile reads STALE and the drill behind the verdict NAMES sync as
+          the unhappy source -- the glyph says "something", the drill says
+          "what". MOVED PIN (US-894-b): the summary line that named it is
+          retired.
     """
-    text = _cardText(_emitted("recording", "2026-08-31T09:00:00Z", driveId=51))
-    assert "STALE" in text
-    assert any("SYNC" in t and "STALE" in t for t in text), text
+    payload = _emitted("recording", "2026-08-31T09:00:00Z", driveId=51)
+    assert "STALE" in _syncTileText(payload)
+    rows = _syncView(payload)["drill"]["rows"]
+    assert any(r["label"] == "SYNC" and r["value"] == "STALE" for r in rows), rows
 
 
 def test_syncGlyph_goesGreenToAmberWhenSyncGoesStale():
@@ -447,7 +477,7 @@ def test_syncCard_syncBlockAbsent_showsUnavailableNeverAZeroOrADate():
     """
     payload = _systemStatus()
     del payload["sync"]
-    text = _cardText(payload)
+    text = _syncTileText(payload)
     assert EM_DASH in text, text
     assert "unavailable" in text, text
     assert not any(t.startswith("Aug ") or t.startswith("Jul ") for t in text), text
@@ -534,9 +564,10 @@ def test_characterisation_neverSyncedWhileParked_currentlyRendersGreen():
     assert state == "ok", "I-us633 behaviour changed -- re-record this measurement"
     assert colour == GREEN
 
-    text = _cardText(payload)
+    text = _syncTileText(payload)
     assert "OK" in text and "never" in text, text
-    assert any("SYSTEM" in t and "OK" in t for t in text), text
+    # MOVED PIN (US-894-b): the `SYSTEM · OK` summary is the verdict's ALL OK.
+    assert _cardText(payload)[0] == "ALL OK", _cardText(payload)
 
 
 def test_characterisation_syncThirtySevenDaysBehindWhileParked_currentlyRendersGreen():

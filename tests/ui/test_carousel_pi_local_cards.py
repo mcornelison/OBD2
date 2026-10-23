@@ -249,7 +249,8 @@ def test_lightPageView_freshReadingWithoutABand_dashesTheWordAlone():
 
 def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
     """Honest-availability applies INSIDE a card: one absent sub-block grays its
-    own tile while every other tile still renders its real value."""
+    own tile while every other tile still renders its real value.
+    MOVED PIN (US-894-b): the OBD LINK tile is retired; sync is the witness."""
     view = _view(
         "systemStatusView",
         {
@@ -261,7 +262,7 @@ def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
         },
     )
     assert view["tiles"]["power"]["level"] == "unavailable"
-    assert view["tiles"]["obdLink"]["value"] == "LINKED"
+    assert view["tiles"]["sync"]["level"] == "ok"
     assert view["tiles"]["drive"]["value"] == "IDLE"
 
 

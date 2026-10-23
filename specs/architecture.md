@@ -749,9 +749,10 @@ after a failed attempt waits out the whole ceiling. Two rules now hold:
   blocker).
 - **Retries are one series per outage.** `ObdConnection` numbers every port
   attempt in the current outage, whichever loop makes it, and resets on a
-  successful connect. `connection_log.retry_count` and `obdLink.retries` both
-  read that number, so a boot `connect()` followed by the heartbeat reads
-  0, 1, 2, … instead of 0..5 then 0, 0, 0.
+  successful connect. `connection_log.retry_count` reads that number (so did
+  system-status `obdLink.retries` until US-894-b retired the block), so a boot
+  `connect()` followed by the heartbeat reads 0, 1, 2, … instead of 0..5 then
+  0, 0, 0.
 
 A `/dev/rfcomm0` present beside `Connected: no` is `rfcomm-bind.service`'s
 lazy binding: `rfcomm bind` creates the node without opening the link. Every
@@ -7502,8 +7503,35 @@ kiosk smoke on the panel, which remains the per-story on-Pi render check.
 #### System Status card + `system-status` emitter (US-400) [Atlas A-3]
 
 The **System Status** card (Card 1) renders the `system-status` state file at 4
-Hz: OBD-link / sync / power / drive tiles + the top-bar link-chain / sync / WiFi
-glyphs.
+Hz: the System page (verdict line + rows, below) + the top-bar link-chain / sync /
+WiFi glyphs.
+
+**System page = verdict line + rows (US-894-b, spec
+`specs/v030-system-page-design.md` §3 layout A, §4.1, §4.2, §4.6).** The US-489
+`SYSTEM · …` summary line, the 2×2 tile grid (`SYS_TILE_ORDER`) and the OBD-link
+tile are gone. `systemStatusView` returns `verdict` (`systemVerdictView`:
+`ALL OK` green at `verdict.issueCount` 0, `n ISSUE(S)` amber otherwise, `--`
+when the verdict is absent / malformed **or the file is unreadable** — never
+`ALL OK`), `rows` (one per subsystem, `.sys-row`, ≥ `--row-min` 44 px, one-line
+ellipsis; never `.tile`; rows not yet built are absent) and `obdDetail`. The
+**OBD row** (`obdRowView`) is the chain `BT → ADAPTER → ECU` from
+`link.<layer>.state`, each step the top-bar dot's look (`linkChainGlyph`) except
+a null layer is **dashed**, never the solid `down` look (AC 4). Its sentence is
+a `bt` / `adapter` verdict member's `reason` **verbatim** (amber), else the
+first non-up layer's words from `OBD_LAYER_SENTENCE` (Iris I1; neutral; later
+layers never speak; all up = `ECU answering`). The page composes no reason text
+and applies no threshold: amber appears only where a verdict member maps.
+**Taps are parked-only** (Atlas B9): the module accessor `currentParked()` →
+`{parked, gearKnown}` exposes the tick's DEBOUNCED `engineParked.parked` (gear
+P/N held 8 s, US-511-b) and the RAW `states/gear` `available === true`; the
+tick's `publishParked` is its only writer and `onParkedChange` listeners fire on
+a change of either value (the page repaints its taps on the edge). Not parked,
+no tap opens and no `›` shows. A parked tap on the OBD row opens the **OBD
+detail** in `#sys-detail` (per layer: state, `since` = `ts`, `last success` =
+`lastOkTs`, `--` where unpublished; then the sentence in full; no MAC and no
+retry count — no publish field); a parked tap on the verdict opens the US-509
+drill. `#version-chip` shows in the drill (the future Pi detail's line) and
+never in a row's detail (Iris I8).
 
 **Top-bar link indicator = the three-layer link chain (US-894-a, spec
 `specs/v030-system-page-design.md` §4.2.1).** The single `BT` glyph is retired
@@ -7512,7 +7540,7 @@ inline SVG (`.chain-mark`, declared `3ch × 1em`, relative units only): three
 dots BT → ADAPTER → ECU, each a `.chain-dot` with its own `data-layer` +
 `data-state`. `systemStatusView` returns `glyphs.bt = {bt, adapter, ecu}` from
 `linkChainGlyph`, which reads `system-status.link.<layer>.state` **verbatim**
-and ignores `source.obd` and `obdLink`: `up` → green, `connecting` → neutral,
+and ignores `source.obd`: `up` → green, `connecting` → neutral,
 `retrying` → `--text-secondary`, `down` → `--text-tertiary`, null / an
 unpublished word → a **hollow** ring. **Amber is keyed to the verdict member,
 never to a state** (§4.0): a dot is amber only while its layer is a
@@ -7533,12 +7561,26 @@ orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
 reusing the boot-state primitives). Schema (spec §7):
 
 ```json
-{ "obdLink": {"state":"reconnecting","retries":3},
-  "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
-  "power": {"mode":"car","source":"external"},
-  "drive": {"state":"recording","driveId":27},
+{ "sync": {"lastOkTs":"…","rows":1204,"pending":null,"stale":false,
+           "rowsWaiting":0,"edrRowsWaiting":0,"notCounted":["…"]},
+  "power": {"source":"external","reasons":{}},
+  "wifi": {"state":"up","ssid":"…","rssiDbm":-55,"home":true,"ts":"…"},
+  "pi": {"cpuTempC":51.2, "…": "…", "overLimit":[]},
+  "link": {"bt":{…}, "adapter":{…}, "ecu":{…}},
+  "drive": {"state":"recording","driveId":27, "…": "…"},
+  "idle": false, "priorShutdown": {…}, "runMode": "live",
+  "source": {"obd":{"available":true,"reason":null}, "wifi":{…}},
+  "verdict": {"issueCount":0,"members":[]},
   "ts":"…" }
 ```
+
+**`obdLink` is retired (US-894-b, Atlas A2/P6).** `buildSystemStatusState`,
+`emit()` and `_emitSystemStatusState` no longer take `obdLinkState` /
+`obdRetries` and publish no `obdLink` block; the link chain (`link`, below) is
+the one link fact. `_gatherObdLinkState` and `OBD_LINKED` / `OBD_RECONNECTING` /
+`OBD_DOWN` stay: the gear producer (`_emitGearState`) derives its link health
+from them. The one non-UI reader, `tools/imu/drive_console.py`, reads
+`link.ecu.state`.
 
 (US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`, and US-896-b
 adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
@@ -7564,8 +7606,7 @@ block, one entry per layer of the chain, every key always present:
 - **`lastOkTs`** is the last time the layer was up this session (null if never;
   never carried across a boot).
 - **Never blanked** when `source.obd.available` is false — that blanking was
-  the ARCH-061 grey. `obdLink {state, retries}` ships **unchanged** beside it
-  (S110 retires it); link `retrying` is not reflected in `obdLink.retries`.
+  the ARCH-061 grey of the retired `obdLink` block (US-894-b).
 
 One rule decides every layer: `deriveLinkLayerState` + `LinkLayerTracker` in
 `system_status_emitter.py`. The tracker (one per layer, held by the
@@ -7806,15 +7847,14 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
   it to the verdict in-process — never a file read-back of the previous tick
   (`tests/pi/orchestrator/test_card_state_emit_order.py`).
 
-**I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
-`linked` (green) / `reconnecting` (amber, with `retries`) / `down`
-(red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
-flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
-tile within ≤2 s (the operator finally *sees* the reconnect, closing the I-033
-"did it capture my drive?" blind spot). On the top bar the reconnect shows on
-the link chain's BT dot (US-894-a): amber while the provider counts `bt` as a
-verdict member (`link.bt` retrying while recording, or down), otherwise
-`--text-secondary`.
+**I-033 reconnect visibility.** The link chain's layer states are reported
+**verbatim**, never fabricated as `up`. On a mid-drive BT drop `link.bt` goes
+`retrying` and the 4 Hz poll surfaces it within ≤2 s on the top-bar chain's BT
+dot (US-894-a) and the System page's OBD row (US-894-b): amber, with the `bt`
+member's reason as the row's sentence, while the provider counts `bt` as a
+verdict member (`link.bt` retrying while recording, or down); otherwise
+`--text-secondary`. (The `obdLink` `reconnecting` tile that carried this before
+is retired, US-894-b.)
 
 **Power-mode SSOT (US-421 / F-098, Sprint 52 / V0.29.6).** The `power.mode`
 field (`car` / `wall` / `unknown`) reports the **deployment context** — Pi
@@ -7836,7 +7876,7 @@ is **`ok` (green) only when the underlying state is genuinely good**. A
 down/reconnecting link, a stale sync, or running on battery renders
 amber/down/neutral — never green. A missing sub-object renders that tile
 `unavailable` (the rest of the card still renders); a missing/malformed file
-renders the whole card `unavailable` and resets the glyphs to neutral (no
+renders the verdict `--` with no rows (US-894-b) and resets the glyphs (no
 lingering stale-green). Tiles are built with `textContent` (no `innerHTML`), so
 emitter values render verbatim, never as markup.
 
@@ -7847,8 +7887,10 @@ sync exceeds the threshold — and treats an absent/unparseable last-sync as sta
 and supplied by config: the emitter takes `syncStaleThresholdS` as a required
 parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
 
-**Summary drill-down (US-509, Sprint 68 / V0.29.23).** The US-489 one-glance
-`SYSTEM · N ISSUE` line is **tappable → a drill-down overlay** (`#sys-detail`,
+**Summary drill-down (US-509, Sprint 68 / V0.29.23).** Since US-894-b the
+**verdict line** is the tap target (parked only, `currentParked()`), and the
+US-489 `SYSTEM · N ISSUE` line and its grid are gone; the drill stays until
+US-894-f retires it. The line is **tappable → a drill-down overlay** (`#sys-detail`,
 `carousel.js#systemIssueRows` / `#systemDrill`), one row per non-OK source,
 **worst-first**: source label + state chip + the tile's own reason + freshness,
 with a `‹ Back` that always returns. It is a **presentation of the same tiles**

@@ -438,7 +438,12 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     MOVED PIN (US-899-b): the TROUBLE CODES screen's head, its tier chips and
     DISMISS are Michroma (spec s4.4b); its titles, sentences, '+n more on
     ALERTS' and notice stay --font-mono, pinned in
-    tests/ui/test_warnings_code_alert.py."""
+    tests/ui/test_warnings_code_alert.py.
+
+    MOVED PIN (US-894-b): the System page's row LABELS (OBD, then DATA / WIFI /
+    UPS as their rows land) are Michroma (system spec s3: "row label --fs-label
+    --font-display"); the values and sentences stay --font-mono, pinned in
+    tests/ui/test_system_page_obd_row.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -462,6 +467,7 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#code-alert .code-alert-head",
         "#code-alert .code-alert-chip",
         "#code-alert-dismiss",
+        ".sys-row-label",
     }, bound
 
 

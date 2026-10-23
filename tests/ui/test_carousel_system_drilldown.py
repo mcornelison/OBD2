@@ -33,6 +33,9 @@
 # 2026-07-31    | Ralph (Rex)  | Initial -- US-509 System-Status drill-down.
 # 2026-10-22    | Ralph (Rex)  | US-876-a MOVED PIN: no source publishes an age;
 #               |              | seen-age freshness/dedup cases reworked.
+# 2026-10-23    | Ralph (Rex)  | US-894-b MOVED PIN: the summary line is the
+#               |              | verdict line (parked-only tap); the OBD LINK
+#               |              | tile is retired, so the view case reads POWER.
 # ================================================================================
 ################################################################################
 
@@ -402,13 +405,15 @@ def test_systemStatusView_carriesTheDrillDownAlongsideTheSummary():
     Then: the drill rows travel WITH the view, derived from the same tiles --
           no second read of the state file
     """
+    # MOVED PIN (US-894-b): the OBD LINK tile is retired; a battery POWER
+    # tile is the degraded source the drill lists first.
     view = _view(
         "systemStatusView",
-        _sysState(obdLink={"state": "down", "retries": 5}),
+        _sysState(power={"mode": "car", "source": "battery"}),
     )
 
-    assert view["drill"]["rows"][0]["label"] == "OBD LINK"
-    assert view["drill"]["rows"][0]["level"] == view["tiles"]["obdLink"]["level"]
+    assert view["drill"]["rows"][0]["label"] == "POWER"
+    assert view["drill"]["rows"][0]["level"] == view["tiles"]["power"]["level"]
 
 
 # ---------------------------------------------------------------------------
@@ -528,12 +533,16 @@ def test_carouselJs_summaryLineIsTappableOnlyWhenRowsExist():
     When: its source is read
     Then: it gates the tap affordance on `drill.tappable`, so an all-good card
           never advertises a drill-down that would open empty
+
+          MOVED PIN (US-894-b): the verdict line is the tap target, painted by
+          renderSystemBody (and gated on parked as well).
     """
     js = _stripJsComments(_read(_JS))
-    start = js.index("function renderSystemStatusCard(")
-    body = js[start : start + 2600]
+    start = js.index("function renderSystemBody(")
+    body = js[start : js.index("\n    }", start)]
 
     assert "drill.tappable" in body
+    assert "currentParked().parked" in body
 
 
 def test_carouselJs_summaryTapOpensTheDrillDown():
@@ -542,12 +551,14 @@ def test_carouselJs_summaryTapOpensTheDrillDown():
     When: its source is read
     Then: the summary element's handler opens the overlay -- a computed row list
           nobody can reach is not a drill-down
+
+          MOVED PIN (US-894-b): the verdict line's handler (appendSysVerdict).
     """
     js = _stripJsComments(_read(_JS))
-    start = js.index("function renderSystemStatusCard(")
-    body = js[start : start + 2600]
+    start = js.index("function appendSysVerdict(")
+    body = js[start : js.index("\n    }", start)]
 
-    assert "openSysDetail" in body
+    assert 'openSysDetail("drill")' in body
 
 
 def test_carouselJs_backButtonClosesTheDrillDown():

@@ -1897,15 +1897,16 @@ class CardStateEmitterMixin:
         if emitter is None:
             return
 
-        obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
+        # US-894-b: obdLink is retired from the payload, so only the source's
+        # availability is read here; _gatherObdLinkState itself is unchanged
+        # (the gear producer's link health reads it, Atlas A2 2026-10-22).
+        _linkState, _retries, obdAvailable, obdReason = self._gatherObdLinkState()
         powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
         distanceKm, distanceSinceTs, distanceEndTs, distancePartial = (
             self._gatherTripWindow()
         )
         payload = emitter(
-            obdLinkState=obdLinkState,
-            obdRetries=obdRetries,
             syncRows=self._lastSyncRows,
             # US-564: NOT MEASURED HERE -> None, never 0. A pending-row count is
             # not tracked at this layer, and `0` is the single most reassuring
@@ -1938,8 +1939,7 @@ class CardStateEmitterMixin:
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
             runMode=self._gatherRunMode(),
-            # US-876-c: the link chain. NOT gated on obdAvailable -- the
-            # never-connected branch above blanks obdLink, never this.
+            # US-876-c: the link chain. NOT gated on obdAvailable.
             link=self._gatherLinkChain(),
             # US-732: the wifi block from the off-tick sampler + thresholds.
             **self._gatherWifiState(),

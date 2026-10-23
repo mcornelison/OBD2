@@ -78,6 +78,15 @@
 #               |              | file's own recorded call).
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): #glyph-bt is the link
 #               |              | chain; an unread chain is three hollow dots.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-b): obdLink is RETIRED (Atlas
+#               |              | A2/P6) and the OBD LINK tile with it. The sweeps
+#               |              | now pin its ABSENCE and the always-present `link`
+#               |              | chain; the biconditional moves to source.obd
+#               |              | (available false IFF a reason); the token pin
+#               |              | moves to _gatherObdLinkState (the gear producer
+#               |              | still reads it); the driver's reading is the
+#               |              | System page's OBD row, which never says the car
+#               |              | is off.
 # ================================================================================
 ################################################################################
 
@@ -109,10 +118,13 @@ from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
 )
 from pi.splash.source_availability import REASON_OBD_OFF  # noqa: E402
 from pi.splash.system_status_emitter import (  # noqa: E402
+    LINK_LAYER_KEYS,
+    LINK_LAYERS,
     OBD_DOWN,
     OBD_LINKED,
     OBD_RECONNECTING,
     SYSTEM_STATUS_FILENAME,
+    buildSystemStatusState,
 )
 
 _NODE = shutil.which("node")
@@ -247,29 +259,18 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _obdTile(payload: Any) -> dict:
-    """The OBD LINK tile as the operator sees it on the 480x320 panel."""
+def _obdRow(payload: Any) -> dict:
+    """The System page's OBD row as the operator sees it (MOVED PIN, US-894-b:
+    was the retired OBD LINK tile)."""
     surface = _surface(payload)
-    path = None
-    for candidate in surface.pathsByClass("tile"):
-        for child in candidate[-1].get("children", []):
-            if "OBD LINK" in _textOf({"children": [child]}):
-                path = candidate
-    assert path is not None, "no OBD LINK tile in the rendered DOM"
-    assert surface.rendered(path), "the OBD LINK tile is in the DOM but not displayed"
-
-    value = ""
-    detail = ""
-    for child in path[-1].get("children", []):
-        classes = (child.get("attrs", {}).get("class") or "").split()
-        if "tile-value" in classes:
-            value = " ".join(_textOf(child))
-        elif "tile-detail" in classes:
-            detail = " ".join(_textOf(child))
+    rows = surface.pathsByClass("sys-row")
+    assert len(rows) == 1, "no OBD row in the rendered DOM"
+    assert surface.rendered(rows[0]), "the OBD row is in the DOM but not displayed"
+    sentence = surface.pathsByClass("sys-row-sentence")[0]
     return {
-        "value": value,
-        "detail": detail,
-        "level": path[-1].get("attrs", {}).get("data-level"),
+        "sentence": " ".join(_textOf(sentence[-1])),
+        "steps": [p[-1]["attrs"].get("data-state") for p in surface.pathsByClass("obd-step")],
+        "card": " ".join(_textOf(rows[0][-1])),
     }
 
 
@@ -296,41 +297,39 @@ _needsNode = pytest.mark.skipif(
 
 
 # ---------------------------------------------------------------------------
-# END STATE, part 1 -- `obdLink` is present in EVERY emitted payload.
+# END STATE, part 1 -- the link fact is present in EVERY emitted payload.
 #
-# RECORDED AS A PASS. This half of the story was already true; it had simply
-# never been asserted as an invariant over the producer's whole branch set.
+# MOVED PIN (US-894-b): `obdLink` is retired; the always-present block is now
+# `link` (every layer, every key -- Atlas L6), and obdLink must be ABSENT on
+# every branch (a silent reader of a removed key reads undefined).
 # ---------------------------------------------------------------------------
 
 
-def test_obdLinkBlockIsPresentWithAStateKey_downEveryCauseTheProducerCanReach(tmp_path):
+def test_theLinkChainIsPresent_andObdLinkAbsent_downEveryCauseTheProducerCanReach(tmp_path):
     """
     Given: every distinct cause `_gatherObdLinkState` can reach -- no connection
            object, an unreadable status, a never-connected car, a dropped link, a
            reconnect in flight, and a live link
     When: the REAL orchestrator emits system-status for each
-    Then: `obdLink` is present in all of them, with both of its keys.
-
-          The story's END STATE, swept rather than spot-checked. Keyed by cause
-          so a regression names the fault it broke, and so this sweep fails loudly
-          if a branch is ever added without being considered here.
+    Then: `link` is present in all of them with every layer and key, and the
+          retired `obdLink` is in none.
     """
     for cause, conn in _allCauses().items():
         payload = _emit(tmp_path / cause, connection=conn)
-        assert "obdLink" in payload, cause
-        block = payload["obdLink"]
-        assert isinstance(block, dict), cause
-        # MOVED PIN (US-876-a): lastSeenS (always null) left the block.
-        assert set(block) == {"state", "retries"}, (cause, block)
+        assert "obdLink" not in payload, cause
+        assert set(payload["link"]) == set(LINK_LAYERS), cause
+        for layer in LINK_LAYERS:
+            assert set(payload["link"][layer]) == set(LINK_LAYER_KEYS), (cause, layer)
 
 
-def test_sampledAt2HzForSixtySecondsWithTheLinkDown_obdLinkIsPresentInEverySample(
+def test_sampledAt2HzForSixtySecondsWithTheLinkDown_theLinkChainIsPresentInEverySample(
     tmp_path,
 ):
     """
     Given: a car that has never linked -- the state Atlas sampled at 15:50
     When: the producer emits 120 times, which is his 2 Hz x 60 s drill
-    Then: `obdLink` is present in 100% of the samples.
+    Then: `link` is present in 100% of the samples (MOVED PIN, US-894-b: was
+          `obdLink`, retired).
 
           validationCriterion 1, run against the producer rather than the Pi.
           The count is asserted, not just "no exception": a producer that emitted
@@ -351,8 +350,10 @@ def test_sampledAt2HzForSixtySecondsWithTheLinkDown_obdLinkIsPresentInEverySampl
     present = 0
     for _ in range(120):
         assert orch._maybeEmitCardStates() is True
-        block = json.loads(target.read_text(encoding="utf-8")).get("obdLink")
-        if isinstance(block, dict) and "state" in block:
+        written = json.loads(target.read_text(encoding="utf-8"))
+        block = written.get("link")
+        if isinstance(block, dict) and set(block) == set(LINK_LAYERS):
+            assert "obdLink" not in written
             present += 1
     assert present == 120
 
@@ -407,7 +408,7 @@ def test_beforeTheFirstObdReadOfABoot_theReasonSaysSo_andIsNotAClaimAboutTheCar(
           nobody has looked at all, and the car may well be running.
     """
     payload = _emit(tmp_path, connection=None)
-    assert payload["obdLink"]["state"] is None
+    assert "obdLink" not in payload  # MOVED PIN (US-894-b): retired
     assert payload["source"]["obd"]["available"] is False
     assert payload["source"]["obd"]["reason"] == REASON_OBD_LINK_NOT_READ
     assert payload["source"]["obd"]["reason"] != REASON_OBD_OFF
@@ -427,7 +428,7 @@ def test_whenTheLinkStateReadFails_theReasonSaysWeCouldNotLook_notThatTheCarIsOf
           the panel is where the operator picks which one to chase.
     """
     payload = _emit(tmp_path, connection=_raisingConnection())
-    assert payload["obdLink"]["state"] is None
+    assert "obdLink" not in payload  # MOVED PIN (US-894-b): retired
     assert payload["source"]["obd"]["available"] is False
     assert payload["source"]["obd"]["reason"] == REASON_OBD_LINK_UNREADABLE
     assert payload["source"]["obd"]["reason"] != REASON_OBD_OFF
@@ -574,11 +575,16 @@ def test_everyUnavailableReasonIsNonEmptyAndCarriesNoPunctuationSentinel(tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_aNullLinkStateAlwaysCarriesAReason_andARealLinkStateNeverDoes(tmp_path):
+def test_anAbsentSourceAlwaysCarriesAReason_andAPresentOneNeverDoes(tmp_path):
     """
     Given: every cause the producer can reach
     When: each emitted payload is read
-    Then: `obdLink.state is None` if and only if `source.obd.reason` is set.
+    Then: `source.obd.available is False` if and only if `source.obd.reason` is
+          set.
+
+          MOVED PIN (US-894-b): this was `obdLink.state is None` IFF a reason;
+          obdLink is retired, and the null it carried was exactly
+          `available is False`, so the claim moves to the source block whole.
 
           BOTH DIRECTIONS, on purpose, because each half fails a different way.
           Forward: an absence with no reason is the story's defect -- a consumer
@@ -594,9 +600,9 @@ def test_aNullLinkStateAlwaysCarriesAReason_andARealLinkStateNeverDoes(tmp_path)
     """
     for cause, conn in _allCauses().items():
         payload = _emit(tmp_path / cause, connection=conn)
-        stateIsNull = payload["obdLink"]["state"] is None
+        absent = payload["source"]["obd"]["available"] is False
         hasReason = payload["source"]["obd"]["reason"] is not None
-        assert stateIsNull == hasReason, (cause, payload["obdLink"], payload["source"])
+        assert absent == hasReason, (cause, payload["source"])
 
 
 def test_theAcquisitionItselfWithholdsAReasonOnEveryAvailableBranch(tmp_path):
@@ -638,7 +644,8 @@ def test_bothSidesOfThatBiconditionalAreActuallyReached_soItIsNotVacuous(tmp_pat
     nulls, reals = [], []
     for cause, conn in _allCauses().items():
         payload = _emit(tmp_path / cause, connection=conn)
-        (nulls if payload["obdLink"]["state"] is None else reals).append(cause)
+        # MOVED PIN (US-894-b): the side is the source's availability.
+        (nulls if payload["source"]["obd"]["available"] is False else reals).append(cause)
     assert nulls and reals, (nulls, reals)
     # US-672 re-recorded this set. `reconnecting_never_linked` moved from the
     # `reals` side to the `nulls` side -- a car we have never reached is an
@@ -652,11 +659,15 @@ def test_bothSidesOfThatBiconditionalAreActuallyReached_soItIsNotVacuous(tmp_pat
     }
 
 
-def test_aRealLinkStateIsAlwaysOneOfTheThreePublishedTokens_neverAFreeString(tmp_path):
+def test_aRealLinkStateIsAlwaysOneOfTheThreeTokens_neverAFreeString(tmp_path):
     """
-    Given: every cause that publishes a non-null state
-    When: the token is read
+    Given: every cause whose source is available
+    When: `_gatherObdLinkState`'s token is read
     Then: it is one of the emitter's own three constants.
+
+          MOVED PIN (US-894-b): the token no longer reaches system-status
+          (obdLink is retired), but the gear producer derives its link health
+          from it (Atlas A2), so the vocabulary is pinned at the gather.
 
           Pinned against the module's constants rather than string literals, so
           renaming a token in the producer fails here instead of silently
@@ -664,8 +675,10 @@ def test_aRealLinkStateIsAlwaysOneOfTheThreePublishedTokens_neverAFreeString(tmp
           would render as `—`/unavailable and look exactly like this story's bug.
     """
     for cause, conn in _allCauses().items():
-        state = _emit(tmp_path / cause, connection=conn)["obdLink"]["state"]
-        if state is not None:
+        state, _, available, _ = _Orch(
+            str(tmp_path / cause), connection=conn
+        )._gatherObdLinkState()
+        if available:
             assert state in {OBD_LINKED, OBD_RECONNECTING, OBD_DOWN}, (cause, state)
 
 
@@ -674,6 +687,9 @@ def test_theUnknownBranchesNeverPaintTheDownMeasurement(tmp_path):
     Given: the two branches where the link state cannot be determined
     When: they emit
     Then: no `down` token survives into the payload.
+
+          MOVED PIN (US-894-b): obdLink, where it used to be blanked, is gone;
+          the chain on these branches reads no layer at all.
 
           `_gatherObdLinkState` still hands `OBD_DOWN` back on both, and the
           emitter discards it because the source is unavailable. That discard is
@@ -684,10 +700,9 @@ def test_theUnknownBranchesNeverPaintTheDownMeasurement(tmp_path):
     """
     for cause in ("never_looked", "status_unreadable"):
         payload = _emit(tmp_path / cause, connection=_allCauses()[cause])
-        assert payload["obdLink"]["state"] is None, cause
-        assert payload["obdLink"]["retries"] == 0, cause
-        # MOVED PIN (US-876-a): the block carries no age key at all now.
-        assert "lastSeenS" not in payload["obdLink"], cause
+        assert "obdLink" not in payload, cause
+        for layer in LINK_LAYERS:
+            assert payload["link"][layer]["state"] != "down", (cause, layer)
 
 
 # ---------------------------------------------------------------------------
@@ -701,19 +716,17 @@ def test_theDriverReadsTheUnreadableReason_notThatTheCarIsOff(tmp_path):
     """
     Given: the Pi cannot read its own connection, in a running car
     When: the SHIPPED dashboard reads the file the REAL producer wrote
-    Then: the OBD LINK tile prints the honest reason at the unavailable level.
+    Then: the OBD row says nothing was read -- never that the car is off and
+          never the `down` look.
 
-          Acquisition -> producer -> state file -> renderer -> DOM in one
-          assertion. `source.obd.reason` is rendered verbatim by `naTile`, so the
-          producer's word IS the driver's word and there is no second vocabulary
-          to drift.
+          MOVED PIN (US-894-b): the OBD LINK tile that printed source.obd's
+          reason is retired. The row reads `link` (spec s4.2), unread here.
     """
     payload = _emit(tmp_path, connection=_raisingConnection())
-    tile = _obdTile(payload)
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_LINK_UNREADABLE, tile
-    assert tile["detail"] != REASON_OBD_OFF, tile
-    assert tile["level"] == "unavailable", tile
+    row = _obdRow(payload)
+    assert row["sentence"] == "Bluetooth not read yet", row
+    assert row["steps"] == ["dashed", "dashed", "dashed"], row
+    assert REASON_OBD_OFF not in row["card"], row
 
 
 @_needsNode
@@ -721,12 +734,13 @@ def test_theDriverReadsTheNotReadYetReasonBeforeTheFirstObdReadOfABoot(tmp_path)
     """
     Given: the payload emitted before anything has looked at the link
     When: the panel renders it
-    Then: the tile prints "not read yet"-class wording, not "OBD: off".
+    Then: the row prints "not read yet"-class wording, not "OBD: off"
+          (MOVED PIN, US-894-b: was the tile's detail).
     """
     payload = _emit(tmp_path, connection=None)
-    tile = _obdTile(payload)
-    assert tile["detail"] == REASON_OBD_LINK_NOT_READ, tile
-    assert tile["level"] == "unavailable", tile
+    row = _obdRow(payload)
+    assert "not read yet" in row["sentence"], row
+    assert REASON_OBD_OFF not in row["card"], row
 
 
 @_needsNode
@@ -734,16 +748,25 @@ def test_aLiveCarStillPaintsTheLink_soTheAbsencesAboveAreNotUnconditional(tmp_pa
     """
     Given: a connected car
     When: the same chain runs
-    Then: the panel paints LINKED at the ok level.
+    Then: the row paints a live chain.
 
-          The negative control for every absence assertion in this file. A
-          producer that had simply been broken into always emitting an absence
-          would pass all of them and fail here.
+          The negative control for every absence assertion in this file.
+          MOVED PIN (US-894-b): the row reads `link`, which this test's _Orch
+          never fills, so the live chain is the producer's own builder output
+          beside the live source the real orchestrator published.
     """
     payload = _emit(tmp_path, connection=_allCauses()["linked"])
-    tile = _obdTile(payload)
-    assert tile["value"] == "LINKED", tile
-    assert tile["level"] == "ok", tile
+    assert payload["source"]["obd"]["available"] is True
+    live = buildSystemStatusState(
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="recording", driveId=1,
+        nowIso="2026-08-31T15:46:00Z",
+        link={layer: {"state": "up", "ts": "2026-08-31T15:45:00Z", "lastOkTs": None}
+              for layer in LINK_LAYERS},
+    )
+    row = _obdRow(live)
+    assert row["steps"] == ["ok", "ok", "ok"], row
+    assert row["sentence"] == "ECU answering", row
 
 
 @_needsNode
@@ -797,8 +820,8 @@ def test_oneUnlinkedCarNowPublishesONEAvailabilityAcrossTheRetryCycle(tmp_path):
 
           Both samples are now an ABSENT source carrying "never connected", which
           is the honest answer to "is the source absent" for a car this Pi has
-          never reached. The link state is null on both, because the emitter
-          blanks the block whenever the source is unavailable.
+          never reached. MOVED PIN (US-894-b): obdLink, which both blanked, is
+          retired; the chain both publish is the same.
     """
     connecting = _emit(
         tmp_path / "connecting",
@@ -812,8 +835,8 @@ def test_oneUnlinkedCarNowPublishesONEAvailabilityAcrossTheRetryCycle(tmp_path):
     assert disconnected["source"]["obd"]["available"] is False
     assert connecting["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
     assert disconnected["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
-    assert connecting["obdLink"]["state"] is None
-    assert disconnected["obdLink"]["state"] is None
+    assert "obdLink" not in connecting and "obdLink" not in disconnected
+    assert connecting["link"] == disconnected["link"]
 
 
 @_needsNode

@@ -242,16 +242,20 @@ def test_aVerdictIsNeverAnIssue_theSummaryStaysOk():
     """
     Given: an UNGRACEFUL verdict from a previous boot
     When: the card summarises
-    Then: SYSTEM still reads OK and the issue list stays empty. The verdict is
-        HISTORY, not a live fault; an amber tile would make the card cry wolf
-        for the whole session about a shutdown that already happened
+    Then: the issue list stays empty. The verdict is HISTORY, not a live
+        fault; an amber tile would make the card cry wolf for the whole session
+        about a shutdown that already happened.
+
+        MOVED PIN (US-894-b): the `SYSTEM · OK` summary is retired; the page's
+        line is the provider's verdict, which no priorShutdown block can move
+        (it carries none here, so it reads `--` -- never an issue count).
     """
     view = _view(
         "systemStatusView",
         _sysState(priorShutdown=_block(verdict="ungraceful", label="UNGRACEFUL: x")),
     )
 
-    assert view["summary"]["text"] == "SYSTEM · OK"
+    assert view["verdict"]["level"] != "amber"
     assert view["drill"]["rows"] == []
     assert "UNGRACEFUL" in _diag(view, "priorShutdown")["text"]
 

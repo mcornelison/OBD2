@@ -36,6 +36,9 @@
 #               |              | PiHealthSampler; limit from pi.health.limits.
 # 2026-10-22    | Ralph (Rex)  | US-877-c -- the system-status payload reaches the
 #               |              | alerts arbiter; emitNow keeps the system entries.
+# 2026-10-23    | Ralph (Rex)  | US-894-b -- MOVED PIN (US-894-b): obdLink is
+#               |              | retired from system-status (Atlas A2/P6); its
+#               |              | asserts become "absent" + the unchanged gather.
 # ================================================================================
 ################################################################################
 
@@ -213,7 +216,10 @@ def test_maybeEmit_linkedCar_recording_writesRealSystemStatus(tmp_path):
 
     assert orch._maybeEmitCardStates() is True
     ss = _readState(tmp_path, "system-status")
-    assert ss["obdLink"]["state"] == "linked"
+    # MOVED PIN (US-894-b): obdLink is retired; the gather it read is unchanged
+    # (the gear producer's link health reads it, Atlas A2).
+    assert "obdLink" not in ss
+    assert orch._gatherObdLinkState()[0] == "linked"
     assert ss["source"]["obd"]["available"] is True
     assert ss["drive"]["state"] == "recording"
     assert ss["idle"] is False
@@ -230,7 +236,7 @@ def test_maybeEmit_noConnection_parked_idleTrueTypedNa(tmp_path):
     orch._maybeEmitCardStates()
     ss = _readState(tmp_path, "system-status")
     assert ss["source"]["obd"]["available"] is False
-    assert ss["obdLink"]["state"] is None
+    assert "obdLink" not in ss  # MOVED PIN (US-894-b): retired
     assert ss["idle"] is True
 
 
@@ -249,8 +255,9 @@ def test_maybeEmit_droppedButSeenLink_isDownButAvailable_notIdle(tmp_path):
 
     orch._maybeEmitCardStates()
     ss = _readState(tmp_path, "system-status")
-    # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
-    assert ss["obdLink"] == {"state": "down", "retries": 3}
+    # MOVED PIN (US-894-b): obdLink is retired; the gather still reads down/3.
+    assert "obdLink" not in ss
+    assert orch._gatherObdLinkState()[:2] == ("down", 3)
     assert ss["source"]["obd"]["available"] is True
     assert ss["idle"] is False
 
@@ -1378,7 +1385,7 @@ def test_link_obdSourceUnavailable_neverConnected_linkStillPublished(tmp_path):
     ss = _readState(tmp_path, "system-status")
 
     assert ss["source"]["obd"]["available"] is False
-    assert ss["obdLink"] == {"state": None, "retries": 0}
+    assert "obdLink" not in ss  # MOVED PIN (US-894-b): retired
     assert ss["link"] == {
         "bt": _LINK_NULL,
         "adapter": _LINK_NULL,
@@ -1561,8 +1568,9 @@ def test_link_heldLinkWithASilentEcu_isRetrying_notDown(tmp_path):
 
 
 def test_link_obdLinkUnchanged_retriesKeepTheirShippedMeaning(tmp_path):
-    """C1: obdLink {state, retries} ships unchanged -- link retrying is not
-    reflected in obdLink.retries."""
+    """C1: the OBD link gather keeps its shipped meaning -- link retrying is not
+    reflected in its retries. MOVED PIN (US-894-b): obdLink, which published
+    them, is retired; the gather stays (the gear producer reads it)."""
     clocks = _LinkClocks()
     orch, conn = _linkOrch(tmp_path, clocks)
     obd = _LinkObd()
@@ -1576,7 +1584,8 @@ def test_link_obdLinkUnchanged_retriesKeepTheirShippedMeaning(tmp_path):
     ss = _readState(tmp_path, "system-status")
 
     assert ss["link"]["ecu"]["state"] == "retrying"
-    assert ss["obdLink"] == {"state": "down", "retries": 0}
+    assert "obdLink" not in ss
+    assert orch._gatherObdLinkState()[:2] == ("down", 0)
 
 
 # ---------------------------------------------------------------------------
