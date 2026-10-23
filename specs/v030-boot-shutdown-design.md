@@ -21,6 +21,9 @@
 | `confirmed` = rows the server confirmed | `confirmed` from the **acked sync marks**, never summed `storedCount` | Atlas O3/O6: a re-send (US-871) would over-count |
 | Away / at home / stall: 3 labels | One label per sync outcome (§2.2), keyed to `OutcomeKind` | The shipped drain ends in 8 ways (`power_watch/contract.py`), not 3 |
 | Shutdown page closed by a 60 s `BLACK_TAIL_CAP` | **Exits only on `cancelled` or power-off**; no timer | CIO 2026-10-23: *"Remove it"* |
+| Degraded on a 12 s clock (`HARD_CAP_MS`, `hardCapSeconds`); yield held by `MIN_PLAY_MS` 2.5 s | **Degraded only on its two events** (a core unit `failed`, dashboard assets missing); the hand-off fires on spin 3's own `animationend`; no clock | Atlas 2026-10-23, under the CIO's no-timer rule. Lands in S114 with the page |
+| Shutdown page paints after a 1 s pre-roll | **Paints on the first `flushing` / `powering_off` read, never on `grace`** | Atlas 2026-10-23: the sequencer's smoothing window is the one debounce (CIO: keep it) |
+| Steps shown as `step i of n` | **One word per ceremony step** (§2.2), names from the promoted `CEREMONY_ORDER` | Atlas D1 |
 | Warning text in mixed case with full stops | `KEEP YOUR EYES / ON THE ROAD`, `DO NOT OPERATE / THIS DISPLAY / WHILE DRIVING` | Same words, set in the shipped 38-glyph Michroma subset (A–Z, 0–9, space, hyphen) |
 
 ---
@@ -43,8 +46,8 @@
   - a Plymouth theme showing the §1.2 PNG, centred and **never scaled**, on a `#0A0A0A` background (so a mode other than 480×320 pads with the same black instead of stretching);
   - `disable_splash=1` (the rainbow); cmdline `loglevel=3 vt.global_cursor_default=0`, and no `console=tty1` text;
   - **the hand-off is lightdm's own** (ADR §11.3). Deploy-managed, reversible, and proved on a cold key-on with SSH verified before and after.
-- **The gap** between Plymouth quitting and the splash page's first frame shows **`--bg` black and nothing else**: no labwc background, no cursor, no desktop. ⚠️ **Open for US-885/651 to measure in S113:** whether lightdm quits Plymouth with `--retain-splash`. If it doesn't, the WARNING drops to black for the chromium start-up and comes back at 0b. That is acceptable; a non-black frame is a defect (AC 1).
-- **0b → 1:** the page holds the WARNING image from its first frame until the logo has painted (US-525's `brandReadyMs`), then cross-fades in 0.5 s. **No minimum hold:** the WARNING has already been up for the whole OS boot, and US-785 must not add to the time to the dashboard.
+- **The gap** between Plymouth quitting and the splash page's first frame shows **`--bg` black and nothing else**: no labwc background, no cursor, no desktop. `--retain-splash` is **confirmed stale** (Atlas F1, 10-23): lightdm does its own Plymouth quit, so the WARNING drops to black for the chromium start-up and comes back at 0b. **The gap is measured on the cold key-on**, not assumed. Black is acceptable; a non-black frame is a defect (AC 1).
+- **0b → 1:** the page holds the WARNING image from its first frame until the logo has painted (the logo's `load` event, US-525), then cross-fades in 0.5 s. **No minimum hold:** the WARNING has already been up for the whole OS boot, and US-785 must not add to the time to the dashboard.
 - **Phase 1 starts at that cross-fade**, not at `boot-state.healthy`. `healthy` (US-494: Pi core up, dashboard assets installed) is a **condition of the hand-off** in phase 3.
 - **The spins** reuse the shipped logo and its brightness levels (`splash.svg`): one rotation is `--t-spin` 3.0 s.
 
@@ -54,6 +57,8 @@
   | 2 | 0.75 (`--bright-hi`) | loops; at least one full rotation (no flicker-through on a fast boot); **finishes its current rotation** before spin 3, so the logo never snaps |
   | 3 | 1.00 (`--bright-max`) | exactly one, then the 0.5 s fade (`--t-fade`) into the Driving page |
 
+  **Each step fires on the animation's own event** (Atlas 2026-10-23): spin 3 starts on spin 2's `animationiteration` once the feeds are finished; the hand-off fires on spin 3's `animationend`, then the fade's `transitionend`. **The rotation's length lives once, in the CSS** (`--t-spin`), with no JS twin: `MIN_PLAY_MS` and the 600 ms `setTimeout` after the fade go. A spin's length is the CIO's sequence, not a wait.
+
   ⚠️ The shipped `splash.svg` is a **fixed 6.5 s timeline** inside an `<object>`. The page can neither hold spin 2 nor start spin 3 on a signal, so the spins must become page-driven (a build note for Ralph, not a design change).
 - **Checklist ticks come from real readiness signals**: each feed's **first live sample this eclipse-obd process**, `capture-health.feeds.<feed>.firstSampleTs` (US-873, shipped; Atlas O4: no splash reads it yet, US-869 is the first consumer). Never a timer, never a database row (DoD 11). A process restart re-arms it, so the checklist can honestly run again.
 - **The hand-off is event-driven. There is no timer and no ceiling** (CIO 2026-10-23, R1/R2, verbatim: *"No wait. there should [not] be any code that puts in any "sleep" or wait commands. The boot sequence should follow the sequence I have designed before. each step can proceed when the prior step is finished. therefore getting to the dashboard should be as quick as possible given the sequence I have defined"*).
@@ -61,9 +66,14 @@
   - **Spin 3 starts when IMU, LIGHT and UPS are all finished** (and `boot-state.healthy`). **OBD is never waited for** (R1): if it is silent (key in ACC, a link fault), the dashboard opens with `OBD` reading `waiting for ECU` (or the layer the chain names, §1.3), and its values fill in when it answers.
   - **Spin 3 means "the software is ready", not "everything is connected."**
   - MEASURED on the current stack (Atlas O5, 4 car-power boots, 10-22): IMU/LIGHT/UPS ready at 42–49 s, OBD at 53–56 s. So on a normal car boot the rule opens the dashboard about 6 s **before** OBD's first sample, with OBD reading `waiting for ECU` for those seconds. That is the CIO's sequence, as fast as it allows.
-  - ⚠️ **R2 holds only if each feed publishes its fault.** `capture-health.feeds.<feed>.state` today reads `unknown` for "no sample yet", and has no fault value (`capture_health.py` :296-335). Until IMU, LIGHT and UPS each publish `faulted` (S114, §3), a dead sensor holds the splash for good: the 10-22 wall boot with UPS ready only at 362 s would have held it for 6 minutes. **Atlas names the fault field per feed, or the gap becomes S114 work** (PM ask (a)). No timer is the fallback.
-- **Degraded** (shipped F-103, unchanged in behaviour): `boot-state.degraded` freezes the logo, shows the amber ring, and prints the emitter's `degradedReason` verbatim (`<service>: failed to start`, `dashboard assets not installed`, `<service>: not ready (<state>)`, `boot did not reach healthy state`, or the page's own `boot-progress instrument not reporting`). It persists until reboot. **Degraded is about `healthy` only:** a feed that is `waiting` or faulted is never degraded.
-  - ⚠️ The shipped degraded path is itself on timers: the page's `HARD_CAP_MS` (12 s) and the emitter's `hardCapSeconds` turn "not healthy yet" into degraded, and `MIN_PLAY_MS` (2.5 s) holds the yield. Under the CIO's rule these are waits. **Atlas is ruling which ones go** (PM ask (c)); this spec waits for his word. The spin rotations are not waits: they are the CIO's own sequence (spin 1 always one rotation).
+  - ⚠️ **R2 holds only if each feed publishes its fault.** At `6e8eb475` `capture-health.feeds.<feed>.state` reads `unknown` for "no sample yet" and has no fault value (`capture_health.py` :296-335). **S114 adds it (Atlas B1):** `state: faulted` + `reason`, a CURRENT state that clears to `ok` on the next good read. IMU and LIGHT take it from their bridge's `presenceFault` (`sensor_absent`); UPS is `faulted` only when the read itself fails (I2C error), and `0xFFFF` (SOC not computed yet) is **not** a fault, it is `waiting`.
+  - **The step latches, the feed does not:** the first ready-or-fault event finishes that feed's step for this boot, and a later recovery does not un-finish it. So one transient UPS read failure at boot finishes the UPS step (accepted), and the feed then shows `ok` on the next good read.
+  - Without the fault field a dead sensor holds the splash for good (the 10-22 wall boot, UPS ready only at 362 s, would have held it for 6 minutes). That is accepted: no timer is the fallback.
+- **Degraded** (F-103): `boot-state.degraded` freezes the logo, shows the amber ring, and prints the emitter's `degradedReason` verbatim. It persists until reboot. **Under the no-timer rule it has only its two EVENT sources** (Atlas 2026-10-23, `boot_state_emitter.py` :169-178):
+  - a core unit reports `failed` (a systemd terminal state) ⇒ `<service>: failed to start`;
+  - the dashboard assets are missing ⇒ `dashboard assets not installed`.
+  - **Retired with the clocks:** `<service>: not ready (<state>)`, `boot did not reach healthy state` (the emitter's 12 s `hardCapSeconds`) and the page's `boot-progress instrument not reporting` (its 12 s `HARD_CAP_MS`). A unit still `activating`, a `boot-state` file not written yet, or a refused connection are all **waiting**: spin 2 keeps looping, with no words of its own (the checklist carries the words). The `pi.splash.bootState` config block goes with them (Atlas C1).
+  - **Degraded is about `healthy` only:** a feed that is `waiting` or faulted is never degraded.
 - `prefers-reduced-motion`: the spins become brightness steps without rotation, at the same moments.
 
 ### 1.2 The WARNING image (phase 0 and 0b)
@@ -84,7 +94,7 @@
 - **Red is the title only.** It is the one place a state colour carries no live state: it is the warning's own word, as on the Pioneer reference. The body stays warm white, so no large bright area lights the cabin at night (frame spec §4.4 rule 5).
 - **No triangle icon.** In V0.30 the triangle is the Warnings page's 4-state icon; a triangle here would read as "a warning is active."
 - **The colours are copies of `tokens.css`** (a baked image can't read tokens). If a token changes, the image is re-rendered; AC 12's grep gate excludes this one file by name.
-- **Where it is installed is Atlas's to name (US-885).** Proposed: `deploy/plymouth/eclipse/` holding `warning.png` (this file, unchanged, md5-checked against `specs/`) and the theme files; the splash kit copies the same PNG beside `index.html` for 0b. One image, two consumers, no twin.
+- **Installed at** `deploy/plymouth/eclipse/` → `/usr/share/plymouth/themes/eclipse/` (Atlas F1, 10-23, accepting this spec's proposal), as `warning.png`: this file, unchanged, md5-checked against `specs/`. The theme applies in both display modes. The splash kit copies the same PNG beside `index.html` for 0b. One image, two consumers, no twin.
 
 ### 1.3 Boot words (exact strings)
 
@@ -100,9 +110,9 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 | Word | Colour | When |
 |---|---|---|
 | `ready` | `--green-ok` | the feed's `firstSampleTs` is non-null. **Finished** |
-| `sensor not found` | `--amber-warn` | **IMU, LIGHT, UPS:** the feed's fault says the sensor is missing. **Finished** |
-| `read failed` | `--amber-warn` | … the fault says a read failed. **Finished** |
-| `fault` | `--amber-warn` | … any other fault token (it still finishes the step; no literal twins: the page keys on the fault field Atlas names) |
+| `sensor not found` | `--amber-warn` | **IMU, LIGHT:** `faulted`, reason `sensor_absent`. **Finished** |
+| `read failed` | `--amber-warn` | **IMU, LIGHT, UPS:** `faulted`, a read-failure reason (for UPS the only fault: an I2C error). **Finished** |
+| `fault` | `--amber-warn` | `faulted` with any other reason. It still finishes the step; the page keys on the published reason codes, no literal twins |
 | `waiting` | `--text-secondary` | no first sample and no fault. **Not finished** (IMU/LIGHT/UPS hold the hand-off). Also OBD while its link chain is unread |
 | `waiting for Bluetooth` | `--text-secondary` | **OBD only**, no first sample: `link.bt` is not `up` |
 | `waiting for adapter` | `--text-secondary` | … `link.bt` up, `link.adapter` not `up` |
@@ -111,7 +121,8 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 
 - **The OBD cause is the first link layer that isn't `up`**, read from `system-status.link.{bt, adapter, ecu}` (the System page's chain, ARCH-061), never guessed. Key in ACC: BT and adapter up, ECU silent ⇒ `waiting for ECU`, matching the dashboard's link chain grey at ECU.
 - **`waiting` is never amber:** a silent feed is not a fault, and a key in ACC is normal. **Amber only for a fault the feed itself published** (R2), the same fact the System page counts. The OBD link words stay grey: the dashboard's link chain owns the OBD fault.
-- **`not read` finishes nothing:** with no `capture-health` the page cannot know any feed finished, so it holds. That is a gap for Atlas's (a), not a reason for a timer.
+- **`not read` finishes nothing:** with no `capture-health` the page cannot know any feed finished, so it holds. That is honest, and never a reason for a timer.
+- **The same words, one meaning, on three surfaces:** this checklist, the System page's `sensor` member (its own spec) and the Light page's `sensor_absent` reason all say `sensor not found` / `read failed`.
 - **No promise words** (no `yet`, no `soon`): `waiting` describes the software, and promises nothing about the car.
 - The wordmark `ECLIPSE OBD-II` (Michroma `--fs-label`, `--text-secondary`) and the version chip (`--font-mono` `--fs-meta`, `--text-tertiary`) stay, as shipped.
 
@@ -120,10 +131,10 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 
 | Step | On the glass |
 |---|---|
-| Key off | after the shipped 1 s pre-roll (a grace that cancels inside it never paints): logo, **reverse spin** at 0.75 (≥ 1 rotation; keeps spinning while the bar < 100 %) + **progress bar** with ticks `0 · 25 · 50 · 75 · 100 %` (`--font-mono` `--fs-meta`) + the label (§2.2) |
-| **At home** | **0–75 % = sync**: `confirmed ÷ waitingAtKeyOff` (§3) · **75–100 % = shutdown steps** `index ÷ of`. A marker at 75 %. |
-| **Away** | **0–100 % = shutdown steps only** (quick). **Never a 0 % sync bar** (F-155 at-home sync). |
-| **Sync ended with rows left** (stall, server down, …) | the bar's sync part turns **amber** and stops; the label says why and how many rows were kept (§2.2); the bar **moves on** to the steps. Unsent rows stay queued. **No new timeout:** `pi.homeNetwork.stallSec` (60 s) is the one number (Atlas S-2) |
+| Key off | **paints on the first `flushing` or `powering_off` read, never on `grace`** (Atlas 2026-10-23): during grace the dashboard stays up, and a blip ends in `cancelled` with nothing painted. Then: logo, **reverse spin** at 0.75 (≥ 1 rotation; keeps spinning while the bar < 100 %) + **progress bar** with ticks `0 · 25 · 50 · 75 · 100 %` (`--font-mono` `--fs-meta`) + the label (§2.2) |
+| **At home** | **0–75 % = the `drain` step, by sync**: `confirmed ÷ waitingAtKeyOff` (§3) · **75–100 % = the steps after the drain**, evenly (`drain close`, `custody`, `monthly_test_hold` when due, `poweroff`). Steps before the drain (`shed`) fill nothing. A marker at 75 %. |
+| **Away**, or the VCELL fast path (no drain) | **0–100 % = `index ÷ of`** (quick). **Never a 0 % sync bar** (F-155 at-home sync). |
+| **Sync ended with rows left** (stall, server down, the fast path cutting the drain, …) | the fill jumps to the 75 % marker, and the **unfilled stretch of the sync part is drawn amber**: the rows kept, shown as a length. The label says why and how many (§2.2); the steps continue from 75 %. `index` never goes backwards (Atlas D1). Unsent rows stay queued. **No new timeout:** `pi.homeNetwork.stallSec` (60 s) is the one number (Atlas S-2) |
 | Close-out | at 100 %: one last **dim** spin (0.25, `--bright-low`), the shipped reverse dim-down (`splash-shutdown.svg`) → **fade to black** → power off |
 | **Key back on** | `phase: cancelled`: the page exits on that poll, as shipped, and the dashboard underneath returns without a reboot |
 
@@ -132,7 +143,10 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 - **Fill colour:** sync and step progress are unbanded, so the fill is `--accent`. Amber (`--amber-warn`) only for a sync that ended with rows kept at home. Empty track `--surface`, ticks and marker `--line`.
 - **Missing data never fakes progress:** before `sync{}` or `step{}` has a value the bar is empty and the label is blank. If a field goes unreadable mid-shutdown, the bar holds its last real value.
 - **The page exits only on `cancelled` or at power-off. No timer ends it** (CIO 2026-10-23, verbatim: *"Remove it"*, the no-timer rule applied to shutdown). The shipped 60 s `BLACK_TAIL_CAP` goes: at home the drain runs to completion (ARCH-065) and can outlast 60 s, and the page must stay up for all of it.
-  - ⚠️ Two more shipped exits are not `cancelled` and not power-off: **`state-missing`** (three missed polls) and **`unrecognized-phase`**. The shipped 1 s **pre-roll** is also a wait (it delays the first paint). Listed for Atlas beside the degraded timers (§7); the spec doesn't rule them.
+  - **Two fault exits stay, on events, not counts** (Atlas 2026-10-23):
+    - the states server answers **404** for `shutdown-state` ⇒ exit at once, cause `state-missing`. A **refused connection or a thrown fetch** is power-off in progress: **hold**, keep the last paint, and die with the power. The fetch must tell the two apart (today both collapse to `null`), and the three-miss count goes;
+    - an **unrecognized phase** ⇒ exit (the fail-safe). Any phase US-883 adds or renames changes the page's list in the same story, and a cross-language guard test pins the page's list to `shutdown_state_emitter.VALID_PHASES`.
+  - **The one debounce stays where it is** (CIO 2026-10-23, `relay(CIO, confirmed 2026-10-23)`: keep it): the sequencer's smoothing window (`grace` → `flushing` | `cancelled`) defines whether a power loss is real. It is the event's own definition, not a wait. **The page holds no timer of its own.**
 - The shutdown page renders on **splash-grace**, on top of the dashboard under labwc. It is **already not shed** (Atlas S-4: `DEFAULT_SHED_UNITS` = `("eclipse-dashboard",)`); keep it so.
 - STOP-level power faults are not this page's job (System/Warnings). The power key runs `systemctl poweroff`, not powerwatch's key-off path, so this page doesn't run for it (ADR §11.3).
 
@@ -166,7 +180,21 @@ The label is two lines in `--font-mono`: **line 1** `--fs-label` `--text-primary
 
 `interrupted` is provisional (US-833: written before the sync can be cut off, then overwritten), so the page never shows it.
 
-**The shutdown steps** (after the sync, or from 0 % when away): line 1 `shutting down`, line 2 `step <index> of <of>`. If `step{}` is absent: line 2 `steps not read`, and the bar holds.
+**The shutdown steps** (Atlas D1: `step.name` is one of `CEREMONY_ORDER`, promoted to a `power_watch` constant, plus `monthly_test_hold` when it is due). Line 2 is always `step <index> of <of>`:
+
+| `step.name` | Line 1 |
+|---|---|
+| `shed` | `closing the dashboard` |
+| `drain` | the sync words above take over the label |
+| `drain close` | `saving the battery record` |
+| `custody` | `recording what synced` |
+| `monthly_test_hold` | `monthly battery test` |
+| `poweroff` | `powering off` |
+| any other name | `shutting down` |
+
+- `of` is the steps **this** path runs (normal at home 5, 6 with the hold; the VCELL fast path 3). If the path changes mid-drain, `of` is recomputed once; the page simply reads it.
+- `monthly_test_hold` holds the Pi on battery on purpose, so the bar stands still for it. The words say why it is standing still.
+- If `step{}` is absent: line 1 `shutting down`, line 2 `steps not read`, and the bar holds.
 
 **Key back on (`cancelled`): no words.** The page exits on the first `cancelled` poll and the dashboard is already underneath. A "cancelled" message would only delay the gauges the driver just asked for.
 
@@ -182,13 +210,15 @@ The label is two lines in `--font-mono`: **line 1** `--fs-label` `--text-primary
 | `boot-state.{healthy, degraded, degradedReason}` | shipped (US-494) | — |
 | Per-feed readiness: `capture-health.feeds.<feed>.{state, firstSampleTs, lastSampleSecondsAgo}` | **shipped** (US-873, `capture_health.py` :330-334) | — |
 | OBD cause: `system-status.link.{bt, adapter, ecu}.state` | shipped (ARCH-061/062) | — |
-| A terminal **fault** per feed for IMU, LIGHT and UPS (sensor missing, read failed), readable by the page | **gap, S114 work** (PM 2026-10-23): `capture-health.feeds.<feed>.state` gains `faulted` + a `reason`; the light reader gains `sensor_absent`. Today `unknown` just means no sample yet | Atlas · Ralph |
+| A **fault** per feed for IMU, LIGHT and UPS, readable by the page | **S114 work** (Atlas A1/B1): `capture-health.feeds.<feed>.state` gains `faulted` + `reason` (current state, never latched); IMU/LIGHT from their bridge's `presenceFault`; `states/light` gains `reasons.lux` + top-level `unavailableReason` `sensor_absent`; UPS faulted only on a failed read. Today `unknown` just means no sample yet | Atlas · Ralph |
+| Degraded on events only | **S114** (Atlas C1): `hardCapSeconds`, `HARD_CAP_MS`, `MIN_PLAY_MS` and the `pi.splash.bootState` config block removed, in one story with the page | Ralph |
 | ~~Uptime clock, `handoffCeilingSec`~~ | **dropped**: no timer, no ceiling (CIO R1/R2) | — |
-| Shutdown: `shutdown-state.step{index, of, name}` | **new** (US-883). Today the emitter publishes only `phase`, `tGraceStartedAt`, `tGraceTotalS`, `tRemainingS`, `reason`, `ts` | Atlas · Ralph |
-| Shutdown: `shutdown-state.sync{waitingAtKeyOff, confirmed}` | **new** (US-883). **`confirmed` = rows waiting at key-off (per table, `source_id` ≤ that table's key-off high-water) whose `source_id` ≤ the table's acked mark now, capped at `waitingAtKeyOff`** (Atlas O3). Never a sum of `storedCount`: a re-send would over-count | Atlas · Ralph |
+| Shutdown: `shutdown-state.step{index, of, name}` | **new** (US-883). Names from `CEREMONY_ORDER`, promoted from `test_shutdown_ceremony_guard` :50 to a `power_watch` constant, imported by the guard test and by `step{}` (Atlas D1). Emitted at every step transition and after each `runSync` pass, through the one builder (D2). Today the emitter publishes only `phase`, `tGraceStartedAt`, `tGraceTotalS`, `tRemainingS`, `reason`, `ts` | Atlas · Ralph |
+| Shutdown: `shutdown-state.sync{waitingAtKeyOff, confirmed}` | **new** (US-883). **`confirmed` = rows waiting at key-off (per table, `source_id` ≤ that table's key-off high-water) whose `source_id` ≤ the table's acked mark now, capped at `waitingAtKeyOff`** (Atlas O3). Never a sum of `storedCount`: a re-send would over-count. **The key-off snapshot** is taken at `SyncWithServerTask.run` start, after smoothing confirmed, over the integer-mark tables only (the not-counted set `readSyncHealth` already uses, plus the drain exclusions). Rows written after it, this shutdown's own included, are outside the count by construction; an EDR-only backlog gives `waitingAtKeyOff` 0 ⇒ `nothing to sync` (Atlas E1) | Atlas · Ralph |
 | Shutdown: `shutdown-state.sync.state` (`away` / `joining` / `syncing` / `ended`) + `sync.outcome` (`OutcomeKind`) | **new, asked here**: the page can't tell away from at home, or name an outcome, without them. Names are Atlas's | Atlas |
 | Sync stall | existing `pi.homeNetwork.stallSec` = 60 | exists |
 | Key back on: `phase: cancelled` → page exits | **shipped** (`shutdown-state-poll.js`) | — |
+| The page's paint/exit events: paint on `flushing`/`powering_off`; 404 ⇒ `state-missing`; refused ⇒ hold; phase list pinned to `VALID_PHASES` | **S114** (Atlas 2026-10-23); the pre-roll and the three-miss count go | Ralph |
 
 ## 4. labwc, not X11
 
@@ -210,12 +240,15 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
    - UPS silent, no fault ⇒ UPS `waiting`; **the splash holds** however long the fixture runs; the moment UPS reports ready or a fault, spin 3 starts;
    - `capture-health` missing ⇒ every row `not read`, and the splash holds.
 5. **No timer:** a grep of the splash page and its tests finds no `setTimeout` or timestamp comparison that gates the hand-off (the poll interval and the spin animations are not gates), and there is no `handoffCeilingSec` key in `config.json` or the validator.
-6. Degraded fixture: logo frozen, amber ring, the emitter's `degradedReason` verbatim; a feed `waiting` or faulted never triggers degraded.
-7. **Home shutdown fixture:** bar ≤ 75 % until `confirmed` = `waitingAtKeyOff`; line 1 `syncing`, line 2 `<c> of <w> rows`; then `shutting down` / `step i of n` to 100 %. **Replay one batch twice: `confirmed` and the bar are unchanged by the second push** (Atlas O3 VC).
+6. **Degraded on events only:** a core unit `failed` ⇒ degraded on the next tick, `<service>: failed to start`; assets missing ⇒ `dashboard assets not installed`. A unit held `activating` keeps the splash looping spin 2 indefinitely (driven clock, 10 min, no degrade). A feed `waiting` or faulted never triggers degraded. A grep finds no `HARD_CAP` or `MIN_PLAY` constant and no `elapsedSeconds` comparison in the emitter; every `setTimeout` in the page is the `POLL_MS` tick.
+6a. The hand-off fires on spin 3's `animationend` (a stubbed animation event, no elapsed-time dependence).
+7. **Home shutdown fixture:** bar ≤ 75 % until `confirmed` = `waitingAtKeyOff`; line 1 `syncing`, line 2 `<c> of <w> rows`; then each step's §2.2 word with `step i of n` to 100 %; `shed` fills nothing. **Replay one batch twice: `confirmed` and the bar are unchanged by the second push** (Atlas O3 VC).
 8. Away fixture: no sync part; `away from home` / `not syncing`; the bar is step-driven.
 9. **One fixture per `OutcomeKind` row in §2.2:** its exact two lines, its bar colour; the steps still run to 100 %; the rows remain queued (verified next sync).
 10. **No shutdown timer:** a 120 s at-home sync fixture keeps the page up for all of it; the page exits only on `cancelled` or power-off; `BLACK_TAIL_CAP` is gone from `shutdown-state-poll.js` (CIO 2026-10-23).
-11. Key-back-on fixture: the page exits on the first `cancelled` poll, shows no words, and the dashboard returns without a reboot.
+11. Key-back-on fixture: the page exits on the first `cancelled` poll, shows no words, and the dashboard returns without a reboot. **`grace` then `cancelled` ⇒ zero paints; `grace` then `flushing` ⇒ paints on the `flushing` read**; no `elapsed()` in the paint path.
+11a. **Fault exits:** one 404 exits with `state-missing`; 10 refused polls do not exit and the last paint holds; an unknown phase exits; the guard test fails if the page's phase list differs from `VALID_PHASES`.
+11b. **Step words:** one fixture per `step.name` row in §2.2 (normal, hold due, fast path, a mid-drain switch to the fast path with the amber stretch).
 12. No literal colour or px in splash CSS: every value resolves to `tokens.css`, which the splash links. Today's `splash/styles.css` fails this (its own token copies at old values, `#000`, 10–14 px text). The one exception is `warning-480x320.png`, a baked image.
 13. **DoD (R15): CIO in the car, key-on and key-off, on the labwc stack.**
 
@@ -233,11 +266,11 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 | Item | Owner |
 |---|---|
 | ~~Ratify 75 s~~: **closed.** The CIO ruled no timer and no ceiling (2026-10-23, R1/R2) | — |
-| The `faulted` reason vocabulary per feed (S114). The §1.3 words map onto it: `sensor_absent` ⇒ `sensor not found`, a read failure ⇒ `read failed`, any other reason ⇒ `fault`. Without it a dead sensor holds the splash | Atlas |
-| Which of the degraded `HARD_CAP_MS` (12 s), `hardCapSeconds` and `MIN_PLAY_MS` (2.5 s) the no-timer rule removes, and which are an animation's own length. **Atlas is ruling; this spec waits for his word.** Also: the shutdown 1 s pre-roll and the `state-missing` / `unrecognized-phase` exits. (`BLACK_TAIL_CAP`: **closed**, CIO removed it 2026-10-23) | Atlas |
-| Does lightdm quit Plymouth with `--retain-splash`? Measure in S113; either answer is acceptable (§1.1) | Atlas · Ralph (US-885/651) |
+| The read-failure reason code per feed (the §1.3 `read failed` keys on it; `sensor_absent` is named) | Atlas (S114) |
+| ~~Degraded timers, pre-roll, state-missing / unrecognized-phase, `BLACK_TAIL_CAP`~~: **all ruled 2026-10-23** (§1.1, §2.1) | — |
+| ~~`--retain-splash`~~: **confirmed stale** (Atlas F1); the black gap is measured on the cold key-on | Ralph (US-885) |
 | `sync.state` + `sync.outcome` names (the uptime field is moot under R2) | Atlas |
-| The Plymouth theme path (proposed `deploy/plymouth/eclipse/`) | Atlas (US-885) |
+| ~~The Plymouth theme path~~: **accepted**, `deploy/plymouth/eclipse/` (Atlas F1) | — |
 
 ## 8. Out of scope
 The boot-time target itself (R4: set by the CIO after the baseline) · OS boot-speed work (US-858/859/866; this spec only needs their splash hook) · lighter renderer (US-867, research only) · the labwc switch (S113).
