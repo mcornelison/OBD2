@@ -1315,6 +1315,8 @@ def _buildFuelEconomy(inputs: dict[str, Any], nowIso: str) -> dict[str, Any]:
     US-890-e: ``inputs.recent`` is the RecentWindow's sums ``{airG, km,
     mafSamples}``; ``recentPublished: false`` records a provider from before
     the field existed, so the stored payload has no ``recent`` key.
+    US-923: ``inputs.resetAllowed`` is the orchestrator's gate verdict
+    ``{value, reason}``; absent, the payload has no ``resetAllowed`` key.
     """
     from dataclasses import replace
 
@@ -1336,6 +1338,7 @@ def _buildFuelEconomy(inputs: dict[str, Any], nowIso: str) -> dict[str, Any]:
         distanceSinceTs=inputs["distanceSinceTs"], nowUtc=_awareUtc(nowIso),
         staleSec=float(DEFAULTS["pi.display.stale.obdLiveSec"]), sinceReset=inputs["sinceReset"],
         recent=None if recentIn is None else fee.RecentSnapshot(**recentIn),
+        resetAllowed=inputs.get("resetAllowed"),
     )
     if inputs.get("recentPublished") is False:
         del payload["recent"]
@@ -1772,3 +1775,187 @@ def test_architectureMd_recordsTheRecentWindowContract():
     for needle in ("RecentWindow", "ratio of sums", "too_few_samples", "recentMinMafSamples",
                    "recentMinMiles", "never held together", "99+", "not started"):
         assert needle in section, needle
+
+
+# ---------------------------------------------------------------------------
+# US-922 -- the MPG unit (specs/v030-fuel-page-design.md s4.3 :71-77, AC 5a).
+#     Every MPG figure is followed by "MPG" in a .fuel-unit, the airflow g/s
+#     pattern (.fuel-line > .fuel-value + .fuel-unit, --fuel-unit-gap 4 px). A
+#     "--" never carries it; "99+" does. The figure text itself is unchanged.
+# ---------------------------------------------------------------------------
+
+MPG_UNIT = "MPG"  # spec s4.3 :71, "Every MPG figure is followed by MPG"
+_MPG_SLOTS = (("fuel-mpg-last30", "last30"), ("fuel-mpg-this-drive", "thisDrive"),
+              ("fuel-mpg-since-reset", "sinceReset"))
+# The fit column (spec s4.3 :74): 141.33 px, "136 px when the body's scrollbar
+# shows, which is the case to design for" -- the classic 16 px scrollbar out of
+# the body, then a third less the two column gaps: (448 - 16 - 24) / 3 = 136.
+_BODY_SCROLLBAR_PX = 16
+_MPG_SCROLLBAR_COLUMN_PX = 136
+
+
+def _resetView(payload: Any, phase: str) -> dict[str, Any]:
+    state = {"phase": phase, "outcome": None, "baselineTs": None, "resetAtTs": None,
+             "confirmFromMs": None}
+    return _probe("fuelMpgResetView", payload, state, 30)
+
+
+def _mpgFigureWithUnitWidth(figure: str, sizeVar: str) -> float:
+    """figure + gap + "MPG", as _airflowWidth models the g/s line."""
+    return (_monoWidth(figure, sizeVar) + _fuelPx("var(--fuel-unit-gap)")
+            + _monoWidth(MPG_UNIT, "var(--fs-label)"))
+
+
+def _mpgScrollbarColumnWidth() -> float:
+    return (_bodyWidthPx() - _BODY_SCROLLBAR_PX - 2 * _fuelPx("var(--fuel-col-gap)")) / 3
+
+
+def test_markup_eachMpgSlotWrapsItsValueAsTheAirflowLine():
+    """
+    Given: dashboard.html's three MPG slots
+    When: their markup is read
+    Then: each carries .fuel-line > .fuel-value "--" + an empty .fuel-unit, as AIRFLOW (:344)
+    """
+    markup = _fuelMarkup()
+    line = ('<span class="fuel-line"><span class="fuel-value">--</span>'
+            '<span class="fuel-unit"></span></span>')
+    for slotCls, _key in _MPG_SLOTS:
+        slot = re.search(rf'<div class="fuel-reading {slotCls}".*?</div>', markup, re.S)
+        assert slot is not None, slotCls
+        assert line in slot.group(0), slotCls
+        assert slot.group(0).count('class="fuel-value"') == 1, slotCls
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("payload", "key", "text"),
+    [(_fuelEconomy(sinceReset=_resetRow(14.8)), "sinceReset", "≈14.8"),
+     (_fuelEconomy(thisDrive=_drive(mpg=26.3)), "thisDrive", "≈26.3"),
+     (_fuelEconomy(thisDrive=_drive(mpg=99.96)), "thisDrive", "≈100.0"),
+     (_withRecent(_recent(mpg=104.2)), "last30", "99+"),
+     (_withRecent(_recent(mpg=27.0)), "last30", "27")],
+    ids=["since-reset-14.8", "this-drive", "this-drive-100", "last30-99plus", "last30-27"],
+)
+def test_validation_aFigure_carriesMpg_andItsTextIsUnchanged(payload: Any, key: str, text: str):
+    view = _mpgView(payload)
+    assert view[key]["text"] == text  # no literal space, no unit in the figure
+    assert view[key]["unit"] == MPG_UNIT
+    assert view[key]["noteKind"] == "none"
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("payload", "key"),
+    [(_fuelEconomy(thisDrive=None), "thisDrive"),                         # not started
+     (_fuelEconomy(sinceReset=None), "sinceReset"),                       # never reset
+     (_fuelEconomy(thisDrive=_drive(mpgNullReason="too_short")), "thisDrive"),
+     (_fuelEconomy(thisDrive=_drive(mpgNullReason="zzz_new")), "thisDrive"),
+     (_fuelEconomy(sinceReset=_resetRow(None)), "sinceReset"),
+     (_fuelEconomy(thisDrive=5, sinceReset="x"), "thisDrive"),            # not published
+     (None, "thisDrive"),                                                 # no source
+     (None, "sinceReset"),
+     ({"ts": None}, "last30"),                                            # not published
+     (_withRecent(None), "last30"),                                       # not started
+     (_withRecent(_recent(mpg=None, mpgNullReason="too_few_samples")), "last30")],
+    ids=["not-started", "never-reset", "reason", "raw-code", "since-reset-null",
+         "not-published", "no-source-drive", "no-source-reset", "last30-unpublished",
+         "last30-not-started", "last30-reason"],
+)
+def test_validation_aDash_neverCarriesTheUnit(payload: Any, key: str):
+    view = _mpgView(payload)
+    assert view[key]["text"] == "--"
+    assert view[key]["unit"] == ""
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("phase", ["posting", "awaiting"])
+def test_resetting_isADash_withNoUnit(phase: str):
+    view = _resetView(_fuelEconomy(sinceReset=_resetRow(14.8)), phase)
+    assert view["sinceReset"]["text"] == "--"
+    assert view["sinceReset"]["note"] == "resetting…"
+    assert view["sinceReset"]["unit"] == ""
+
+
+@_NODE_ONLY
+def test_resetOverlay_idle_keepsTheFiguresUnit():
+    view = _resetView(_fuelEconomy(sinceReset=_resetRow(14.8)), "idle")
+    assert (view["sinceReset"]["text"], view["sinceReset"]["unit"]) == ("≈14.8", MPG_UNIT)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("caseId", [cid for cid, _c in _mpgCases()])
+def test_dom_mpgUnitPaintsTheView(caseId: str):
+    """
+    Given: every MPG fixture case
+    When: the page boots on it
+    Then: each slot's .fuel-unit (inside its .fuel-line) reads the view's unit
+    """
+    payload = dict(_mpgCases())[caseId]["fuel-economy"]
+    view = _mpgView(payload)
+    surface = _boot(system=_driving(), fuelEconomy=payload)
+    for slotCls, key in _MPG_SLOTS:
+        unit = _mpgSlotPath(surface, slotCls, "fuel-unit")
+        assert _textOf(unit[-1]) == view[key]["unit"], slotCls
+        assert any("fuel-line" in _classes(n) for n in unit), slotCls
+        assert _textOf(_mpgSlotPath(surface, slotCls, "fuel-value")[-1]) == view[key]["text"]
+
+
+@_NODE_ONLY
+def test_dom_validation_sinceReset14p8_andLast30Capped_carryMpg_notStartedDoesNot():
+    payload = _withRecent(_recent(mpg=104.2))
+    payload["thisDrive"] = None
+    payload["sinceReset"] = _resetRow(14.8)
+    surface = _boot(system=_driving(), fuelEconomy=payload)
+
+    def _pair(slotCls: str) -> tuple[str, str]:
+        return (_textOf(_mpgSlotPath(surface, slotCls, "fuel-value")[-1]),
+                _textOf(_mpgSlotPath(surface, slotCls, "fuel-unit")[-1]))
+
+    assert _pair("fuel-mpg-since-reset") == ("≈14.8", MPG_UNIT)
+    assert _pair("fuel-mpg-last30") == ("99+", MPG_UNIT)
+    assert _pair("fuel-mpg-this-drive") == ("--", "")
+
+
+@_NODE_ONLY
+def test_dom_mpgUnit_isTheAirflowUnitStyle():
+    surface = _boot(system=_driving(), fuelEconomy=_fuelEconomy(thisDrive=_drive(mpg=26.3)))
+    unit = _mpgSlotPath(surface, "fuel-mpg-this-drive", "fuel-unit")
+    assert surface.winningDeclaration(unit, "font-size")[0] == "var(--fs-label)"
+    assert surface.winningDeclaration(unit, "color")[0] == "var(--text-secondary)"
+    assert surface.winningDeclaration(unit, "font-family")[0] == "var(--font-mono)"
+    line = _mpgSlotPath(surface, "fuel-mpg-this-drive", "fuel-line")
+    assert surface.winningDeclaration(line, "gap")[0] == "var(--fuel-unit-gap)"
+    assert _fuelPx("var(--fuel-unit-gap)") == 4  # spec s4.3 :71, "the 4 px --fuel-unit-gap"
+
+
+def test_css_mpgLine_wrapsRatherThanClips():
+    """Spec :77: a seven-character figure drops MPG under it -- never clips."""
+    body = _rule("#fuel-card .fuel-mpg .fuel-line")
+    assert _decl(body, "flex-wrap") == "wrap"
+    for selector, ruleBody in _fuelRules():
+        if "fuel-line" in selector or "fuel-unit" in selector:
+            assert "nowrap" not in ruleBody, selector
+            assert "ellipsis" not in ruleBody, selector
+
+
+def test_mpgScrollbarColumn_isTheSpecs136px():
+    assert _mpgScrollbarColumnWidth() == _MPG_SCROLLBAR_COLUMN_PX
+
+
+@pytest.mark.parametrize(
+    ("figure", "sizeVar", "spec"),
+    [("≈100.0", "var(--fs-secondary)", 134.0),   # spec :76, the six-character worst case
+     ("≈99.9", "var(--fs-secondary)", 118.4),    # spec :76
+     ("99+", "var(--fs-primary)", 101.5)],       # spec :75, LAST 30 S
+)
+def test_validation_figurePlusMpg_fitsTheScrollbarColumn(figure: str, sizeVar: str, spec: float):
+    width = _mpgFigureWithUnitWidth(figure, sizeVar)
+    assert round(width, 1) == spec, (figure, width)
+    assert width <= _MPG_SCROLLBAR_COLUMN_PX, (figure, width)
+
+
+def test_mpgUnitFitModel_failsAPlantedSevenCharacterFigure():
+    """Spec :77: "≈1000.0" (seven characters) is 149.7 px -- it must wrap, not fit."""
+    width = _mpgFigureWithUnitWidth("≈1000.0", "var(--fs-secondary)")
+    assert round(width, 1) == 149.7
+    assert width > _MPG_SCROLLBAR_COLUMN_PX

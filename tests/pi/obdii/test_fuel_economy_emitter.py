@@ -19,6 +19,8 @@
 # 2026-10-15    | Rex (US-890-e) | recent (MPG over the last 30 s): RecentWindow,
 #                                null precedence, lock-apart feeding, the
 #                                recent-crawl fixture case.
+# 2026-10-22    | Rex (US-923)   | resetAllowed: published each card tick from the
+#                                cached gear reading + the deriver's SPEED.
 # ================================================================================
 ################################################################################
 
@@ -346,7 +348,9 @@ def test_freshProcess_noDrive_thisDriveNull(tmp_path):
     state = _orch(tmp_path).state()
 
     # US-890-e named pin change: the empty state gains 'recent': None.
-    assert state == {"thisDrive": None, "sinceReset": None, "ts": None, "recent": None}
+    # MOVED PIN (US-923): and the gate verdict -- no gear, no SPEED: fail closed.
+    assert state == {"thisDrive": None, "sinceReset": None, "ts": None, "recent": None,
+                     "resetAllowed": {"value": False, "reason": "speed_unknown"}}
 
 
 def test_driveStartWithNoMafYet_zeroFuel_mpgNullMafStale(tmp_path):
@@ -1052,3 +1056,88 @@ def test_speedKmDelta_feedsTheWindow_withTheTwoLocksNeverHeldTogether(tmp_path):
 
     assert overlaps == []
     assert recent["mpg"] == pytest.approx(_steadyMpg(60.0, 10.0))
+
+
+# ============================================ US-923 resetAllowed published
+
+
+def test_builder_withoutAGateVerdict_omitsTheKey_withOne_carriesIt():
+    """None is the shape a provider from before the gate published."""
+    snap = fee.FuelIntegrator(300.0).snapshot()
+    settings = fee.FuelSettings.fromConfig({})
+    kw = {"distanceKm": None, "distanceSinceTs": None,
+          "nowUtc": datetime(2026, 10, 22, tzinfo=UTC), "staleSec": 5.0}
+
+    assert "resetAllowed" not in fee.buildFuelEconomyState(snap, settings, **kw)
+    payload = fee.buildFuelEconomyState(
+        snap, settings, resetAllowed={"value": False, "reason": "driving"}, **kw)
+    assert payload["resetAllowed"] == {"value": False, "reason": "driving"}
+
+
+class _Deriver:
+    """Counts update calls; answers a fixed reading."""
+
+    def __init__(self, reading: Any) -> None:
+        self.reading = reading
+        self.calls = 0
+
+    def update(self, **kw: Any) -> Any:
+        self.calls += 1
+        return self.reading
+
+
+def _gearOrch(tmp_path, reading: Any) -> tuple[_Orch, _Deriver, list[Any]]:
+    orch = _orch(tmp_path)
+    deriver = _Deriver(reading)
+    published: list[Any] = []
+    orch._gearDeriver = deriver
+    orch._gearStateEmitter = published.append
+    orch._gearClock = lambda: orch.t
+    orch._gatherObdLinkState = lambda: ("linked", 0, True, None)
+    return orch, deriver, published
+
+
+def test_emitGearState_cachesTheReadingItPublished_withItsDerivationTime(tmp_path):
+    from pi.obdii.gear_derivation import GearReading
+
+    park = GearReading(available=True, gear="P", reason="park")
+    orch, deriver, published = _gearOrch(tmp_path, park)
+
+    orch._emitGearState()
+
+    assert published == [park]
+    assert (orch._lastGearReading, orch._lastGearAtS) == (park, orch.t)
+    assert deriver.calls == 1
+
+
+def test_publishedResetAllowed_readsTheCache_neverASecondDerivation(tmp_path):
+    from pi.obdii.gear_derivation import GearReading, Reading
+
+    orch, deriver, _ = _gearOrch(tmp_path, GearReading(True, "N", "neutral"))
+    orch._emitGearState()
+    calls = deriver.calls
+
+    assert orch.state()["resetAllowed"] == {"value": True, "reason": None}
+    assert deriver.calls - calls <= 1  # the tick's own gear emit, not the gate
+    # Past maxAgeS the cached N ages out; a fresh 40 km/h refuses.
+    orch._gearDeriver = None
+    orch.advance(3.5)
+    orch._lastSpeedReading = Reading(value=40.0, tsS=orch.t)
+    assert orch.state()["resetAllowed"] == {"value": False, "reason": "driving"}
+
+
+def test_publishedResetAllowed_noGearNoSpeed_isSpeedUnknown(tmp_path):
+    """pi.gear.enabled false caches nothing: the gate fails closed."""
+    assert _orch(tmp_path).state()["resetAllowed"] == {
+        "value": False, "reason": "speed_unknown"}
+
+
+def test_publishedResetAllowed_followsTheConfiguredLimit(tmp_path):
+    from pi.obdii.gear_derivation import Reading
+
+    orch = _orch(tmp_path, fuel={"resetMaxSpeedKph": 12})
+    orch._gearClock = lambda: orch.t
+    orch._lastSpeedReading = Reading(value=12.0, tsS=orch.t)
+    assert orch.state()["resetAllowed"]["value"] is True
+    orch._lastSpeedReading = Reading(value=13.0, tsS=orch.t)
+    assert orch.state()["resetAllowed"] == {"value": False, "reason": "driving"}

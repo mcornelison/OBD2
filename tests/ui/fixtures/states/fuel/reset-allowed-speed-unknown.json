@@ -1,0 +1,39 @@
+{
+  "description": "US-923: resetAllowed {value: false, reason: 'speed_unknown'} (not P/N, SPEED missing or older than pi.gear.maxAgeSec) -> no hint, the long-press is inert.",
+  "reads": [
+    {
+      "label": "read",
+      "now": "2026-10-20T15:10:00Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": false,
+          "reason": "speed_unknown"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null,
+        "resetAllowed": {
+          "value": false,
+          "reason": "speed_unknown"
+        }
+      }
+    }
+  ]
+}

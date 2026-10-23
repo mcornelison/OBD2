@@ -17,6 +17,7 @@
 # ================================================================================
 # 2026-09-22    | Rex (US-739)   | Initial -- distinctness, explicit entries, the
 #               |                | ruled wording and the width envelope.
+# 2026-10-22    | Rex (US-511-a) | engine_off_rolling -> "engine off" pinned.
 # ================================================================================
 ################################################################################
 """US-739: every gear reason renders as its own words, not a shared string."""
@@ -86,7 +87,12 @@ def test_everyProducerReasonRendersADistinctString():
 @_NODE_TESTS
 @pytest.mark.parametrize(
     ("token", "text"),
-    [("link_down", "no link"), ("settling_park", "confirming park")],
+    [
+        ("link_down", "no link"),
+        ("settling_park", "confirming park"),
+        # US-511-a: Iris's wording, UIDEV-012 I2 (system spec 4.7.2).
+        ("engine_off_rolling", "engine off"),
+    ],
 )
 def test_theNewTokensCarryThePmRuledWording(token: str, text: str):
     """The operator wording is the PM's and the CIO's, not the developer's."""
@@ -110,7 +116,7 @@ def test_theNewStringsFitTheWidthEnvelope():
     """AC4: both sit inside the envelope the shipped strings establish. If one
     did not fit, the story says STOP AND REPORT rather than abbreviate."""
     entries = _explicitEntries()
-    for token in ("link_down", "settling_park"):
+    for token in ("link_down", "settling_park", "engine_off_rolling"):
         assert len(entries[token]) <= _WIDTH_ENVELOPE, entries[token]
 
 

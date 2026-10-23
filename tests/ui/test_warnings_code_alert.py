@@ -29,6 +29,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-899-b key-on TROUBLE CODES screen.
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: parked is states/gear (P/N);
+#               |              | the DOM routes serve a gear, moving is gear 3.
 # ================================================================================
 ################################################################################
 
@@ -55,7 +57,12 @@ import render_harness as rh  # noqa: E402
 from pi.obdii.alerts_ack_store import AlertsAckStore  # noqa: E402
 from pi.obdii.alerts_arbiter import CODE_UNRATED_SENTENCE, buildAlertsState  # noqa: E402
 from tests.ui.css_type_scale import DASHBOARD_CSS, readCss  # noqa: E402
-from tests.ui.test_carousel_kebab_always_visible import _driving, _parked  # noqa: E402
+from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
+    _driving,
+    _gearMoving,
+    _gearParked,
+    _parked,
+)
 from tests.ui.test_warnings_page import (  # noqa: E402
     CODES_READ,
     NOW_MS,
@@ -101,7 +108,8 @@ DISPLAY_STALE = {
 }
 ACK_OK = {"ok": True}
 ACK_409 = {"__status": 409, "__body": {"ok": False, "error": "unknown_id", "ids": [P0400_ID]}}
-# engineParked (US-511): idle must be HELD parkedOnS (8 s) before it is parked.
+# engineParked (US-511): the parked GEAR (US-511-b; was idle) must be HELD
+# parkedOnS (8 s) before it is parked.
 PARK_HOLD = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}]
 
 
@@ -148,7 +156,8 @@ def _priorBootEpisodes() -> list:
 # name -> (episodes, acknowledgedIds).
 CODE_ALERT_SCENARIOS: dict[str, tuple[list, tuple[str, ...]]] = {
     "code-alert-keyon": (_twoCodes(), ()),
-    # The same provider payload: 'moving' is the system-status side.
+    # The same provider payload: 'moving' is the gear side (US-511-b; was
+    # system-status).
     "code-alert-moving": (_twoCodes(), ()),
     "code-alert-and-stop": ([*_overheat(), *_twoCodes()], ()),
     "code-alert-five-codes": (_fiveCodes(), ()),
@@ -415,8 +424,15 @@ def test_thePullOverAck_stillSettlesOnItsOwnEntry():
 # ---------------------------------------------------------------------------
 
 
-def _routes(alerts: Any, system: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
-    routes: dict[str, Any] = {"/system-status": system if system is not None else _parked()}
+def _routes(
+    alerts: Any, system: dict[str, Any] | None = None, gear: Any = None, **extra: Any
+) -> dict[str, Any]:
+    # MOVED PIN (US-511-b): parked is states/gear (P or N), so every boot serves
+    # a gear route -- parked unless the caller says otherwise.
+    routes: dict[str, Any] = {
+        "/system-status": system if system is not None else _parked(),
+        "/gear": gear if gear is not None else _gearParked(),
+    }
     if alerts is not None:
         routes["/alerts"] = alerts
     routes.update(extra)
@@ -551,7 +567,9 @@ def test_dom_200ButNoNullReRead_isCouldntDismissAfterTheConfirmWindow():
 @_NODE_ONLY
 def test_dom_899_7_moving_notDrawn_noPost():
     """Validation 3: code-alert-moving -- not drawn; a DISMISS click posts nothing."""
-    routes = _routes(_fixture("code-alert-moving"), _driving(), **{"/alerts-ack": ACK_OK})
+    routes = _routes(
+        _fixture("code-alert-moving"), _driving(), gear=_gearMoving(), **{"/alerts-ack": ACK_OK}
+    )
     surface, out = _boot(routes, [*PARK_HOLD, {"click": DISMISS_ID}, {"flush": 2}])
     assert not _painted(surface, SURFACE_ID)
     assert _posts(out) == []
@@ -569,16 +587,16 @@ def test_dom_hidingWhileMovingIsNotADismiss_itReturnsWhenParked():
     routes = _routes(_fixture("code-alert-keyon"))
     surface, out = _boot(routes, [
         *PARK_HOLD,
-        {"setRoutes": {"/system-status": _driving()}}, {"flush": 4},
+        {"setRoutes": {"/system-status": _driving(), "/gear": _gearMoving()}}, {"flush": 4},
         {"advanceMs": 4000, "flush": 4},
     ])
     assert not _painted(surface, SURFACE_ID), "drawn while moving"
     assert _posts(out) == []
     back, out = _boot(routes, [
         *PARK_HOLD,
-        {"setRoutes": {"/system-status": _driving()}}, {"flush": 4},
+        {"setRoutes": {"/system-status": _driving(), "/gear": _gearMoving()}}, {"flush": 4},
         {"advanceMs": 4000, "flush": 4},
-        {"setRoutes": {"/system-status": _parked()}}, {"flush": 4},
+        {"setRoutes": {"/system-status": _parked(), "/gear": _gearParked()}}, {"flush": 4},
         {"advanceMs": 9000, "flush": 4},
     ])
     assert _painted(back, SURFACE_ID), "the code alert did not come back when parked"

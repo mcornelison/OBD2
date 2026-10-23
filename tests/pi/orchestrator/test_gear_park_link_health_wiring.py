@@ -27,6 +27,9 @@
 # 2026-09-07    | Rex (US-687-b) | Initial -- link health reaches the gear
 #               |                | producer, and the three not-linked states
 #               |                | that must never publish P.
+# 2026-10-22    | Rex (US-511-a) | MOVED PIN: _runParkedTicks feeds SPEED (P
+#               |                | means stopped); no-SPEED key-off and the
+#               |                | engine_off_rolling wiring pinned.
 # ================================================================================
 ################################################################################
 
@@ -114,13 +117,19 @@ class _Clock:
         return self.nowS
 
 
-def _runParkedTicks(tmp_path, status, *, holdS=25.0, parkDwellSec=20.0) -> dict:
+def _runParkedTicks(tmp_path, status, *, holdS=25.0, parkDwellSec=20.0,
+                    speedKph=0.0) -> dict:
     """Drive the REAL emit path with NO RPM ever arriving; return states/gear.
 
     Everything between the fake status and the parsed JSON is production code:
     _gatherObdLinkState -> _emitGearState -> GearDeriver.update ->
     makeGearStateEmitter -> the state file. A pin taken anywhere short of the
     file would not catch a missing passthrough, which is the entire risk here.
+
+    MOVED PIN (US-511-a): SPEED is now fed every tick through the REAL
+    ``observeGearInput`` seam (``speedKph``, default a stopped 0), because P
+    needs a fresh SPEED 0 (Spool 2026-10-22, Atlas A1). ``speedKph=None``
+    feeds no SPEED at all -- the wall-power key-off.
     """
     clock = _Clock()
     orch = _Orch(
@@ -133,6 +142,8 @@ def _runParkedTicks(tmp_path, status, *, holdS=25.0, parkDwellSec=20.0) -> dict:
 
     end = clock.nowS + holdS
     while clock.nowS <= end:
+        if speedKph is not None:
+            orch.observeGearInput("SPEED", speedKph)
         orch._emitGearState()
         clock.nowS += 0.5
 
@@ -157,19 +168,59 @@ def _linkedStatus() -> _FakeStatus:
 
 def test_emitGearState_healthyLink_withNoRpm_publishesPark(tmp_path):
     """
-    Given: a REAL connected status and no RPM ever observed
+    Given: a REAL connected status, no RPM ever observed, SPEED 0 arriving
     When:  the orchestrator's own emit path runs past the park dwell
     Then:  states/gear says P
 
     THE ONE THAT WOULD HAVE CAUGHT A MISSING PASSTHROUGH. `linkHealthy`
     defaults to False, so an `_emitGearState` that forgot the argument leaves
     every other test in this sprint green and the tile permanently dark.
+
+    MOVED PIN (US-511-a): SPEED 0 is fed through the real seam, which P needs.
     """
     state = _runParkedTicks(tmp_path, _linkedStatus())
 
     assert state["available"] is True
     assert state["gear"] == gd.GEAR_PARK
     assert state["reason"] == gd.REASON_PARK
+
+
+def test_emitGearState_healthyLink_noRpm_noSpeed_publishesNoPark(tmp_path):
+    """
+    Given: a REAL connected status and neither RPM nor SPEED ever arriving --
+           the wall-power key-off: dongle linked, ECU dark
+    When:  the same 25 s of ticks run
+    Then:  no P (US-511-a, Spool 2026-10-22): nothing says the car is stopped
+    """
+    state = _runParkedTicks(tmp_path, _linkedStatus(), speedKph=None)
+
+    assert state["gear"] != gd.GEAR_PARK
+    assert state["available"] is False
+    assert state["reason"] == gd.REASON_NO_DATA
+
+
+def test_emitGearState_freshRpmZeroWhileRolling_publishesEngineOffRolling(tmp_path):
+    """
+    Given: a stall while rolling, routed through the real observe seam
+    When:  SPEED 12 km/h and RPM 0 arrive fresh
+    Then:  states/gear is absent with reason engine_off_rolling, not P
+    """
+    orch = _Orch(
+        str(tmp_path / "states"),
+        connection=_FakeConnection(_linkedStatus()),
+        clock=_Clock(),
+        parkDwellSec=20.0,
+    )
+    orch._initializeCardStateEmitters()
+
+    orch.observeGearInput("SPEED", 12.0)
+    orch.observeGearInput("RPM", 0.0)
+
+    state = json.loads((tmp_path / "states" / "gear").read_text(encoding="utf-8"))
+
+    assert state["available"] is False
+    assert state["gear"] is None
+    assert state["reason"] == gd.REASON_ENGINE_OFF_ROLLING
 
 
 def test_emitGearState_linkDown_theLooseDongleIncident_publishesNoPark(tmp_path):

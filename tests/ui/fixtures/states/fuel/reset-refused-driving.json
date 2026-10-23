@@ -1,6 +1,5 @@
 {
-  "description": "The page offered the reset parked, but a drive began recording before eclipse-obd serviced it: 409 {ok:false, reason:'driving'}, nothing changed. SINCE RESET shows the latest provider value (24.6) + 'park to reset'. Read built by the REAL buildFuelEconomyState.",
-  "parked": true,
+  "description": "US-923: the page offered the reset (resetAllowed {value: true} at walking pace), but the car passed 8 km/h before eclipse-obd re-checked the SAME gate at service time: 409 {ok:false, reason:'driving'}, nothing changed. SINCE RESET shows the latest provider value (24.6) + 'slow to reset'. Read built by the REAL buildFuelEconomyState.",
   "response": {
     "status": 409,
     "body": {
@@ -21,6 +20,10 @@
           "fuel_l": 39.39,
           "distance_km": 412.0,
           "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -32,7 +35,11 @@
           "resetAtTs": "2026-10-01T12:00:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     }
   ]

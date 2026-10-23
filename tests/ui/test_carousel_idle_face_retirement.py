@@ -47,6 +47,8 @@
 #                               at #alerts-card over states/alerts.
 # 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the unread line is NOT
 #                               CHECKED YET (the empty-state body).
+# 2026-10-22    | Ralph (Rex)  | US-511-b -- MOVED PIN: parkedNext's rawIdle is
+#                               renamed rawParked (fed by gearParked).
 # ================================================================================
 ################################################################################
 
@@ -356,7 +358,9 @@ def test_parkedNext_reducesTheResolvedIdleSignalNotAFace():
     sig = re.search(r"function parkedNext\(([^)]*)\)", js)
     assert sig, "parkedNext is gone"
     params = [p.strip() for p in sig.group(1).split(",") if p.strip()]
-    assert params == ["prev", "rawIdle", "nowMs", "cfg"], params
+    # MOVED PIN (US-511-b, Atlas B1): rawIdle is renamed rawParked -- the input
+    # is gearParked(states/gear) now; the reducer is otherwise unchanged.
+    assert params == ["prev", "rawParked", "nowMs", "cfg"], params
     body = _codeOnly(_fnBody(js, "parkedNext"))
     for forbidden in ("idleCardView", "homeFace", "imuView"):
         assert forbidden not in body

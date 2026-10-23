@@ -334,7 +334,10 @@
            (US-890-e). Skeleton "--" + "not read".
            US-890-f: SINCE RESET's parked-only reset (`fuelMpgResetView`):
            `.fuel-reset-line` carries "hold to reset" or the outcome,
-           `.fuel-reset-progress` the hold, #fuel-reset-confirm the confirm. -->
+           `.fuel-reset-progress` the hold, #fuel-reset-confirm the confirm.
+           US-922: each MPG slot's value sits in a `.fuel-line` with a
+           `.fuel-unit`, the AIRFLOW g/s pattern; "MPG" shows only with a
+           figure, never beside a "--" (fuel spec s4.3). -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
@@ -361,19 +364,19 @@
           <div class="fuel-mpg">
             <div class="fuel-reading fuel-mpg-last30" data-slot="mpg-last30" data-note="unpublished">
               <span class="fuel-label">LAST 30 S</span>
-              <span class="fuel-value">--</span>
+              <span class="fuel-line"><span class="fuel-value">--</span><span class="fuel-unit"></span></span>
               <span class="fuel-note">not published</span>
             </div>
             <div class="fuel-reading fuel-mpg-this-drive" data-slot="mpg-this-drive" data-note="reason">
               <span class="fuel-label">THIS DRIVE</span>
-              <span class="fuel-value">--</span>
+              <span class="fuel-line"><span class="fuel-value">--</span><span class="fuel-unit"></span></span>
               <span class="fuel-flag" hidden></span>
               <span class="fuel-note">not read</span>
             </div>
             <div class="fuel-reading fuel-mpg-since-reset" id="fuel-since-reset" data-slot="mpg-since-reset"
                  data-note="reason" data-pressable="false">
               <span class="fuel-label">SINCE RESET</span>
-              <span class="fuel-value">--</span>
+              <span class="fuel-line"><span class="fuel-value">--</span><span class="fuel-unit"></span></span>
               <span class="fuel-note">not read</span>
               <span class="fuel-reset-line" hidden></span>
               <span class="fuel-reset-progress" hidden aria-hidden="true"><span class="fuel-reset-progress-fill"></span></span>

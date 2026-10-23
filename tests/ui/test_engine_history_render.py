@@ -34,6 +34,8 @@
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-889-c Engine scroll half.
 # 2026-10-19    | Ralph (Rex)  | US-909: mil-on-one-code joins MIL_FIXTURES;
 #               |              | DTC_COUNT 1 reads '1 code ›' (spec s3:53).
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: parked is states/gear (P/N),
+#               |              | so the parked boots serve a gear route too.
 # ================================================================================
 ################################################################################
 
@@ -57,6 +59,8 @@ import render_harness as rh  # noqa: E402
 
 from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
     _driving,
+    _gearMoving,
+    _gearParked,
     _parked,
 )
 from tests.ui.test_dashboard_fidelity_pass import _stripJsComments  # noqa: E402
@@ -182,8 +186,12 @@ def _param(value: float | None, unit: str, **extra: Any) -> dict[str, Any]:
 def _boot(
     history: Any = None, obdLive: Any = None, system: Any = None,
     steps: list[dict[str, Any]] | None = None, nowIso: str = "2026-10-20T15:12:30Z",
+    gear: Any = None,
 ) -> rh.Surface:
     routes: dict[str, Any] = {}
+    # MOVED PIN (US-511-b): parked is states/gear (P or N), not system-status idle.
+    if gear is not None:
+        routes["/gear"] = gear
     if history is not None:
         routes["/engine-history"] = history
     if obdLive is not None:
@@ -199,7 +207,8 @@ def _bootHistory(name: str) -> rh.Surface:
     return _boot(history=fx["engine-history"], nowIso=fx["now"])
 
 
-# Parked is the US-511 debounce: idle must be HELD for parkedOnS (8 s).
+# Parked is the US-511 debounce: the parked GEAR (US-511-b) must be HELD for
+# parkedOnS (8 s).
 _HOLD_PARKED = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}]
 
 
@@ -210,7 +219,7 @@ def _bootMil(name: str, parked: bool, click: bool = False) -> rh.Surface:
         steps += [{"click": "engine-codes"}, {"flush": 2}]
     return _boot(
         obdLive=fx["obd-live"], system=_parked() if parked else _driving(),
-        steps=steps, nowIso=fx["now"],
+        steps=steps, nowIso=fx["now"], gear=_gearParked() if parked else _gearMoving(),
     )
 
 
@@ -727,10 +736,13 @@ def test_dom_milOnTwelve_parked_isATapToTheAlertsCard():
 
 
 @_NODE_ONLY
-def test_dom_idleNotYetHeld_isNotParked():
-    """The debounce, not the raw flag: idle for one tick is not parked yet."""
+def test_dom_parkedGearNotYetHeld_isNotParked():
+    """The debounce, not the raw fact: a parked gear for one tick is not parked
+    yet. MOVED PIN (US-511-b): was test_dom_idleNotYetHeld_isNotParked."""
     fx = _fixture("mil-on-two-codes")
-    surface = _boot(obdLive=fx["obd-live"], system=_parked(), nowIso=fx["now"])
+    surface = _boot(
+        obdLive=fx["obd-live"], system=_parked(), nowIso=fx["now"], gear=_gearParked()
+    )
     codes = surface.pathById("engine-codes")
     assert codes is not None and codes[-1]["attrs"].get("data-tap") == "false"
 
@@ -749,7 +761,7 @@ def test_dom_everyMilFixture_paintsOnAndItsCount(name: str, count: int):
 @_NODE_ONLY
 def test_dom_milOff_hidesTheCountLine():
     obdLive = {"params": {"MIL_ON": _param(0.0, "mil"), "DTC_COUNT": _param(0.0, "count")}}
-    surface = _boot(obdLive=obdLive, system=_parked(), steps=_HOLD_PARKED)
+    surface = _boot(obdLive=obdLive, system=_parked(), steps=_HOLD_PARKED, gear=_gearParked())
     assert _textOf(_child(_stat(surface, "MIL_ON"), "eng-stat-value")[-1]) == "OFF"
     codes = surface.pathById("engine-codes")
     assert codes is not None and not surface.rendered(codes)
@@ -775,7 +787,8 @@ def test_noO2SensorsTile_untilUs891():
 def test_theTickRendersTheScrollHalf_fromEngineHistoryAndTheParkedDebounce():
     js = _read(_JS)
     assert re.search(
-        r"engineParked = parkedNext\(engineParked, carouselIdle\(sysData\), nowMs, carouselCfg\);", js
+        # MOVED PIN (US-511-b): the debounce is fed the gear, not idle.
+        r"engineParked = parkedNext\(engineParked, gearParked\(lastGear\), nowMs, carouselCfg\);", js
     )
     assert re.search(
         r"renderEngineScroll\(\s*engineCard,\s*engineHistoryView\(await stateOnce\(\"engine-history\"\)\),"

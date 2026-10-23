@@ -6564,8 +6564,8 @@ Atlas Q19: one poll loop, never a copy per route): it writes
 `loadFuelResetTimeoutSec`; short because the server is single-threaded and the wait
 blocks every GET) for `fuel-reset-outcome.json` carrying the SAME `requestId`.
 eclipse-obd services it from `runLoop` in `_maybeServiceFuelResetRequest`, right after
-`_maybeServiceDtcClearRequest`: the request is consumed first; while `_gatherDriveState`
-says `recording` it writes `{ok: false, reason: "driving"}` and changes nothing;
+`_maybeServiceDtcClearRequest`: the request is consumed first; when the US-923 gate
+(below) refuses it writes `{ok: false, reason: <the gate's reason>}` and changes nothing;
 otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
 `fuel_since_reset.reset` directly) and writes `{ok: true, resetAtTs}` (`reason
 "unavailable"` with no fuel producer or database). Status mapping, copied from
@@ -6573,6 +6573,36 @@ otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
 or the request cannot be written), 409 refused (`reason` in the body), 504 no outcome in
 time (`ok: null`; the request is withdrawn), 200 `{ok: true, resetAtTs}`. The next
 `states/fuel-economy` then carries `sinceReset` totals 0 and that `resetAtTs`.
+
+**MPG reset gate -- one predicate (US-923; CIO 2026-10-22, Atlas C1-C5).** The reset is
+allowed parked OR slow rolling in any gear, decided ONCE by the pure
+`src/pi/obdii/fuel_reset_gate.resetAllowed(gearReading, speedReading, nowS, maxAgeS,
+maxKph) -> {value, reason}`: allowed when the RAW derived gear is `P` or `N` (no 8 s hold,
+for the reset only -- C2), or when SPEED is fresh within `maxAgeS` and `<= maxKph`;
+refused `driving` (not parked, fresh SPEED over the limit) or `speed_unknown` (not
+parked, SPEED missing / stale) -- C4. Inputs are the deriver's own in-process readings,
+no obd-live read and no second speed reading: `_emitGearState` caches the `GearReading`
+it published WITH the `_gearNowS` it was derived at as `(_lastGearReading,
+_lastGearAtS)` (never a second `deriver.update`), and a cached reading older than
+`maxAgeS` is ABSENT, so a stale P never allows a reset at speed (Rule 13 GAP 1); SPEED is
+`_lastSpeedReading`. `maxAgeS` is `pi.gear.maxAgeSec` (the same freshness rule as
+`_parkOpinion`); `maxKph` is `pi.fuel.resetMaxSpeedKph` (validator default 8, finite >
+0: 4.97 mph, the largest whole km/h at or under 5 mph -- C5). `nowS` is `_gearNowS()` on
+BOTH paths (GAP 2; the UTC seam `_obdLiveNowUtc` stamps only `resetAtTs`).
+`CardStateEmitterMixin._fuelResetAllowed` is the one caller of the predicate: the card
+tick publishes it as `states/fuel-economy.resetAllowed {value, reason}`, and
+`_maybeServiceFuelResetRequest` re-checks the SAME call at service time in place of the
+retired "recording -> driving" refusal, returning the predicate's reason (409 through
+`states_http_server`, unchanged pass-through) -- so the page word and the outcome cannot
+disagree. A mid-recording reset is allowed (C3): `resetSinceReset` moves the watermark
+under `_fuelLock`, it is serviced before the card emit in the same loop, and `thisDrive`
+is untouched. The page renders the gate and computes none: `carousel.js`
+`fuelResetAllowed(read)` (strict `value === true`; anything else, a missing block
+included, fails closed) drives the `hold to reset` hint and the long-press; a 409
+`driving` / `speed_unknown` shows `slow to reset` / `speed unknown` as the outcome line
+(`park to reset` is retired). Clear, the code-row tap and Settings stay on
+`engineParked` (US-511-b). With `pi.gear.enabled` false no SPEED is cached and the gate
+answers `speed_unknown`.
 
 **`POST /alerts-ack` (US-897-c; Atlas s3, Q20-Q27).** Acknowledges `states/alerts`
 entries for THIS boot (the store is under `states/alerts` above). Body `{ids: [string,
@@ -6907,8 +6937,9 @@ panel. A hysteresis debounce now sits between the flag and the menu policy:
 
 | Fact | Owner | Contract |
 |------|-------|----------|
-| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Unchanged. Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. |
-| Debounced "is the vehicle parked?" | `parkedNext(prev, rawIdle, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs idle held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs idle held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). |
+| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. **Since US-511-b it is the home-nav input only (`updateHomeNav`); no parked consumer reads it.** |
+| Raw "is the vehicle parked?" (US-511-b) | `gearParked(gearData)` | `isObj(gearData) && gearData.available === true && (gear === 'P' \|\| gear === 'N')`, strict string compare, on the tick's one `states/gear` read (`lastGear`, no second fetch). Fails closed: no gear file, unreadable, `available` not strictly true, or any other gear is *not* parked; `pi.gear.enabled` false writes no gear file, so every parked-only control stays locked. |
+| Debounced "is the vehicle parked?" | `parkedNext(prev, rawParked, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs the raw parked fact held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs it held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). Fed `gearParked(lastGear)` (US-511-b; was `carouselIdle(sysData)`). |
 | Menu policy | `menuAccess(parked)` | Applies policy **only**. `tapVisible = parked === true`; `longPress` stays unconditional. |
 
 **The thresholds are asymmetric on purpose.** Offering a single tap into a
@@ -6941,6 +6972,42 @@ idle-SSOT one and needs an Atlas ruling. `parkedOnS`/`parkedOffS` join the same
 positive-only rule, so `parkedOnS: 0` falls back to the default rather than
 silently deleting the debounce. Pinned by
 `tests/ui/test_carousel_parked_debounce.py`.
+
+**Every parked-only control reads one fact: the gear is P or N (US-511-b,
+F-124; Atlas B1-B4).** `system-status.idle` means *never connected this boot*,
+so once the dongle linked nothing parked-only ever unlocked (F2, confirmed on the
+car). The debounce's input is now `gearParked(lastGear)` — the deriver's `P`/`N`,
+which since US-511-a mean *stopped* — and the reducer, thresholds (8 s / 3 s) and
+fail-closed start are unchanged. The shipped consumers keep reading
+`engineParked.parked`: the code-row tap, the fuel reset hold/hint (until US-923
+moved it to the provider's `states/fuel-economy.resetAllowed`), the Clear
+button (`clearButtonView`), the TROUBLE CODES screen (`codeAlertView`) and the
+Engine codes tap (`engineStatusView`). **Lock words (Atlas B2; warnings spec
+:190-195, system 4.7.2):** `clearButtonView(data, parked, gearKnown)` replaces
+only an `ok` gate when `parked` is not strictly true — `gearKnown` (the
+*current raw* `states/gear` has `available === true`) → `moving`, *"🔒 CLEAR
+CODES — stop to clear"*; otherwise `parked_unknown`, *"🔒 CLEAR CODES — gear
+unknown"*. No label contains *moving*. Server unchanged (Atlas B3): `dtc_clear`
+and `states_http_server` gain no parked check. Pinned by
+`tests/ui/test_warnings_code_detail.py` (the KOEO F2 regression and the
+fail-closed gear cases) and `tests/ui/test_carousel_parked_debounce.py`.
+
+**Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
+mean *the car is stopped*, which is what lets parked-only controls read them
+(system spec 4.7.2). `GearDeriver._parkOpinion` (`src/pi/obdii/gear_derivation.py`)
+therefore requires a **fresh SPEED of exactly 0** (same `_liveValue` /
+`pi.gear.maxAgeSec` freshness as RPM; whole-km/h PID) on every road into `P`:
+**`P` = fresh RPM 0 AND fresh SPEED 0**, or — RPM unusable on a healthy link —
+fresh SPEED 0 held past `pi.gear.parkDwellSec` (`settling_park` meanwhile). A
+fresh RPM 0 with a fresh SPEED > 0 is a stall while rolling and publishes the
+typed absence **`engine_off_rolling`** (tile text `engine off`); fresh RPM 0 with
+SPEED missing/stale is `no_data`/`stale`. Precedence (Atlas A2): `not_calibrated`
+→ `link_down` → the fresh-RPM-0 branch (link-independent) → the no_data/stale
+guards → `N` → floors/bands. RPM unusable with SPEED missing, stale or moving
+falls through to those guards, so there is no forever `settling_park` — and the
+**wall-power key-off** (dongle linked, ECU dark, both readings aging out) **no
+longer reaches `P`**; it reads `stale`. Spool 2026-10-22; pinned by
+`tests/pi/obdii/test_gear_park.py::TestParkMeansStopped`.
 
 **Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
 show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
@@ -7152,7 +7219,9 @@ deliberate, named copy loss, alongside US-510's locked parked-screen navigation
 footer (the ⋮ affordance it taught is untouched and still in the top bar).
 
 The retirement is **display-only**: `carouselIdle` / `parkedNext` remain the
-parked SSOT for the auto-rotate pause and the ⋮ reveal, and
+parked SSOT for the auto-rotate pause and the ⋮ reveal (US-511-b: `parkedNext`
+is now fed `gearParked(states/gear)`, and `carouselIdle` is the home-nav input
+only), and
 `tests/ui/test_carousel_idle_face_retirement.py` pins that separation so a future
 edit cannot re-couple them. (Two different things in `carousel.js` are spelled
 *idle* -- the parked SSOT and the retired face -- which is precisely why the
@@ -8195,7 +8264,7 @@ frame is `TIER_COLOR_VAR[codeAlert.tier]` (the PULL OVER map), set as the inline
 custom property `--code-alert-frame`.
 
 **When.** Null — not drawn — unless `engineParked.parked` is strictly true (the
-US-511 debounce; it starts not-parked, so the screen appears ≥ 8 s after boot, Iris
+US-511 debounce, fed by the gear P/N since US-511-b; it starts not-parked, so the screen appears ≥ 8 s after boot, Iris
 U6) **and** `takeover` is null (PULL OVER > CODE ALERT: with both set only PULL OVER
 is drawn, and the code alert returns once the takeover clears). Not being drawn is
 not a dismiss: it posts nothing and the screen returns when parked, until dismissed.
@@ -8718,7 +8787,8 @@ each: this drive's history, then the status row.
   count is not read). That line is a tap to the
   Alerts card ONLY while parked: `data-tap="true"` + `role="button"` from the
   US-511 `parkedNext` debounce (its first consumer since TD-us659), advanced
-  once per tick from the same system-status; moving, it carries no tap target.
+  once per tick from the tick's states/gear (`gearParked`, US-511-b; was
+  system-status idle); moving, it carries no tap target.
   No O2 SENSORS tile until US-891 (Iris G-3). Fixtures:
   `tests/ui/fixtures/states/engine/{cold-start-history, fan-cycle-history,
   coolant-dwell-fired, bucket-worst-band, history-gap, history-trimmed-2h,

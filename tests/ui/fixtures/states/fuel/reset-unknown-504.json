@@ -1,6 +1,5 @@
 {
   "description": "504: no outcome from eclipse-obd inside pi.fuel.resetTimeoutSec, so the server does not know whether the reset landed (ok null). The slot shows the latest provider value + 'couldn't confirm'; the next read carries sinceReset.resetAtTs T with mpg null (it DID land), so the slot shows '--' + 'too short yet' -- never the pre-reset MPG. Reads built by the REAL buildFuelEconomyState.",
-  "parked": true,
   "response": {
     "status": 504,
     "body": {
@@ -21,6 +20,10 @@
           "fuel_l": 39.39,
           "distance_km": 412.0,
           "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -32,7 +35,11 @@
           "resetAtTs": "2026-10-01T12:00:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     },
     {
@@ -47,6 +54,10 @@
           "fuel_l": 0.0,
           "distance_km": 0.0,
           "reset_at_ts": "2026-10-20T15:10:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -58,7 +69,11 @@
           "resetAtTs": "2026-10-20T15:10:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     }
   ]

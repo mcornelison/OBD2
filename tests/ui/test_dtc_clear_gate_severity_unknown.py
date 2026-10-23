@@ -21,6 +21,8 @@
 #               |              | P0443 minor and an untabled P0300 as unknown.
 # 2026-10-20    | Ralph (Rex)  | US-898-c MOVED PIN: the label table carries the
 #               |              | display-only `moving` lock; no label says moving.
+# 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: plus `parked_unknown`, the
+#               |              | gear-unknown lock word (Atlas B2).
 # ================================================================================
 ################################################################################
 
@@ -307,7 +309,10 @@ def test_everyDisabledGateReason_hasItsOwnDistinctPanelLabel():
     # MOVED PIN (US-898-c): plus the ONE display-only reason, `moving` -- the
     # engineParked lock the panel adds over an otherwise-`ok` gate (the server
     # has no parked input, so it has no GATE_ word for it).
-    assert (reasons - {dtc_clear.GATE_NO_CODES}) | {"moving"} == set(labels), (reasons, labels)
+    # MOVED PIN (US-511-b, Atlas B2): and `parked_unknown`, the same lock when
+    # the gear itself is unknown. Server unchanged (Atlas B3): still no GATE_.
+    displayOnly = {"moving", "parked_unknown"}
+    assert (reasons - {dtc_clear.GATE_NO_CODES}) | displayOnly == set(labels), (reasons, labels)
     assert len(set(labels.values())) == len(labels), labels
     # Iris 2026-10-19: no clear-lock text says `moving` (the lock also holds an
     # idling car and the 8 s hold, where the word would be false).

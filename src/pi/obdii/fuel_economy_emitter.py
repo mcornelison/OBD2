@@ -22,6 +22,8 @@
 #                                pi.obdii.fuel_status and imported (one copy).
 # 2026-10-15    | Rex (US-890-e) | recent: MPG over the last pi.fuel.recentWindowSec
 #                                (Spool's ratio of sums) from a pure RecentWindow.
+# 2026-10-22    | Rex (US-923)   | resetAllowed {value, reason}: the orchestrator's
+#                                fuel_reset_gate verdict, published for the page.
 # ================================================================================
 ################################################################################
 
@@ -507,6 +509,7 @@ def buildFuelEconomyState(
     staleSec: float,
     sinceReset: Mapping[str, Any] | None = None,
     recent: RecentSnapshot | None = None,
+    resetAllowed: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the states/fuel-economy payload.
 
@@ -521,6 +524,11 @@ def buildFuelEconomyState(
             None before any row / without a database.
         recent: The ``RecentWindow`` sums read at the same publish; None is
             an empty window (never a figure).
+        resetAllowed: US-923 -- ``fuel_reset_gate.resetAllowed``'s verdict
+            ``{value, reason}``, computed by the orchestrator (this builder
+            decides nothing about it). None leaves the key out: the shape a
+            provider from before the gate published, which the page reads as
+            "not allowed".
 
     Returns:
         ``{thisDrive, sinceReset, ts, recent}``. ``thisDrive`` and ``recent``
@@ -528,7 +536,7 @@ def buildFuelEconomyState(
         ``mpg`` is null. ``sinceReset`` is ``{fuelL, distanceKm, mpg,
         resetAtTs}`` or null. ``recent`` is ``{mpg, windowSec, mafSamples}``.
         ``ts`` is the newest MAF reading's event time, null when none was
-        integrated.
+        integrated. ``resetAllowed`` is present when given.
     """
     from common.time.helper import toCanonicalIso
 
@@ -569,7 +577,7 @@ def buildFuelEconomyState(
         }
         if mpg is None:
             thisDrive["mpgNullReason"] = reason
-    return {
+    payload: dict[str, Any] = {
         "thisDrive": thisDrive,
         "sinceReset": _sinceResetPayload(sinceReset, settings),
         "ts": (
@@ -577,6 +585,12 @@ def buildFuelEconomyState(
         ),
         "recent": recentBlock,
     }
+    if resetAllowed is not None:
+        payload["resetAllowed"] = {
+            "value": resetAllowed.get("value"),
+            "reason": resetAllowed.get("reason"),
+        }
+    return payload
 
 
 def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
@@ -587,7 +601,8 @@ def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
 
     Returns:
         ``emit(snap, settings, *, distanceKm, distanceSinceTs, nowUtc,
-        staleSec, sinceReset=None, recent=None)`` writing the payload
+        staleSec, sinceReset=None, recent=None, resetAllowed=None)`` writing
+        the payload
         atomically. Best-effort by contract: write failures are logged, never
         raised.
     """
@@ -605,6 +620,7 @@ def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
         staleSec: float,
         sinceReset: Mapping[str, Any] | None = None,
         recent: RecentSnapshot | None = None,
+        resetAllowed: Mapping[str, Any] | None = None,
     ) -> None:
         try:
             boot_state_emitter.ensureStatesDir(statesDir)
@@ -619,6 +635,7 @@ def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
                     staleSec=staleSec,
                     sinceReset=sinceReset,
                     recent=recent,
+                    resetAllowed=resetAllowed,
                 ),
             )
         except Exception as e:  # noqa: BLE001 -- never crash the run loop

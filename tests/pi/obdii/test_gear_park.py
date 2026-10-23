@@ -30,6 +30,10 @@
 # 2026-09-07    | Rex (US-687-b) | Initial -- the PARK branch, its dwell, its
 #               |                | link-health condition, its precedence, and
 #               |                | every neighbour it must not steal a case from.
+# 2026-10-22    | Rex (US-511-a) | P MEANS STOPPED (Spool 2026-10-22, Atlas
+#               |                | A1-A4): every Park fixture now carries a fresh
+#               |                | SPEED 0; Spool's VCs as TestParkMeansStopped.
+#               |                | MOVED PINs marked inline.
 # ================================================================================
 ################################################################################
 
@@ -89,6 +93,16 @@ def _deriver(bands=_BANDS, **kwargs):
 def _tick(deriver, *, speed, rpm, nowS, linkHealthy=True):
     """One update at ``nowS``. Readings are passed already-built."""
     return deriver.update(speed=speed, rpm=rpm, nowS=nowS, linkHealthy=linkHealthy)
+
+
+def _stopped(nowS):
+    """A FRESH SPEED 0 at ``nowS`` -- the evidence P needs since US-511-a.
+
+    Spool 2026-10-22: P must mean STOPPED, so every Park fixture now keeps a
+    live zero SPEED underneath the RPM outage. KOEO measured 2026-10-22 19:57Z:
+    SPEED 0 arrives fresh alongside RPM 0 (Atlas, obd2db).
+    """
+    return gd.Reading(0.0, nowS)
 
 
 def _holdNoRpm(deriver, *, forS, speed=None, linkHealthy=True, startS=1000.0,
@@ -196,11 +210,16 @@ class TestParkFromAbsentRpm:
 
     def test_update_noRpmAtAll_heldPastTheDwell_readsPark(self):
         """
-        Given: no RPM reading at all and a healthy link
+        Given: no RPM reading at all, a healthy link and a fresh SPEED 0
         When:  that is held past parkDwellSec
         Then:  it reports an AVAILABLE reading whose gear is the string "P"
+
+        MOVED PIN (US-511-a): the fixture now feeds a fresh SPEED 0 -- P without
+        speed evidence is exactly what Atlas A1 retired.
         """
-        result = _holdNoRpm(_deriver(), forS=gd.DEFAULT_PARK_DWELL_S + 1.0)
+        result = _holdNoRpm(
+            _deriver(), forS=gd.DEFAULT_PARK_DWELL_S + 1.0, speed=_stopped
+        )
 
         assert result.available is True
         assert result.gear == gd.GEAR_PARK
@@ -220,8 +239,13 @@ class TestParkFromAbsentRpm:
         dwell not yet met is now `settling_park` -- the state that resolves
         itself by waiting -- where it used to be the undifferentiated
         `no_data`.
+
+        MOVED PIN (US-511-a): settling_park now needs a fresh SPEED 0 under the
+        outage (Atlas A1); without one the tick falls through to no_data/stale.
         """
-        result = _holdNoRpm(_deriver(), forS=gd.DEFAULT_PARK_DWELL_S - 5.0)
+        result = _holdNoRpm(
+            _deriver(), forS=gd.DEFAULT_PARK_DWELL_S - 5.0, speed=_stopped
+        )
 
         assert result.available is False
         assert result.gear != gd.GEAR_PARK
@@ -241,8 +265,11 @@ class TestParkFromAbsentRpm:
         US-739: `_tick` claims a healthy link, so the first tick is
         `settling_park` -- the dwell has started and nothing is known yet. The
         load-bearing assertion, that this is NOT Park, is unchanged.
+
+        MOVED PIN (US-511-a): fed a fresh SPEED 0, because settling_park now
+        requires one (Atlas A1); with no SPEED the first tick is no_data.
         """
-        result = _tick(_deriver(), speed=None, rpm=None, nowS=1000.0)
+        result = _tick(_deriver(), speed=_stopped(1000.0), rpm=None, nowS=1000.0)
 
         assert result.available is False
         assert result.gear != gd.GEAR_PARK
@@ -264,17 +291,20 @@ class TestParkFromStaleRpm:
         on a cold boot before any reading was taken, which is not when anybody
         is looking at the tile. This test goes red for that implementation and
         every other test in this class stays green.
+
+        MOVED PIN (US-511-a): SPEED is now kept FRESH at 0 underneath the aged
+        RPM. An aged SPEED as well is the wall-power key-off, which no longer
+        reaches P (TestParkMeansStopped pins that).
         """
         deriver = _deriver()
         # A real reading taken at t=1000, then never replaced -- exactly what the
         # emitter holds after the engine stops.
         lastRpm = gd.Reading(_MEASURED_IDLE_RPM, 1000.0)
-        lastSpeed = gd.Reading(0.0, 1000.0)
 
         result = None
         nowS = 1000.0
         while nowS <= 1000.0 + gd.DEFAULT_PARK_DWELL_S + 5.0:
-            result = _tick(deriver, speed=lastSpeed, rpm=lastRpm, nowS=nowS)
+            result = _tick(deriver, speed=_stopped(nowS), rpm=lastRpm, nowS=nowS)
             nowS += 0.25
 
         assert result.available is True
@@ -303,13 +333,15 @@ class TestParkFromStaleRpm:
         number has to be the true one: whoever re-checks the dwell after
         `totalCap` changes must re-check the SUM, and must recompute it rather
         than trust any figure written down here.
+
+        MOVED PIN (US-511-a): SPEED stays fresh at 0 (the car is stopped and the
+        ECU still answers SPEED). The arithmetic is unchanged.
         """
         deriver = _deriver()
         lastRpm = gd.Reading(_MEASURED_IDLE_RPM, 1000.0)
-        lastSpeed = gd.Reading(0.0, 1000.0)
 
         def _at(nowS):
-            return _tick(deriver, speed=lastSpeed, rpm=lastRpm, nowS=nowS)
+            return _tick(deriver, speed=_stopped(nowS), rpm=lastRpm, nowS=nowS)
 
         atTheDwell = None
         nowS = 1000.0
@@ -415,13 +447,15 @@ class TestParkRequiresAHealthyLink:
         tempting implementation restarts the clock on the link instead, which
         would make a FLAPPING link postpone Park forever -- the opposite error,
         invisible to every other test here.
+
+        MOVED PIN (US-511-a): fed a fresh SPEED 0, which P now requires.
         """
         deriver = _deriver()
         result = None
         nowS = 1000.0
         while nowS <= 1000.0 + gd.DEFAULT_PARK_DWELL_S + 5.0:
             healthy = nowS >= 1000.0 + gd.DEFAULT_PARK_DWELL_S
-            result = _tick(deriver, speed=None, rpm=None, nowS=nowS,
+            result = _tick(deriver, speed=_stopped(nowS), rpm=None, nowS=nowS,
                            linkHealthy=healthy)
             nowS += 0.25
 
@@ -457,22 +491,22 @@ class TestTheInDriveBusStall:
 
         assert result.gear != gd.GEAR_PARK
 
-    def test_update_theSameStallHeldPastTheDwell_doesReadPark(self):
+    def test_update_theSameStallHeldPastTheDwell_stillDoesNotReadPark(self):
         """
         Given: the identical fixture, held past parkDwellSec instead
         When:  the link is still healthy and SPEED is still 45 km/h
-        Then:  Park
+        Then:  NOT Park -- the speed-side guard reports the missing RPM
 
-        🔴 WHY THIS TEST EXISTS. Without it the 13 s test above passes for an
-        implementation that refuses Park whenever SPEED > 0 -- a condition
-        nobody ruled, which would make the dwell decorative and the 13 s figure
-        irrelevant. An assertion that can only be satisfied one way is not
-        evidence (US-635).
+        MOVED PIN (US-511-a). This test used to assert Park, and its docstring
+        called refusing P at SPEED > 0 "a condition nobody ruled". It now IS
+        ruled: Spool 2026-10-22 (P must mean stopped) and Atlas A1 (RPM unusable
+        + link healthy + SPEED not fresh 0 falls through to the existing
+        no_data/stale guards). A car doing 45 km/h is not parked however long
+        its RPM stalls, and P now unlocks parked-only controls (US-511-b).
 
-        It also records the DESIGN PROPERTY the story states out loud: RPM and
-        SPEED share one transport, so `RPM absent` means *engine off OR link
-        down*, and a sufficiently long outage renders P. The link condition
-        narrows that; it does not remove it.
+        The 13 s test above is no longer the dwell's only witness: the dwell is
+        pinned with a fresh SPEED 0 in TestParkMeansStopped, where it still
+        separates settling_park from P.
         """
         result = _holdNoRpm(
             _deriver(),
@@ -480,7 +514,9 @@ class TestTheInDriveBusStall:
             speed=self._movingSpeed,
         )
 
-        assert result.gear == gd.GEAR_PARK
+        assert result.gear != gd.GEAR_PARK
+        assert result.available is False
+        assert result.reason == gd.REASON_NO_DATA
 
     def test_update_rpmReturning_resetsTheDwellClock(self):
         """
@@ -604,6 +640,8 @@ class TestParkPrecedence:
         after a stop is exactly when a stale candidate would resurface, and a
         gear the car is not yet in is the one thing this producer must never
         print.
+
+        MOVED PIN (US-511-a): the switch-off now carries a fresh SPEED 0.
         """
         deriver = _deriver()
         _tick(deriver, speed=gd.Reading(_MOVING_SPEED_KPH, 1000.0),
@@ -614,7 +652,7 @@ class TestParkPrecedence:
                      nowS=settledS).gear == 2
 
         parked = _holdNoRpm(deriver, forS=gd.DEFAULT_PARK_DWELL_S + 2.0,
-                            startS=settledS)
+                            startS=settledS, speed=_stopped)
         assert parked.gear == gd.GEAR_PARK
 
         restartS = settledS + gd.DEFAULT_PARK_DWELL_S + 5.0
@@ -636,11 +674,202 @@ class TestParkPrecedence:
         invalidated by US-686 raising maxAgeSec, which is why it is now stated as
         the relationship rather than as a number -- see
         test_update_theRealKeyOffDelay_isTheDwellPlusTheFreshnessWindow.)
+
+        MOVED PIN (US-511-a): fed a fresh SPEED 0, which P now requires.
         """
         result = _holdNoRpm(_deriver(), forS=gd.DEFAULT_PARK_DWELL_S,
-                            stepS=gd.DEFAULT_PARK_DWELL_S)
+                            stepS=gd.DEFAULT_PARK_DWELL_S, speed=_stopped)
 
         assert result.gear == gd.GEAR_PARK
+
+
+# ---------------------------------------------------------------------------
+# US-511-a: P MEANS STOPPED. Spool's VCs (pm/inbox 2026-10-22, P ignores SPEED)
+# and Atlas's precedence ruling A1-A2. P now unlocks parked-only controls, so a
+# stall while rolling must never read P.
+# ---------------------------------------------------------------------------
+
+# Spool's VC 1 figure: a car still rolling at 12 km/h when the engine stops.
+_ROLLING_KPH = 12.0
+
+
+class TestParkMeansStopped:
+    """P = fresh RPM 0 AND fresh SPEED 0, or the healthy-link dwell over a
+    fresh SPEED 0. Nothing else reaches P."""
+
+    def test_update_freshRpmZero_freshSpeedRolling_isEngineOffRolling(self):
+        """
+        Given: fresh RPM 0 and fresh SPEED 12 km/h -- a stall while rolling
+        When:  the deriver is updated
+        Then:  gear absent, reason engine_off_rolling (Spool VC 1)
+        """
+        result = _tick(_deriver(), speed=gd.Reading(_ROLLING_KPH, 1000.0),
+                       rpm=gd.Reading(0.0, 1000.0), nowS=1000.0)
+
+        assert result.available is False
+        assert result.gear is None
+        assert result.reason == gd.REASON_ENGINE_OFF_ROLLING
+
+    def test_update_engineOffRolling_isLinkIndependent(self):
+        """
+        Given: the same stall, with the link flag NOT healthy
+        When:  the deriver is updated
+        Then:  still engine_off_rolling, never link_down -- the fresh-RPM-0
+               branch stays link-independent (Atlas A2): the readings
+               themselves prove the link delivered
+        """
+        result = _tick(_deriver(), speed=gd.Reading(_ROLLING_KPH, 1000.0),
+                       rpm=gd.Reading(0.0, 1000.0), nowS=1000.0, linkHealthy=False)
+
+        assert result.reason == gd.REASON_ENGINE_OFF_ROLLING
+
+    def test_update_koeo_freshRpmZero_freshSpeedZero_isPark(self):
+        """
+        Given: fresh RPM 0 and fresh SPEED 0 -- key on, engine off (KOEO
+               2026-10-22 19:57Z: states/gear read P/park with SPEED 0 fresh)
+        When:  the deriver is updated
+        Then:  P immediately (Spool VC 2)
+        """
+        result = _tick(_deriver(), speed=gd.Reading(0.0, 1000.0),
+                       rpm=gd.Reading(0.0, 1000.0), nowS=1000.0)
+
+        assert result.available is True
+        assert result.gear == gd.GEAR_PARK
+        assert result.reason == gd.REASON_PARK
+
+    def test_update_linkUp_rpmAndSpeedBothStaleFor25s_isNeverPark(self):
+        """
+        Given: a healthy link, and RPM and SPEED both aged out, for 25 s
+        When:  the deriver is ticked throughout
+        Then:  never P -- the tick lands on stale (Spool VC 3). This is the
+               wall-power key-off: the dongle stays linked, the ECU goes dark,
+               and nothing says the car is stopped
+        """
+        deriver = _deriver()
+        lastRpm = gd.Reading(_MEASURED_IDLE_RPM, 1000.0)
+        lastSpeed = gd.Reading(0.0, 1000.0)
+        seen = set()
+        nowS = 1000.0
+        result = None
+        while nowS <= 1000.0 + 25.0:
+            result = _tick(deriver, speed=lastSpeed, rpm=lastRpm, nowS=nowS)
+            seen.add(result.gear)
+            nowS += 0.25
+
+        assert gd.GEAR_PARK not in seen
+        assert result.available is False
+        assert result.reason in (gd.REASON_STALE, gd.REASON_NO_DATA)
+
+    def test_update_idleAtAStandstill_isNeutral(self):
+        """
+        Given: fresh RPM 800 and fresh SPEED 0
+        When:  the deriver is updated
+        Then:  N (Spool VC 4) -- the stopped-and-running half is unchanged
+        """
+        result = _tick(_deriver(), speed=gd.Reading(0.0, 1000.0),
+                       rpm=gd.Reading(_MEASURED_IDLE_RPM, 1000.0), nowS=1000.0)
+
+        assert result.gear == gd.GEAR_NEUTRAL
+
+    def test_update_freshRpmZero_speedStale_isStaleNotPark(self):
+        """
+        Given: fresh RPM 0 and a SPEED reading that has aged out
+        When:  the deriver is updated
+        Then:  not P, reason stale (Spool VC 5)
+        """
+        result = _tick(_deriver(),
+                       speed=gd.Reading(0.0, 1000.0 - gd.DEFAULT_MAX_AGE_S - 0.1),
+                       rpm=gd.Reading(0.0, 1000.0), nowS=1000.0)
+
+        assert result.available is False
+        assert result.reason == gd.REASON_STALE
+
+    def test_update_freshRpmZero_speedMissing_isNoDataNotPark(self):
+        """
+        Given: fresh RPM 0 and no SPEED ever seen
+        When:  the deriver is updated
+        Then:  not P, reason no_data (Atlas A2)
+        """
+        result = _tick(_deriver(), speed=None, rpm=gd.Reading(0.0, 1000.0),
+                       nowS=1000.0)
+
+        assert result.available is False
+        assert result.reason == gd.REASON_NO_DATA
+
+    def test_update_rpmStale_speedFreshZero_settlesThenParks(self):
+        """
+        Given: RPM aged out, a healthy link and SPEED fresh at 0
+        When:  held past parkDwellSec
+        Then:  settling_park first, then P (Spool VC 6, Atlas A1)
+        """
+        deriver = _deriver()
+        lastRpm = gd.Reading(_MEASURED_IDLE_RPM, 1000.0 - gd.DEFAULT_MAX_AGE_S - 0.1)
+        start = 1000.0
+        first = _tick(deriver, speed=_stopped(start), rpm=lastRpm, nowS=start)
+        assert first.reason == gd.REASON_SETTLING_PARK
+
+        result = None
+        nowS = start
+        while nowS <= start + gd.DEFAULT_PARK_DWELL_S + 0.5:
+            result = _tick(deriver, speed=_stopped(nowS), rpm=lastRpm, nowS=nowS)
+            nowS += 0.25
+
+        assert result.gear == gd.GEAR_PARK
+
+    def test_update_rpmUnusable_speedFreshMoving_neverSettlesPark(self):
+        """
+        Given: RPM missing, a healthy link and SPEED fresh at 45 km/h
+        When:  held far past the dwell
+        Then:  never settling_park and never P -- the tick falls through to the
+               existing no_data guard (Atlas A1: no forever settling_park)
+        """
+        deriver = _deriver()
+        reasons = set()
+        nowS = 1000.0
+        while nowS <= 1000.0 + gd.DEFAULT_PARK_DWELL_S * 2.0:
+            result = _tick(deriver, speed=gd.Reading(_MOVING_SPEED_KPH, nowS),
+                           rpm=None, nowS=nowS)
+            reasons.add(result.reason)
+            nowS += 0.25
+
+        assert reasons == {gd.REASON_NO_DATA}
+
+    def test_update_rpmUnusable_linkDown_isStillLinkDown(self):
+        """
+        Given: RPM unusable, the link down, SPEED fresh at 0
+        When:  the deriver is updated
+        Then:  link_down -- it still dominates the stale-RPM branch (Atlas A1)
+        """
+        result = _tick(_deriver(), speed=_stopped(1000.0), rpm=None, nowS=1000.0,
+                       linkHealthy=False)
+
+        assert result.reason == gd.REASON_LINK_DOWN
+
+    def test_update_engineOffRolling_clearsTheDebounceCandidate(self):
+        """
+        Given: a settled 2nd gear, then one engine_off_rolling tick
+        When:  a moving sample arrives again
+        Then:  SETTLING -- a typed absence drops the candidate, so the pre-stall
+               2 is not republished on the restart
+        """
+        deriver = _deriver()
+        _tick(deriver, speed=gd.Reading(_MOVING_SPEED_KPH, 1000.0),
+              rpm=gd.Reading(_MOVING_RPM, 1000.0), nowS=1000.0)
+        settledS = 1000.0 + gd.DEFAULT_DEBOUNCE_S + 0.1
+        assert _tick(deriver, speed=gd.Reading(_MOVING_SPEED_KPH, settledS),
+                     rpm=gd.Reading(_MOVING_RPM, settledS),
+                     nowS=settledS).gear == 2
+
+        stallS = settledS + 0.5
+        assert _tick(deriver, speed=gd.Reading(_ROLLING_KPH, stallS),
+                     rpm=gd.Reading(0.0, stallS),
+                     nowS=stallS).reason == gd.REASON_ENGINE_OFF_ROLLING
+
+        restartS = stallS + 0.5
+        result = _tick(deriver, speed=gd.Reading(_MOVING_SPEED_KPH, restartS),
+                       rpm=gd.Reading(_MOVING_RPM, restartS), nowS=restartS)
+
+        assert result.reason == gd.REASON_SETTLING
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +889,8 @@ class TestParkDwellIsConfigurable:
         Asserted through BEHAVIOUR rather than by reading a private attribute:
         a wiring that stored the value and then ignored it would pass an
         attribute check and fail the car.
+
+        MOVED PIN (US-511-a): fed a fresh SPEED 0, which P now requires.
         """
         config = {
             "pi": {
@@ -673,7 +904,7 @@ class TestParkDwellIsConfigurable:
         deriver = gd.createGearDeriverFromConfig(config)
         assert deriver is not None
 
-        result = _holdNoRpm(deriver, forS=6.0)
+        result = _holdNoRpm(deriver, forS=6.0, speed=_stopped)
 
         assert result.gear == gd.GEAR_PARK, (
             "a 5 s configured dwell did not govern -- the module default is 20 s "
@@ -717,8 +948,12 @@ def test_toStateDict_park_carriesTheStringGlyphAndTheParkReason():
     The RENDERER turns `park` into driver English (US-687-a's rule: humanise at
     the renderer, never at the producer), so the state file must keep the exact
     token for tests, logs and any future consumer.
+
+    MOVED PIN (US-511-a): fed a fresh SPEED 0, which P now requires.
     """
-    reading = _holdNoRpm(_deriver(), forS=gd.DEFAULT_PARK_DWELL_S + 1.0)
+    reading = _holdNoRpm(
+        _deriver(), forS=gd.DEFAULT_PARK_DWELL_S + 1.0, speed=_stopped
+    )
 
     assert reading.toStateDict() == {
         "available": True,

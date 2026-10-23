@@ -25,6 +25,10 @@
 #               |              | the engine switched off. Keyed on UNUSABLE
 #               |              | (missing OR stale), because readings age out
 #               |              | rather than disappear.
+# 2026-10-22    | Rex (US-511-a) | P MEANS STOPPED (Spool 2026-10-22, Atlas
+#               |              | A1-A4). P needs a FRESH SPEED 0 on both roads
+#               |              | in; a fresh RPM 0 at speed is the new typed
+#               |              | absence engine_off_rolling.
 # ================================================================================
 ################################################################################
 
@@ -81,6 +85,7 @@ __all__ = [
     "REASON_AMBIGUOUS",
     "REASON_BELOW_THRESHOLD",
     "REASON_ENGAGED",
+    "REASON_ENGINE_OFF_ROLLING",
     "REASON_NEUTRAL",
     "REASON_NOT_CALIBRATED",
     "REASON_LINK_DOWN",
@@ -118,6 +123,10 @@ REASON_SETTLING = "settling"
 # own reason.
 REASON_LINK_DOWN = "link_down"
 REASON_SETTLING_PARK = "settling_park"
+# US-511-a (Spool 2026-10-22, Atlas A2): the ECU says the engine is stopped
+# (fresh RPM 0) while the car is still moving (fresh SPEED > 0) -- a stall while
+# rolling. Before this it read P, and P now unlocks parked-only controls.
+REASON_ENGINE_OFF_ROLLING = "engine_off_rolling"
 
 # --------------------------------------------------------------------------
 # Spool's semantics, transcribed from the US-508 contract already recorded in
@@ -459,7 +468,11 @@ class GearDeriver:
         # before any reading was taken, which is not when anybody is looking at
         # this tile: after a real drive the reading is STALE, and that is the
         # normal parked state.
-        parked = self._parkOpinion(rpmValue, nowS, linkHealthy)
+        #
+        # US-511-a: SPEED is passed in too, because P now means STOPPED (Spool
+        # 2026-10-22). Precedence (Atlas A2): link_down -> the fresh-RPM-0
+        # branch -> the no_data/stale guards below -> N -> floors/bands.
+        parked = self._parkOpinion(rpmValue, speedKph, nowS, linkHealthy)
         if parked is not None:
             return parked
 
@@ -528,38 +541,52 @@ class GearDeriver:
         return value
 
     def _parkOpinion(
-        self, rpmValue: Any, nowS: float, linkHealthy: bool
+        self, rpmValue: Any, speedKph: Any, nowS: float, linkHealthy: bool
     ) -> GearReading | None:
-        """Advance the park dwell and return P, or None to keep deciding.
+        """Advance the park dwell and return P (or a P-side absence), or None.
+
+        P MEANS STOPPED (US-511-a, Spool 2026-10-22; Atlas A1-A2). P now unlocks
+        parked-only controls, so EVERY road into it requires a FRESH SPEED of
+        exactly 0 -- the same ``_liveValue`` / ``maxAgeS`` freshness rule RPM
+        gets, and the same exact-zero compare N uses (PID 0x0D decodes to whole
+        km/h, so a stopped car reports a clean 0).  Before this, a stall while
+        rolling (fresh RPM 0, car moving) read P.  KOEO measured 2026-10-22
+        19:57Z (Atlas, obd2db): states/gear read P from fresh RPM 0 with SPEED 0
+        fresh alongside, so the stopped car keeps its P.
 
         TWO WAYS INTO PARK, and they are deliberately not the same shape,
         because the evidence behind them is not the same evidence:
 
-        * **RPM UNUSABLE** (missing or stale) plus a healthy link, held for
-          ``parkDwellS``.  Absence is ambiguous -- it is *engine off OR link
-          down OR bus stall* -- so it needs BOTH corroborations: the link
-          condition rules out the dead dongle, and the dwell rules out the
-          stall.  Neither alone is sufficient and the story's "the trap" clause
-          is about exactly that.
         * **RPM PRESENT, FRESH AND ZERO.**  Immediate, and NOT gated on
           ``linkHealthy``.  A fresh reading of 0 is the ECU affirmatively
           reporting a stopped engine -- it is a MEASUREMENT, not an absence, so
-          there is nothing for a dwell to disambiguate.  Nor is a separate
-          health flag consulted: the reading itself is proof the link
-          delivered, and asking a second source whether the link is alive when
-          the link just answered would be a second acquisition path for one
-          fact.  A dead dongle cannot reach this branch, because a dead dongle
-          produces no reading to be zero.
+          there is nothing for a dwell to disambiguate, and the reading itself
+          is proof the link delivered.  SPEED then decides: fresh 0 -> P; fresh
+          and not 0 -> ``engine_off_rolling``; missing -> ``no_data``; stale ->
+          ``stale``.
+        * **RPM UNUSABLE** (missing or stale).  Link down -> ``link_down``.
+          Link healthy AND SPEED fresh 0 -> ``settling_park`` until
+          ``parkDwellS``, then P: absence is ambiguous (*engine off OR bus
+          stall*), so the link rules out the dead dongle and the dwell rules
+          out the stall.  Link healthy and SPEED missing, stale or moving ->
+          None, so the existing no_data/stale guards in :meth:`update` report
+          it.  That ends the forever-``settling_park`` and means the wall-power
+          key-off (dongle linked, ECU dark, BOTH readings aging out) NO LONGER
+          REACHES P: nothing there says the car is stopped.
 
         Args:
             rpmValue: The resolved RPM -- a float, or a _MISSING/_STALE
+                sentinel.
+            speedKph: The resolved SPEED -- a float, or a _MISSING/_STALE
                 sentinel.
             nowS: Monotonic seconds now.
             linkHealthy: Whether the OBD link is up AND linked.
 
         Returns:
-            A Park reading, or None if this tick is not Park.
+            P, a P-side typed absence, or None if this tick is not decided here.
         """
+        speedStopped = isinstance(speedKph, float) and speedKph == 0.0
+
         if rpmValue is _MISSING or rpmValue is _STALE:
             if self._rpmUnusableSinceS is None:
                 self._rpmUnusableSinceS = nowS
@@ -571,6 +598,11 @@ class GearDeriver:
                 # running, so a link that returns still reaches Park on the
                 # outage already in progress.
                 return self._absent(REASON_LINK_DOWN)
+            if not speedStopped:
+                # US-511-a (Atlas A1): no evidence the car is stopped, so this is
+                # not the Park branch's to decide. The dwell clock keeps timing
+                # the RPM outage; the guards in update() name the absence.
+                return None
             if heldS >= self._parkDwellS:
                 return self._park()
             # US-739: healthy link, RPM unusable, dwell not yet met. The only
@@ -583,7 +615,15 @@ class GearDeriver:
         # parking event -- the dwell times the outage in progress, nothing else.
         self._rpmUnusableSinceS = None
         if isinstance(rpmValue, float) and rpmValue == 0.0:
-            return self._park()
+            if speedKph is _MISSING:
+                return self._absent(REASON_NO_DATA)
+            if speedKph is _STALE:
+                return self._absent(REASON_STALE)
+            if speedStopped:
+                return self._park()
+            # Fresh RPM 0 with a fresh SPEED that is not 0: the engine stopped
+            # while the car rolls. Never P (Spool 2026-10-22 VC 1).
+            return self._absent(REASON_ENGINE_OFF_ROLLING)
         return None
 
     def _park(self) -> GearReading:
@@ -594,23 +634,32 @@ class GearDeriver:
         add another ``debounceS`` to the delay and put that argument out by that
         much of the budget it was measured against.
 
-        THE REAL KEY-OFF-TO-GLYPH DELAY IS ``parkDwellS + maxAgeS``, not
-        ``parkDwellS`` alone: the dwell clock starts when RPM becomes UNUSABLE,
-        and a PRESENT reading does not become unusable until it ages out, so one
-        whole freshness window elapses before the dwell begins. US-686 raised
-        ``maxAgeS`` 2.0 -> 3.0 and therefore moved that sum as well. It is
-        deliberately NOT written down as a figure here -- it is arithmetic on two
-        tunable constants, and the last two stories each invalidated whichever
-        figure the one before had recorded. Recompute it; do not quote it.
-        ``test_gear_park.py`` pins it as that arithmetic.
+        THE REAL KEY-OFF-TO-GLYPH DELAY, since US-511-a, depends on which road
+        into P the car takes (Spool 2026-10-22):
+
+        * KOEO -- the ECU stays powered and answers RPM 0 and SPEED 0, fresh:
+          P at once, no dwell (KOEO measured 2026-10-22 19:57Z).
+        * RPM aging out while SPEED is still answered fresh at 0: the dwell
+          path, and its delay is ``parkDwellS + maxAgeS``, not ``parkDwellS``
+          alone -- the dwell clock starts when RPM becomes UNUSABLE, and a
+          PRESENT reading does not become unusable until it ages out. That sum
+          is arithmetic on two tunable constants; recompute it, do not quote it.
+          ``test_gear_park.py`` pins it as that arithmetic.
+        * Wall-power key-off -- the dongle stays linked and the ECU goes dark,
+          so RPM AND SPEED both age out: NO P AT ALL. Nothing there says the car
+          is stopped, and P now unlocks parked-only controls; the tile reads
+          ``stale``.
 
         The candidate IS cleared, for the reason US-687-a's ``_neutral`` records:
         without it, switching off in 2nd and restarting would republish the
         pre-park 2 on the first moving sample, a gear the car is not yet in.
 
-        WHAT P CLAIMS: the link is up and the engine is not reporting a speed.
-        NOT that a lever is in Park -- this car is a manual and has no Park
-        detent at all. The CIO ruled the glyph on the record ("we're not doing
+        WHAT P CLAIMS (US-511-a, Spool 2026-10-22): the car is STOPPED -- a
+        fresh SPEED of 0 -- and the engine is not turning: either a fresh RPM 0,
+        or RPM gone quiet for ``parkDwellS`` on a healthy link. P and N both
+        mean stopped (system spec 4.7.2), which is what lets parked-only
+        controls read them. NOT that a lever is in Park -- this car is a manual
+        and has no Park detent at all. The CIO ruled the glyph on the record ("we're not doing
         anything with that information other than displaying it"), and that
         ruling holds only while gear stays DISPLAY-ONLY: no column, no sync, no
         analysis. US-693 is the lint that keeps that true, and if gear ever does

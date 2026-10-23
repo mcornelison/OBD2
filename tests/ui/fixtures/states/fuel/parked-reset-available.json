@@ -1,6 +1,5 @@
 {
-  "description": "Parked, a stored since-reset total (24.6 mpg since 2026-10-01). Hold 2 s, Yes; the server answers 200 with resetAtTs T. The first read after the 200 still carries the OLD row (the provider publishes every ~2 s), so the slot keeps 'resetting…'; the next read carries sinceReset.resetAtTs T with mpg null, so the slot shows that read: '--' + 'too short yet'. Reads built by the REAL buildFuelEconomyState.",
-  "parked": true,
+  "description": "The gate is open (resetAllowed {value: true}: parked, or rolling at <= 8 km/h), a stored since-reset total (24.6 mpg since 2026-10-01). Hold 2 s, Yes; the server answers 200 with resetAtTs T. The first read after the 200 still carries the OLD row (the provider publishes every ~2 s), so the slot keeps 'resetting…'; the next read carries sinceReset.resetAtTs T with mpg null, so the slot shows that read: '--' + 'too short yet'. Reads built by the REAL buildFuelEconomyState.",
   "response": {
     "status": 200,
     "body": {
@@ -21,6 +20,10 @@
           "fuel_l": 39.39,
           "distance_km": 412.0,
           "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -32,7 +35,11 @@
           "resetAtTs": "2026-10-01T12:00:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     },
     {
@@ -47,6 +54,10 @@
           "fuel_l": 39.39,
           "distance_km": 412.0,
           "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -58,7 +69,11 @@
           "resetAtTs": "2026-10-01T12:00:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     },
     {
@@ -73,6 +88,10 @@
           "fuel_l": 0.0,
           "distance_km": 0.0,
           "reset_at_ts": "2026-10-20T15:10:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
         }
       },
       "fuel-economy": {
@@ -84,7 +103,11 @@
           "resetAtTs": "2026-10-20T15:10:00Z"
         },
         "ts": null,
-        "recent": null
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
       }
     }
   ]

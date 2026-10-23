@@ -41,6 +41,8 @@
 #                                pi.warnings.ackStorePath default + non-empty.
 # 2026-10-20    | Rex (US-899-a1)| pi.display.stale.alertsAckConfirmSec 6 /
 #                                alertsAckNoticeSec 3 + finite > 0.
+# 2026-10-22    | Rex (US-923)   | pi.fuel.resetMaxSpeedKph default 8 + positivity;
+#                                config.json carries it.
 # ================================================================================
 ################################################################################
 
@@ -51,6 +53,7 @@ Run with:
     pytest tests/test_config_validator.py -v
 """
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -1707,13 +1710,31 @@ def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():
         "recentWindowSec": 30,
         "recentMinMiles": 0.1,
         "recentMinMafSamples": 10,
+        # US-923 named pin change (Atlas C5): 8 km/h = 4.97 mph.
+        "resetMaxSpeedKph": 8,
     }
+
+
+def test_validate_fuelResetMaxSpeedKph_isTheLargestWholeKphAtOrUnderFiveMph():
+    """US-923 (Atlas C5, CIO 2026-10-22: speed <= 5 = slow rolling in any gear):
+    SPEED decodes in whole km/h, so the limit is 8 (4.97 mph); 9 is 5.59 mph."""
+    from pi.obdii.gear_derivation import MPH_PER_KPH
+
+    kph = ConfigValidator().validate(_baseCfg())["pi"]["fuel"]["resetMaxSpeedKph"]
+    assert kph * MPH_PER_KPH <= 5.0 < (kph + 1) * MPH_PER_KPH
+
+
+def test_configJson_carriesTheResetMaxSpeedKph():
+    """US-923: config.json pi.fuel names the key (the validator default too)."""
+    with open(Path(__file__).resolve().parents[1] / "config.json", encoding="utf-8") as fh:
+        shipped = json.load(fh)
+    assert shipped["pi"]["fuel"]["resetMaxSpeedKph"] == 8
 
 
 @pytest.mark.parametrize(
     "key",
     ["stoichAfr", "densityGPerL", "minMiles", "persistSec", "resetTimeoutSec",
-     "recentWindowSec", "recentMinMiles", "recentMinMafSamples"],
+     "recentWindowSec", "recentMinMiles", "recentMinMafSamples", "resetMaxSpeedKph"],
 )
 @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "14.7", True])
 def test_validate_fuelPositiveKeys_nonPositiveOrNonFinite_rejected(key, bad):

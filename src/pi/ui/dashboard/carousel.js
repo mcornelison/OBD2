@@ -2106,8 +2106,12 @@
   // changed" -- it reads as a broken panel. This inserts a HYSTERESIS debounce
   // between the flag and the menu policy:
   //
-  //   not parked -> parked      idle held TRUE  for >= parkedOnS  (8 s)
-  //   parked -> not parked      idle held FALSE for >= parkedOffS (3 s)
+  //   not parked -> parked      raw parked held TRUE  for >= parkedOnS  (8 s)
+  //   parked -> not parked      raw parked held FALSE for >= parkedOffS (3 s)
+  //
+  // US-511-b: the raw input is now gearParked(states/gear) -- gear P or N --
+  // not the `idle` flag (which means "never connected this boot" and so never
+  // unlocked anything after the first connect). The reducer is unchanged.
   //
   // THE TWO THRESHOLDS DIFFER ON PURPOSE. Offering a single tap into a service
   // stop is a convenience and can afford to be slow; WITHDRAWING it once the
@@ -2131,17 +2135,34 @@
     return { parked: false, raw: false, sinceMs: null };
   }
 
-  // Advance the signal by one observation. `prev` is the last state, `rawIdle`
-  // the emitter's flag for THIS poll, `nowMs` the tick clock.
-  function parkedNext(prev, rawIdle, nowMs, cfg) {
+  // US-511-b (Atlas B1, spec v030-system-page-design 4.7.2): the RAW parked
+  // fact is the derived gear -- P or N -- and nothing else. The deriver's P
+  // already means stopped (US-511-a: fresh RPM 0 AND fresh SPEED 0), so this
+  // reads the one fact rather than computing a second one. It replaced
+  // carouselIdle as the reducer's input: system-status `idle` means "never
+  // connected this boot", so after the first connect nothing parked-only ever
+  // unlocked (F2, confirmed on the car). Fails closed: no gear file, an
+  // unreadable one, `available` not strictly true, or any other gear (an
+  // engaged gear is a number) is NOT parked.
+  function gearParked(gearData) {
+    return (
+      isObj(gearData) &&
+      gearData.available === true &&
+      (gearData.gear === "P" || gearData.gear === "N")
+    );
+  }
+
+  // Advance the signal by one observation. `prev` is the last state,
+  // `rawParked` gearParked() for THIS poll, `nowMs` the tick clock.
+  function parkedNext(prev, rawParked, nowMs, cfg) {
     var state =
       isObj(prev) && typeof prev.parked === "boolean"
         ? { parked: prev.parked, raw: prev.raw === true, sinceMs: prev.sinceMs }
         : parkedInit();
-    // Only a strict `true` is idle. carouselIdle already applies this rule
+    // Only a strict `true` is parked. gearParked already applies this rule
     // upstream; re-applying it means the reducer cannot be broken by a second
     // caller that hands it a raw payload field instead.
-    var raw = rawIdle === true;
+    var raw = rawParked === true;
     // A hold is a MEASURED duration. With no readable clock there is no
     // measurement, so return the state completely untouched -- including the
     // reading. Recording the reading without a timestamp would let the NEXT
@@ -2950,9 +2971,13 @@
     // US-919 (Iris 2026-10-20, verbatim): no Mode 07 answered, so the pending
     // set Mode 04 would also wipe was never read. One fact, no tier, no "yet".
     pending_not_read: "🔒 CLEAR CODES — pending codes haven’t been read",
-    // US-898-c (Iris 2026-10-19): the lock is engineParked, which also holds
-    // an idling car and the 8 s hold, so it says what unlocks it.
-    moving: "🔒 CLEAR CODES — engine off to clear",
+    // US-511-b (Atlas B2; spec warnings :190-195, system 4.7.2 :326-328): the
+    // lock is engineParked, now fed by the gear (P or N), so an idling car
+    // in N unlocks it -- "engine off" was no longer what unlocks it.
+    moving: "🔒 CLEAR CODES — stop to clear",
+    // US-511-b: the gear itself is unknown (no states/gear, or `available` not
+    // true), so "stop" would claim a fact nobody has.
+    parked_unknown: "🔒 CLEAR CODES — gear unknown",
   };
 
   // Re-derive the clear gate from the raw codes (the display mirror of the
@@ -3015,12 +3040,19 @@
   // is asked only when the gate is otherwise `ok`, so a permanent reason
   // (WATCH, STOP, UNRATED, sync, session lock) wins over `moving` -- a WATCH
   // code never implies that turning the engine off unlocks it.
-  function clearButtonView(data, parked) {
+  //
+  // US-511-b (Atlas B2): `gearKnown` is whether the CURRENT raw states/gear is
+  // available (strict true), not the debounced state -- so the word follows
+  // the gear under the operator: an unknown gear says 'parked_unknown', a
+  // known one that is not (yet) held parked says 'moving'.
+  function clearButtonView(data, parked, gearKnown) {
     var reason = clearGateReason(data);
     if (reason === "no_codes") {
       return { visible: false, enabled: false, reason: reason, label: null };
     }
-    if (reason === "ok" && parked !== true) reason = "moving";
+    if (reason === "ok" && parked !== true) {
+      reason = gearKnown === true ? "moving" : "parked_unknown";
+    }
     return {
       visible: true,
       enabled: reason === "ok",
@@ -4158,7 +4190,12 @@
     // nobody chose. Both sit inside the <=16-character envelope the strings
     // above establish ("too slow to tell" is the longest, at 16).
     link_down: "no link",
-    settling_park: "confirming park"
+    settling_park: "confirming park",
+    // US-511-a: fresh RPM 0 while SPEED says the car is still moving -- a
+    // stall while rolling, which used to read P. Iris's wording (UIDEV-012 I2,
+    // system spec 4.7.2). Explicit because the fallback would render
+    // "engine off rolling", 18 characters, past the 16-character envelope.
+    engine_off_rolling: "engine off"
   };
 
   function gearReasonText(reason) {
@@ -4581,9 +4618,15 @@
   // precision. No approximately sign: the label already says "last 30 s".
   var FUEL_MPG_LAST30_CAP = 99;
   var FUEL_MPG_LAST30_CAP_TEXT = "99+";
+  // US-922: the unit after every MPG figure, painted into .fuel-unit as the
+  // airflow's g/s (fuel spec s4.3, CIO 2026-10-22: "just text"). A figure is
+  // noteKind "none"; every "--" (a reason, "not published", "resetting…")
+  // carries no unit -- its note already says why there is no number.
+  var FUEL_MPG_UNIT = "MPG";
 
   function fuelMpgSlot(text, note, noteKind) {
-    return { text: text, note: note, noteKind: noteKind, flag: "" };
+    var unit = noteKind === "none" ? FUEL_MPG_UNIT : "";
+    return { text: text, note: note, noteKind: noteKind, flag: "", unit: unit };
   }
 
   function fuelMpgReasonText(code) {
@@ -4652,7 +4695,10 @@
 
   // --- US-890-f the SINCE RESET reset (F-127, spec s4.3) ---------------------
   //
-  // Parked only: hold SINCE RESET ~2 s, confirm "Reset average MPG?", then a
+  // US-923: offered only while the PROVIDER's gate says so --
+  // states/fuel-economy.resetAllowed.value === true (orchestrator
+  // fuel_reset_gate, re-checked when the POST lands). The page computes no gate
+  // of its own. Then: hold SINCE RESET ~2 s, confirm "Reset average MPG?", then a
   // token-gated POST /fuel-reset, then show the RE-READ stored value (F-126
   // honest write, never optimistic). The page never caches an "old value": the
   // slot always renders the LATEST states/fuel-economy read plus an outcome
@@ -4665,14 +4711,26 @@
   // Every outcome text is <= 16 characters, the MPG row's fit rule (s4.6).
   var FUEL_RESET_HINT = "hold to reset";
   var FUEL_RESET_RESETTING = "resetting…";
+  // US-923: the two gate refusals keep the provider's code as their key (fuel
+  // spec s4.3/s4.6, Iris UIDEV-012 I4): driving -> "slow to reset" (at 5 mph
+  // the reset works, so not "park"/"stop"); speed_unknown -> "speed unknown".
   var FUEL_RESET_OUTCOME_TEXT = {
-    park: "park to reset",
+    driving: "slow to reset",
+    speed_unknown: "speed unknown",
     failed: "couldn't reset",
     unconfirmed: "couldn't confirm",
   };
-  // The one refusal that means "move the car first" (core.py
-  // _maybeServiceFuelResetRequest); every other 409 reason is a failed reset.
-  var FUEL_RESET_DRIVING_REASON = "driving";
+  // The refusals that come from the gate (fuel_reset_gate.resetAllowed's
+  // reasons, via core.py _maybeServiceFuelResetRequest); every other 409
+  // reason is a failed reset.
+  var FUEL_RESET_GATE_REASONS = { driving: true, speed_unknown: true };
+
+  // The gate as published: only a strict true offers the reset. false, null,
+  // a missing block or an unreadable file all fail closed (spec s4.3).
+  function fuelResetAllowed(fuelEconomyData) {
+    var gate = isObj(fuelEconomyData) ? fuelEconomyData.resetAllowed : null;
+    return isObj(gate) && gate.value === true;
+  }
 
   // pi.display.stale.fuelResetConfirmSec, injected per request as
   // window.DISPLAY_STALE.fuelResetConfirmSec (the imuSec pattern). There is NO
@@ -4710,19 +4768,22 @@
       return state;
     }
     state.phase = "idle";
-    if (status === 409 && b.reason === FUEL_RESET_DRIVING_REASON) state.outcome = "park";
+    var gateRefusal = status === 409 && typeof b.reason === "string" &&
+      Object.prototype.hasOwnProperty.call(FUEL_RESET_GATE_REASONS, b.reason);
+    if (gateRefusal) state.outcome = b.reason;
     else if (status === 409 || status === 503 || status === 401) state.outcome = "failed";
     else state.outcome = "unconfirmed";
     return state;
   }
 
   // Advance the reset by one event. Pure; the clock arrives on the event.
-  //   {type: "hold", parked, confirmSec}      the 2 s hold completed
+  // `allowed` is fuelResetAllowed(the latest read) -- the provider's gate.
+  //   {type: "hold", allowed, confirmSec}     the 2 s hold completed
   //   {type: "no"}                            confirm -> No (changes nothing)
   //   {type: "yes", read}                     confirm -> Yes
   //   {type: "answer", status, body, nowMs}   the POST answered
   //   {type: "failure"}                       the POST never answered
-  //   {type: "read", read, parked, nowMs, confirmSec}   one tick's read
+  //   {type: "read", read, allowed, nowMs, confirmSec}   one tick's read
   function fuelResetNext(prev, ev) {
     var s = isObj(prev) && typeof prev.phase === "string" ? {
       phase: prev.phase, outcome: prev.outcome, baselineTs: prev.baselineTs,
@@ -4730,7 +4791,7 @@
     } : fuelResetInit();
     var type = isObj(ev) ? ev.type : null;
     if (type === "hold") {
-      if (s.phase === "idle" && ev.parked === true && typeof ev.confirmSec === "number") {
+      if (s.phase === "idle" && ev.allowed === true && typeof ev.confirmSec === "number") {
         s.phase = "confirm";
       }
       return s;
@@ -4762,8 +4823,8 @@
     }
     if (type !== "read") return s;
     var ts = fuelSinceResetTs(ev.read);
-    if (s.phase === "confirm" && ev.parked !== true) {
-      // The car moved under an open confirm: withdraw it.
+    if (s.phase === "confirm" && ev.allowed !== true) {
+      // The gate closed under an open confirm (the car sped up): withdraw it.
       s.phase = "idle";
     } else if (s.phase === "awaiting") {
       if (ts !== null && ts === s.resetAtTs) {
@@ -4782,16 +4843,19 @@
     return s;
   }
 
-  // The MPG row with the reset applied to SINCE RESET.
-  function fuelMpgResetView(fuelEconomyData, resetState, parked, confirmSec) {
-    return fuelResetOverlay(fuelMpgView(fuelEconomyData), resetState, parked, confirmSec);
+  // The MPG row with the reset applied to SINCE RESET, gated by the same read.
+  function fuelMpgResetView(fuelEconomyData, resetState, confirmSec) {
+    return fuelResetOverlay(
+      fuelMpgView(fuelEconomyData), resetState, fuelResetAllowed(fuelEconomyData), confirmSec
+    );
   }
 
   // Apply the reset to a fuelMpgView. `sinceReset.line` is the slot's outcome /
   // hint line; `reset` says whether the hold is live and the confirm is open.
-  function fuelResetOverlay(view, resetState, parked, confirmSec) {
+  // `allowed` is fuelResetAllowed(read): the hint and the hold follow it alone.
+  function fuelResetOverlay(view, resetState, allowed, confirmSec) {
     var s = isObj(resetState) && typeof resetState.phase === "string" ? resetState : fuelResetInit();
-    var offered = parked === true && typeof confirmSec === "number";
+    var offered = allowed === true && typeof confirmSec === "number";
     var slot = view.sinceReset;
     slot.line = "";
     if (s.phase === "posting" || s.phase === "awaiting") {
@@ -5278,6 +5342,7 @@
     fuelResetInit: fuelResetInit,
     fuelResetNext: fuelResetNext,
     fuelMpgResetView: fuelMpgResetView,
+    fuelResetAllowed: fuelResetAllowed,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -5298,6 +5363,7 @@
     exceedsMoveCancel: exceedsMoveCancel,
     parkedInit: parkedInit,
     parkedNext: parkedNext,
+    gearParked: gearParked,
     appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
@@ -5796,6 +5862,9 @@
         slot.setAttribute("data-note", slotView.noteKind || "none");
         var valueEl = slot.querySelector(".fuel-value");
         if (valueEl) valueEl.textContent = slotView.text;
+        // US-922: the unit, as renderFuelAirflow paints g/s.
+        var unitEl = slot.querySelector(".fuel-unit");
+        if (unitEl) unitEl.textContent = slotView.unit || "";
         var flagEl = slot.querySelector(".fuel-flag");
         if (flagEl) {
           flagEl.textContent = slotView.flag;
@@ -7251,7 +7320,7 @@
       // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
       // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
       // first consumer since TD-us659), advanced once per tick from the same
-      // system-status every other surface reads; the render sets data-tap from
+      // states/gear the Driving card reads (US-511-b); the render sets data-tap from
       // it, and the handler honours only what is on the glass right now.
       var engineParked = parkedInit();
       var engineCodes = document.getElementById("engine-codes");
@@ -7263,8 +7332,10 @@
       // US-890-f: the SINCE RESET reset (spec s4.3). `fuelReset` is the
       // fuelResetNext state and `lastFuelEconomy` the LATEST states/fuel-economy
       // read; Yes and the POST's answer repaint from them between ticks, so
-      // "resetting…" shows from Yes. Parked is `engineParked` -- the ONE US-511
-      // debounce, so the hint and the CHECK ENGINE tap can never disagree.
+      // "resetting…" shows from Yes. US-923: the gate is the provider's
+      // `resetAllowed` on that same read (fuelResetAllowed) -- never
+      // engineParked, which stays the gate for Clear, the code-row tap and
+      // Settings only.
       var fuelReset = fuelResetInit();
       var lastFuelEconomy = null;
       var fuelSinceResetEl = document.getElementById("fuel-since-reset");
@@ -7276,7 +7347,7 @@
       function paintFuelMpg() {
         renderFuelMpg(
           fuelCard,
-          fuelMpgResetView(lastFuelEconomy, fuelReset, engineParked.parked, fuelConfirmSec())
+          fuelMpgResetView(lastFuelEconomy, fuelReset, fuelConfirmSec())
         );
       }
       if (fuelSinceResetEl) {
@@ -7318,11 +7389,12 @@
             }
             if (!isLongPressComplete(elapsed, FUEL_RESET_HOLD_MS)) return;
             fuelHoldClear();
-            // Honour only what is on the glass right now: the car may have
-            // moved during the hold.
+            // Honour only what is on the glass right now: the gate may have
+            // closed during the hold.
             if (fuelSinceResetEl.getAttribute("data-pressable") !== "true") return;
             fuelReset = fuelResetNext(fuelReset, {
-              type: "hold", parked: engineParked.parked, confirmSec: fuelConfirmSec(),
+              type: "hold", allowed: fuelResetAllowed(lastFuelEconomy),
+              confirmSec: fuelConfirmSec(),
             });
             paintFuelMpg();
           }, 50);
@@ -7785,7 +7857,9 @@
       // the button follows the codes and engineParked under the operator.
       function renderClearButton(dtcData) {
         if (!clearBtn) return;
-        var view = clearButtonView(dtcData, engineParked.parked);
+        var view = clearButtonView(
+          dtcData, engineParked.parked, isObj(lastGear) && lastGear.available === true
+        );
         // US-491: the zone is now a bordered, LABELLED card, so it must go with
         // the button -- an empty "CLEAR CODES" box on a nothing-to-clear detail
         // is a new visual regression. The GATE is untouched: visibility still
@@ -8204,7 +8278,9 @@
         // US-889-c: the scroll half -- this drive's history from
         // states/engine-history alone, and the status row from the same cached
         // obd-live, its codes tap gated on the debounced parked signal.
-        engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        // US-511-b: fed from THIS tick's states/gear (lastGear, read above --
+        // no second fetch), never from system-status idle.
+        engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
         // moves the dismiss on first (a codeAlert-null re-read settles it).
@@ -8232,15 +8308,16 @@
         );
         // US-890-d: the MPG row from states/fuel-economy alone. US-890-f: the
         // read also advances the reset (match / confirm window / a landed
-        // reset), against the same parked signal and this tick's one clock.
+        // reset), against that read's own gate (US-923) and this tick's one
+        // clock.
         lastFuelEconomy = await stateOnce("fuel-economy");
         fuelReset = fuelResetNext(fuelReset, {
-          type: "read", read: lastFuelEconomy, parked: engineParked.parked,
+          type: "read", read: lastFuelEconomy, allowed: fuelResetAllowed(lastFuelEconomy),
           nowMs: nowMs, confirmSec: fuelConfirmSec(),
         });
         renderFuelMpg(fuelCard, fuelResetOverlay(
           fuelMpgView(await stateOnce("fuel-economy")),
-          fuelReset, engineParked.parked, fuelConfirmSec()
+          fuelReset, fuelResetAllowed(lastFuelEconomy), fuelConfirmSec()
         ));
         // US-896-b: the NAV trip from the SAME system-status every other
         // surface on this tick read (cached); the page does no time arithmetic.

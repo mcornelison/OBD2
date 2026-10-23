@@ -1,0 +1,39 @@
+{
+  "description": "US-923: resetAllowed {value: true} (gear P/N, or fresh SPEED <= 8 km/h in any gear) -> 'hold to reset' shows and the long-press is live.",
+  "reads": [
+    {
+      "label": "read",
+      "now": "2026-10-20T15:10:00Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null,
+        "resetAllowed": {
+          "value": true,
+          "reason": null
+        }
+      }
+    }
+  ]
+}

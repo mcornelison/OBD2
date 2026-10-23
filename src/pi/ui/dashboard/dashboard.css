@@ -1905,6 +1905,13 @@ html, body {
 #fuel-card .fuel-mpg .fuel-note {
   overflow-wrap: anywhere;
 }
+/* US-922 (spec s4.3): "MPG" follows each figure on the shared .fuel-line /
+   .fuel-unit (the airflow g/s idiom). ≈100.0 MPG fits the 136 px scrollbar
+   column at 134 px; a seven-character figure would not, so the line wraps and
+   MPG drops under the figure -- never clipped, shrunk or ellipsized. */
+#fuel-card .fuel-mpg .fuel-line {
+  flex-wrap: wrap;
+}
 /* US-890-f SINCE RESET reset (spec s4.3). The line under the slot carries the
    parked-only "hold to reset" hint or the outcome ("park to reset", "couldn't
    reset", "couldn't confirm"); every text <= 16 characters, so --fs-meta mono
