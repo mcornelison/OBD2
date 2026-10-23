@@ -222,7 +222,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         <li><b>Amber means counted, and counted means amber.</b> Every amber element carries the member it belongs to (<code>data-m</code>), and each fixture's amber set equals its member set (AC 7). Bluetooth trying to link, another network, weak WiFi, the UPS on battery and a stale sync are expected states: neutral, uncounted.</li>
         <li><b>ARCH-061 closes:</b> BT and ADAPTER green, ECU grey, <code>ECU not answering (key off?)</code>, <code>ALL OK</code>. Parked key-off between attempts is <code>n-n-n</code>: <code>Bluetooth trying to link (key off?)</code>, neutral. No word promises an outcome (<code>takes ~1 min</code> is gone).</li>
         <li><b>Dashed = no reading; solid = a reading.</b> A <code>null</code> layer is a dashed step and a hollow top-bar dot, never the <code>down</code> look.</li>
-        <li><b>WiFi glyph:</b> <code>up</code> green; <code>weak</code> neutral; no reading dim arcs with no slash; <code>down</code> or <code>not_associated</code> slashed; <code>read_failed</code> amber, the one counted WiFi state.</li>
+        <li><b>WiFi glyph:</b> <code>up</code> green; <code>weak</code> neutral; no reading (or associated with no level) dim arcs with no slash; <code>down</code> slashed (not associated is a reading, never a reason: Atlas A6); <code>read_failed</code> amber, the one counted WiFi state.</li>
         <li><b>Locked until parked</b> (gear <code>P</code> or <code>N</code> held 8 s, CIO 2026-10-22): Settings stays readable, every control goes tertiary with no <code>−</code>/<code>+</code>, a tap writes nothing, and one line says <code>🔒 view only — stop to change</code>, or <code>🔒 view only — gear unknown</code> while the gear is unknown. No word on the glass says <code>moving</code>.</li>
         <li><b>Brightness FIXED</b> runs from the effective <code>minLevel</code> (75 % shipped) to 100 % in 5 % steps; an unreadable <code>minLevel</code> disables FIXED and reads <code>Unknown</code>. AUTO→FIXED starts at the level the panel applies now.</li>
         <li><b>Auto-dim ends</b> step the 1-2-3-5 ladder from 1 to 1000 lux and cannot cross: the page disables the crossing step, and the seam's 400 is the rule.</li>
@@ -243,7 +243,7 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   // S109 member reasons (Iris 2026-10-19 words; the provider owns them, the page prints them verbatim).
   var R = {
     btRetry: "Link dropped. Retrying.", btDown: "Not linked. Check the OBD dongle.",
-    adapter: "Bluetooth up; adapter not answering.", capture: "OBD feed stalled.", wifi: "WiFi couldn't be read.",
+    adapter: "Bluetooth up; adapter not answering.", capture: "OBD feed stalled.", captureUps: "UPS feed stalled.", wifi: "WiFi couldn't be read.",
     piCpu: "CPU 80.2 °C, limit 80 °C.", piMulti: "Over limit: CPU temp, throttling, disk."
   };
   function L(state, sinceAgo, lastOkAgo) { return { state: state, ts: sinceAgo == null ? null : iso(sinceAgo), lastOkTs: lastOkAgo == null ? null : iso(lastOkAgo) }; }
@@ -271,29 +271,41 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     "arch061-between-attempts": sc({ link: { bt: L("connecting", 2 * H, null), adapter: L("connecting", 2 * H, null), ecu: L("connecting", 2 * H, null) } }),
     "all-ok-driving": sc({ link: { bt: L("up", 21 * MIN, SEC), adapter: L("up", 21 * MIN, SEC), ecu: L("up", 20 * MIN, SEC) },
       capture: { state: "recording", feeds: FEEDS_REC }, sync: { lastOkTs: iso(50 * MIN), rowsWaiting: 1240, edrRowsWaiting: 3, notCounted: [], stale: false },
-      wifi: { state: null, ssid: null, rssiDbm: null, home: null }, wifiSrc: { available: false, reason: "not_associated" } }),
+      wifi: { state: "down", ssid: null, rssiDbm: null, home: false }, wifiSrc: { available: true, reason: null } }),
     "bt-connecting": sc({ link: { bt: L("connecting", 20 * SEC, null), adapter: L("connecting", 20 * SEC, null), ecu: L("connecting", 20 * SEC, null) } }),
     "bt-retrying": sc({ verdict: V([M("bt", R.btRetry)]), link: BT_DOWN_LINK }),
     "adapter-silent": sc({ verdict: V([M("adapter", R.adapter)]), link: { bt: L("up", 31 * MIN, 2 * SEC), adapter: L("down", 4 * MIN, 9 * MIN), ecu: L("down", 4 * MIN, 9 * MIN) } }),
     "adapter-down-bt-down": sc({ verdict: V([M("bt", R.btDown)]), link: { bt: L("down", 3 * MIN, null), adapter: L("down", 3 * MIN, null), ecu: L("down", 3 * MIN, null) } }),
     "link-not-read": sc({ link: { bt: L(null, null, null), adapter: L(null, null, null), ecu: L(null, null, null) } }),
-    "prev-session-ecu-stale": sc({ link: { bt: L("up", 31 * MIN, 2 * SEC), adapter: L("up", 31 * MIN, 2 * SEC), ecu: L("down", 31 * MIN, null) } }),
     "ecu-retrying-after-keyoff": sc({ link: { bt: L("up", 31 * MIN, 2 * SEC), adapter: L("up", 31 * MIN, 2 * SEC), ecu: L("retrying", 6 * MIN, 7 * MIN) } }),
     "capture-stalled": sc({ verdict: V([M("capture", R.capture)]), link: { bt: L("up", 21 * MIN, SEC), adapter: L("up", 21 * MIN, SEC), ecu: L("up", 20 * MIN, SEC) },
       capture: { state: "stalled", feeds: [["OBD", "stalled", 48], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "writing", 5]] } }),
-    "capture-stalled-ecu-silent": sc({ capture: { state: "stalled", feeds: [["OBD", "stalled", 300], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "writing", 5]] } }),
+    "capture-stalled-ecu-silent": sc({ link: { bt: L("up", 31 * MIN, 2 * SEC), adapter: L("up", 31 * MIN, 2 * SEC), ecu: L("down", 6 * MIN, 7 * MIN) },
+      capture: { state: "stalled", reason: "stalled", lastRowSecondsAgo: 300, feeds: [["OBD", "stalled", 300], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "writing", 5]] } }),
+    // A4 VC 1 / W3: cold boot, the logger has written nothing, no feed stalled, ECU up => not stalled, 0 members, no ECU words.
+    "capture-never-written-ecu-up": sc({ link: { bt: L("up", 2 * MIN, SEC), adapter: L("up", 2 * MIN, SEC), ecu: L("up", 90 * SEC, SEC) },
+      capture: { state: "stalled", reason: "never_written", lastRowSecondsAgo: null, feeds: [["OBD", "writing", 2], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "writing", 5]] } }),
+    // A4 VC 2: top-level ok, the UPS feed stalled, ECU up => stalled, 1 member.
+    "capture-ups-feed-stalled": sc({ verdict: V([M("capture", R.captureUps)]), link: { bt: L("up", 21 * MIN, SEC), adapter: L("up", 21 * MIN, SEC), ecu: L("up", 20 * MIN, SEC) },
+      capture: { state: "ok", reason: null, lastRowSecondsAgo: 2, feeds: [["OBD", "writing", 2], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "stalled", 140]] } }),
     "away-from-home": sc({ sync: { lastOkTs: iso(3 * H), rowsWaiting: 3880, edrRowsWaiting: 0, notCounted: [], stale: true },
       wifi: { state: "weak", ssid: "Starbucks", rssiDbm: -79, home: false } }),
     "rows-not-counted": sc({ sync: { lastOkTs: iso(25 * MIN), rowsWaiting: 12345, edrRowsWaiting: 1, notCounted: ["battery_health_log", "startup_log"], stale: false } }),
     "sync-days-old": sc({ sync: { lastOkTs: "2026-10-12T23:42:00Z", rowsWaiting: 48210, edrRowsWaiting: 0, notCounted: [], stale: true } }),
     "sync-stale-glyph": sc({ sync: { lastOkTs: iso(DAY + 2 * H), rowsWaiting: 512, edrRowsWaiting: 0, notCounted: [], stale: true } }),
     "wifi-weak-home": sc({ wifi: { state: "weak", ssid: "DeathstarWifi", rssiDbm: -77, home: true } }),
-    "wifi-not-read": sc({ wifi: { state: null, ssid: null, rssiDbm: null, home: null }, wifiSrc: { available: false, reason: null } }),
+    "wifi-not-read": sc({ wifi: { state: null, ssid: null, rssiDbm: null, home: null }, wifiSrc: { available: false, reason: "not_read" } }),
+    // W1: associated (SSID known), /proc gave no level => state null with available true.
+    "wifi-associated-no-level": sc({ wifi: { state: null, ssid: "DeathstarWifi", rssiDbm: null, home: true }, wifiSrc: { available: true, reason: null } }),
     "wifi-nmcli-absent": sc({ wifi: { state: null, ssid: null, rssiDbm: null, home: null }, wifiSrc: { available: false, reason: "nmcli_absent" } }),
-    "wifi-not-associated": sc({ wifi: { state: null, ssid: null, rssiDbm: null, home: null }, wifiSrc: { available: false, reason: "not_associated" } }),
+    // A6: not associated is a READING: available true, state down, reason null.
+    "wifi-down": sc({ wifi: { state: "down", ssid: null, rssiDbm: null, home: false }, wifiSrc: { available: true, reason: null } }),
     "wifi-read-failed": sc({ verdict: V([M("wifi", R.wifi)]), wifi: { state: null, ssid: null, rssiDbm: null, home: null }, wifiSrc: { available: false, reason: "read_failed" } }),
     "ups-on-battery": sc({ power: { source: "battery", reason: null }, batt: with_(BASE.batt, { vcellV: 3.94, ageS: 3, soc: 0.71 }) }),
     "ups-fresh-12s": sc({}),
+    "ups-source-provider-absent": sc({ power: { source: "unknown", reason: "provider_absent" } }),
+    "ups-source-unreadable": sc({ power: { source: "unknown", reason: "source_unreadable" } }),
+    "ups-source-read-failed": sc({ power: { source: "unknown", reason: "read_failed" } }),
     "ups-gauge-unreadable": sc({ batt: with_(BASE.batt, { available: false, vcellV: null, soc: null, health: "unknown", healthReason: "log_unreadable" }) }),
     "last-stop-ungraceful": sc({ batt: with_(BASE.batt, { lastStop: { verdict: "ungraceful", notAfterTs: iso(2 * DAY) } }) }),
     "pi-hot": sc({ verdict: V([M("pi", R.piCpu)]), pi: with_(BASE.pi, { cpuTempC: 80.2, overLimit: ["cpuTemp"] }) }),
@@ -388,8 +400,8 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   function wifiGlyph(d) {
     var w = d.wifi, r = d.wifiSrc.reason, cls, slash = false, m = "";
     if (w.state === null && r === "read_failed") { cls = "c-warn"; m = amb("wifi"); }
-    else if (w.state === "down" || (w.state === null && r === "not_associated")) { cls = "c-off"; slash = true; }
-    else if (w.state === null) cls = "c-off";
+    else if (w.state === "down") { cls = "c-off"; slash = true; }
+    else if (w.state === null) cls = "c-off";   // not_read, nmcli_absent, or associated with no level: no slash, no lit arcs
     else if (w.state === "weak") cls = "c-neu";
     else cls = "c-ok";
     return '<span id="glyph-wifi" class="' + cls + '"' + m + ' title="WiFi"><svg class="wifi" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">' +
@@ -410,14 +422,22 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
 
   // ---- rows ----
   function dataRow(d) {
-    var c = d.capture.state, mCap = member(d, "capture"), val, cls, parts = [];
-    if (c === "stalled") { cls = mCap ? "c-warn" : "c-neu"; val = "stalled"; }
-    else if (c === "recording") { cls = "c-ok"; val = "recording"; }
+    var cap = d.capture, c = cap.state, mCap = member(d, "capture"), val, cls, parts = [];
+    var ecu = d.link.ecu.state, ecuSilent = ecu === "down" || ecu === "retrying" || ecu === "connecting";
+    // A4: stalled if and only if a capture member exists; a top-level stall with no member takes its word from the reason.
+    if (mCap) { cls = "c-warn"; val = "stalled"; c = "member"; }
+    else if (c === "stalled") { cls = "c-neu"; val = cap.reason === "never_written" ? "no rows" : "stopped"; c = "nomember"; }
+    else if (c === "recording" || c === "ok") { cls = "c-ok"; val = "recording"; c = "recording"; }
     else if (c === "idle") { cls = "c-neu"; val = "idle"; }
     else { cls = "c-off"; val = "--"; }
-    var valHTML = '<span class="' + cls + '"' + (c === "stalled" && mCap ? amb("capture") : "") + ">" + val + '</span><span class="c-neu"> · ' + syncWhen(d.sync.lastOkTs) + "</span>";
-    if (c === "stalled" && mCap) parts.push('<span class="c-warn"' + amb("capture") + ">" + esc(mCap.reason) + "</span>");
-    else if (c === "stalled") parts.push("not counted: ECU not answering");
+    var valHTML = '<span class="' + cls + '"' + (mCap ? amb("capture") : "") + ">" + val + '</span><span class="c-neu"> · ' + syncWhen(d.sync.lastOkTs) + "</span>";
+    if (mCap) parts.push('<span class="c-warn"' + amb("capture") + ">" + esc(mCap.reason) + "</span>");
+    else if (c === "nomember") {
+      // A4: a cause is named only from the fact that carries it.
+      if (ecuSilent) parts.push("ECU not answering");
+      else if (cap.reason === "never_written") parts.push("no row logged this session");
+      else if (cap.lastRowSecondsAgo != null) parts.push("last row " + agoText(iso(cap.lastRowSecondsAgo * SEC)));
+    }
     else if (c === "recording") parts.push("all 4 feeds writing");
     else if (c === "idle") parts.push("not driving");
     else parts.push("capture not read yet");
@@ -432,18 +452,21 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     return { value: valHTML, sentence: parts.join(" · ") };
   }
   function wifiView(d) {
-    var w = d.wifi, r = d.wifiSrc.reason, sig = w.state === "weak" ? "weak signal" : "good signal";
-    if (w.state === "up" || w.state === "weak") {
+    var w = d.wifi, r = d.wifiSrc.reason, sig = w.state === "weak" ? "weak signal" : w.state === null ? "no signal level" : "good signal";
+    // W1: available + state null = associated with no level; it takes the home word, never "--" or "down".
+    if (w.state === "up" || w.state === "weak" || (w.state === null && d.wifiSrc.available)) {
       var tail = (w.ssid ? esc(w.ssid) + " · " : "") + sig;
       if (w.home === true) return { v: "home", cls: "c-ok", s: tail };
       if (w.home === false) return { v: "other network", cls: "c-neu", s: tail };
       return { v: "connected", cls: "c-neu", s: tail };
     }
-    if (w.state === "down" || r === "not_associated") return { v: "down", cls: "c-off", s: "not connected" };
+    if (w.state === "down") return { v: "down", cls: "c-off", s: "not connected" };
     if (r === "read_failed") { var m = member(d, "wifi"); return { v: '<span class="mono">?</span> not read', cls: "c-warn", s: m ? esc(m.reason) : "", m: "wifi" }; }
     if (r === "nmcli_absent") return { v: "--", cls: "c-off", s: "no WiFi tool on this host" };
     return { v: "--", cls: "c-off", s: "not read yet" };
   }
+  // W2: reasons.source in words (card_state_emitter POWER_SOURCE_UNKNOWN_REASONS); any other token prints nothing.
+  var POWER_REASON_WORDS = { provider_absent: "no power sensor running", source_unreadable: "power sensor unreadable", read_failed: "power sensor read failed" };
   function upsView(d) {
     var b = d.batt;
     if (!b.available) return { v: "--", s: "gauge unreadable" };
@@ -495,11 +518,10 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
         var last = "last success " + (x.lastOkTs ? fmtStamp(x.lastOkTs) : "--");
         out += kv(l[1], x.state === null ? "--" : LINK_WORD[x.state], since + " · " + last, lk.cls.split(" ")[0], lk.m);
       });
-      out += kv("ADAPTER MAC", "00:04:3E:85:0D:FB", "OBDLink LX", "");
       out += kv("NOW", obdSentence(d), "", "", null);
     } else if (view === "data") {
       out += '<div class="sec">FEEDS</div><div class="feeds">' + d.capture.feeds.map(function (f) {
-        var m = f[1] === "stalled" && member(d, "capture") && f[0] === "OBD" ? "capture" : null;
+        var m = f[1] === "stalled" && member(d, "capture") ? "capture" : null;
         var cls = f[1] === "writing" ? "c-ok" : f[1] === "stalled" ? (m ? "c-warn" : "c-neu") : f[1] === "idle" ? "c-neu" : "c-off";
         return kv(f[0], f[1] || "--", "last row " + (freshAgo(f[2]) || "--"), cls, m);
       }).join("") + "</div>";
@@ -514,14 +536,15 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       var w = d.wifi, r = d.wifiSrc.reason, wv = wifiView(d);
       out += kv("STATE", wv.v, "", wv.cls, wv.m);
       out += kv("NETWORK", w.ssid ? esc(w.ssid) : "--", "", w.ssid ? "" : "c-off");
-      out += kv("STRENGTH", w.rssiDbm != null ? (w.state === "weak" ? "weak" : "good") + " · " + w.rssiDbm + " dBm" : "--", "", w.rssiDbm != null ? "" : "c-off");
+      out += kv("STRENGTH", w.rssiDbm != null ? (w.state === "weak" ? "weak" : "good") + " · " + w.rssiDbm + " dBm" : w.state === null && d.wifiSrc.available ? "no signal level" : "--", "", w.rssiDbm != null ? "" : "c-off");
+      if (w.state === "down") out += kv("LINK", "not connected to any network", "", "c-off");
       out += kv("HOME NETWORK", w.home === true ? "yes" : w.home === false ? "no" : "unknown", "", "");
-      if (r) out += kv("REASON", r === "nmcli_absent" ? "no WiFi tool on this host" : r === "not_associated" ? "not connected to any network" : esc((member(d, "wifi") || {}).reason || ""), "", r === "read_failed" ? "c-warn" : "c-neu", r === "read_failed" ? "wifi" : null);
+      if (r) out += kv("REASON", r === "nmcli_absent" ? "no WiFi tool on this host" : r === "not_read" ? "not read yet" : esc((member(d, "wifi") || {}).reason || ""), "", r === "read_failed" ? "c-warn" : "c-neu", r === "read_failed" ? "wifi" : null);
     } else if (view === "ups") {
       var b = d.batt, uv = upsView(d);
       out += '<div class="sec">PI UPS BATTERY</div>';
       out += kv("CELL", uv.v, b.available ? "VCELL, measured" : "gauge unreadable", uv.v === "--" ? "c-off" : "");
-      out += kv("SOURCE", uv.s.split(" · ")[0], d.power.reason ? "reason: " + esc(d.power.reason) : "", "");
+      out += kv("SOURCE", uv.s.split(" · ")[0], POWER_REASON_WORDS[d.power.reason] || "", "");
       var hv = { good: "GOOD", degraded: "DEGRADED", replace: "REPLACE" }[b.health] || "--";
       var hcls = b.health === "good" ? "c-ok" : hv === "--" ? "c-off" : "c-neu";   // never alarm-red, never amber
       var hsub = b.health === "unknown" ? ({ no_database: "no battery log database", log_unreadable: "battery log unreadable", clock_unreadable: "clock unreadable", no_monthly_test: "no monthly battery test yet", monthly_test_stale: "monthly battery test overdue", too_few_syncs: "too few home syncs to judge" }[b.healthReason] || "reason not reported")
@@ -677,18 +700,20 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     { h: "OBD link (ARCH-061)", fx: [
       F("arch061-during-attempt", "Key off, parked, home; BT + adapter up, ECU connecting (<code>g-g-n</code>): <code>ECU not answering (key off?)</code>, <code>ALL OK</code>. Nothing reads Bluetooth down.", "arch061-during-attempt"),
       F("arch061-between-attempts", "Key off between attempts, all three connecting (<code>n-n-n</code>): <code>Bluetooth trying to link (key off?)</code>, every step neutral, <code>ALL OK</code>.", "arch061-between-attempts"),
-      F("all-ok-driving", "Driving, all up, recording, away (<code>wlan0</code> not associated ⇒ <code>down</code>, slashed glyph, uncounted). No row chevrons; SETTINGS and ⋮ stay.", "all-ok-driving", "system", { parked: false }),
+      F("all-ok-driving", "Driving, all up, recording, away (<code>wlan0</code> not associated ⇒ <code>state: down</code>, slashed glyph, uncounted). No row chevrons; SETTINGS and ⋮ stay.", "all-ok-driving", "system", { parked: false }),
       F("bt-connecting", "BT connecting at key-on: neutral, uncounted, same words. No <code>takes ~1 min</code>.", "bt-connecting"),
       F("bt-retrying", "The <code>bt</code> member: BT step and top-bar dot amber, <code>1 ISSUE</code>, the reason verbatim.", "bt-retrying"),
       F("adapter-silent", "The <code>adapter</code> member: ADAPTER step amber, <code>Bluetooth up; adapter not answering.</code>", "adapter-silent"),
       F("adapter-down-bt-down", "BT is the fault: its member speaks, and the adapter step isn't amber.", "adapter-down-bt-down"),
       F("link-not-read", "Every layer <code>null</code>: dashed steps, hollow dots, <code>Bluetooth not read yet</code>.", "link-not-read"),
-      F("prev-session-ecu-stale", "The ECU answered last session only: grey, never green. Detail: last success <code>--</code>.", "prev-session-ecu-stale", "obd"),
       F("ecu-retrying-after-keyoff", "ECU retrying after key-off is normal: grey step and dot, <code>ALL OK</code>.", "ecu-retrying-after-keyoff")
     ] },
     { h: "Data + sync", fx: [
       F("capture-stalled", "The <code>capture</code> member: <code>stalled</code> and <code>OBD feed stalled.</code> in amber.", "capture-stalled"),
-      F("capture-stalled-ecu-silent", "A stall with the ECU silent isn't counted: <code>stalled</code> neutral, <code>not counted: ECU not answering</code>.", "capture-stalled-ecu-silent"),
+      F("capture-stalled-ecu-silent", "A stall with the ECU down isn't a member, so it never reads <code>stalled</code> (A4): <code>stopped</code> neutral, <code>ECU not answering</code>.", "capture-stalled-ecu-silent"),
+      F("capture-never-written-ecu-up", "Cold boot, ECU up, no feed stalled: <code>no rows</code>, <code>no row logged this session</code>, 0 members, no ECU words (A4 VC 1).", "capture-never-written-ecu-up"),
+      F("capture-ups-feed-stalled", "Top-level ok, UPS feed stalled: <code>stalled</code> amber, <code>UPS feed stalled.</code>, 1 member (A4 VC 2). The detail marks the UPS feed.", "capture-ups-feed-stalled"),
+      F("capture-ups-feed-stalled, detail", "The member's amber sits on the feed that stalled.", "capture-ups-feed-stalled", "data"),
       F("away-from-home", "Another network, weak, away: neutral and uncounted. <code>away from home · 3,880 rows waiting</code>.", "away-from-home"),
       F("rows-not-counted", "<code>12,345+ rows waiting</code>: the <code>+</code> sits on the number, so an ellipsis can't hide it.", "rows-not-counted"),
       F("rows-not-counted, detail", "The uncounted tables by name, never folded into the count; the last sync as a full stamp.", "rows-not-counted", "data", { scroll: 999 }),
@@ -697,9 +722,11 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     ] },
     { h: "WiFi", fx: [
       F("wifi-weak-home", "<code>home</code> green, <code>weak signal</code>, glyph neutral. Weak is never amber.", "wifi-weak-home"),
-      F("wifi-not-read", "<code>null</code>, no reason: <code>--</code>, <code>not read yet</code>, dim arcs, no slash.", "wifi-not-read"),
+      F("wifi-not-read", "<code>null</code>, <code>not_read</code>: <code>--</code>, <code>not read yet</code>, dim arcs, no slash.", "wifi-not-read"),
+      F("wifi-associated-no-level", "Associated, no level (W1): <code>home</code> + <code>DeathstarWifi · no signal level</code>, never <code>--</code> or <code>down</code>; dim arcs, no slash.", "wifi-associated-no-level"),
       F("wifi-nmcli-absent", "The dev box: <code>--</code>, <code>no WiFi tool on this host</code>, uncounted.", "wifi-nmcli-absent"),
-      F("wifi-not-associated", "<code>null</code> + <code>not_associated</code> is a reading: <code>down</code>, slashed glyph.", "wifi-not-associated"),
+      F("wifi-down", "Not associated is a reading (A6): <code>state: down</code>, reason null ⇒ <code>down</code>, slashed glyph.", "wifi-down"),
+      F("wifi-down, detail", "<code>not connected to any network</code>; no REASON line (there is no reason).", "wifi-down", "wifi"),
       F("wifi-read-failed", "The <code>wifi</code> member: <code>? not read</code> amber, counted. The one amber WiFi state.", "wifi-read-failed"),
       F("wifi-read-failed, detail", "The reason in words; no IP row (there's no field).", "wifi-read-failed", "wifi")
     ] },
@@ -707,6 +734,9 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       F("ups-fresh-12s", "<code>4.12 V</code> · <code>on external power · 12 s ago</code>. A freshness age, not <code>just now</code>.", "ups-fresh-12s"),
       F("ups-on-battery", "<code>on battery</code> is neutral, not amber. No SOC on the row, no runtime.", "ups-on-battery"),
       F("ups-gauge-unreadable", "Typed NA: <code>--</code> and <code>gauge unreadable</code>.", "ups-gauge-unreadable"),
+      F("ups-source-provider-absent", "<code>power source unknown</code>; detail: <code>no power sensor running</code> (not <code>no UPS fitted</code>).", "ups-source-provider-absent", "ups"),
+      F("ups-source-unreadable", "The live Pi today: detail <code>power sensor unreadable</code>.", "ups-source-unreadable", "ups"),
+      F("ups-source-read-failed", "Detail: <code>power sensor read failed</code>.", "ups-source-read-failed", "ups"),
       F("ups detail", "VCELL, source, health (green GOOD; never amber), the margin with its <code>vs n s job</code>, LAST STOP, SOC last and marked modelled.", "ups-fresh-12s", "ups"),
       F("last-stop-ungraceful", "LAST STOP <code>UNGRACEFUL</code>, neutral: it's history. SOC last, <code>(modelled, uncalibrated)</code>.", "last-stop-ungraceful", "ups", { scroll: 999 })
     ] },

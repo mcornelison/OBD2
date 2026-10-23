@@ -148,7 +148,11 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
 ### 4.3 DATA (capture + sync; S4)
 - **Value:**
   - the capture state from **`capture-health`, never from the drive state** (I3 confirmed): `recording` / `idle` / `stalled` / `--` when capture-health is absent or its state is unknown (`--text-tertiary`).
-    - **`stalled` is amber only while `capture` is a member.** A stall with the ECU not up isn't a member, so the value is `stalled` in `--text-secondary`, with the sentence `not counted: ECU not answering`.
+    - **`stalled` if and only if there is a `capture` member** (Atlas A4, 2026-10-22: one source per fact). The member comes from `feeds.*.state` alone, and only with the ECU up (`system_status_emitter` :538-541), so the value and the count can never disagree in either direction. `stalled` is always amber.
+    - **A top-level `stalled` with no member never reads `stalled` and adds no member** (corrected 2026-10-22, UIDEV-013; this replaces I3's grey `stalled`). The value comes from the top-level `reason`, in `--text-secondary`:
+      - `never_written` (the logger has written no row since its process started, e.g. a cold boot) ⇒ `no rows`;
+      - `stalled` (rows were written once; none inside the stall window) ⇒ `stopped`.
+      - Both are no wider than `recording`, so ` · synced <when>` keeps the budget measured in UIDEV-010.
   - then ` · synced <when>` from `sync.lastOkTs` ("last data stored", S109 Rule 10), in local time (I3 date rule):
     - same local day ⇒ `fmtTimeOfDay` (`6:42 PM`);
     - the local day before ⇒ `yesterday`, **with no time on the row** (corrected 2026-10-22, UIDEV-010). `recording · synced yesterday 12:59 PM` is 37 characters = 445 px in the 334 px value column, so the ellipsis cut the time to a wrong-looking `5:0…`. That is the failure the `+` rule below exists to prevent. `recording · synced yesterday` is 28 characters and fits. The full `fmtStamp` is in the DATA detail;
@@ -159,7 +163,11 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
   1. `stalled` with the member ⇒ the `capture` member's `reason` verbatim (`OBD feed stalled.`). Otherwise:
      - `all 4 feeds writing` (R3: OBD, light, IMU, UPS) while recording;
      - `not driving` while idle (I3 confirmed);
-     - `capture not read yet` when the value is `--`.
+     - `capture not read yet` when the value is `--`;
+     - **`no rows` / `stopped` (no member; W3):** a cause is named only from the fact that carries it (Atlas A4):
+       - `link.ecu` is `down`, `retrying` or `connecting` ⇒ `ECU not answering`;
+       - otherwise (ECU up, or the layer not read) no cause is printed. `no rows` ⇒ `no row logged this session`; `stopped` ⇒ `last row <age>` from the top-level `lastRowSecondsAgo` through `agoText` (a history age, `4 min ago`), and nothing when it's null.
+       - Never `ECU not answering` with the ECU up: on a cold boot that would be false.
   2. **Away:** `wifi.home === false` ⇒ `away from home` (neutral; F-155 at-home sync). If `wifi.home` is null, no home word at all: never guess away.
   3. **Rows:** `sync.rowsWaiting` ⇒ `n rows waiting` (`fmtThousands`, so `12,345`). `sync.edrRowsWaiting` > 0 ⇒ `n event rows`. Zero event rows prints nothing.
      - **Singular (I3):** `1 row waiting`, `1 event row`. With the `+` it stays plural: `1+ rows waiting`.
@@ -171,15 +179,16 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
 - **Old fields retired:** `rows` / `pending` no longer exist.
 
 ### 4.4 WIFI (carries US-732 + US-742; S3)
-The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}` + `source.wifi {available, reason: nmcli_absent|not_associated|read_failed}`. The shipped weak band is kept (Atlas 732-4). **The emitter derives `state`; the page applies no RSSI threshold.**
+The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}` + `source.wifi {available, reason: nmcli_absent|read_failed|not_read}` (`wifi_reader` :180-193 + the emitter's `REASON_WIFI_UNKNOWN`; there is no `not_associated`, Atlas A6). The shipped weak band is kept (Atlas 732-4). **The emitter derives `state`; the page applies no RSSI threshold.**
 
 | Provider | Value | Colour | Sentence | Counted |
 |---|---|---|---|---|
 | `up`/`weak`, `home: true` | `home` | `--green-ok` | `<ssid> · good signal` / `· weak signal` | no |
 | `up`/`weak`, `home: false` | `other network` | `--text-secondary` | same | no |
 | `up`/`weak`, `home: null` | `connected` | `--text-secondary` | same | no |
-| `down`, **or** `null` with reason `not_associated` (I5) | `down` | `--text-tertiary` | `not connected` | no |
-| `null`, no reason | `--` | `--text-tertiary` | `not read yet` | no |
+| `null`, `available: true` (associated, `ssid` set, `rssiDbm` null) | the `home` word, as the three rows above | as above | `<ssid> · no signal level` | no |
+| `down` (`available: true`, not associated) | `down` | `--text-tertiary` | `not connected` | no |
+| `null`, `not_read` | `--` | `--text-tertiary` | `not read yet` | no |
 | `null`, `nmcli_absent` | `--` | `--text-tertiary` | `no WiFi tool on this host` | no (dev box never counts, Atlas) |
 | `null`, `read_failed` | `? not read` | `--amber-warn` | the `wifi` member's `reason` (`WiFi couldn't be read.`) | **yes** |
 
@@ -188,10 +197,14 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 - **`up` reads `good signal`, not `strong`.** `up` only means "above the weak band", and `strong` would claim more than that.
 - **Unknown is never `down`** (Atlas 2026-08-20). **`--` is the one no-data mark** (two hyphens, as on the Warnings icon), never `—`.
 - **`home: null` ⇒ `connected`, neutral** (I5 confirmed). Never `home`, and never `other network`.
-- **`not_associated` is a reading** (we looked; wlan0 isn't associated). The builder publishes `state: null` whenever `available` is false (I5), so **the row and the glyph key on `state` and `reason` together**: `null` + `not_associated` renders as `down`. Atlas may instead publish `state: down` with `available: true`, and the page then needs no special case. Either way it is never `--`.
+- **Not associated is a reading, not a reason** (Atlas A6, 2026-10-22, verified in `wifi_reader` :180-193): `available: true`, `state: down`, reason null. The page has no special case for it. *(This replaces I5's `null` + `not_associated`: Atlas's W3 vocabulary named a reason that was never built, and the shipped producer wins.)*
+- **Associated, no signal level (W1):** `available: true` with `state: null` means wlan0 is on a network (the SSID is known) but `/proc/net/wireless` gave no level, so `deriveWifiState` can't band it (`system_status_emitter` :606-607).
+  - It's never `down` (the car is connected) and never `not read yet` (the link was read).
+  - The page tells it from an unread link by `source.wifi.available`, never by a missing `ssid`.
+- **No literal twins (Atlas A6):** the page's reason strings are checked against `wifi_reader.WIFI_REASON_*` and `system_status_emitter.REASON_WIFI_UNKNOWN`.
 - **Top-bar WiFi glyph:**
-  - `null` (no reason, `nmcli_absent`) ⇒ dim `--text-tertiary` arcs, **no slash** (a slash claims `down`);
-  - `down`, or `null` + `not_associated` ⇒ the slashed glyph;
+  - `null` (`not_read`, `nmcli_absent`, or associated with no level) ⇒ dim `--text-tertiary` arcs, **no slash** (a slash claims `down`, and lit arcs claim a level);
+  - `down` ⇒ the slashed glyph;
   - `read_failed` ⇒ amber, the one amber WiFi state.
 
 ### 4.5 UPS (S5)
@@ -212,15 +225,26 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 ### 4.6 Detail screens (parked; Back returns to System)
 | Detail | Contents |
 |---|---|
-| **OBD** | per layer, **this session only** (ARCH-062): state; since when (= the layer's `ts`, the transition time); last success (= `lastOkTs`, through `fmtStamp`; `--` when the layer hasn't been up this session, never a time from an earlier boot); adapter MAC; the row's sentence in full. `available` = `state != null` (S109 I4, 2026-10-22). **Retry count waits on a field:** S109 doesn't publish one, so the line isn't drawn (the same rule as I5's IP). |
+| **OBD** | per layer, **this session only** (ARCH-062): state; since when (= the layer's `ts`, the transition time); last success (= `lastOkTs`, through `fmtStamp`; `--` when the layer hasn't been up this session, never a time from an earlier boot); the row's sentence in full. **No adapter MAC** (Atlas A3, 2026-10-22): no publish field exists (it lives only inside `bt_resilience`), and a display must not grow its own reader, so the line isn't drawn. `available` = `state != null` (S109 I4, 2026-10-22). **Retry count waits on a field:** S109 doesn't publish one, so the line isn't drawn (the same rule as I5's IP). |
 | **DATA** | per feed (OBD, light, IMU, UPS): `writing` / `stalled` / `idle` / `--` (unknown) + last row age (`--` when undated) (I3); sync: last data stored (`lastOkTs` through `fmtStamp`, local, full date), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
-| **WIFI** | SSID, strength (word + `rssiDbm` dBm), home network `yes` / `no` / `unknown`, and the typed `source.wifi.reason` in words: `nmcli_absent` ⇒ `no WiFi tool on this host`, `not_associated` ⇒ `not connected to any network`, `read_failed` ⇒ the member's reason. **No IP:** there's no field, and the row isn't drawn (I5) |
+| **WIFI** | SSID, strength (word + `rssiDbm` dBm; `no signal level` and no dBm when associated with `rssiDbm` null), home network `yes` / `no` / `unknown`. `state: down` ⇒ `not connected to any network`. The typed `source.wifi.reason` in words: `not_read` ⇒ `not read yet`, `nmcli_absent` ⇒ `no WiFi tool on this host`, `read_failed` ⇒ the member's reason. **No IP:** there's no field, and the row isn't drawn (I5) |
 | **UPS** (replaces the Battery Health card; S6) | below |
 | **Pi** (from the verdict line) | below |
 
 #### 4.6.1 UPS detail (S5 + S6)
 **The Battery Health card retires (CIO).** Its content moves here, with its existing rules (US-401 F-8–F-11, US-504, US-736, ARCH-065) and its existing view functions:
-- **VCELL** (`vcellTile`) and the **source** with its age (M7 rule). An unresolved source shows its typed `reasons.source` in words.
+- **VCELL** (`vcellTile`) and the **source** with its age (M7 rule). An unresolved source shows its typed `reasons.source` in words (W2; `card_state_emitter` :219-254, `POWER_SOURCE_UNKNOWN_REASONS`):
+
+  | `reasons.source` | Words |
+  |---|---|
+  | `provider_absent` | `no power sensor running` |
+  | `source_unreadable` | `power sensor unreadable` |
+  | `read_failed` | `power sensor read failed` |
+
+  - **Not `no UPS fitted`.** `provider_absent` means no power-source provider runs in this process: the bench, *or* hardware that never started. The car has the X1209 fitted, so that word would be false on a Pi whose sensor failed to start.
+  - The words name the **sensor** (the power-loss line), not the UPS or the pack: none of the three says anything about the battery.
+  - `source_unreadable` is the live Pi's state today (two services claim GPIO6, I-us628). The word names the fact, not that cause: the cause isn't published.
+  - A reason outside the three prints no words, only `power source unknown`. The page checks its keys against `POWER_SOURCE_UNKNOWN_REASONS`, so it has no literal twins. All three are 24 characters or fewer.
 - **Health verdict:** `GOOD` / `DEGRADED` / `REPLACE` / `--` (`healthValue`), **never alarm-red, never amber** (Spool, load-bearing; `healthLevel` as shipped: green for good, neutral otherwise).
   - It's followed by the unknown reason (`BATTERY_HEALTH_REASON_TEXT`) or the T-vs-J margin (`healthMarginText`, e.g. `11 min vs 40 s job`), and **always** the F-9 `last health check · <date> (<age>)` line.
   - **The margin is exempt from "never a runtime" (I6), on three conditions:** it's the verdict's evidence (minutes to the reserve floor against the at-home job, ARCH-065, shipped); it appears only here, only under a resolved verdict; and it's always printed with its `vs n s job` half, so it reads as a margin. It never goes on the row.
@@ -362,16 +386,18 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
    - **no element reads "Bluetooth down"**.
 3. **Connecting fixture:** BT step neutral, `Bluetooth trying to link (key off?)`, verdict **not** incremented. No element anywhere reads `takes ~1 min`. **Retrying fixture:** BT step amber, verdict incremented, sentence = the `bt` member's `reason` verbatim.
 4. **ARCH-062:**
-   - A previous-session ECU success with this session silent renders grey, never green.
    - A `null` layer renders a **dashed** step (and a hollow top-bar dot), never the solid `down` look.
 5. **WiFi:**
    - `null` with no reason or `nmcli_absent` renders `--`, uncounted, never `down`;
    - `read_failed` renders `? not read` amber and counted;
+   - `down` (not associated) renders `down` with the slashed glyph, from `state` alone. The string `not_associated` appears nowhere in the page or its tests;
+   - associated with `rssiDbm` null renders the `home` word + `<ssid> · no signal level`, never `--`, never `down`, glyph unslashed;
    - `weak` is never amber, on the row or the glyph.
 6. **UPS:**
    - never renders a runtime, `charging`, `crate`, SOC on the row, `car` or `wall`;
    - `on battery` is not amber;
-   - no `min to cutoff` anywhere on the page or its details.
+   - no `min to cutoff` anywhere on the page or its details;
+   - each `reasons.source` renders its §4.6.1 words; no element says `no UPS fitted`.
 7. **🔴 The amber set equals the member set:** every amber element maps to exactly one `verdict.members[].key`, and every member has one (US-759). Assert it on every fixture.
 8. **While not parked** (§4.7.2: a numbered gear, the 8 s hold, or the gear unknown; test a driving fixture, a hold fixture and a `link_down` fixture):
    - row taps open nothing;
@@ -391,6 +417,11 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
 11. No literal colour or px in this page's CSS. The chain SVG uses relative units only.
 12. **DoD (R15): CIO judgement in the car,** including whether the `minLevel` floor is right.
 13. **Words:** every member sentence on the page is the provider's `reason` byte for byte. `carousel.js` contains none of the S109 reason strings (a file-wide grep gate, as US-899's `PULL OVER` one).
+14a. **DATA (Atlas A4 VC):**
+   - top-level `never_written`, no stalled feed, ECU up ⇒ `no rows`, `no row logged this session`, 0 members, no ECU words;
+   - UPS feed stalled, top-level `ok` ⇒ `stalled` amber, `UPS feed stalled.`, 1 member;
+   - all feeds `ok` ⇒ `recording`, 0 members;
+   - `stalled` appears on the row only when a `capture` member exists.
 14. **Top bar:** the left cluster with the chain fits its 168.6 px side track, by `test_topbar_three_column_grid`'s measured model.
 
 ## 7. Fixtures (S10)
@@ -405,24 +436,27 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `bt-retrying` | AC 3, `bt` member, `1 ISSUE`, reason verbatim |
 | `adapter-silent` | `adapter` member, amber sentence |
 | `link-not-read` | every layer `null`: dashed steps, hollow dots, `not read yet` |
-| `prev-session-ecu-stale` | AC 4 |
 | `capture-stalled` | `capture` member, value `stalled`, reason verbatim |
 | `away-from-home` | `wifi.home false`, `away from home`, rows waiting, uncounted |
 | `rows-not-counted` | `notCounted: ["<table>", "<table>"]` ⇒ `12,345+ rows waiting` on the row, the names in the detail, never folded into the count |
 | `wifi-weak-home` | `home` green, `weak signal`, glyph neutral |
-| `wifi-not-read` | `null`, no reason ⇒ `--`, uncounted |
+| `wifi-not-read` | `null`, `not_read` ⇒ `--`, `not read yet`, uncounted |
+| `wifi-associated-no-level` | W1: `available: true`, `state: null`, `ssid` set, `rssiDbm` null ⇒ the `home` word, `<ssid> · no signal level`, glyph unslashed |
 | `wifi-nmcli-absent` | dev box ⇒ `--`, `no WiFi tool on this host`, uncounted |
 | `wifi-read-failed` | `wifi` member ⇒ `? not read` amber |
 | `ups-on-battery` | `on battery` neutral, VCELL + age, no SOC on the row |
 | `ups-gauge-unreadable` | typed NA |
+| `ups-source-provider-absent` / `-unreadable` / `-read-failed` | W2: `power source unknown` on the row; the §4.6.1 words in the UPS detail |
 | `pi-hot` | `pi` member, one limit, the Pi line |
 | `pi-multi-limit` | `Over limit: CPU temp, throttling, disk.` |
 | `ecu-retrying-after-keyoff` | I1/I2: BT + adapter up, ECU retrying ⇒ `ECU not answering (key off?)`, ECU step and dot `--text-secondary`, `ALL OK` |
 | `adapter-down-bt-down` | I1/I2: `bt` member speaks; the adapter step isn't amber |
-| `capture-stalled-ecu-silent` | I3: `stalled` in `--text-secondary`, `not counted: ECU not answering`, uncounted |
+| `capture-stalled-ecu-silent` | A4: top-level `stalled`, ECU `down` ⇒ `stopped` in `--text-secondary`, `ECU not answering`, uncounted |
+| `capture-never-written-ecu-up` | A4 VC 1 / W3: cold boot ⇒ `no rows`, `no row logged this session`, 0 members |
+| `capture-ups-feed-stalled` | A4 VC 2: top-level `ok`, UPS feed stalled ⇒ `stalled` amber, `UPS feed stalled.`, 1 member |
 | `sync-days-old` | I3: `synced Oct 12`, never a bare time |
 | `sync-stale-glyph` | I4: `sync.stale`, no member ⇒ sync glyph neutral |
-| `wifi-not-associated` | I5: `null` + `not_associated` ⇒ `down`, slashed glyph |
+| `wifi-down` | A6: `available: true`, not associated ⇒ `state: down`, reason null, `down`, slashed glyph (replaces `wifi-not-associated`) |
 | `ups-fresh-12s` | I6: `on external power · 12 s ago` |
 | `last-stop-ungraceful` | I7: LAST STOP line in the UPS detail, neutral |
 | `two-issues` | `bt` + `pi`: `2 ISSUES`, the amber set equals the member set |
@@ -435,7 +469,10 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `settings-parked-idling` | AC 8: gear `N`, engine idling, held 8 s ⇒ unlocked |
 | `settings-locked-driving` | AC 8, incl. one in-flight write |
 
-**Retired:** `ups-low`. There's no UPS member (Spool + Atlas P5), so the fixture had no basis.
+**Retired:**
+- `ups-low`. There's no UPS member (Spool + Atlas P5), so the fixture had no basis.
+- `prev-session-ecu-stale` (S109 L5): every layer is this session only (ARCH-062), so a previous-session success can't be published.
+- `wifi-not-associated` (Atlas A6): the reason never existed; `wifi-down` replaces it.
 
 ## 8. Out of scope
 - detecting wall vs car power (US-729);
