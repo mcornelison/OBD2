@@ -4158,7 +4158,12 @@
     // nobody chose. Both sit inside the <=16-character envelope the strings
     // above establish ("too slow to tell" is the longest, at 16).
     link_down: "no link",
-    settling_park: "confirming park"
+    settling_park: "confirming park",
+    // US-511-a: fresh RPM 0 while SPEED says the car is still moving -- a
+    // stall while rolling, which used to read P. Iris's wording (UIDEV-012 I2,
+    // system spec 4.7.2). Explicit because the fallback would render
+    // "engine off rolling", 18 characters, past the 16-character envelope.
+    engine_off_rolling: "engine off"
   };
 
   function gearReasonText(reason) {

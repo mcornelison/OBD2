@@ -31,6 +31,9 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: re-pointed from the Home GEAR tile
 #                               DOM at gearView / gearReasonText (Atlas
 #                               B1/B2).
+# 2026-10-22    | Rex (US-511-a) | MOVED PIN: _emitParked feeds a fresh SPEED 0
+#               |                | (P means stopped); key-off and stall-while-
+#               |                | rolling pinned at the glyph.
 # ================================================================================
 ################################################################################
 
@@ -117,10 +120,15 @@ def _emitParked(
     *,
     linkHealthy: bool = True,
     holdS: float | None = None,
-    speedKph: float | None = None,
+    speedKph: float | None = 0.0,
     lastRpm: gd.Reading | None = None,
 ) -> dict:
     """Hold "no usable RPM" through the REAL producer; return what it wrote.
+
+    MOVED PIN (US-511-a): ``speedKph`` now defaults to a FRESH 0 -- P means
+    stopped (Spool 2026-10-22, Atlas A1), so the parked car keeps answering
+    SPEED 0. ``speedKph=None`` feeds no SPEED: the wall-power key-off, which
+    no longer reaches P.
 
     ``lastRpm`` lets a caller hand the deriver a reading that AGES OUT instead
     of one that was never taken -- the post-drive state, and the one the story
@@ -371,6 +379,29 @@ class TestTheConditionsHoldOnThePanel:
         )
 
         assert _gearGlyph(surface) != "P"
+
+    def test_noRpmAndNoSpeed_theWallPowerKeyOff_paintsNoP(self, tmp_path):
+        """
+        Given: a healthy link with neither RPM nor SPEED, held past the dwell
+        When:  the panel renders
+        Then:  no P (US-511-a, Spool 2026-10-22): nothing says the car stopped
+        """
+        surface = _surface(_emitParked(tmp_path, speedKph=None))
+
+        assert _gearGlyph(surface) != "P"
+
+    def test_aStallWhileRolling_paintsNoP_andSaysEngineOff(self, tmp_path):
+        """
+        Given: fresh RPM 0 with a fresh SPEED 12 km/h, through the real producer
+        When:  the panel renders
+        Then:  the dash, not P, with Iris's detail `engine off` (US-511-a)
+        """
+        payload = _emitOnce(tmp_path, gd.Reading(12.0, 1000.0), gd.Reading(0.0, 1000.0))
+        surface = _surface(payload)
+
+        assert payload["reason"] == gd.REASON_ENGINE_OFF_ROLLING
+        assert _gearGlyph(surface) == EN_DASH_PAIR
+        assert _gearDetail(surface) == "engine off"
 
     def test_aPostDriveStaleReading_paintsAP(self, tmp_path):
         """

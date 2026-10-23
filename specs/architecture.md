@@ -6942,6 +6942,23 @@ positive-only rule, so `parkedOnS: 0` falls back to the default rather than
 silently deleting the debounce. Pinned by
 `tests/ui/test_carousel_parked_debounce.py`.
 
+**Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
+mean *the car is stopped*, which is what lets parked-only controls read them
+(system spec 4.7.2). `GearDeriver._parkOpinion` (`src/pi/obdii/gear_derivation.py`)
+therefore requires a **fresh SPEED of exactly 0** (same `_liveValue` /
+`pi.gear.maxAgeSec` freshness as RPM; whole-km/h PID) on every road into `P`:
+**`P` = fresh RPM 0 AND fresh SPEED 0**, or — RPM unusable on a healthy link —
+fresh SPEED 0 held past `pi.gear.parkDwellSec` (`settling_park` meanwhile). A
+fresh RPM 0 with a fresh SPEED > 0 is a stall while rolling and publishes the
+typed absence **`engine_off_rolling`** (tile text `engine off`); fresh RPM 0 with
+SPEED missing/stale is `no_data`/`stale`. Precedence (Atlas A2): `not_calibrated`
+→ `link_down` → the fresh-RPM-0 branch (link-independent) → the no_data/stale
+guards → `N` → floors/bands. RPM unusable with SPEED missing, stale or moving
+falls through to those guards, so there is no forever `settling_park` — and the
+**wall-power key-off** (dongle linked, ECU dark, both readings aging out) **no
+longer reaches `P`**; it reads `stale`. Spool 2026-10-22; pinned by
+`tests/pi/obdii/test_gear_park.py::TestParkMeansStopped`.
+
 **Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
 show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
 `[hidden] { display: none }` is a *user-agent* declaration, so **any** author

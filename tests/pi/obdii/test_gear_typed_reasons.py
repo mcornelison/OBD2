@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-09-22    | Rex (US-739)   | Initial -- the state table, the speed-side
 #               |                | absences, and the exported tokens.
+# 2026-10-22    | Rex (US-511-a) | MOVED PINs: settling_park and the dwell-to-P
+#               |                | rows now carry a fresh SPEED 0 (Atlas A1).
 # ================================================================================
 ################################################################################
 """US-739: link_down and settling_park, per the approved state table."""
@@ -61,6 +63,12 @@ class TestTheTokensExist:
         assert "REASON_LINK_DOWN" in gd.__all__
         assert "REASON_SETTLING_PARK" in gd.__all__
 
+    def test_engineOffRollingIsExportedWithItsRuledValue(self) -> None:
+        """US-511-a (Atlas A2): the stall-while-rolling absence is a wire token
+        the renderer maps, and reasons are discovered by REASON_ prefix."""
+        assert gd.REASON_ENGINE_OFF_ROLLING == "engine_off_rolling"
+        assert "REASON_ENGINE_OFF_ROLLING" in gd.__all__
+
     def test_everyReasonTokenIsDistinct(self) -> None:
         """Two reasons sharing a value would be two facts the tile cannot tell
         apart -- the defect this story exists to remove."""
@@ -92,12 +100,16 @@ class TestTheApprovedStateTable:
     @pytest.mark.parametrize("rpm", [None, _aged(800.0)], ids=["missing", "stale"])
     def test_rpmUnusable_linkHealthy_dwellNotMet_saysSettlingPark(self, rpm) -> None:
         """
-        Given: RPM unusable, the link healthy, and the dwell not yet met
+        Given: RPM unusable, the link healthy, SPEED fresh 0, dwell not yet met
         When:  the deriver is updated
         Then:  settling_park -- the one state that resolves itself by waiting
+
+        MOVED PIN (US-511-a): SPEED is now a fresh 0. Atlas A1: with SPEED
+        moving (the old 60 km/h fixture) the tick falls through to the
+        no_data/stale guards instead -- a moving car is not settling into P.
         """
         result = _deriver().update(
-            speed=_fresh(_SPEED_IN_3RD), rpm=rpm, nowS=_NOW, linkHealthy=True
+            speed=_fresh(0.0), rpm=rpm, nowS=_NOW, linkHealthy=True
         )
 
         assert result.available is False
@@ -106,13 +118,16 @@ class TestTheApprovedStateTable:
 
     def test_rpmUnusable_linkHealthy_dwellMet_isStillPark(self) -> None:
         """The row this story must NOT disturb: hold past the dwell and Park
-        still fires, from the STALE sentinel."""
+        still fires, from the STALE sentinel.
+
+        MOVED PIN (US-511-a): SPEED is now kept fresh at 0 -- P needs it."""
         deriver = _deriver()
         nowS = _NOW
         result = None
         while nowS <= _NOW + gd.DEFAULT_PARK_DWELL_S + 0.5:
             result = deriver.update(
-                speed=None, rpm=gd.Reading(800.0, _NOW - gd.DEFAULT_MAX_AGE_S - 0.1),
+                speed=gd.Reading(0.0, nowS),
+                rpm=gd.Reading(800.0, _NOW - gd.DEFAULT_MAX_AGE_S - 0.1),
                 nowS=nowS, linkHealthy=True,
             )
             nowS += 0.25
@@ -125,6 +140,9 @@ class TestTheApprovedStateTable:
         Given: an outage that begins with the link down, then the link returns
         When:  the dwell elapses, measured from when RPM became unusable
         Then:  Park -- emitting link_down does not restart the dwell clock
+
+        MOVED PIN (US-511-a): the healthy half now carries a fresh SPEED 0,
+        which P needs; the link-down half is unchanged.
         """
         deriver = _deriver()
         nowS = _NOW
@@ -138,7 +156,9 @@ class TestTheApprovedStateTable:
         # The link returns; the dwell keeps counting from the ORIGINAL outage.
         result = None
         while nowS <= _NOW + gd.DEFAULT_PARK_DWELL_S + 0.5:
-            result = deriver.update(speed=None, rpm=rpm, nowS=nowS, linkHealthy=True)
+            result = deriver.update(
+                speed=gd.Reading(0.0, nowS), rpm=rpm, nowS=nowS, linkHealthy=True
+            )
             nowS += 0.25
 
         assert result.gear == gd.GEAR_PARK
