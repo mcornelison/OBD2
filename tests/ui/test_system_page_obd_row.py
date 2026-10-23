@@ -32,6 +32,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-b System page OBD row.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-d): the WIFI row is the third.
 # ================================================================================
 ################################################################################
 
@@ -698,7 +699,8 @@ def test_thePage_rendersTheVerdictLineAndTheObdRow_neverATile():
     assert "tile" not in re.findall(r"[\w-]+", classes)
     rows = surface.pathsByClass("sys-row")
     # MOVED PIN (US-894-c): the DATA row follows the OBD row.
-    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data"]
+    # MOVED PIN (US-894-d): then the WIFI row.
+    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data", "wifi"]
     steps = surface.pathsByClass("obd-step")
     assert [p[-1]["attrs"]["data-state"] for p in steps] == ["ok", "ok", "neutral"]
     assert [_text(p[-1]) for p in steps] == ["BT", "ADAPTER", "ECU"]
@@ -795,7 +797,8 @@ def test_parked_theObdRowOpensTheObdDetail_inSysDetail_withoutTheVersionChip():
         steps=[{"clickNth": {"selector": ".sys-row", "index": 0}}, {"flush": 1}],
     )
     # MOVED PIN (US-894-c): verdict + OBD row + DATA row.
-    assert len(surface.pathsByClass("sys-chevron")) == 3
+    # MOVED PIN (US-894-d): + the WIFI row.
+    assert len(surface.pathsByClass("sys-chevron")) == 4
     detail = surface.pathById("sys-detail")
     assert detail[-1]["attrs"].get("hidden") is None, "the OBD detail did not open"
     assert _text(surface.pathById("sys-detail-head")[-1]) == "OBD"

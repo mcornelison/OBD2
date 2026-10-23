@@ -30,6 +30,7 @@
 # 2026-10-13    | Rex (US-873) | The System card ignores the additive feeds block.
 # 2026-10-23    | Rex (US-894-c)| MOVED PIN: the tile is retired; the same rules
 #               |              | on the DATA row (A4: stalled iff a member).
+# 2026-10-23    | Rex (US-894-d)| MOVED PIN: the WIFI row follows the DATA row.
 # ================================================================================
 ################################################################################
 
@@ -243,7 +244,8 @@ class TestItReachesThePage:
     def test_systemStatusView_carriesTheDataRow_andNoCaptureTile(self) -> None:
         view = _view("systemStatusView", _sys(_CAPTURE_MEMBER), _capture("ok"))
 
-        assert [r["key"] for r in view["rows"]] == ["obd", "data"]
+        # MOVED PIN (US-894-d): the WIFI row follows the DATA row.
+        assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi"]
         assert view["rows"][1]["word"] == "stalled"
         assert "capture" not in view["tiles"]
         assert "drive" not in view["tiles"]

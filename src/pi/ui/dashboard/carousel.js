@@ -1363,25 +1363,164 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-894-d (spec s4.4, s4.6; Iris I5, W1; Atlas A6) -- the WIFI row, its
+  // detail and the top-bar glyph, keyed on (wifi.state, source.wifi.reason).
+  // The emitter derives `state` (ARCH-007); the page applies NO RSSI
+  // threshold. Amber is the `wifi` verdict MEMBER's (s4.0): a failed read is
+  // the one counted WiFi state, and `weak` is never amber.
+  // -------------------------------------------------------------------------
+
+  // Copies of the provider's vocabulary (pi.network.wifi_reader
+  // WIFI_REASON_*, system_status_emitter REASON_WIFI_UNKNOWN / VERDICT_WIFI
+  // and deriveWifiState's bands), pinned equal by
+  // tests/ui/test_system_page_wifi_row.py. There is no `not_associated`
+  // (Atlas A6): not associated is the reading `down`, reason null.
+  var WIFI_REASON_NOT_READ = "not_read";
+  var WIFI_REASON_NMCLI_ABSENT = "nmcli_absent";
+  var WIFI_REASON_READ_FAILED = "read_failed";
+  var WIFI_MEMBER_KEY = "wifi";
+  var WIFI_STATE_DOWN = "down";
+  // The two absences in words; read_failed speaks through its member.
+  var WIFI_REASON_WORDS = {
+    not_read: "not read yet",
+    nmcli_absent: "no WiFi tool on this host",
+  };
+  // `up` only means above the weak band, so `good`, never `strong`.
+  var WIFI_SIGNAL_WORD = { up: "good signal", weak: "weak signal" };
+  var WIFI_STRENGTH_WORD = { up: "good", weak: "weak" };
+  var WIFI_NO_LEVEL = "no signal level";
+
+  function wifiReading(data) {
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
+    var source = isObj(data) && isObj(data.source) && isObj(data.source.wifi)
+      ? data.source.wifi : {};
+    return {
+      wifi: wifi,
+      state: typeof wifi.state === "string" ? wifi.state : null,
+      ssid: typeof wifi.ssid === "string" && wifi.ssid ? wifi.ssid : null,
+      available: source.available === true,
+      reason: typeof source.reason === "string" ? source.reason : null,
+    };
+  }
+
+  // True when the link was read and wlan0 is on a network: a band (up /
+  // weak), or W1's associated-with-no-level (available, state null). The page
+  // tells that from an unread link by `available`, never by a missing ssid.
+  function wifiLinked(r) {
+    if (!r.available) return false;
+    if (r.state === null) return r.wifi.state === null;
+    return Object.prototype.hasOwnProperty.call(WIFI_SIGNAL_WORD, r.state);
+  }
+
+  // The home word (I5): home true -> `home` green; false -> `other network`;
+  // null -> `connected` (never guessed either way).
+  function wifiHomeWord(home) {
+    if (home === true) return { word: "home", look: "ok" };
+    if (home === false) return { word: "other network", look: "secondary" };
+    return { word: "connected", look: "secondary" };
+  }
+
+  // The WIFI row (s4.4 table). A member's reason is printed verbatim.
+  function wifiRowView(data) {
+    var r = wifiReading(data);
+    var isMember = verdictMemberKeys(data)[WIFI_MEMBER_KEY] === true;
+    var word = SYS_NO_DATA;
+    var look = "tertiary";
+    var sentence = "";
+    if (isMember || r.reason === WIFI_REASON_READ_FAILED) {
+      // Amber only with the member: a verdict-absent file counted nothing.
+      var member = verdictMemberReason(data, [WIFI_MEMBER_KEY]);
+      word = "? not read";
+      look = isMember ? "amber" : "secondary";
+      sentence = member !== null ? member : "";
+    } else if (wifiLinked(r)) {
+      var home = wifiHomeWord(r.wifi.home);
+      word = home.word;
+      look = home.look;
+      sentence = (r.ssid !== null ? r.ssid + " · " : "")
+        + (r.state === null ? WIFI_NO_LEVEL : WIFI_SIGNAL_WORD[r.state]);
+    } else if (r.available && r.state === WIFI_STATE_DOWN) {
+      word = "down";
+      sentence = "not connected";
+    } else if (!r.available) {
+      sentence = r.reason === WIFI_REASON_NMCLI_ABSENT
+        ? WIFI_REASON_WORDS.nmcli_absent : WIFI_REASON_WORDS.not_read;
+    }
+    return {
+      key: "wifi",
+      label: "WIFI",
+      word: word,
+      look: look,
+      tail: "",
+      value: word,
+      sentence: sentence,
+      level: isMember ? "amber" : "secondary",
+    };
+  }
+
+  // The WIFI detail (s4.6, parked): SSID, strength (word + dBm; `no signal
+  // level` and no dBm when associated with no level), home yes / no /
+  // unknown, `not connected to any network` for `down`, and the typed reason
+  // in words. No IP: there is no field, so the line is not drawn (I5).
+  function wifiDetailView(data) {
+    var r = wifiReading(data);
+    var row = wifiRowView(data);
+    var member = verdictMemberReason(data, [WIFI_MEMBER_KEY]);
+    var rssi = r.available && typeof r.wifi.rssiDbm === "number" && isFinite(r.wifi.rssiDbm)
+      ? r.wifi.rssiDbm : null;
+    var strength = SYS_NO_DATA;
+    if (rssi !== null) {
+      strength = (Object.prototype.hasOwnProperty.call(WIFI_STRENGTH_WORD, r.state)
+        ? WIFI_STRENGTH_WORD[r.state] + " · " : "") + rssi + " dBm";
+    } else if (wifiLinked(r) && r.state === null) {
+      strength = WIFI_NO_LEVEL;
+    }
+    var reason = null;
+    if (member !== null) {
+      reason = member;
+    } else if (r.reason !== null && !r.available
+               && Object.prototype.hasOwnProperty.call(WIFI_REASON_WORDS, r.reason)) {
+      reason = WIFI_REASON_WORDS[r.reason];
+    } else if (r.reason === WIFI_REASON_READ_FAILED) {
+      reason = SYS_NO_DATA;
+    }
+    var home = r.available ? r.wifi.home : null;
+    return {
+      head: "WIFI",
+      state: { text: row.word, look: row.look },
+      network: r.available && r.ssid !== null ? r.ssid : SYS_NO_DATA,
+      strength: strength,
+      link: r.available && r.state === WIFI_STATE_DOWN ? "not connected to any network" : null,
+      home: home === true ? "yes" : home === false ? "no" : "unknown",
+      reason: reason,
+      reasonLevel: row.level,
+    };
+  }
+
+  // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3) + US-894-d (s4.4). The
+  // emitter has ALREADY derived the band; this maps it to a glyph state and
+  // applies NO threshold of its own:
+  //   `up` ok; `weak` neutral (a band on a working link, never amber);
+  //   `down` the slashed glyph (a MEASUREMENT: we looked, no link);
+  //   no reading -- not_read, nmcli_absent, associated with no level, or no
+  //   payload -- `dim` arcs with NO slash (a slash claims down, lit arcs a
+  //   level); read_failed amber, the one amber WiFi state.
+  function wifiGlyphState(data) {
+    var r = wifiReading(data);
+    var member = verdictMemberKeys(data)[WIFI_MEMBER_KEY] === true;
+    // Before the unread return: a failed read is also unavailable. Amber is
+    // the member's (s4.0), so a failed read nothing counted stays dim.
+    if (member || r.reason === WIFI_REASON_READ_FAILED) return member ? "amber" : "dim";
+    if (!r.available) return "dim";
+    if (r.state === "up") return "ok";
+    if (r.state === "weak") return "neutral";
+    if (r.state === WIFI_STATE_DOWN) return "down";
+    return "dim";
+  }
+
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
-  // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3). The emitter has ALREADY
-  // derived the band; this maps its verdict to a glyph state and applies NO
-  // threshold of its own.
-  //
-  // The load-bearing line is the last one: an unreadable link renders NEUTRAL,
-  // never amber. `down` is a MEASUREMENT -- we looked and there is no link.
-  // Painting "no signal" when the truth is "we could not look" is a fabricated
-  // reading, which is the defect class this contract exists to prevent.
-  function wifiGlyphState(data) {
-    var src = data && data.source && data.source.wifi;
-    if (!src || src.available !== true) return "neutral";
-    var wifi = data.wifi || {};
-    if (wifi.state === "up") return "ok";
-    if (wifi.state === "weak") return "amber";
-    if (wifi.state === "down") return "down";
-    return "neutral";   // available but ungradeable -- still not a claim
-  }
 
   // US-688: `captureData` is a SECOND state file (states/capture-health), read
   // on the same slow tick. It is a separate slot rather than a key inside
@@ -1397,6 +1536,7 @@
   //
   // US-894-c: the DATA row is the second row; the SYNC / DRIVE / CAPTURE
   // tiles and their drill rows are gone (the drill keeps POWER until US-894-e).
+  // US-894-d: the WIFI row is the third.
   function systemStatusView(data, captureData) {
     if (!isObj(data)) return null;
     var tiles = {
@@ -1405,10 +1545,11 @@
     return {
       // s4.1: the provider's count, never the page's.
       verdict: systemVerdictView(data),
-      rows: [obdRowView(data), dataRowView(data, captureData)],
+      rows: [obdRowView(data), dataRowView(data, captureData), wifiRowView(data)],
       // s4.6: the rows' details, from the SAME read.
       obdDetail: obdDetailView(data),
       dataDetail: dataDetailView(data, captureData),
+      wifiDetail: wifiDetailView(data),
       // US-509: the drill-down behind the verdict -- one read of the state
       // file feeds the page AND the overlay.
       drill: systemDrill(tiles, data),
@@ -5555,6 +5696,9 @@
     systemStatusView: systemStatusView,
     dataRowView: dataRowView,
     dataDetailView: dataDetailView,
+    wifiRowView: wifiRowView,
+    wifiDetailView: wifiDetailView,
+    wifiGlyphState: wifiGlyphState,
     syncWhenText: syncWhenText,
     freshAgeText: freshAgeText,
     CAPTURE_STATE_WORD: CAPTURE_STATE_WORD,
@@ -5915,6 +6059,10 @@
         renderDataDetail(bodyEl, view);
         return;
       }
+      if (sysDetailKind === "wifi") {
+        renderWifiDetail(bodyEl, view);
+        return;
+      }
       var head = document.getElementById("sys-detail-head");
       // The head repeats the LINE THE OPERATOR TAPPED verbatim (the verdict).
       if (head) head.textContent = view && view.verdict ? view.verdict.text : "";
@@ -6019,6 +6167,7 @@
       el.appendChild(head);
       el.appendChild(value);
       bodyEl.appendChild(el);
+      return el;
     }
 
     function renderDataDetail(bodyEl, view) {
@@ -6058,6 +6207,30 @@
       sentence.setAttribute("data-level", detail.level);
       sentence.textContent = detail.sentence;
       bodyEl.appendChild(sentence);
+    }
+
+    // s4.6 WIFI detail (US-894-d): the state word in its look, then SSID,
+    // strength, `not connected to any network` for `down`, home, and the
+    // reason in words -- amber only as the `wifi` member's. No IP line.
+    function renderWifiDetail(bodyEl, view) {
+      var detail = view && view.wifiDetail ? view.wifiDetail : wifiDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      var stateEl = appendDataFact(bodyEl, "STATE", "", "wifi-state-row");
+      var word = stateEl.querySelector(".sys-diag-text");
+      if (word) {
+        word.className = "sys-diag-text sys-row-word";
+        word.setAttribute("data-state", detail.state.look);
+        word.textContent = detail.state.text;
+      }
+      appendDataFact(bodyEl, "NETWORK", detail.network);
+      appendDataFact(bodyEl, "STRENGTH", detail.strength);
+      if (detail.link !== null) appendDataFact(bodyEl, "LINK", detail.link);
+      appendDataFact(bodyEl, "HOME NETWORK", detail.home);
+      if (detail.reason !== null) {
+        var reasonEl = appendDataFact(bodyEl, "REASON", detail.reason, "wifi-reason");
+        reasonEl.setAttribute("data-level", detail.reasonLevel);
+      }
     }
 
     // US-559: the reference facts, below the faults. Built with textContent (no
@@ -6123,7 +6296,8 @@
     function resetSystemGlyphs(glyphEls) {
       paintLinkChain(glyphEls.bt, linkChainGlyph(null));
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
-      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", "neutral");
+      // US-894-d: no reading -> dim arcs, no slash (s4.4).
+      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", wifiGlyphState(null));
     }
 
     // --- US-401 Battery Health DOM render (browser only) --------------------

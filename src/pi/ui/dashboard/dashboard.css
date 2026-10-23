@@ -270,6 +270,14 @@ html, body {
   fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round;
 }
 #glyph-wifi .wifi-mark circle { fill: currentColor; stroke: none; }
+/* US-894-d (spec s4.4): no reading (`dim`: not_read, nmcli_absent, associated
+   with no level) is dim arcs with NO slash; `down` is the slashed glyph. Both
+   are uncounted, so neither is amber (s4.0) -- the #topbar `down` amber above
+   is for other glyphs. Amber is the `wifi` member alone ([data-state="amber"]). */
+#topbar #glyph-wifi[data-state="dim"],
+#topbar #glyph-wifi[data-state="down"] { color: var(--text-tertiary); }
+#glyph-wifi .wifi-slash { display: none; }
+#glyph-wifi[data-state="down"] .wifi-slash { display: inline; }
 /* US-894-a (spec s4.2.1): the three-layer link chain BT -> ADAPTER -> ECU in the
    BT slot. A 3ch x 1em SVG (letter-spacing does not reach it, so 3ch is exact);
    each dot paints its own data-state through currentColor. Amber is a verdict
@@ -1342,6 +1350,8 @@ html, body {
 .sys-diag-text {
   margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
 }
+/* US-894-d WIFI detail: the reason is amber only as the `wifi` member's. */
+.wifi-reason[data-level="amber"] .sys-diag-text { color: var(--amber-warn); }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)

@@ -42,6 +42,9 @@
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-b System page OBD-row fixtures.
 # 2026-10-23    | Ralph (Rex)  | US-894-c: the DATA-row fixtures (capture + sync);
 #               |              | syncRows / syncPending retired from the inputs.
+# 2026-10-23    | Ralph (Rex)  | US-894-d: the four WIFI-row fixtures the story
+#               |              | names (weak-home, not-read, nmcli-absent,
+#               |              | read-failed).
 # ================================================================================
 ################################################################################
 
@@ -63,6 +66,10 @@ for _root in (_REPO_ROOT, _SRC):
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
+from pi.network.wifi_reader import (  # noqa: E402
+    WIFI_REASON_NMCLI_ABSENT,
+    WIFI_REASON_READ_FAILED,
+)
 from pi.obdii.capture_health import (  # noqa: E402
     DEFAULT_STALL_SECONDS,
     REASON_NEVER_WRITTEN,
@@ -73,7 +80,10 @@ from pi.splash.battery_health_emitter import (  # noqa: E402
     VERDICT_GOOD,
     buildBatteryHealthState,
 )
-from pi.splash.system_status_emitter import buildSystemStatusState  # noqa: E402
+from pi.splash.system_status_emitter import (  # noqa: E402
+    REASON_WIFI_UNKNOWN,
+    buildSystemStatusState,
+)
 
 NOW = "2026-10-22T23:10:00Z"
 ZONE = "America/Chicago"
@@ -363,6 +373,38 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
             ),
             "capture-health": _capture(0.4),
         },
+    ),
+    # --- US-894-d: the WIFI row (spec s4.4, s7) ---------------------------
+    "wifi-weak-home": (
+        "On the home network inside the emitter's weak band -> 'home' green, "
+        "'DeathstarWifi · weak signal', the glyph neutral (weak is never "
+        "amber), uncounted.",
+        {"system-status": _systemInputs(_upChain(), wifiRssiDbm=-77)},
+    ),
+    "wifi-not-read": (
+        "No WiFi sample taken yet (the emitter's not_read) -> '--', 'not read "
+        "yet', dim arcs with no slash, uncounted.",
+        {"system-status": _systemInputs(
+            _upChain(), wifiAvailable=False, wifiSsid=None, wifiRssiDbm=None,
+            wifiHome=None, wifiUnavailableReason=REASON_WIFI_UNKNOWN,
+        )},
+    ),
+    "wifi-nmcli-absent": (
+        "The dev box: no nmcli on the host -> '--', 'no WiFi tool on this "
+        "host', dim arcs with no slash, uncounted (ALL OK).",
+        {"system-status": _systemInputs(
+            _upChain(), wifiAvailable=False, wifiSsid=None, wifiRssiDbm=None,
+            wifiHome=None, wifiUnavailableReason=WIFI_REASON_NMCLI_ABSENT,
+        )},
+    ),
+    "wifi-read-failed": (
+        "The WiFi read failed -> the wifi member, 1 ISSUE, '? not read' amber, "
+        "the member's reason verbatim; the glyph amber, the one amber WiFi "
+        "state.",
+        {"system-status": _systemInputs(
+            _upChain(), wifiAvailable=False, wifiSsid=None, wifiRssiDbm=None,
+            wifiHome=None, wifiUnavailableReason=WIFI_REASON_READ_FAILED,
+        )},
     ),
 }
 
