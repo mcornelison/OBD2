@@ -23,6 +23,8 @@
 #               |              | scanned RAW file text, so the US-553 comment
 #               |              | that DOCUMENTS the ban in order to forbid it
 #               |              | made the guard red on a correct script.
+# 2026-10-23    | Rex (US-895-b)| MOVED PIN: the lux ends join the allow-list;
+#               |              | their seam tests run through the real one.
 # ================================================================================
 ################################################################################
 
@@ -76,11 +78,15 @@ def _writeConfig(tmp: Path, **overrides) -> Path:
     ``test_bothReadPaths_agreeOnRejectingAnOutOfAllowListKey`` reads back at 45.
     Docstring said "the 5 Slice-1 keys" until US-603; the allow-list has been 3
     keys since US-533 dropped ``pi.alerts.audioAlerts`` and ``pi.power.mode``.
+    MOVED PIN (US-895-b): 5 keys -- the autoDim lux ends, at the shipped 3 / 300.
     """
     config = {
         "protocolVersion": "1.0.0",
         "pi": {
-            "display": {"carousel": {"autoRotateS": 8, "resumeIdleS": 45}},
+            "display": {
+                "carousel": {"autoRotateS": 8, "resumeIdleS": 45},
+                "autoDim": {"luxMin": 3.0, "luxFull": 300.0},
+            },
             "calibration": {"mode": False},
             "alerts": {"audioAlerts": False},
             "analysis": {"triggerAfterDrive": True},
@@ -267,7 +273,11 @@ class TestSliceOneAllowList:
         assertion is a set, so it fails just as loudly on a re-add (which is
         US-538's job, alongside an actual audio path) as on a further drop.
         """
+        # MOVED PIN (US-895-b): the autoDim lux ends join (CIO reversed Atlas
+        # ruling B 2026-10-19), first in the table.
         assert set(OVERRIDABLE_KEYS) == {
+            "pi.display.autoDim.luxMin",
+            "pi.display.autoDim.luxFull",
             "pi.display.carousel.autoRotateS",
             "pi.calibration.mode",
             "pi.analysis.triggerAfterDrive",
@@ -312,19 +322,14 @@ def _isLevelOrNone(value) -> bool:
     )
 
 
-def _isPositiveNumber(value) -> bool:
-    return not isinstance(value, bool) and isinstance(value, (int, float)) and value > 0
-
-
 @pytest.fixture
 def autoDimOverridable(monkeypatch):
-    """US-878-c B1: no autoDim key is overridable in this story (US-895-b/c add
-    them), so the resolve/POST paths are proved with the allow-list PATCHED to
-    carry them. The seam itself never reads the allow-list."""
+    """US-878-c B1: overrideLevel is not overridable yet (US-895-c adds it), so
+    its resolve/POST paths are proved with the allow-list PATCHED to carry it.
+    The seam itself never reads the allow-list. MOVED PIN (US-895-b): the lux
+    ends are in the REAL allow-list now, so the patch no longer adds them."""
     validators = dict(overlayModule._VALIDATORS)
     validators[_OVERRIDE_KEY] = _isLevelOrNone
-    validators[_LUX_MIN_KEY] = _isPositiveNumber
-    validators[_LUX_FULL_KEY] = _isPositiveNumber
     monkeypatch.setattr(overlayModule, "_VALIDATORS", validators)
     monkeypatch.setattr(overlayModule, "OVERRIDABLE_KEYS", tuple(validators))
 
@@ -449,7 +454,8 @@ class TestCrossKeySeam:
         assert _OVERRIDE_KEY in warnings[0]
         assert "overrideLevel >= minLevel" in warnings[0]
 
-    def test_resolve_bothLuxCrossed_bothDropped_eachLogged(self, autoDimOverridable, caplog):
+    def test_resolve_bothLuxCrossed_bothDropped_eachLogged(self, caplog):
+        # MOVED PIN (US-895-b): through the REAL allow-list, no patch.
         base = _autoDimBase(luxMin=3.0, luxFull=300.0)
 
         with caplog.at_level(logging.WARNING):
@@ -460,14 +466,15 @@ class TestCrossKeySeam:
         assert effective["pi"]["display"]["autoDim"] == {"luxMin": 3.0, "luxFull": 300.0}
         assert len(_seamWarnings(caplog)) == 2
 
-    def test_resolve_aConsistentOverlayPair_isApplied(self, autoDimOverridable):
+    def test_resolve_aConsistentOverlayPair_isApplied(self):
+        # MOVED PIN (US-895-b): through the REAL allow-list, no patch.
         base = _autoDimBase(luxMin=3.0, luxFull=300.0)
 
         effective = resolveEffectiveConfig(base, {_LUX_MIN_KEY: 10.0, _LUX_FULL_KEY: 500.0})
 
         assert effective["pi"]["display"]["autoDim"] == {"luxMin": 10.0, "luxFull": 500.0}
 
-    def test_resolve_neverHandsTheValidatorACrossedPair(self, autoDimOverridable, tmp_path):
+    def test_resolve_neverHandsTheValidatorACrossedPair(self, tmp_path):
         """The boot path: secrets_loader applies the overlay, then main.py
         validates. A crossing overlay must not fail ConfigValidator."""
         config = {"pi": {"display": {"autoDim": {"luxMin": 3.0, "luxFull": 300.0}}}}
@@ -479,6 +486,28 @@ class TestCrossKeySeam:
         ConfigValidator(requiredKeys=[])._validateDisplayAutoDim(effective)
 
         assert effective["pi"]["display"]["autoDim"]["luxFull"] == 300.0
+
+    def test_boot_handEditedCrossingLuxFull_oneWarningNamingTheRule_configValueStands(
+        self, tmp_path, caplog
+    ):
+        """
+        Given: config.json luxMin 3, config.local.json luxFull 2 (hand-edited)
+        When: the orchestrator's read path loads and validates the config
+        Then: it validates (eclipse-obd starts); exactly one WARNING names
+              'luxFull > luxMin'; the effective luxFull is config.json's
+              (US-895-b validationCriteria 3, real allow-list)
+        """
+        configPath = _writeConfig(tmp_path)
+        _writeOverlay(configPath, {_LUX_FULL_KEY: 2})
+
+        with caplog.at_level(logging.WARNING):
+            config = loadConfigWithSecrets(str(configPath))
+        ConfigValidator(requiredKeys=[])._validateDisplayAutoDim(config)
+
+        assert config["pi"]["display"]["autoDim"]["luxFull"] == 300.0
+        named = [m for m in _seamWarnings(caplog) if "luxFull > luxMin" in m]
+        assert len(named) == 1
+        assert _LUX_FULL_KEY in named[0]
 
     def test_crossKeyRefusal_namesTheRuleForACrossingWrite(self, tmp_path):
         configPath = tmp_path / "config.json"
@@ -500,10 +529,23 @@ class TestCrossKeySeam:
         assert crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 2.0) is not None
         assert crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 5.0) is None
 
-    def test_noKeyJoinsTheAllowListInThisStory(self):
-        """Scope fence: US-895-b/c make the autoDim keys overridable, not US-878-c."""
-        for key in (_OVERRIDE_KEY, _MIN_LEVEL_KEY, _LUX_MIN_KEY, _LUX_FULL_KEY):
+    def test_onlyTheLuxEndsJoinTheAllowList_firstAndInOrder(self):
+        """Scope fence. MOVED PIN (US-895-b): was test_noKeyJoinsTheAllowListInThisStory.
+        US-895-b adds luxMin/luxFull FIRST (Atlas B11); overrideLevel is US-895-c's
+        and minLevel nobody's."""
+        assert OVERRIDABLE_KEYS[:2] == (_LUX_MIN_KEY, _LUX_FULL_KEY)
+        for key in (_OVERRIDE_KEY, _MIN_LEVEL_KEY):
             assert key not in OVERRIDABLE_KEYS
+
+    @pytest.mark.parametrize("value", [0, -1, 0.0, True, "5", None, float("inf"), float("nan")])
+    def test_luxEnds_takeOnlyAFinitePositiveNumber(self, value):
+        for key in (_LUX_MIN_KEY, _LUX_FULL_KEY):
+            assert validateOverlayValue(key, value) == (False, None), (key, value)
+
+    @pytest.mark.parametrize("value", [1, 3.4, 1000])
+    def test_luxEnds_acceptAPositiveNumber(self, value):
+        for key in (_LUX_MIN_KEY, _LUX_FULL_KEY):
+            assert validateOverlayValue(key, value) == (True, value)
 
 
 class TestLoadOverlay:

@@ -108,6 +108,12 @@ def test_everyDeclaredSpec_rendersTheTwoChoiceControl():
     # MOVED PIN (US-895-a): auto-rotate moved from kind 'seconds' (Off/On) to
     # kind 'steps' -- its choices are its declared Off · 5 s ... 30 s.
     for spec in _view("settingsSpecs"):
+        # MOVED PIN (US-895-b): kind 'ladder' (the lux ends) offers its rungs in lux.
+        if spec["kind"] == "ladder":
+            assert _view("settingsChoices", spec) == [
+                {"value": v, "label": f"{v} lux"} for v in spec["steps"]
+            ], spec["key"]
+            continue
         if spec["kind"] == "steps":
             assert _view("settingsChoices", spec) == [
                 {"value": v, "label": "Off" if v == 0 else f"{v} s"} for v in spec["steps"]

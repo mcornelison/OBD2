@@ -1094,6 +1094,19 @@ html, body {
   border-color: var(--text-tertiary); font-weight: 400;
 }
 #settings-list[data-locked="true"] .set-value { color: var(--text-tertiary); }
+/* US-895-b (spec s4.7): the kind "ladder" row, AUTO-DIM ENDS -- two lux ends
+   stacked in one row, each its name then `− value +`. The step that would
+   cross the partner is drawn disabled: outlined, tertiary, no pointer. */
+.set-end { display: flex; align-items: center; gap: 4px; }
+.set-end-name {
+  min-width: 11ch; font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}
+.set-end-controls { display: flex; gap: 4px; }
+.set-ends { flex-direction: column; align-items: flex-end; }
+.set-step:disabled {
+  background: transparent; color: var(--text-tertiary); cursor: default;
+}
 .settings-foot {
   margin: 2px 0 0; font-size: var(--fs-meta); color: var(--text-tertiary);
 }

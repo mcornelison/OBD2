@@ -26,6 +26,8 @@
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-895-a Settings lock, entry point,
 #               |              | steps kind and layout.
+# 2026-10-23    | Ralph (Rex)  | US-895-b MOVED PIN: the AUTO-DIM ENDS row leads
+#               |              | DISPLAY; its ends are .set-end, not .set-row.
 # ================================================================================
 ################################################################################
 
@@ -414,8 +416,11 @@ def test_stepsWriteTheChosenSeconds():
 
 @_needsNode
 def test_specsCarryASection_displayThenSystem_andUpperCaseNames():
+    # MOVED PIN (US-895-b): the two lux ends lead DISPLAY (OVERRIDABLE_KEYS order).
     specs = _view("settingsSpecs")
     assert [(s["key"], s["section"]) for s in specs] == [
+        ("pi.display.autoDim.luxMin", "DISPLAY"),
+        ("pi.display.autoDim.luxFull", "DISPLAY"),
         (_AUTO_ROTATE, "DISPLAY"),
         (_CALIB, "SYSTEM"),
         ("pi.analysis.triggerAfterDrive", "SYSTEM"),
@@ -423,7 +428,7 @@ def test_specsCarryASection_displayThenSystem_andUpperCaseNames():
     for spec in specs:
         assert spec["label"] == spec["label"].upper(), spec
     assert [s["label"] for s in specs] == [
-        "ROTATE PAGES", "CALIBRATION MODE", "ANALYZE EACH DRIVE",
+        "DIM-START", "FULL-BRIGHT", "ROTATE PAGES", "CALIBRATION MODE", "ANALYZE EACH DRIVE",
     ]
 
 
@@ -644,7 +649,11 @@ def test_theSectionsRenderDisplayThenSystem_withTheShippedApplyTags(tmp_path):
     surface = _run(tmp_path, "settings-parked-idling", _BOOT + _HOLD_8S + _OPEN_KEBAB)["surface"]
     titles = [_text(p[-1]) for p in surface.pathsByClass("set-section")]
     assert titles == ["DISPLAY", "SYSTEM"]
+    # MOVED PIN (US-895-b): a spec with a `row` draws into its row's shell,
+    # which carries the FIRST end's key; the new 'light-reading' state joins.
     notes = _view("settingsSpecs")
     for spec in notes:
+        if spec["row"] and spec["key"] not in _rows(surface):
+            continue
         assert _rowText(surface, spec["key"], "set-apply") == spec["applyNote"]
-    assert set(_view("settingsApplyStates")) == {"reload", "capture-restart"}
+    assert set(_view("settingsApplyStates")) == {"reload", "capture-restart", "light-reading"}

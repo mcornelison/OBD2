@@ -30,6 +30,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-08    | Ralph (Rex)  | Initial -- US-533 apply semantics + B2 drop.
+# 2026-10-23    | Ralph (Rex)  | US-895-b MOVED PIN: the lux ends' new
+#               |              | 'light-reading' apply state.
 # ================================================================================
 ################################################################################
 
@@ -56,12 +58,19 @@ _AUTO_ROTATE = "pi.display.carousel.autoRotateS"
 _CALIBRATION = "pi.calibration.mode"
 _TRIGGER_AFTER_DRIVE = "pi.analysis.triggerAfterDrive"
 _AUDIO_ALERTS = "pi.alerts.audioAlerts"
+_LUX_MIN = "pi.display.autoDim.luxMin"
+_LUX_FULL = "pi.display.autoDim.luxFull"
 
 # The apply-state each key EARNED in this story, with the consumer that proves
 # it. This is the Python side of a cross-language pin: the display cannot import
 # it, so the risk is drift, and this map is what fails when a consumer changes
 # and its label does not (US-532's key-list guard, applied to apply-states).
 _EXPECTED_APPLY = {
+    # MOVED PIN (US-895-b, Atlas B12): light_state_bridge re-reads config.json +
+    # config.local.json (mtime-checked) on its next burst -- "at the next light
+    # reading", with no time claim (no sensor, no reading, nothing applies it).
+    _LUX_MIN: "light-reading",
+    _LUX_FULL: "light-reading",
     # B1: states_http_server._injectHtml resolves pi.display.carousel per
     # request, so the value lands on the next page load -- which the UI triggers
     # itself. NOT "live": the running carousel keeps its current period until the
@@ -275,6 +284,17 @@ def test_theReloadHappensAfterTheRepaint_notInsteadOfIt():
     (a kiosk with reloads suppressed must still show the truth)."""
     body = _postSettingBody()
     assert body.index("render(out.value") < body.index("settingsReloadNeeded(")
+
+
+@_NODE_TESTS
+@pytest.mark.parametrize("key", [_LUX_MIN, _LUX_FULL])
+def test_luxEnds_sayAtTheNextLightReading_andClaimNoTime(key):
+    """US-895-b (Atlas B12): the note names the consumer's trigger, a light
+    reading, and no duration -- with no sensor, nothing applies it."""
+    spec = _spec(key)
+    assert spec["applyNote"] == "applies at the next light reading"
+    assert not any(ch.isdigit() for ch in spec["applyNote"])
+    assert _view("settingsReloadNeeded", spec, {"ok": True, "key": key, "value": 5}) is False
 
 
 def test_onlyTheReloadApplyPathCanReload():

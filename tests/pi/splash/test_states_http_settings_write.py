@@ -21,6 +21,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-07    | Ralph (Rex)  | Initial implementation (US-531 settings write).
+# 2026-10-23    | Rex (US-895-b)| MOVED PIN: the lux ends are in the REAL
+#               |              | allow-list; _VALID_VALUES + base config grow.
 # ================================================================================
 ################################################################################
 
@@ -55,7 +57,10 @@ _CALIB_KEY = "pi.calibration.mode"
 _BASE_CONFIG = {
     "deviceId": "test-pi",
     "pi": {
-        "display": {"carousel": {"autoRotateS": 8}},
+        "display": {
+            "carousel": {"autoRotateS": 8},
+            "autoDim": {"luxMin": 3.0, "luxFull": 300.0},
+        },
         "calibration": {"mode": False},
         "alerts": {"audioAlerts": False},
         "analysis": {"triggerAfterDrive": False},
@@ -71,7 +76,11 @@ _BASE_CONFIG = {
 # on a key already present. ruff's F601 could not see it, because F601 compares
 # LITERAL keys and one of the two was a name. The set-equality assertion below
 # could not see it either: duplicates collapse before the comparison runs.
+# MOVED PIN (US-895-b): the autoDim lux ends joined the allow-list; each value
+# keeps luxFull > luxMin against the base config's 3 / 300.
 _VALID_VALUES = {
+    "pi.display.autoDim.luxMin": 5,
+    "pi.display.autoDim.luxFull": 500,
     _AUTO_ROTATE_KEY: 0,
     _CALIB_KEY: True,
     "pi.analysis.triggerAfterDrive": True,
@@ -338,17 +347,13 @@ def test_settingsWrite_invalidValue_400_carriesTheReReadValueToSnapBackTo(
 
 
 # ---------------------------------------------------------------------------
-# US-878-c: the cross-key seam guards the write (B1: allow-list patched, since
-# no autoDim key is overridable until US-895-b/c).
+# US-878-c: the cross-key seam guards the write. MOVED PIN (US-895-b): the lux
+# ends go through the REAL allow-list; only overrideLevel (US-895-c) is patched.
 # ---------------------------------------------------------------------------
 
 _LUX_MIN_KEY = "pi.display.autoDim.luxMin"
 _LUX_FULL_KEY = "pi.display.autoDim.luxFull"
 _OVERRIDE_KEY = "pi.display.autoDim.overrideLevel"
-
-
-def _isPositive(value) -> bool:
-    return not isinstance(value, bool) and isinstance(value, (int, float)) and value > 0
 
 
 def _isLevelOrNone(value) -> bool:
@@ -361,8 +366,6 @@ def _isLevelOrNone(value) -> bool:
 def autoDimServer(tmp_path, monkeypatch):
     validators = dict(overlayModule._VALIDATORS)
     validators[_OVERRIDE_KEY] = _isLevelOrNone
-    validators[_LUX_MIN_KEY] = _isPositive
-    validators[_LUX_FULL_KEY] = _isPositive
     monkeypatch.setattr(overlayModule, "_VALIDATORS", validators)
     monkeypatch.setattr(overlayModule, "OVERRIDABLE_KEYS", tuple(validators))
     config = json.loads(json.dumps(_BASE_CONFIG))
@@ -425,6 +428,36 @@ def test_settingsWrite_crossingAgainstAStoredPartner_400(autoDimServer, overlayF
 
     assert exc.value.code == 400
     assert json.loads(overlayFile.read_text(encoding="utf-8")) == {_LUX_MIN_KEY: 50.0}
+
+
+def test_settingsWrite_crossingLuxFull2_withLuxMin3_realAllowList_400_noWrite(
+    server, overlayFile
+):
+    """
+    Given: the UNPATCHED allow-list, config luxMin 3 (validationCriteria 1)
+    When: POST {key: luxFull, value: 2}
+    Then: 400 with key, the re-read value and the rule; no overlay written
+    """
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _postSetting(server, _LUX_FULL_KEY, 2)
+
+    assert exc.value.code == 400
+    assert json.loads(exc.value.read().decode("utf-8")) == {
+        "ok": False,
+        "key": _LUX_FULL_KEY,
+        "value": 300.0,
+        "error": "luxFull must be greater than luxMin",
+    }
+    assert not overlayFile.exists()
+
+
+def test_settingsWrite_luxMinAtOrAboveLuxFull_400(server, overlayFile):
+    """The rule is strict: luxMin equal to luxFull crosses too."""
+    for value in (300, 500):
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _postSetting(server, _LUX_MIN_KEY, value)
+        assert exc.value.code == 400
+    assert not overlayFile.exists()
 
 
 def test_settingsWrite_consistentLuxFull_isStored(autoDimServer, overlayFile):

@@ -51,6 +51,8 @@
 #               |              | cross-key rule (overlay.crossKeyRefusal); both
 #               |              | 400s are {ok, key, value (re-read), error}.
 #               |              | DISPLAY_SETTINGS entries are {found, value}.
+# 2026-10-23    | Rex (US-895-b)| DISPLAY_AUTODIM resolved PER REQUEST through
+#               |              | the overlay seam (construction cache retired).
 # ================================================================================
 ################################################################################
 
@@ -315,7 +317,10 @@ def makeStatesHandler(
     ``displayConfig`` (US-483-b) is the ``pi.display.autoDim`` sub-config injected
     into the served kiosk HTML so the carousel's auto-dim curve is tunable via
     config (not code). ``None`` -> the placeholder becomes ``null`` and the
-    carousel falls back to its built-in grounded defaults.
+    carousel falls back to its built-in grounded defaults. US-895-b: when
+    ``configPath`` is supplied this section is RE-READ per request (through the
+    overlay seam, so a saved lux end lands on the next reload) and this argument
+    is only the config-less fallback -- the ``carouselConfig`` posture below.
 
     ``carouselConfig`` (US-506) is the ``pi.display.carousel`` sub-config -- the
     auto-rotate period, pause self-expiry and swipe velocity/travel thresholds --
@@ -344,15 +349,12 @@ def makeStatesHandler(
     ``None`` -> POST /alerts-ack returns an honest 503.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
-    # Serialize once: the JSON object literal substituted for the quoted
-    # placeholder (json.dumps(None) -> "null", the honest no-config fallback).
-    #
-    # ONLY auto-dim is cached here. The carousel section deliberately is NOT
-    # (US-533 B1) -- see _DISPLAY_CAROUSEL_PLACEHOLDER; ``carouselConfig`` is
-    # kept as the fallback for servers constructed WITHOUT a configPath, where
-    # there is no file to re-read and the caller-supplied section is the only
-    # truth available.
-    displayConfigJson = json.dumps(displayConfig)
+    # Nothing display-side is cached here any more. US-895-b (Atlas B15) retired
+    # the last construction-time blob, auto-dim: its lux ends are now operator
+    # settings, so it is re-read per request like the carousel section (US-533
+    # B1). ``displayConfig`` / ``carouselConfig`` are kept as the fallback for
+    # servers constructed WITHOUT a configPath, where there is no file to re-read
+    # and the caller-supplied section is the only truth available.
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Applied to the connection by StreamRequestHandler.setup; the stdlib
@@ -791,6 +793,15 @@ def makeStatesHandler(
             )
             # US-882-c: the stale windows, per request for the same reason.
             staleJson = json.dumps(loadDisplayStaleConfig(configPath))
+            # US-895-b (Atlas B15): and auto-dim, whose luxMin / luxFull the
+            # band now writes -- a construction-time blob would hand the page
+            # the pre-save ends on every reload (the US-532 defect). Same
+            # no-configPath fallback as the carousel section.
+            displayConfigJson = json.dumps(
+                displayConfig
+                if configPath is None
+                else loadDisplayAutoDimConfig(configPath)
+            )
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)

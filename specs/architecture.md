@@ -1962,8 +1962,11 @@ validator sees at boot; `from .validator import DEFAULTS`). Rules (`CROSS_KEY_RU
 - **`DISPLAY_SETTINGS` entries are `{found, value}`** (Atlas B13): a key that resolves
   to null (overrideLevel = auto) is distinct from one that cannot be resolved
   (`found: false`, rendered Unknown). The band reads `.value`.
-- No autoDim key is in `OVERRIDABLE_KEYS` yet (US-895-b adds luxMin/luxFull, US-895-c
-  overrideLevel); the seam is proven with the allow-list patched until then.
+- **autoDim luxMin/luxFull overridable -- CIO reversed ruling B 2026-10-19** (Atlas
+  acked; US-895-b). Both are in `OVERRIDABLE_KEYS`, FIRST (finite numbers > 0, the
+  validator's rule), so `luxFull > luxMin` is now judged on real overlay values at
+  both seams. overrideLevel is still not overridable (US-895-c); its seam tests patch
+  the allow-list until then.
 
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
@@ -4878,9 +4881,11 @@ hardware-backlight scalar). Tuning is a **config change, not code** (CIO
 2026-07-22): `eclipse-states-http` injects the `pi.display.autoDim` object into
 the served `dashboard.html` at serve time — the same same-origin seam as the
 `__SPLASH_TOKEN__` SSOT — via the quoted `"__DISPLAY_AUTODIM__"` placeholder
-(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe; no
-config → `null` → the carousel's built-in grounded defaults, which mirror
-config.json). The consumer reads **only** `states/light` — it opens no OBD/second
+(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe through the
+overlay seam, **per request** since US-895-b -- Atlas B15 retired the construction-time
+blob, because the lux ends are now operator settings; no configPath → the
+constructor's `displayConfig` stands, and no config → `null` → the carousel's built-in
+grounded defaults, which mirror config.json). The consumer reads **only** `states/light` — it opens no OBD/second
 connection.
 
 **Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
@@ -6692,10 +6697,12 @@ window.DISPLAY_STALE = {"imuSec": 3.0};
   through `overlay.readEffectiveValue`, never cached at construction, so a config.json
   change reaches the kiosk on its next reload with no unit restart. A value that is not
   a finite number > 0, an absent key or an unreadable config serves the validator default.
-- **imuSec / autoDim are config.json keys, read per request (882-c) / on mtime change
-  (878-b) through overlay.resolveEffectiveConfig; not operator-overridable.** They are
-  not in `OVERRIDABLE_KEYS` (Atlas ruled B, 2026-10-14), so a value in config.local.json
-  is ignored and nothing is added to `/settings`.
+- **imuSec / autoDim are config.json keys, read per request (882-c; `DISPLAY_AUTODIM`
+  since US-895-b) / on mtime change (878-b) through overlay.resolveEffectiveConfig.**
+  imuSec is not in `OVERRIDABLE_KEYS` (Atlas ruled B, 2026-10-14), so a value in
+  config.local.json is ignored. **autoDim luxMin/luxFull overridable -- CIO reversed
+  ruling B 2026-10-19** (US-895-b): those two are written by `/settings` and honoured
+  from config.local.json; the rest of autoDim is not.
 - **Page side.** `imuView` compares the reading's age against
   `resolveImuStaleSec(window.DISPLAY_STALE)`. When the injection is absent (a `file://`
   preview leaves the placeholder string) or not a finite positive number it uses
@@ -6749,9 +6756,12 @@ pre-US-893-a carousel.js in node, config = the validator `DEFAULTS` autoDim) is 
 reference for the curve; the bridge matches it to 1e-9. The bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
 lifecycle passes, Atlas G5) re-reads it through `overlay.resolveEffectiveConfig` when
 config.json or config.local.json changes mtime, checked at most once per second on a
-monotonic clock. It never uses the HTTP server's start-time cache (Atlas gap 5).
-autoDim is not in `OVERRIDABLE_KEYS`, so a config.local.json value is ignored; an
-unreadable config.json keeps the current autoDim and is retried on the next check.
+monotonic clock. It never uses the HTTP server's `DISPLAY_AUTODIM` (Atlas gap 5).
+**autoDim luxMin/luxFull overridable -- CIO reversed ruling B 2026-10-19** (US-895-b):
+a config.local.json luxMin/luxFull applies on the next burst after the mtime check (a
+pair breaking `luxFull > luxMin` is dropped, with the seam's one warning per key); no
+other autoDim key is overridable. An unreadable config.json keeps the current autoDim
+and is retried on the next check.
 
 **Replay:** `src/pi/sensors/replay_feeder.py` publishes the same burst for every
 replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every row,
@@ -7060,6 +7070,23 @@ write is the chosen seconds through the same `autoRotateS` key. No new
 `OVERRIDABLE_KEYS` entry. Pinned by `tests/ui/test_settings_lock.py` over the
 generated `tests/ui/fixtures/states/system/settings-*` fixtures (the 8 s hold is
 driven by the clock: 7 s locked, 8 s unlocked).
+
+**AUTO-DIM ENDS (US-895-b, spec s4.7, Iris I11).** The first DISPLAY row: `luxMin`
+(`DIM-START`) and `luxFull` (`FULL-BRIGHT`) are two `SETTINGS_SPECS` of the new kind
+**`ladder`**, drawn as ONE `.set-row` (their shared `row: "AUTO-DIM ENDS"`; the row
+carries the first key, each end is a `.set-end` with its own `data-key`). Each end is
+a `− value +` stepper over `SETTINGS_LUX_LADDER` 1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100
+· 200 · 300 · 500 · 1000 lux; the outer ends hide their `−` / `+`; a stored value off the
+ladder shows as stored (`4 lux`) and the next tap goes to the neighbouring rung
+(`settingsStepNext`: 4 → + 5 / − 3). `below` / `above` name the partner, and
+`settingsStepCrosses` disables (drawn, `disabled`, no listener) the step that would make
+`luxMin >= luxFull`; an unknown partner disables nothing. The seam is the rule: a
+crossing POST is the recorded real 400 (`settings-lux-cross-rejected`) → `couldn't save`
+and the end snaps back to the re-read value. Apply tag: the new `SETTINGS_APPLY_NOTES`
+state `light-reading`, **"applies at the next light reading"** (Atlas B12: the light
+bridge re-reads on its next burst; no time claim). The two ends share the row's one
+apply tag, which shows the status note of the last real paint. Pinned by
+`tests/ui/test_settings_lux_ends.py`.
 
 **Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
 mean *the car is stopped*, which is what lets parked-only controls read them

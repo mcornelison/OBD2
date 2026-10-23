@@ -2212,10 +2212,19 @@
   // which is exactly what test_noDeadApplyStatesAreLeftInTheMapping forbids: a
   // label nobody has checked against a consumer, waiting for the next story to
   // reach for it as though it had been.
+  // US-895-b (Atlas B12): "light-reading" is the lux ends' -- the light bridge
+  // re-reads config on its next burst. It claims no time: with no sensor, no
+  // reading comes and nothing applies it.
   var SETTINGS_APPLY_NOTES = {
     reload: "applies on reload",
     "capture-restart": "applies on capture restart",
+    "light-reading": "applies at the next light reading",
   };
+
+  // US-895-b (spec s4.7, Iris I11): the lux ends' 1-2-3-5-per-decade ladder,
+  // bounded 1..1000 lux (twilight ~3.4 lux, overcast daylight ~1000 lux: the
+  // validator's autoDim DEFAULTS grounding; the shipped 3 / 300 sit on it).
+  var SETTINGS_LUX_LADDER = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500, 1000];
 
   // AUTO-ROTATE is "reload", NOT "restart" -- and the difference is load-bearing.
   // Atlas's original GAP 1 remedy was an eclipse-states-http bounce, but that
@@ -2244,7 +2253,20 @@
   // Michroma subset has no lower case. AUTO-ROTATE is kind "steps" (Atlas
   // A8/B10): a stepper over its declared `steps`, 0 = Off (US-541-a), the
   // CIO-approved Off · 5 s · 8 s · 10 s · 15 s · 30 s.
+  //
+  // US-895-b (spec s4.7): the auto-dim ends are kind "ladder" -- two specs
+  // drawn as ONE row (their shared `row` names it), each a stepper over the
+  // lux ladder. `below` / `above` name the partner key an end must stay
+  // strictly below / above (luxFull > luxMin), so the page can disable the
+  // crossing step; the seam's 400 is still the rule. First in the table
+  // because they are first in OVERRIDABLE_KEYS (Atlas B11).
   var SETTINGS_SPECS = [
+    { key: "pi.display.autoDim.luxMin", label: "DIM-START", row: "AUTO-DIM ENDS",
+      section: "DISPLAY", kind: "ladder", steps: SETTINGS_LUX_LADDER,
+      below: "pi.display.autoDim.luxFull", apply: "light-reading" },
+    { key: "pi.display.autoDim.luxFull", label: "FULL-BRIGHT", row: "AUTO-DIM ENDS",
+      section: "DISPLAY", kind: "ladder", steps: SETTINGS_LUX_LADDER,
+      above: "pi.display.autoDim.luxMin", apply: "light-reading" },
     { key: "pi.display.carousel.autoRotateS", label: "ROTATE PAGES",
       section: "DISPLAY", kind: "steps", steps: [0, 5, 8, 10, 15, 30],
       apply: "reload" },
@@ -2283,6 +2305,9 @@
         section: spec.section,
         kind: spec.kind,
         steps: spec.steps ? spec.steps.slice() : null,
+        row: spec.row || null,
+        below: spec.below || null,
+        above: spec.above || null,
         apply: spec.apply,
         // Derived from one mapping, never written per row: a future `apply` flip
         // then cannot leave a stale note contradicting it.
@@ -2332,12 +2357,13 @@
   // the table actually declares.
   // US-895-a: kind "steps" is that branch -- its choices are the spec's own
   // declared steps, labelled as the stepper shows them.
+  // US-895-b: kind "ladder" likewise offers its declared rungs, in lux.
   function settingsChoices(spec) {
-    if (spec && spec.kind === "steps") {
+    if (spec && (spec.kind === "steps" || spec.kind === "ladder")) {
       var steps = settingsSteps(spec);
       var out = [];
       for (var i = 0; i < steps.length; i++) {
-        out.push({ value: steps[i], label: settingsStepLabel(steps[i]) });
+        out.push({ value: steps[i], label: settingsValueLabel(spec, steps[i]) });
       }
       return out;
     }
@@ -2361,6 +2387,27 @@
   // other value -- a declared step or a stored off-step one -- is its seconds.
   function settingsStepLabel(value) {
     return value === 0 ? "Off" : String(value) + " s";
+  }
+
+  // A stepper's value as shown: a ladder end is its lux, stored exactly (a
+  // hand-edited 4 reads '4 lux'); a steps row is its seconds.
+  function settingsValueLabel(spec, value) {
+    if (spec && spec.kind === "ladder") return String(value) + " lux";
+    return settingsStepLabel(value);
+  }
+
+  // US-895-b (spec s4.7): would stepping a lux end to `next` cross its
+  // partner? `below` must stay strictly under the partner, `above` strictly
+  // over it (luxFull > luxMin). An unknown partner disables nothing -- the
+  // seam's 400 is the rule, this is the page's convenience.
+  function settingsStepCrosses(spec, next, partnerValue) {
+    if (typeof next !== "number" || typeof partnerValue !== "number" ||
+        !isFinite(partnerValue)) {
+      return false;
+    }
+    if (spec && spec.below) return next >= partnerValue;
+    if (spec && spec.above) return next <= partnerValue;
+    return false;
   }
 
   // The value one tap moves a steps row to, or null when there is none (an
@@ -2432,6 +2479,11 @@
     if (kind === "steps") {
       known = typeof value === "number" && isFinite(value) && value >= 0;
       if (known) display = settingsStepLabel(value);
+    } else if (kind === "ladder") {
+      // US-895-b: a lux end the overlay could store is a finite number > 0,
+      // shown exactly as stored, on the ladder or off it.
+      known = typeof value === "number" && isFinite(value) && value > 0;
+      if (known) display = settingsValueLabel(spec, value);
     } else if (kind === "bool") {
       known = typeof value === "boolean";
       if (known) {
@@ -2467,7 +2519,7 @@
   // the overlay's validator takes bool only, so a truthy string would 400.
   function settingsWriteValue(spec, desired) {
     if (!spec) return null;
-    if (spec.kind === "steps") return desired;
+    if (spec.kind === "steps" || spec.kind === "ladder") return desired;
     return !!desired;
   }
 
@@ -5834,6 +5886,7 @@
     settingsReloadNeeded: settingsReloadNeeded,
     settingsChoices: settingsChoices,
     settingsStepNext: settingsStepNext,
+    settingsStepCrosses: settingsStepCrosses,
     settingsLockView: settingsLockView,
     settingsBandView: settingsBandView,
     settingsRowView: settingsRowView,
@@ -7875,31 +7928,64 @@
           title.className = "set-section";
           title.textContent = band.sections[s];
           settingsList.appendChild(title);
+          // US-895-b: specs sharing a `row` draw into one shell, per build.
+          var shells = {};
           for (var i = 0; i < specs.length; i++) {
-            if (specs[i].section === band.sections[s]) buildSettingsRow(specs[i]);
+            if (specs[i].section === band.sections[s]) buildSettingsRow(specs[i], shells);
           }
         }
       }
 
-      function buildSettingsRow(spec) {
+      // One `.set-row`: name, apply tag, controls. A spec with a `row` (the
+      // two lux ends) shares its shell with the specs of the same row; the
+      // row carries the first one's key, and each end its own `.set-end`.
+      // `values` / `repaints` let one end read and repaint its partner, and
+      // the shared tag shows the note of the end that last changed it.
+      function settingsShell(spec, shells) {
+        if (spec.row && shells[spec.row]) return shells[spec.row];
         var row = document.createElement("div");
         row.className = "set-row";
         row.setAttribute("data-key", spec.key);
         var name = document.createElement("span");
         name.className = "set-name";
-        name.textContent = spec.label;
+        name.textContent = spec.row || spec.label;
         row.appendChild(name);
         var note = document.createElement("span");
         note.className = "set-apply";
         row.appendChild(note);
         var controls = document.createElement("div");
-        controls.className = "set-controls";
+        controls.className = spec.row ? "set-controls set-ends" : "set-controls";
         row.appendChild(controls);
+        settingsList.appendChild(row);
+        var shell = { note: note, controls: controls, values: {}, repaints: {}, noteText: "" };
+        if (spec.row) shells[spec.row] = shell;
+        return shell;
+      }
+
+      function buildSettingsRow(spec, shells) {
+        var shell = settingsShell(spec, shells);
+        var note = shell.note;
+        var controls = shell.controls;
+        if (spec.row) {
+          var end = document.createElement("div");
+          end.className = "set-end";
+          end.setAttribute("data-key", spec.key);
+          var endName = document.createElement("span");
+          endName.className = "set-end-name";
+          endName.textContent = spec.label;
+          end.appendChild(endName);
+          controls = document.createElement("div");
+          controls.className = "set-end-controls";
+          end.appendChild(controls);
+          shell.controls.appendChild(end);
+        }
+        var partnerKey = spec.below || spec.above;
 
         var choices = settingsChoices(spec);
-        // This row's last painted value + status note, kept per key so the
-        // lock's repaint never drops a pending or settled note.
-        var state = { value: null, note: "" };
+        // This end's last painted value, kept per key for the repaints; the
+        // status note is the shell's, so the lock's repaint never drops a
+        // pending or settled note.
+        var state = { value: null };
 
         function stepButton(view, direction, locked) {
           // Locked: no − / + at all; at an end, that end's is hidden.
@@ -7909,24 +7995,38 @@
           btn.className =
             "set-step " + (direction < 0 ? "set-step-minus" : "set-step-plus") + " tap-target";
           btn.textContent = direction < 0 ? "−" : "+";
-          btn.addEventListener("click", function () {
-            postSetting(spec, next, render, view.value);
-          });
+          // US-895-b: a lux end's step that would cross its partner is shown
+          // disabled and wired to nothing; the seam refuses it regardless.
+          if (partnerKey && settingsStepCrosses(spec, next, shell.values[partnerKey])) {
+            btn.disabled = true;
+          } else {
+            btn.addEventListener("click", function () {
+              postSetting(spec, next, render, view.value);
+            });
+          }
           controls.appendChild(btn);
         }
 
         // The ONE paint path for this row. Built with textContent (no
         // innerHTML) so a config value can never become markup.
-        function render(value, statusNote) {
+        // `repaint` (the lock edge, or the partner end changed): same value,
+        // and the shared status note is left as the last real paint set it
+        // -- a write in flight keeps `saving…` -- and nothing cascades.
+        function render(value, statusNote, repaint) {
           state.value = value;
-          state.note = statusNote || "";
           var view = settingsRowView(spec, value);
+          shell.values[spec.key] = view.value;
           var locked = settingsLock().locked;
-          note.textContent = statusNote
-            ? view.applyNote + " · " + statusNote
+          if (!repaint) shell.noteText = statusNote || "";
+          note.textContent = shell.noteText
+            ? view.applyNote + " · " + shell.noteText
             : view.applyNote;
           controls.textContent = "";
-          if (spec.kind === "steps") {
+          // The partner's crossing step follows this end's value.
+          if (!repaint && partnerKey && shell.repaints[partnerKey]) {
+            shell.repaints[partnerKey]();
+          }
+          if (spec.kind === "steps" || spec.kind === "ladder") {
             stepButton(view, -1, locked);
             var shown = document.createElement("span");
             shown.className = "set-value";
@@ -7954,12 +8054,13 @@
           }
         }
 
-        settingsRepaints.push(function () {
-          render(state.value, state.note);
-        });
+        function repaint() {
+          render(state.value, "", true);
+        }
+        settingsRepaints.push(repaint);
+        shell.repaints[spec.key] = repaint;
         // US-878-c: a not-found entry is null here, i.e. Unknown.
         render(settingsEntry(settingsSource, spec.key).value, "");
-        settingsList.appendChild(row);
       }
 
       if (menuBtn) {

@@ -28,6 +28,8 @@
 #               |              | the EFFECTIVE config (overlay -> config.json ->
 #               |              | DEFAULTS); resolve drops, crossKeyRefusal
 #               |              | refuses the POST.
+# 2026-10-23    | Rex (US-895-b)| pi.display.autoDim.luxMin / luxFull join the
+#               |              | allow-list (finite positive numbers), first.
 # ================================================================================
 ################################################################################
 
@@ -123,6 +125,17 @@ def _isBool(value: Any) -> bool:
     return isinstance(value, bool)
 
 
+def _isPositiveNumber(value: Any) -> bool:
+    """True for a finite int/float > 0 (bool is NOT a number here).
+
+    The validator's rule for the autoDim lux ends (a positive number), plus
+    finite: an infinite end would make the curve's log span meaningless.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and value > 0
+
+
 # Slice-1 overridable keys. Adding a key here is the ONLY way to make a setting
 # operator-writable -- both the read gate and the US-531 write gate consult this
 # one table, so a key cannot become writable without also becoming readable.
@@ -135,7 +148,14 @@ def _isBool(value: Any) -> bool:
 # Removing it here deletes the row from the band, the injected read AND the write
 # gate at once, because all three derive from this list. Audio is future work
 # (US-538); re-adding the key here is step one of that story, not this one.
+#
+# US-895-b (CIO 2026-10-19 reversed Atlas ruling B; Atlas acked): the autoDim
+# lux ends are overridable. Dict order is OVERRIDABLE_KEYS order and the band's
+# SETTINGS_SPECS order, nothing more (Atlas B11). The pair must still satisfy
+# luxFull > luxMin -- CROSS_KEY_RULES below, at both the read and write seams.
 _VALIDATORS = {
+    "pi.display.autoDim.luxMin": _isPositiveNumber,
+    "pi.display.autoDim.luxFull": _isPositiveNumber,
     "pi.display.carousel.autoRotateS": _isNonNegativeNumber,
     "pi.calibration.mode": _isBool,
     "pi.analysis.triggerAfterDrive": _isBool,

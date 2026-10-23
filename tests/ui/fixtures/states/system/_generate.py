@@ -54,6 +54,8 @@
 # 2026-10-23    | Ralph (Rex)  | US-895-a: the five settings-* fixtures (gear
 #               |              | from buildGearState; band-state stub + a
 #               |              | recorded real /settings response).
+# 2026-10-23    | Ralph (Rex)  | US-895-b: settings-lux-cross-rejected (a stale
+#               |              | band stub; the recorded real cross-key 400).
 # ================================================================================
 ################################################################################
 
@@ -599,6 +601,15 @@ _SETTINGS_CONFIG = {
 }
 _SETTINGS_TOKEN = "fixture-token-0123456789abcdefghijklmnopqrstuv"
 
+# US-895-b: the lux ends at the shipped 3 / 300, in the stub AND config.json.
+# The overlay luxMin 200 was saved AFTER this page loaded (another surface, or
+# a hand edit), so the page still reads 3 and offers FULL-BRIGHT − to 200; the
+# seam judges 200 against the stored 200 and refuses it.
+_LUX_STORED = {"pi.display.autoDim.luxMin": 3.0, "pi.display.autoDim.luxFull": 300.0}
+_LUX_CONFIG = copy.deepcopy(_SETTINGS_CONFIG)
+_LUX_CONFIG["pi"]["display"]["autoDim"] = {"luxMin": 3.0, "luxFull": 300.0}
+_LUX_OVERLAY = {"pi.display.autoDim.luxMin": 200.0}
+
 SETTINGS_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     "settings-locked-hold": (
         "AC 8: stopped, engine idling, gear N read for under 8 s (inside the "
@@ -640,15 +651,30 @@ SETTINGS_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
          "settings": _SETTINGS_STORED,
          "settings-write": {"key": "pi.display.carousel.autoRotateS", "value": -1}},
     ),
+    "settings-lux-cross-rejected": (
+        "US-895-b: parked; the band stub reads DIM-START 3 / FULL-BRIGHT 300, "
+        "but luxMin 200 was stored after the page loaded, so FULL-BRIGHT − to "
+        "200 reaches the seam -> the recorded real 400 (luxFull > luxMin; the "
+        "body carries the re-read 300) -> 'couldn't save' and the end snaps "
+        "back to 300 lux.",
+        {"system-status": _systemInputs(_upChain()), "gear": _GEAR_NEUTRAL,
+         "settings": {**_LUX_STORED, **_SETTINGS_STORED},
+         "settings-config": _LUX_CONFIG,
+         "settings-overlay": _LUX_OVERLAY,
+         "settings-write": {"key": "pi.display.autoDim.luxFull", "value": 200}},
+    ),
 }
 
 
-def _recordSettingsWrite(key: str, value: Any) -> dict[str, Any]:
+def _recordSettingsWrite(
+    key: str, value: Any, config: dict[str, Any], overlay: dict[str, Any] | None
+) -> dict[str, Any]:
     """POST one setting to a REAL StatesHttpServer and record {status, body}.
 
     Runs the shipped _handleSettingsWrite (token gate, overlay validator, the
-    cross-key seam, the re-read) over a temp config holding _SETTINGS_CONFIG,
-    so the recorded body is the server's, byte for byte as JSON.
+    cross-key seam, the re-read) over a temp config holding ``config`` (and
+    ``overlay`` as its config.local.json, when given), so the recorded body is
+    the server's, byte for byte as JSON.
     """
     # Imported here: only the settings-* fixtures need a live server.
     import tempfile
@@ -661,7 +687,10 @@ def _recordSettingsWrite(key: str, value: Any) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         configPath = os.path.join(tmp, "config.json")
         with open(configPath, "w", encoding="utf-8") as fh:
-            json.dump(_SETTINGS_CONFIG, fh)
+            json.dump(config, fh)
+        if overlay is not None:
+            with open(os.path.join(tmp, "config.local.json"), "w", encoding="utf-8") as fh:
+                json.dump(overlay, fh)
         statesDir = os.path.join(tmp, "states")
         assetsDir = os.path.join(tmp, "assets")
         os.mkdir(statesDir)
@@ -703,7 +732,10 @@ def _buildSettingsFixture(name: str) -> dict[str, Any]:
     }
     if "settings-write" in inputs:
         write = inputs["settings-write"]
-        payloads["settings-write"] = _recordSettingsWrite(write["key"], write["value"])
+        payloads["settings-write"] = _recordSettingsWrite(
+            write["key"], write["value"],
+            inputs.get("settings-config", _SETTINGS_CONFIG), inputs.get("settings-overlay"),
+        )
     return {
         "description": description,
         "now": NOW,

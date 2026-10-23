@@ -629,9 +629,11 @@ class LightStateBridge:
         """Re-read autoDim from config.json through the overlay seam.
 
         config.local.json is applied by ``resolveEffectiveConfig``, whose
-        allow-list does not hold autoDim, so an overlay value is ignored (Atlas
-        ruled B). An unreadable or malformed config.json keeps the current
-        autoDim and returns False, so the next check retries it.
+        allow-list holds luxMin and luxFull (US-895-b: the CIO reversed Atlas
+        ruling B 2026-10-19), so a saved lux end applies on the next burst after
+        the mtime check; a pair that breaks ``luxFull > luxMin`` is dropped
+        there. An unreadable or malformed config.json keeps the current autoDim
+        and returns False, so the next check retries it.
         """
         try:
             with open(configPath, encoding="utf-8") as fh:
