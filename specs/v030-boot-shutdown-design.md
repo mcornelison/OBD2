@@ -20,6 +20,7 @@
 | Checklist ticks `✓`; label `OBD · waiting for ECU` | The words in §1.3: `ready` / `waiting` / `waiting for <layer>` / the fault words | The Michroma subset has no `✓` and no `·`; the cause comes from the link chain (Atlas A4: name a cause only from the fact that carries it) |
 | `confirmed` = rows the server confirmed | `confirmed` from the **acked sync marks**, never summed `storedCount` | Atlas O3/O6: a re-send (US-871) would over-count |
 | Away / at home / stall: 3 labels | One label per sync outcome (§2.2), keyed to `OutcomeKind` | The shipped drain ends in 8 ways (`power_watch/contract.py`), not 3 |
+| Shutdown page closed by a 60 s `BLACK_TAIL_CAP` | **Exits only on `cancelled` or power-off**; no timer | CIO 2026-10-23: *"Remove it"* |
 | Warning text in mixed case with full stops | `KEEP YOUR EYES / ON THE ROAD`, `DO NOT OPERATE / THIS DISPLAY / WHILE DRIVING` | Same words, set in the shipped 38-glyph Michroma subset (A–Z, 0–9, space, hyphen) |
 
 ---
@@ -60,9 +61,9 @@
   - **Spin 3 starts when IMU, LIGHT and UPS are all finished** (and `boot-state.healthy`). **OBD is never waited for** (R1): if it is silent (key in ACC, a link fault), the dashboard opens with `OBD` reading `waiting for ECU` (or the layer the chain names, §1.3), and its values fill in when it answers.
   - **Spin 3 means "the software is ready", not "everything is connected."**
   - MEASURED on the current stack (Atlas O5, 4 car-power boots, 10-22): IMU/LIGHT/UPS ready at 42–49 s, OBD at 53–56 s. So on a normal car boot the rule opens the dashboard about 6 s **before** OBD's first sample, with OBD reading `waiting for ECU` for those seconds. That is the CIO's sequence, as fast as it allows.
-  - ⚠️ **R2 holds only if each feed publishes its fault.** `capture-health.feeds.<feed>.state` today reads `unknown` for "no sample yet", and has no fault value (`capture_health.py` :296-335). Until IMU, LIGHT and UPS each publish a terminal fault that the page can read, a dead sensor holds the splash for good: the 10-22 wall boot with UPS ready only at 362 s would have held it for 6 minutes. **Atlas names the fault field per feed, or the gap becomes S114 work** (PM ask (a)). No timer is the fallback.
+  - ⚠️ **R2 holds only if each feed publishes its fault.** `capture-health.feeds.<feed>.state` today reads `unknown` for "no sample yet", and has no fault value (`capture_health.py` :296-335). Until IMU, LIGHT and UPS each publish `faulted` (S114, §3), a dead sensor holds the splash for good: the 10-22 wall boot with UPS ready only at 362 s would have held it for 6 minutes. **Atlas names the fault field per feed, or the gap becomes S114 work** (PM ask (a)). No timer is the fallback.
 - **Degraded** (shipped F-103, unchanged in behaviour): `boot-state.degraded` freezes the logo, shows the amber ring, and prints the emitter's `degradedReason` verbatim (`<service>: failed to start`, `dashboard assets not installed`, `<service>: not ready (<state>)`, `boot did not reach healthy state`, or the page's own `boot-progress instrument not reporting`). It persists until reboot. **Degraded is about `healthy` only:** a feed that is `waiting` or faulted is never degraded.
-  - ⚠️ The shipped degraded path is itself on timers: the page's `HARD_CAP_MS` (12 s) and the emitter's `hardCapSeconds` turn "not healthy yet" into degraded, and `MIN_PLAY_MS` (2.5 s) holds the yield. Under the CIO's rule these are waits. **Atlas rules whether they go**, with the shutdown `BLACK_TAIL_CAP` (PM ask (c)). The spin rotations are not waits: they are the CIO's own sequence (spin 1 always one rotation).
+  - ⚠️ The shipped degraded path is itself on timers: the page's `HARD_CAP_MS` (12 s) and the emitter's `hardCapSeconds` turn "not healthy yet" into degraded, and `MIN_PLAY_MS` (2.5 s) holds the yield. Under the CIO's rule these are waits. **Atlas is ruling which ones go** (PM ask (c)); this spec waits for his word. The spin rotations are not waits: they are the CIO's own sequence (spin 1 always one rotation).
 - `prefers-reduced-motion`: the spins become brightness steps without rotation, at the same moments.
 
 ### 1.2 The WARNING image (phase 0 and 0b)
@@ -130,7 +131,8 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 - **Every percentage comes from a real stage**: confirmed rows, or completed shutdown steps. Never a timer, never an estimate. A stall **looks** stalled (US-795 wording).
 - **Fill colour:** sync and step progress are unbanded, so the fill is `--accent`. Amber (`--amber-warn`) only for a sync that ended with rows kept at home. Empty track `--surface`, ticks and marker `--line`.
 - **Missing data never fakes progress:** before `sync{}` or `step{}` has a value the bar is empty and the label is blank. If a field goes unreadable mid-shutdown, the bar holds its last real value.
-- ⚠️ **The shipped 60 s `BLACK_TAIL_CAP` closes the page 60 s after it starts.** At home the drain runs to completion (ARCH-065) and can outlast 60 s, so the page would vanish mid-sync. **The cap must not end the page while `sync` is `joining` or `syncing`.** The fix is Ralph's (count from `powering_off`, for example); the rule is mine.
+- **The page exits only on `cancelled` or at power-off. No timer ends it** (CIO 2026-10-23, verbatim: *"Remove it"*, the no-timer rule applied to shutdown). The shipped 60 s `BLACK_TAIL_CAP` goes: at home the drain runs to completion (ARCH-065) and can outlast 60 s, and the page must stay up for all of it.
+  - ⚠️ Two more shipped exits are not `cancelled` and not power-off: **`state-missing`** (three missed polls) and **`unrecognized-phase`**. The shipped 1 s **pre-roll** is also a wait (it delays the first paint). Listed for Atlas beside the degraded timers (§7); the spec doesn't rule them.
 - The shutdown page renders on **splash-grace**, on top of the dashboard under labwc. It is **already not shed** (Atlas S-4: `DEFAULT_SHED_UNITS` = `("eclipse-dashboard",)`); keep it so.
 - STOP-level power faults are not this page's job (System/Warnings). The power key runs `systemctl poweroff`, not powerwatch's key-off path, so this page doesn't run for it (ADR §11.3).
 
@@ -180,7 +182,7 @@ The label is two lines in `--font-mono`: **line 1** `--fs-label` `--text-primary
 | `boot-state.{healthy, degraded, degradedReason}` | shipped (US-494) | — |
 | Per-feed readiness: `capture-health.feeds.<feed>.{state, firstSampleTs, lastSampleSecondsAgo}` | **shipped** (US-873, `capture_health.py` :330-334) | — |
 | OBD cause: `system-status.link.{bt, adapter, ecu}.state` | shipped (ARCH-061/062) | — |
-| A terminal **fault** per feed for IMU, LIGHT and UPS (sensor missing, read failed), readable by the page | **gap**: `capture-health.feeds` has none (`unknown` = no sample). The UPS has `power.source` reasons, which are about the source line, not the gauge feed | **Atlas names it per feed** (PM ask (a)) |
+| A terminal **fault** per feed for IMU, LIGHT and UPS (sensor missing, read failed), readable by the page | **gap, S114 work** (PM 2026-10-23): `capture-health.feeds.<feed>.state` gains `faulted` + a `reason`; the light reader gains `sensor_absent`. Today `unknown` just means no sample yet | Atlas · Ralph |
 | ~~Uptime clock, `handoffCeilingSec`~~ | **dropped**: no timer, no ceiling (CIO R1/R2) | — |
 | Shutdown: `shutdown-state.step{index, of, name}` | **new** (US-883). Today the emitter publishes only `phase`, `tGraceStartedAt`, `tGraceTotalS`, `tRemainingS`, `reason`, `ts` | Atlas · Ralph |
 | Shutdown: `shutdown-state.sync{waitingAtKeyOff, confirmed}` | **new** (US-883). **`confirmed` = rows waiting at key-off (per table, `source_id` ≤ that table's key-off high-water) whose `source_id` ≤ the table's acked mark now, capped at `waitingAtKeyOff`** (Atlas O3). Never a sum of `storedCount`: a re-send would over-count | Atlas · Ralph |
@@ -212,7 +214,7 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 7. **Home shutdown fixture:** bar ≤ 75 % until `confirmed` = `waitingAtKeyOff`; line 1 `syncing`, line 2 `<c> of <w> rows`; then `shutting down` / `step i of n` to 100 %. **Replay one batch twice: `confirmed` and the bar are unchanged by the second push** (Atlas O3 VC).
 8. Away fixture: no sync part; `away from home` / `not syncing`; the bar is step-driven.
 9. **One fixture per `OutcomeKind` row in §2.2:** its exact two lines, its bar colour; the steps still run to 100 %; the rows remain queued (verified next sync).
-10. A 120 s at-home sync fixture: the page is still up at 119 s (the black-tail cap does not cut it, §2.1).
+10. **No shutdown timer:** a 120 s at-home sync fixture keeps the page up for all of it; the page exits only on `cancelled` or power-off; `BLACK_TAIL_CAP` is gone from `shutdown-state-poll.js` (CIO 2026-10-23).
 11. Key-back-on fixture: the page exits on the first `cancelled` poll, shows no words, and the dashboard returns without a reboot.
 12. No literal colour or px in splash CSS: every value resolves to `tokens.css`, which the splash links. Today's `splash/styles.css` fails this (its own token copies at old values, `#000`, 10–14 px text). The one exception is `warning-480x320.png`, a baked image.
 13. **DoD (R15): CIO in the car, key-on and key-off, on the labwc stack.**
@@ -231,8 +233,8 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 | Item | Owner |
 |---|---|
 | ~~Ratify 75 s~~: **closed.** The CIO ruled no timer and no ceiling (2026-10-23, R1/R2) | — |
-| The fault field per feed for IMU, LIGHT and UPS, or the gap as S114 work (PM ask (a)). Without it a dead sensor holds the splash | Atlas |
-| Do the degraded `HARD_CAP_MS` / `hardCapSeconds` / `MIN_PLAY_MS` and the shutdown `BLACK_TAIL_CAP` go under the no-timer rule? (PM ask (c)) | Atlas |
+| The `faulted` reason vocabulary per feed (S114). The §1.3 words map onto it: `sensor_absent` ⇒ `sensor not found`, a read failure ⇒ `read failed`, any other reason ⇒ `fault`. Without it a dead sensor holds the splash | Atlas |
+| Which of the degraded `HARD_CAP_MS` (12 s), `hardCapSeconds` and `MIN_PLAY_MS` (2.5 s) the no-timer rule removes, and which are an animation's own length. **Atlas is ruling; this spec waits for his word.** Also: the shutdown 1 s pre-roll and the `state-missing` / `unrecognized-phase` exits. (`BLACK_TAIL_CAP`: **closed**, CIO removed it 2026-10-23) | Atlas |
 | Does lightdm quit Plymouth with `--retain-splash`? Measure in S113; either answer is acceptable (§1.1) | Atlas · Ralph (US-885/651) |
 | `sync.state` + `sync.outcome` names (the uptime field is moot under R2) | Atlas |
 | The Plymouth theme path (proposed `deploy/plymouth/eclipse/`) | Atlas (US-885) |
