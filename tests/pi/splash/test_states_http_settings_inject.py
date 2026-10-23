@@ -23,6 +23,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-07    | Ralph (Rex)  | Initial -- US-532 effective-settings injection.
+# 2026-10-23    | Rex (US-878-c)| Every entry is {found, value} (Atlas B13).
 # ================================================================================
 ################################################################################
 
@@ -131,9 +132,9 @@ def test_loadEffectiveSettings_readsEveryOverridableKey(tmp_path):
 
 def test_loadEffectiveSettings_returnsShippedDefaultsWhenNoOverlay(tmp_path):
     settings = loadEffectiveSettings(_writeConfig(tmp_path))
-    assert settings["pi.display.carousel.autoRotateS"] == 8
-    assert settings["pi.calibration.mode"] is False
-    assert settings["pi.analysis.triggerAfterDrive"] is True
+    assert settings["pi.display.carousel.autoRotateS"] == {"found": True, "value": 8}
+    assert settings["pi.calibration.mode"] == {"found": True, "value": False}
+    assert settings["pi.analysis.triggerAfterDrive"] == {"found": True, "value": True}
 
 
 def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
@@ -151,9 +152,9 @@ def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
         },
     )
     settings = loadEffectiveSettings(configPath)
-    assert settings["pi.display.carousel.autoRotateS"] == 0
-    assert settings["pi.calibration.mode"] is True
-    assert settings["pi.analysis.triggerAfterDrive"] is False
+    assert settings["pi.display.carousel.autoRotateS"]["value"] == 0
+    assert settings["pi.calibration.mode"]["value"] is True
+    assert settings["pi.analysis.triggerAfterDrive"]["value"] is False
 
 
 def test_loadEffectiveSettings_noConfigPath_isNone(tmp_path):
@@ -169,7 +170,7 @@ def test_loadEffectiveSettings_malformedConfig_everyKeyUnknown(tmp_path):
     configPath.write_text("{not json", encoding="utf-8")
     settings = loadEffectiveSettings(str(configPath))
     assert set(settings) == set(overlay.OVERRIDABLE_KEYS)
-    assert all(value is None for value in settings.values())
+    assert all(entry == {"found": False, "value": None} for entry in settings.values())
 
 
 def test_loadEffectiveSettings_unresolvableKey_isNoneNotADefault(tmp_path):
@@ -177,7 +178,7 @@ def test_loadEffectiveSettings_unresolvableKey_isNoneNotADefault(tmp_path):
     is unknown -- the same case US-531 used to prove its response is a re-read."""
     configPath = _writeConfig(tmp_path, {"pi": {"power": "not-a-dict"}})
     settings = loadEffectiveSettings(configPath)
-    assert settings["pi.calibration.mode"] is None
+    assert settings["pi.calibration.mode"] == {"found": False, "value": None}
 
 
 def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path):
@@ -185,7 +186,23 @@ def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path)
     shows the shipped default -- not the junk the overlay carried."""
     configPath = _writeConfig(tmp_path)
     _writeOverlay(configPath, {"pi.calibration.mode": "yes-please"})
-    assert loadEffectiveSettings(configPath)["pi.calibration.mode"] is False
+    assert loadEffectiveSettings(configPath)["pi.calibration.mode"]["value"] is False
+
+
+def test_loadEffectiveSettings_resolvedNull_isFoundNotUnknown(tmp_path, monkeypatch):
+    """US-878-c B13: a key that RESOLVES to null (overrideLevel = auto) is
+    {found: true, value: null}; only an unresolvable key is found: false. A
+    bare null could not tell the band AUTO from Unknown."""
+    key = "pi.display.autoDim.overrideLevel"
+    monkeypatch.setattr(overlay, "OVERRIDABLE_KEYS", (*overlay.OVERRIDABLE_KEYS, key))
+    config = json.loads(json.dumps(_BASE_CONFIG))
+    config["pi"]["display"]["autoDim"] = {"overrideLevel": None}
+
+    resolved = loadEffectiveSettings(_writeConfig(tmp_path, config))
+    missing = loadEffectiveSettings(_writeConfig(tmp_path))
+
+    assert resolved[key] == {"found": True, "value": None}
+    assert missing[key] == {"found": False, "value": None}
 
 
 # US-668 deleted test_loadEffectiveSettings_invalidPowerMode_coercesToUnknown.
@@ -205,7 +222,7 @@ def test_index_injectsSettingsObject(tmp_path):
         body = _getIndex(server)
         assert '"__DISPLAY_SETTINGS__"' not in body  # placeholder gone
         assert "window.DISPLAY_SETTINGS = {" in body  # a JS object, not a string
-        assert _injectedSettings(body)["pi.calibration.mode"] is False
+        assert _injectedSettings(body)["pi.calibration.mode"] == {"found": True, "value": False}
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -241,10 +258,10 @@ def test_index_settingsAreResolvedPerRequest_notCachedAtConstruction(tmp_path):
     configPath = _writeConfig(tmp_path)
     server, thread = _serve(tmp_path, configPath)
     try:
-        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"] is False
+        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"]["value"] is False
         # Simulate the US-531 write landing AFTER the server was constructed.
         _writeOverlay(configPath, {"pi.calibration.mode": True})
-        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"] is True
+        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"]["value"] is True
     finally:
         server.shutdown()
         thread.join(timeout=5)

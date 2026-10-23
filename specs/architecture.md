@@ -1935,6 +1935,35 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
 | `pi.location.home` | Home reference point (lat/lon + elevation ASL) — altitude anchor + future GPS home-geofence; PII, `.env`-only (US-517) |
 
+### Pi-local overlay: the cross-key seam (US-878-c, Sprint 110 / V0.30)
+
+The F-126 overlay (`config.local.json`, `src/common/config/overlay.py`) is applied by
+`secrets_loader` BEFORE `main.py` validates, so an operator value that breaks a
+ConfigValidator cross-key rule would stop the collector at boot. **ONE function,
+`overlay.enforceCrossKeyRules`, checks the cross-key rules for an overlay on the
+EFFECTIVE config** = overlay → config.json → validator `DEFAULTS` (the order the
+validator sees at boot; `from .validator import DEFAULTS`). Rules (`CROSS_KEY_RULES`):
+`overrideLevel >= minLevel` (when overrideLevel is not null) and `luxFull > luxMin`.
+
+- **Drop, never repair.** When a rule breaks, EVERY overlay-sourced key in that rule
+  is dropped (the fallbacks are config.json / DEFAULTS, already validator-proven), so
+  one pass per rule is stable; the loop is capped at the rule count and raises if a
+  rule is still broken (a code bug). A rule the SHIPPED config breaks on its own is
+  not the seam's: config.json still fails loud at the validator (US-627 AC-4).
+- **Two production callers.** `resolveEffectiveConfig` drops with the existing
+  `invalid, using default` warning, which names the broken rule, once per dropped key
+  per resolve (Atlas B6). `states_http_server._handleSettingsWrite` refuses through
+  `overlay.crossKeyRefusal` (the proposed entry judged with the stored overlay):
+  400, nothing written.
+- **One 400 shape** for a broken rule AND a per-key invalid value (Atlas B7):
+  `{ok: false, key, value: <re-read effective>, error: <rule text>}`, so the band can
+  snap back to what is really stored.
+- **`DISPLAY_SETTINGS` entries are `{found, value}`** (Atlas B13): a key that resolves
+  to null (overrideLevel = auto) is distinct from one that cannot be resolved
+  (`found: false`, rendered Unknown). The band reads `.value`.
+- No autoDim key is in `OVERRIDABLE_KEYS` yet (US-895-b adds luxMin/luxFull, US-895-c
+  overrideLevel); the seam is proven with the allow-list patched until then.
+
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
 Infrastructure addresses (IPs, hostnames, ports, MACs) MUST live in
@@ -4789,6 +4818,18 @@ Chromium kiosk can't reach the panel backlight) from the `states/light` feed.
 > status line and dot, all read this one return. Grep gate (Atlas A2, comments
 > stripped): no `luxMin`/`luxFull`/`minLevel` numeric literal and zero `Math.log`
 > in carousel.js. The paragraph below is the US-483-b history of the page curve.
+
+> **US-878-c (Sprint 110 / V0.30): the applier's `fixed` step (Atlas B4).**
+> `appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive, settings)`
+> gained step 2, after STOP: `pi.display.autoDim.overrideLevel` found in the
+> per-request settings blob (`window.DISPLAY_SETTINGS`, `{found, value}`) and a finite
+> number in [0, 1] → `{overrideLevel, 'fixed'}`; outside [0, 1] it falls through,
+> never clamped (US-627). Order: STOP → fixed → fresh bridge level → defaultLevel.
+> The override is a CONFIG fact (validator default `None` = auto; None or a finite
+> number in [minLevel, 1.0]; config.json `"overrideLevel": null`), so a fixed level
+> survives a dead light sensor. The blob is its ONLY carrier: no `states/light` key,
+> no bridge timer, the light bridge untouched. The Light page status reads
+> `BRIGHTNESS 80 % (fixed in Settings)` in `--text-secondary`, never amber (Iris I12).
 
 Before US-893-a the page computed it itself: `brightnessLevel(lightData, cfg, nowMs,
 alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is

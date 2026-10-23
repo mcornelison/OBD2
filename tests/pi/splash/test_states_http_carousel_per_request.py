@@ -167,7 +167,10 @@ def test_injectedCarouselAndSettingsAgreeOnAutoRotateS(served):
         _postSetting(server, _AUTO_ROTATE, value)
         body = _index(server)
         assert _injected(body, "DISPLAY_CAROUSEL")["autoRotateS"] == value
-        assert _injected(body, "DISPLAY_SETTINGS")[_AUTO_ROTATE] == value
+        # MOVED PIN (US-878-c): each settings entry is {found, value} (Atlas B13).
+        assert _injected(body, "DISPLAY_SETTINGS")[_AUTO_ROTATE] == {
+            "found": True, "value": value,
+        }
 
 
 def test_theRestOfTheCarouselSectionSurvivesTheReRead(served):

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from common.config import overlay as overlayModule
 from common.config.overlay import (
     OVERLAY_FILENAME,
     OVERRIDABLE_KEYS,
@@ -312,6 +313,126 @@ def test_settingsWrite_negativeAutoRotateS_rejected_noWrite(server, overlayFile)
 
     assert 400 <= exc.value.code < 500
     assert not overlayFile.exists()
+
+
+def test_settingsWrite_invalidValue_400_carriesTheReReadValueToSnapBackTo(
+    server, overlayFile
+):
+    """
+    Given: a wrong-typed value for an allow-listed key
+    When: an authenticated write is POSTed
+    Then: 400 {ok: false, key, value: <re-read effective>, error} (US-878-c B7),
+          so the band can snap back to what is really stored
+    """
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _postSetting(server, _AUTO_ROTATE_KEY, "fast")
+
+    assert exc.value.code == 400
+    assert json.loads(exc.value.read().decode("utf-8")) == {
+        "ok": False,
+        "key": _AUTO_ROTATE_KEY,
+        "value": 8,
+        "error": "invalid value for this setting",
+    }
+    assert not overlayFile.exists()
+
+
+# ---------------------------------------------------------------------------
+# US-878-c: the cross-key seam guards the write (B1: allow-list patched, since
+# no autoDim key is overridable until US-895-b/c).
+# ---------------------------------------------------------------------------
+
+_LUX_MIN_KEY = "pi.display.autoDim.luxMin"
+_LUX_FULL_KEY = "pi.display.autoDim.luxFull"
+_OVERRIDE_KEY = "pi.display.autoDim.overrideLevel"
+
+
+def _isPositive(value) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and value > 0
+
+
+def _isLevelOrNone(value) -> bool:
+    return value is None or (
+        not isinstance(value, bool) and isinstance(value, (int, float)) and 0 <= value <= 1
+    )
+
+
+@pytest.fixture
+def autoDimServer(tmp_path, monkeypatch):
+    validators = dict(overlayModule._VALIDATORS)
+    validators[_OVERRIDE_KEY] = _isLevelOrNone
+    validators[_LUX_MIN_KEY] = _isPositive
+    validators[_LUX_FULL_KEY] = _isPositive
+    monkeypatch.setattr(overlayModule, "_VALIDATORS", validators)
+    monkeypatch.setattr(overlayModule, "OVERRIDABLE_KEYS", tuple(validators))
+    config = json.loads(json.dumps(_BASE_CONFIG))
+    config["pi"]["display"]["autoDim"] = {
+        "luxMin": 3.0, "luxFull": 300.0, "minLevel": 0.75, "overrideLevel": None,
+    }
+    configPath = tmp_path / "config.json"
+    configPath.write_text(json.dumps(config), encoding="utf-8")
+    srv = _makeServer(tmp_path, str(configPath))
+    thread = _start(srv)
+    yield srv
+    srv.shutdown()
+    thread.join(timeout=5)
+
+
+def test_settingsWrite_crossingLuxFull_400_ruleText_noWrite(autoDimServer, overlayFile):
+    """
+    Given: config luxMin 3, luxFull 300, and an operator setting already stored
+    When: luxFull 2.0 is POSTed (crosses luxMin)
+    Then: 400 {ok: false, key, value: 300.0 (re-read), error: the rule text},
+          and the overlay is byte-for-byte unchanged
+    """
+    overlayFile.write_text(json.dumps({_CALIB_KEY: True}), encoding="utf-8")
+    before = overlayFile.read_bytes()
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _postSetting(autoDimServer, _LUX_FULL_KEY, 2.0)
+
+    assert exc.value.code == 400
+    assert json.loads(exc.value.read().decode("utf-8")) == {
+        "ok": False,
+        "key": _LUX_FULL_KEY,
+        "value": 300.0,
+        "error": "luxFull must be greater than luxMin",
+    }
+    assert overlayFile.read_bytes() == before
+
+
+def test_settingsWrite_overrideBelowMinLevel_400_noWrite(autoDimServer, overlayFile):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _postSetting(autoDimServer, _OVERRIDE_KEY, 0.5)
+
+    assert exc.value.code == 400
+    body = json.loads(exc.value.read().decode("utf-8"))
+    assert body == {
+        "ok": False,
+        "key": _OVERRIDE_KEY,
+        "value": None,
+        "error": "overrideLevel must be at least minLevel",
+    }
+    assert not overlayFile.exists()
+
+
+def test_settingsWrite_crossingAgainstAStoredPartner_400(autoDimServer, overlayFile):
+    """The stored overlay luxMin 50 is the partner: luxFull 40 crosses it."""
+    overlayFile.write_text(json.dumps({_LUX_MIN_KEY: 50.0}), encoding="utf-8")
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _postSetting(autoDimServer, _LUX_FULL_KEY, 40.0)
+
+    assert exc.value.code == 400
+    assert json.loads(overlayFile.read_text(encoding="utf-8")) == {_LUX_MIN_KEY: 50.0}
+
+
+def test_settingsWrite_consistentLuxFull_isStored(autoDimServer, overlayFile):
+    resp = _postSetting(autoDimServer, _LUX_FULL_KEY, 500.0)
+
+    assert resp.status == 200
+    assert _bodyOf(resp) == {"ok": True, "key": _LUX_FULL_KEY, "value": 500.0}
+    assert json.loads(overlayFile.read_text(encoding="utf-8")) == {_LUX_FULL_KEY: 500.0}
 
 
 # ---------------------------------------------------------------------------

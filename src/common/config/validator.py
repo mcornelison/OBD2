@@ -189,6 +189,8 @@
 #                                overlay key.
 # 2026-10-22    | Rex (US-923)  | pi.fuel.resetMaxSpeedKph 8 (Atlas C5, CIO
 #                                2026-10-22 <= 5 mph); finite, > 0.
+# 2026-10-23    | Rex (US-878-c)| pi.display.autoDim.overrideLevel None (auto);
+#                                None or finite in [minLevel, 1.0].
 # ================================================================================
 ################################################################################
 
@@ -863,6 +865,11 @@ DEFAULTS: dict[str, Any] = {
     # ignored by both tiers (guarded by tests/test_alarm_floor_level_retired.py).
     'pi.display.autoDim.luxStaleSec': 10,
     'pi.display.autoDim.curve': 'logarithmic',
+    # US-878-c (Atlas A5/A6, B4): a FIXED brightness the page's one applier
+    # (carousel.js appliedBrightness) uses ahead of the light bridge, so it
+    # survives a dead sensor. None = auto. Floored at minLevel; the overlay seam
+    # (overlay.enforceCrossKeyRules) drops an overlay value that breaks the floor.
+    'pi.display.autoDim.overrideLevel': None,
     # US-874 (F-159): states/obd-live publishes a PID as STALE (value null, the
     # old reading under `last`) once utcNow - its event ts exceeds this. Basis
     # (Atlas 2026-10-13, MEASURED on obd2db): across 57 drives since 09-01, 44 of
@@ -1879,6 +1886,30 @@ class ConfigValidator:
                 f"exactly when the light sensor has failed",
                 missingFields=['pi.display.autoDim.defaultLevel'],
             )
+
+        # US-878-c: overrideLevel is None (auto) or a finite level in
+        # [minLevel, 1.0]. The floor is the EFFECTIVE minLevel (Atlas A5), so a
+        # fixed brightness can never sit below the curve's own floor.
+        overrideLevel = self._getNestedValue(
+            config, 'pi.display.autoDim.overrideLevel'
+        )
+        if overrideLevel is not None:
+            floor = (
+                minLevel
+                if isinstance(minLevel, (int, float)) and not isinstance(minLevel, bool)
+                else 0.0
+            )
+            if (
+                isinstance(overrideLevel, bool)
+                or not isinstance(overrideLevel, (int, float))
+                or not math.isfinite(overrideLevel)
+                or not (floor <= overrideLevel <= 1.0)
+            ):
+                raise ConfigValidationError(
+                    f"pi.display.autoDim.overrideLevel must be null or a number in "
+                    f"[minLevel ({floor!r}), 1.0] (got {overrideLevel!r})",
+                    missingFields=['pi.display.autoDim.overrideLevel'],
+                )
 
         luxMin = self._getNestedValue(config, 'pi.display.autoDim.luxMin')
         luxFull = self._getNestedValue(config, 'pi.display.autoDim.luxFull')

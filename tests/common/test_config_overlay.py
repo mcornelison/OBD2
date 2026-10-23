@@ -48,15 +48,19 @@ from pathlib import Path
 
 import pytest
 
+from common.config import overlay as overlayModule
 from common.config.overlay import (
     OVERRIDABLE_KEYS,
     applyConfigOverlay,
+    crossKeyRefusal,
+    enforceCrossKeyRules,
     loadOverlay,
     overlayPathFor,
     resolveEffectiveConfig,
     validateOverlayValue,
 )
 from common.config.secrets_loader import loadConfigWithSecrets
+from common.config.validator import ConfigValidator
 from pi.splash.states_http_server import loadDisplayCarouselConfig
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -289,6 +293,217 @@ class TestSliceOneAllowList:
 
         assert ok is True
         assert value == 0
+
+
+_OVERRIDE_KEY = "pi.display.autoDim.overrideLevel"
+_MIN_LEVEL_KEY = "pi.display.autoDim.minLevel"
+_LUX_MIN_KEY = "pi.display.autoDim.luxMin"
+_LUX_FULL_KEY = "pi.display.autoDim.luxFull"
+
+
+def _autoDimBase(**autoDim) -> dict:
+    """A base config whose pi.display.autoDim section is exactly ``autoDim``."""
+    return {"pi": {"display": {"autoDim": dict(autoDim)}}}
+
+
+def _isLevelOrNone(value) -> bool:
+    return value is None or (
+        not isinstance(value, bool) and isinstance(value, (int, float)) and 0 <= value <= 1
+    )
+
+
+def _isPositiveNumber(value) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and value > 0
+
+
+@pytest.fixture
+def autoDimOverridable(monkeypatch):
+    """US-878-c B1: no autoDim key is overridable in this story (US-895-b/c add
+    them), so the resolve/POST paths are proved with the allow-list PATCHED to
+    carry them. The seam itself never reads the allow-list."""
+    validators = dict(overlayModule._VALIDATORS)
+    validators[_OVERRIDE_KEY] = _isLevelOrNone
+    validators[_LUX_MIN_KEY] = _isPositiveNumber
+    validators[_LUX_FULL_KEY] = _isPositiveNumber
+    monkeypatch.setattr(overlayModule, "_VALIDATORS", validators)
+    monkeypatch.setattr(overlayModule, "OVERRIDABLE_KEYS", tuple(validators))
+
+
+def _seamWarnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if "invalid, using default" in r.getMessage()]
+
+
+class TestCrossKeySeam:
+    """US-878-c (Atlas A5/A6, B1-B3, B6): ONE function checks the cross-key rules
+    on the EFFECTIVE config (overlay -> config.json -> validator DEFAULTS), so an
+    overlay value can never stop ConfigValidator at boot."""
+
+    def test_overrideBelowMinLevel_isDropped_andTheRuleIsNamed(self):
+        """
+        Given: effective minLevel 0.75 (config.json) and overrideLevel 0.5 (overlay)
+        When: the seam checks the rules
+        Then: overrideLevel is dropped under the rule 'overrideLevel >= minLevel'
+        """
+        kept, drops = enforceCrossKeyRules(_autoDimBase(minLevel=0.75), {_OVERRIDE_KEY: 0.5})
+
+        assert kept == {}
+        assert [(key, rule.name) for key, rule in drops] == [
+            (_OVERRIDE_KEY, "overrideLevel >= minLevel")
+        ]
+
+    @pytest.mark.parametrize("level", [None, 0.75, 0.8, 1.0])
+    def test_overrideNullOrAtOrAboveMinLevel_isKept(self, level):
+        kept, drops = enforceCrossKeyRules(_autoDimBase(minLevel=0.75), {_OVERRIDE_KEY: level})
+
+        assert kept == {_OVERRIDE_KEY: level}
+        assert drops == []
+
+    def test_minLevelMissingFromConfig_comparesAgainstTheValidatorDefault(self):
+        """DEFAULTS minLevel is 0.15: 0.10 breaks it, 0.20 does not."""
+        low, lowDrops = enforceCrossKeyRules(_autoDimBase(), {_OVERRIDE_KEY: 0.10})
+        high, highDrops = enforceCrossKeyRules(_autoDimBase(), {_OVERRIDE_KEY: 0.20})
+
+        assert (low, [k for k, _ in lowDrops]) == ({}, [_OVERRIDE_KEY])
+        assert (high, highDrops) == ({_OVERRIDE_KEY: 0.20}, [])
+
+    def test_bothLuxKeysInOverlayAndCrossed_bothDropped(self):
+        kept, drops = enforceCrossKeyRules(
+            _autoDimBase(luxMin=3.0, luxFull=300.0),
+            {_LUX_MIN_KEY: 500.0, _LUX_FULL_KEY: 100.0},
+        )
+
+        assert kept == {}
+        assert sorted(key for key, _ in drops) == [_LUX_FULL_KEY, _LUX_MIN_KEY]
+        assert {rule.name for _, rule in drops} == {"luxFull > luxMin"}
+
+    @pytest.mark.parametrize(
+        ("overlayValues", "dropped"),
+        [
+            ({_LUX_FULL_KEY: 2.0}, _LUX_FULL_KEY),
+            ({_LUX_MIN_KEY: 400.0}, _LUX_MIN_KEY),
+        ],
+    )
+    def test_oneLuxKeyCrossed_onlyItIsDropped(self, overlayValues, dropped):
+        """The config.json partner is not an overlay key, so it is never dropped."""
+        others = {_OVERRIDE_KEY: 0.9, "pi.calibration.mode": True}
+        kept, drops = enforceCrossKeyRules(
+            _autoDimBase(luxMin=3.0, luxFull=300.0, minLevel=0.75),
+            {**overlayValues, **others},
+        )
+
+        assert kept == others
+        assert [key for key, _ in drops] == [dropped]
+
+    def test_configLacksLuxMin_overlayLuxFullBelowTheDefault_isDropped(self):
+        """luxMin falls back to DEFAULTS 3.0: luxFull 2.5 crosses it, 5.0 does not."""
+        kept, drops = enforceCrossKeyRules(_autoDimBase(luxFull=300.0), {_LUX_FULL_KEY: 2.5})
+        keptOk, dropsOk = enforceCrossKeyRules(_autoDimBase(luxFull=300.0), {_LUX_FULL_KEY: 5.0})
+
+        assert (kept, [k for k, _ in drops]) == ({}, [_LUX_FULL_KEY])
+        assert (keptOk, dropsOk) == ({_LUX_FULL_KEY: 5.0}, [])
+
+    def test_aShippedConfigThatBreaksARule_isLeftToTheValidator(self):
+        """No overlay key in the rule -> nothing to drop and no raise: a bad
+        SHIPPED config still fails loud at ConfigValidator (US-627 AC-4)."""
+        kept, drops = enforceCrossKeyRules(
+            _autoDimBase(luxMin=500.0, luxFull=100.0), {"pi.calibration.mode": True}
+        )
+
+        assert kept == {"pi.calibration.mode": True}
+        assert drops == []
+
+    def test_doesNotMutateItsInputs(self):
+        base = _autoDimBase(minLevel=0.75)
+        overlayValues = {_OVERRIDE_KEY: 0.5}
+
+        enforceCrossKeyRules(base, overlayValues)
+
+        assert overlayValues == {_OVERRIDE_KEY: 0.5}
+        assert base == _autoDimBase(minLevel=0.75)
+
+    def test_stillBrokenAfterTheCap_raises(self, monkeypatch):
+        """B2: the loop is capped at the rule count; a rule still broken after it
+        is a code bug, so it raises instead of looping or guessing."""
+        monkeypatch.setattr(overlayModule, "_ruleBrokenByOverlay", lambda *_: True)
+
+        with pytest.raises(RuntimeError):
+            enforceCrossKeyRules(_autoDimBase(minLevel=0.75), {_OVERRIDE_KEY: 0.5})
+
+    def test_resolve_overrideBelowMinLevel_droppedWithOneWarningNamingTheRule(
+        self, autoDimOverridable, caplog
+    ):
+        """
+        Given: overrideLevel 0.5 overridable and in the overlay, minLevel 0.75
+        When: resolveEffectiveConfig runs
+        Then: the config.json value stands, with ONE 'invalid, using default'
+              warning that names the rule (B6)
+        """
+        base = _autoDimBase(minLevel=0.75, overrideLevel=None)
+
+        with caplog.at_level(logging.WARNING):
+            effective = resolveEffectiveConfig(base, {_OVERRIDE_KEY: 0.5})
+
+        assert effective["pi"]["display"]["autoDim"]["overrideLevel"] is None
+        warnings = _seamWarnings(caplog)
+        assert len(warnings) == 1
+        assert _OVERRIDE_KEY in warnings[0]
+        assert "overrideLevel >= minLevel" in warnings[0]
+
+    def test_resolve_bothLuxCrossed_bothDropped_eachLogged(self, autoDimOverridable, caplog):
+        base = _autoDimBase(luxMin=3.0, luxFull=300.0)
+
+        with caplog.at_level(logging.WARNING):
+            effective = resolveEffectiveConfig(
+                base, {_LUX_MIN_KEY: 500.0, _LUX_FULL_KEY: 100.0}
+            )
+
+        assert effective["pi"]["display"]["autoDim"] == {"luxMin": 3.0, "luxFull": 300.0}
+        assert len(_seamWarnings(caplog)) == 2
+
+    def test_resolve_aConsistentOverlayPair_isApplied(self, autoDimOverridable):
+        base = _autoDimBase(luxMin=3.0, luxFull=300.0)
+
+        effective = resolveEffectiveConfig(base, {_LUX_MIN_KEY: 10.0, _LUX_FULL_KEY: 500.0})
+
+        assert effective["pi"]["display"]["autoDim"] == {"luxMin": 10.0, "luxFull": 500.0}
+
+    def test_resolve_neverHandsTheValidatorACrossedPair(self, autoDimOverridable, tmp_path):
+        """The boot path: secrets_loader applies the overlay, then main.py
+        validates. A crossing overlay must not fail ConfigValidator."""
+        config = {"pi": {"display": {"autoDim": {"luxMin": 3.0, "luxFull": 300.0}}}}
+        configPath = tmp_path / "config.json"
+        configPath.write_text(json.dumps(config), encoding="utf-8")
+        _writeOverlay(configPath, {_LUX_FULL_KEY: 1.0})
+
+        effective = applyConfigOverlay(config, str(configPath))
+        ConfigValidator(requiredKeys=[])._validateDisplayAutoDim(effective)
+
+        assert effective["pi"]["display"]["autoDim"]["luxFull"] == 300.0
+
+    def test_crossKeyRefusal_namesTheRuleForACrossingWrite(self, tmp_path):
+        configPath = tmp_path / "config.json"
+        configPath.write_text(
+            json.dumps(_autoDimBase(luxMin=3.0, luxFull=300.0)), encoding="utf-8"
+        )
+
+        refused = crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 2.0)
+        allowed = crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 500.0)
+
+        assert refused is not None
+        assert refused.error == "luxFull must be greater than luxMin"
+        assert allowed is None
+
+    def test_crossKeyRefusal_unreadableConfig_judgesAgainstTheDefaults(self, tmp_path):
+        configPath = tmp_path / "config.json"
+        configPath.write_text("{not json", encoding="utf-8")
+
+        assert crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 2.0) is not None
+        assert crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 5.0) is None
+
+    def test_noKeyJoinsTheAllowListInThisStory(self):
+        """Scope fence: US-895-b/c make the autoDim keys overridable, not US-878-c."""
+        for key in (_OVERRIDE_KEY, _MIN_LEVEL_KEY, _LUX_MIN_KEY, _LUX_FULL_KEY):
+            assert key not in OVERRIDABLE_KEYS
 
 
 class TestLoadOverlay:

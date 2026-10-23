@@ -24,6 +24,10 @@
 #               |              | value and reuses the ONE allow-list gate.
 # 2026-08-08    | Rex (US-533) | B2: dropped pi.alerts.audioAlerts -- no consumer
 #               |              | exists, so the row could only ever no-op.
+# 2026-10-23    | Rex (US-878-c)| The cross-key seam: enforceCrossKeyRules on
+#               |              | the EFFECTIVE config (overlay -> config.json ->
+#               |              | DEFAULTS); resolve drops, crossKeyRefusal
+#               |              | refuses the POST.
 # ================================================================================
 ################################################################################
 
@@ -71,6 +75,15 @@ honoured can never be stored, and vice versa -- then lands the file atomically
 byte-intact rather than truncating them. :func:`readEffectiveValue` re-reads from
 disk through :func:`applyConfigOverlay`, which is how a caller reports what the
 readers will ACTUALLY see instead of echoing back what was requested.
+
+Cross-key rules (US-878-c)
+--------------------------
+Some keys are only legal TOGETHER (``luxFull > luxMin``; ``overrideLevel >=
+minLevel``). :func:`enforceCrossKeyRules` is the ONE place those are checked
+for an overlay, on the effective config, with two callers: the read seam drops
+the overlay values that break a rule (so ConfigValidator never fails at boot on
+an operator's setting), and the POST /settings route refuses the write
+(:func:`crossKeyRefusal`).
 """
 
 from __future__ import annotations
@@ -78,10 +91,14 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .validator import DEFAULTS
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +142,121 @@ _VALIDATORS = {
 }
 
 OVERRIDABLE_KEYS: tuple[str, ...] = tuple(_VALIDATORS)
+
+
+def _isRealNumber(value: Any) -> bool:
+    """True for a finite int/float that is not a bool."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
+
+
+def _overrideAtLeastMinLevel(overrideLevel: Any, minLevel: Any) -> bool:
+    # null = auto, which no floor can break. A non-number on either side is the
+    # per-key rules' business, never this one's.
+    if overrideLevel is None or not (_isRealNumber(overrideLevel) and _isRealNumber(minLevel)):
+        return True
+    return bool(overrideLevel >= minLevel)
+
+
+def _luxFullAboveLuxMin(luxMin: Any, luxFull: Any) -> bool:
+    if not (_isRealNumber(luxMin) and _isRealNumber(luxFull)):
+        return True
+    return bool(luxFull > luxMin)
+
+
+@dataclass(frozen=True)
+class CrossKeyRule:
+    """One rule that ties config keys together.
+
+    Attributes:
+        name: The rule as the drop warning names it.
+        error: The text a refused POST /settings returns.
+        keys: The dot-paths it reads, in the order ``holds`` takes them.
+        holds: True when the effective values satisfy the rule.
+    """
+
+    name: str
+    error: str
+    keys: tuple[str, ...]
+    holds: Callable[..., bool]
+
+
+# US-878-c (Atlas A5/A6, B2): the cross-key rules ConfigValidator enforces at
+# boot, checked HERE on the effective config so an overlay value can never stop
+# the collector. A rule only an overlay key can break is the seam's; a rule the
+# shipped config.json breaks on its own still fails loud at the validator.
+CROSS_KEY_RULES: tuple[CrossKeyRule, ...] = (
+    CrossKeyRule(
+        name="overrideLevel >= minLevel",
+        error="overrideLevel must be at least minLevel",
+        keys=("pi.display.autoDim.overrideLevel", "pi.display.autoDim.minLevel"),
+        holds=_overrideAtLeastMinLevel,
+    ),
+    CrossKeyRule(
+        name="luxFull > luxMin",
+        error="luxFull must be greater than luxMin",
+        keys=("pi.display.autoDim.luxMin", "pi.display.autoDim.luxFull"),
+        holds=_luxFullAboveLuxMin,
+    ),
+)
+
+
+def _effectiveValue(key: str, base: dict[str, Any], overlayValues: dict[str, Any]) -> Any:
+    """overlay -> config.json -> validator DEFAULTS: the order the validator sees at boot."""
+    if key in overlayValues:
+        return overlayValues[key]
+    found, value = getDotPath(base, key)
+    return value if found else DEFAULTS.get(key)
+
+
+def _ruleBrokenByOverlay(
+    rule: CrossKeyRule, base: dict[str, Any], overlayValues: dict[str, Any]
+) -> bool:
+    if not any(key in overlayValues for key in rule.keys):
+        return False
+    return not rule.holds(*(_effectiveValue(key, base, overlayValues) for key in rule.keys))
+
+
+def enforceCrossKeyRules(
+    base: dict[str, Any], overlayValues: dict[str, Any]
+) -> tuple[dict[str, Any], list[tuple[str, CrossKeyRule]]]:
+    """THE cross-key seam: drop overlay values that break a rule on the effective config.
+
+    When a rule breaks, EVERY overlay-sourced key in it is dropped, so the rule
+    falls back to config.json / DEFAULTS values the validator already proved
+    consistent. One pass per rule is therefore enough; the loop is capped at
+    the rule count and a rule still broken after it is a code bug, so it raises.
+
+    Args:
+        base: The config.json contents. Never mutated.
+        overlayValues: Flat dot-path overlay entries that passed the per-key gate.
+            Never mutated.
+
+    Returns:
+        ``(kept, drops)``: the surviving overlay entries, and one
+        ``(key, rule)`` per dropped key for the caller to log or refuse.
+
+    Raises:
+        RuntimeError: If a rule is still broken by an overlay key after the cap.
+    """
+    kept = dict(overlayValues)
+    drops: list[tuple[str, CrossKeyRule]] = []
+    for _ in range(len(CROSS_KEY_RULES)):
+        broken = [rule for rule in CROSS_KEY_RULES if _ruleBrokenByOverlay(rule, base, kept)]
+        if not broken:
+            return kept, drops
+        for rule in broken:
+            for key in rule.keys:
+                if key in kept:
+                    del kept[key]
+                    drops.append((key, rule))
+    stillBroken = [rule.name for rule in CROSS_KEY_RULES if _ruleBrokenByOverlay(rule, base, kept)]
+    if stillBroken:
+        raise RuntimeError(f"Cross-key rules still broken after the cap: {stillBroken}")
+    return kept, drops
 
 
 def overlayPathFor(configPath: str) -> str:
@@ -224,6 +356,7 @@ def resolveEffectiveConfig(
     allowed = frozenset(OVERRIDABLE_KEYS if allowlist is None else allowlist)
     effective = copy.deepcopy(base)
 
+    accepted: dict[str, Any] = {}
     for key, value in overlay.items():
         if key not in allowed:
             logger.warning("Overlay key not overridable, ignoring: %s", key)
@@ -231,11 +364,23 @@ def resolveEffectiveConfig(
 
         isValid, stored = validateOverlayValue(key, value)
         if isValid:
-            if not _setDotPath(effective, key, stored):
-                logger.warning("Overlay key blocked by a non-dict branch: %s", key)
+            accepted[key] = stored
             continue
 
         logger.warning("Overlay value for %s is invalid, using default: %r", key, value)
+
+    # US-878-c: the cross-key rules run on the EFFECTIVE config, so the validator
+    # that main.py runs after this can never be handed a pair the overlay crossed.
+    kept, drops = enforceCrossKeyRules(base, accepted)
+    for key, rule in drops:
+        logger.warning(
+            "Overlay value for %s is invalid, using default: %r (breaks %s)",
+            key, accepted[key], rule.name,
+        )
+
+    for key, stored in kept.items():
+        if not _setDotPath(effective, key, stored):
+            logger.warning("Overlay key blocked by a non-dict branch: %s", key)
 
     return effective
 
@@ -294,14 +439,51 @@ def readEffectiveValue(configPath: str, key: str) -> tuple[bool, Any]:
         ``(True, value)``, or ``(False, None)`` when the config or the key
         cannot be resolved. Never a fabricated value.
     """
+    config = _readConfigFile(configPath)
+    if config is None:
+        return False, None
+    return getDotPath(applyConfigOverlay(config, configPath), key)
+
+
+def _readConfigFile(configPath: str) -> dict[str, Any] | None:
+    """config.json as a dict, or None when it is unreadable or not an object."""
     try:
         with open(configPath, encoding="utf-8") as fh:
             config = json.load(fh)
     except (OSError, ValueError):
-        return False, None
-    if not isinstance(config, dict):
-        return False, None
-    return getDotPath(applyConfigOverlay(config, configPath), key)
+        return None
+    return config if isinstance(config, dict) else None
+
+
+def crossKeyRefusal(configPath: str, key: str, value: Any) -> CrossKeyRule | None:
+    """The rule a proposed overlay write would break, or None (US-878-c B7).
+
+    The write-side caller of :func:`enforceCrossKeyRules`: the proposed entry is
+    judged together with the overlay already stored, against config.json (or
+    DEFAULTS alone when config.json is unreadable), exactly as the read seam
+    will resolve it. The proposed key is overlay-sourced, so a rule it breaks
+    always drops it.
+
+    Args:
+        configPath: Path to config.json.
+        key: Dot-path key the caller wants to write (already per-key valid).
+        value: Proposed value.
+
+    Returns:
+        The broken :class:`CrossKeyRule`, or ``None`` when the write is consistent.
+    """
+    base = _readConfigFile(configPath) or {}
+    candidate: dict[str, Any] = {}
+    for storedKey, storedValue in loadOverlay(overlayPathFor(configPath)).items():
+        isValid, stored = validateOverlayValue(storedKey, storedValue)
+        if isValid:
+            candidate[storedKey] = stored
+    candidate[key] = value
+    _, drops = enforceCrossKeyRules(base, candidate)
+    for droppedKey, rule in drops:
+        if droppedKey == key:
+            return rule
+    return None
 
 
 def _writeOverlayAtomic(overlayPath: str, overlay: dict[str, Any]) -> bool:

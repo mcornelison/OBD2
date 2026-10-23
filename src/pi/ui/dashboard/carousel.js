@@ -1731,8 +1731,8 @@
   // US-893-b: the Light page paints its OWN absence ('--' + 'no light data' in
   // its own layout, the brightness it fell back to beside it), so its view is
   // built even with no payload; `absent` tells the shell the feed is missing.
-  function sourceView(key, data, cfg, nowMs, alarmActive) {
-    if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive);
+  function sourceView(key, data, cfg, nowMs, alarmActive, settings) {
+    if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive, settings);
     if (cardAvailability(data) !== "available") return null;
     if (key === "battery-health") return batteryHealthView(data);
     if (key === "ltft-trend") return fuelTrendView(data);
@@ -1745,7 +1745,7 @@
   // t=0. Fixing one and not the other would re-create the confusion one swipe
   // away, which is why the story's conditionalOutcome names the shared shape
   // rather than the three tiles it was reported on.
-  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs, alarmActive) {
+  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs, alarmActive, settings) {
     var base = { key: spec.key, title: spec.title, label: spec.noData.label };
     // The gate is checked FIRST and short-circuits: a gated card must carry no
     // reading, not a suppressed one (nothing downstream can leak what was never
@@ -1760,7 +1760,7 @@
       base.view = null;
       return base;
     }
-    var view = sourceView(spec.key, data, cfg, nowMs, alarmActive);
+    var view = sourceView(spec.key, data, cfg, nowMs, alarmActive, settings);
     base.gated = false;
     if (view === null || view.absent === true) {
       if (loadPhase(data, waitedMs) === "loading") {
@@ -1972,6 +1972,19 @@
       { value: false, label: "Off" },
       { value: true, label: "On" },
     ];
+  }
+
+  // US-878-c (Atlas B13): one entry of the injected settings blob. The server
+  // sends {found, value} per key, so a key that RESOLVED to null (overrideLevel
+  // = auto) is told apart from one it could not resolve. Anything else -- no
+  // blob, a missing key, a bare value, found not exactly true -- is not found.
+  function settingsEntry(source, key) {
+    var entry = isObj(source) ? source[key] : null;
+    if (!isObj(entry) || entry.found !== true ||
+        !Object.prototype.hasOwnProperty.call(entry, "value")) {
+      return { found: false, value: null };
+    }
+    return { found: true, value: entry.value };
   }
 
   // Render one settings row from its EFFECTIVE value. `known:false` means the
@@ -3163,6 +3176,10 @@
     return out;
   }
 
+  // US-878-c: the fixed-brightness key, as the server injects it in the
+  // settings blob (the overlay's flat dot-path).
+  var OVERRIDE_LEVEL_KEY = "pi.display.autoDim.overrideLevel";
+
   // brightnessAlarmActive (the alarm input below) is US-899-a1's: it keys on the
   // states/alerts takeover, beside takeoverAlertView.
 
@@ -3175,12 +3192,18 @@
   //      surface is FULL before anything else is read, so a dark cabin (or a dead
   //      light sensor) can never dim a PULL-OVER alarm. It SUPERSEDED the old
   //      alarmFloorLevel key outright, which is why US-595 could retire it.
-  //   2. FRESH -> {data.brightnessLevel, data.brightnessMode}: the level the
+  //   2. US-878-c (Atlas B4): pi.display.autoDim.overrideLevel found in the
+  //      per-request settings blob and a finite number in [0, 1] -> {it,
+  //      'fixed'}. A CONFIG fact, not a sensor one, so a fixed level survives a
+  //      dead light sensor. The blob is its only carrier (no states/light key,
+  //      no bridge timer). Outside [0, 1] it falls through, never clamped
+  //      (US-627); null (auto) or not found falls through too.
+  //   3. FRESH -> {data.brightnessLevel, data.brightnessMode}: the level the
   //      bridge published, applied as published ('auto', or 'default' when the
   //      bridge had no reading). FRESH = an object, not sourceUnavailable, a
   //      parseable ts no older than luxStaleSec, and a brightnessLevel that is a
   //      finite number in [0, 1].
-  //   3. otherwise -> {injected defaultLevel, 'fallback'}.
+  //   4. otherwise -> {injected defaultLevel, 'fallback'}.
   //
   // lux is NOT consulted: the bridge already turned it into the level. An
   // out-of-range brightnessLevel is fallback, NEVER clamped (US-627: never
@@ -3188,8 +3211,13 @@
   // never takes effect). The fallback defaultLevel is applied UNCLAMPED for the
   // same reason; validate_config enforces defaultLevel >= minLevel. A payload
   // with no brightnessLevel at all (an older producer) is fallback, not a throw.
-  function appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) {
+  function appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive, settings) {
     if (alarmActive) return { level: STOP_ALARM_LEVEL, basis: "alert" };
+    var override = settingsEntry(settings, OVERRIDE_LEVEL_KEY);
+    if (override.found && typeof override.value === "number" && isFinite(override.value) &&
+        override.value >= 0 && override.value <= 1) {
+      return { level: override.value, basis: "fixed" };
+    }
     var c = resolveAutoDimConfig(injectedAutoDim);
     var fallback = { level: c.defaultLevel, basis: "fallback" };
     if (!isObj(lightData) || sourceUnavailable(lightData, "light")) return fallback;
@@ -3328,7 +3356,8 @@
     var value = Math.round(applied.level * 100) + " %";
     var label = applied.basis === "auto" ? "BRIGHTNESS AUTO" : "BRIGHTNESS";
     var note = applied.basis === "auto" ? null
-      : applied.basis === "alert" ? "(alert)" : "(default, no reading)";
+      : applied.basis === "alert" ? "(alert)"
+      : applied.basis === "fixed" ? "(fixed in Settings)" : "(default, no reading)";
     return {
       label: label, value: value, note: note,
       text: label + " " + value + (note ? " " + note : ""),
@@ -3409,8 +3438,8 @@
   // lightBand is '--' with no glyph. Stale (age > luxStaleSec, or undated)
   // dims the word tile, the curve and the raw row -- never the status, which
   // reports what the kiosk applied.
-  function lightPageView(data, cfg, nowMs, alarmActive) {
-    var applied = appliedBrightness(data, cfg, nowMs, alarmActive);
+  function lightPageView(data, cfg, nowMs, alarmActive, settings) {
+    var applied = appliedBrightness(data, cfg, nowMs, alarmActive, settings);
     var status = lightStatusView(applied);
     if (!isObj(data) || sourceUnavailable(data, "light")) {
       return {
@@ -5352,6 +5381,7 @@
     settingsReloadNeeded: settingsReloadNeeded,
     settingsChoices: settingsChoices,
     settingsRowView: settingsRowView,
+    settingsEntry: settingsEntry,
     settingsChoiceActive: settingsChoiceActive,
     settingsWriteValue: settingsWriteValue,
     settingsSaveResult: settingsSaveResult,
@@ -7096,7 +7126,8 @@
               }
             }
 
-            render(settingsSource ? settingsSource[spec.key] : null, "");
+            // US-878-c: a not-found entry is null here, i.e. Unknown.
+            render(settingsEntry(settingsSource, spec.key).value, "");
             settingsList.appendChild(row);
           })(specs[i]);
         }
@@ -8166,7 +8197,8 @@
               sourceCardView(
                 spec, data, await stateOnce("system-status"), displayAutoDim,
                 nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs),
-                brightnessAlarmActive(await stateOnce("alerts"))
+                brightnessAlarmActive(await stateOnce("alerts")),
+                settingsSource
               )
             );
             continue;
@@ -8345,7 +8377,8 @@
             lightData,
             displayAutoDim,
             nowMs,
-            brightnessAlarmActive(lastAlerts)
+            brightnessAlarmActive(lastAlerts),
+            settingsSource
           ).level
         );
       }

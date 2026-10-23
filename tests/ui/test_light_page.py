@@ -34,6 +34,7 @@
 #               |                | is served as the provider's PULL OVER at
 #               |                | /alerts (brightnessAlarmActive keys on it);
 #               |                | every assertion is unchanged.
+# 2026-10-23    | Rex (US-878-c) | The width budget covers the 'fixed' status.
 # ================================================================================
 ################################################################################
 
@@ -581,7 +582,8 @@ def test_widthBudget_NIGHTWithItsGlyph_theWidestAmbient_andEveryStatusFit():
     ambient = len("30,000") * ADVANCE_OBSERVED * primary + len(" lux") * ADVANCE_OBSERVED * label
     assert ambient <= left
     gap = _px("--light-notes-gap", root)
-    for basis in ("auto", "fallback", "alert"):
+    # US-878-c: the 'fixed' basis ('(fixed in Settings)') must fit too.
+    for basis in ("auto", "fallback", "alert", "fixed"):
         s = _call("lightStatusView", {"level": 1.0, "basis": basis})
         width = michromaWidthPx(s["label"], meta) + gap + len(s["value"]) * ADVANCE_OBSERVED * label
         if s["note"]:

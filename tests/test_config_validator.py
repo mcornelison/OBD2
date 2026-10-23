@@ -1767,6 +1767,50 @@ def test_validate_fuelMafTrusted_nonBool_rejected(bad):
         ConfigValidator().validate(cfg)
 
 
+def test_validate_autoDimOverrideLevel_defaultsToNone_auto():
+    """US-878-c (Atlas A5/A6): overrideLevel None = auto, the shipped state."""
+    autoDim = ConfigValidator().validate(_baseCfg())["pi"]["display"]["autoDim"]
+    assert "overrideLevel" in autoDim
+    assert autoDim["overrideLevel"] is None
+
+
+def test_configJson_carriesTheOverrideLevelAsNull():
+    """US-878-c: config.json pi.display.autoDim names the key, null = auto."""
+    with open(Path(__file__).resolve().parents[1] / "config.json", encoding="utf-8") as fh:
+        shipped = json.load(fh)
+    autoDim = shipped["pi"]["display"]["autoDim"]
+    assert "overrideLevel" in autoDim
+    assert autoDim["overrideLevel"] is None
+
+
+@pytest.mark.parametrize("level", [0.75, 0.8, 1.0, 1])
+def test_validate_autoDimOverrideLevel_atOrAboveMinLevel_accepted(level):
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"autoDim": {"minLevel": 0.75, "defaultLevel": 1.0, "overrideLevel": level}}}
+    assert ConfigValidator().validate(cfg)["pi"]["display"]["autoDim"]["overrideLevel"] == level
+
+
+@pytest.mark.parametrize("bad", [0.5, 1.01, -0.1, float("inf"), float("nan"), "0.8", True])
+def test_validate_autoDimOverrideLevel_outsideMinLevelToOne_rejected(bad):
+    """US-878-c: None, or a finite number in [minLevel, 1.0] -- the floor is the
+    EFFECTIVE minLevel, never a literal."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"autoDim": {"minLevel": 0.75, "defaultLevel": 1.0, "overrideLevel": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.autoDim.overrideLevel"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_autoDimOverrideLevel_floorIsTheDefaultMinLevelWhenUnset():
+    """minLevel absent -> its default 0.15 is the floor: 0.10 fails, 0.20 passes."""
+    low = _baseCfg()
+    low["pi"] = {"display": {"autoDim": {"overrideLevel": 0.10}}}
+    with pytest.raises(ConfigValidationError, match="overrideLevel"):
+        ConfigValidator().validate(low)
+    ok = _baseCfg()
+    ok["pi"] = {"display": {"autoDim": {"overrideLevel": 0.20}}}
+    assert ConfigValidator().validate(ok)["pi"]["display"]["autoDim"]["overrideLevel"] == 0.20
+
+
 def test_validate_obdiiConnectDebug_absent_defaultsFalse():
     """US-907: absent = off; the diagnostic window is opt-in per deploy."""
     cfg = ConfigValidator().validate(_baseCfg())
