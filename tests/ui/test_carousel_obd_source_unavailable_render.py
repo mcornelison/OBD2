@@ -69,6 +69,8 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-637 punch-list 3.1 recorded pass +
 #               |              | the constant-reason finding (I-us637).
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): #glyph-bt is the link
+#               |              | chain; its dots read `link`, not source.obd.
 # ================================================================================
 ################################################################################
 
@@ -329,12 +331,27 @@ def _systemCardText(payload: Any) -> list[str]:
     return []
 
 
-def _btGlyph(payload: Any) -> str:
+def _chain(payload: Any) -> dict[str, str]:
+    """MOVED PIN (US-894-a): #glyph-bt is the link chain -> {layer: data-state}."""
     surface = _surface(payload)
     path = surface.pathById("glyph-bt")
     assert path is not None, "no #glyph-bt in the rendered DOM"
     assert surface.rendered(path), "#glyph-bt is in the DOM but not displayed"
-    return path[-1].get("attrs", {}).get("data-state")
+    dots = surface.pathsByClass("chain-dot")
+    assert len(dots) == 3, f"the chain paints {len(dots)} dots, not 3"
+    return {
+        dot[-1]["attrs"]["data-layer"]: dot[-1]["attrs"].get("data-state") for dot in dots
+    }
+
+
+_HOLLOW = {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
+
+
+def _layers(bt: str | None, adapter: str | None, ecu: str | None) -> dict:
+    return {
+        layer: {"state": state, "ts": _NOW if state else None, "lastOkTs": None}
+        for layer, state in (("bt", bt), ("adapter", adapter), ("ecu", ecu))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -482,19 +499,20 @@ def test_obdAvailableButDown_stillRendersTheMeasurement_notTheAbsence():
     assert tile["level"] == "down", tile
 
 
-def test_obdUnavailable_btGlyphGoesNeutral_neverDown():
+def test_obdUnavailable_unreadLinkChainIsHollow_neverDown():
     """
     Given: `down` on the top bar is a MEASUREMENT -- we looked and there is no
            link
-    When: the source is unavailable, i.e. we could not look
-    Then: the glyph is NEUTRAL.
+    When: the link layers were not read
+    Then: the chain is three HOLLOW dots -- never the solid `down` look.
 
-          carousel.js:873 states this rule for the WIFI glyph in the same file;
-          the OBD glyph obeys it too and nothing said so. Painting "no signal"
-          when the truth is "we could not look" is a fabricated reading.
+          MOVED PIN (US-894-a): this pinned the single BT glyph NEUTRAL under an
+          unavailable source. The chain reads `link` per layer (spec s4.2.1); an
+          unread layer is hollow (ARCH-062), and a read `down` on a member layer
+          is amber -- the positive control that the hollow is not unconditional.
     """
-    assert _btGlyph(_systemStatus()) == "neutral"
-    assert _btGlyph(_systemStatus(obdAvailable=True, obdLinkState="down")) == "down"
+    assert _chain(_systemStatus()) == _HOLLOW
+    assert _chain(_systemStatus(link=_layers("down", None, None)))["bt"] == "amber"
 
 
 def test_obdUnavailable_summaryNeverClaimsSystemOk():
@@ -556,22 +574,25 @@ def test_unavailableSourceBeatsAStaleLinkedBlockSittingBesideIt():
     assert "seen 4s ago" not in _systemCardText(payload)
 
 
-def test_unavailableSourceBeatsAStaleLinkedBlock_onTheGLYPHToo():
+def test_theTopBarChainReadsLinkVerbatim_neitherObdLinkNorSourceObd():
     """
-    Given: the same both-halves-disagree payload, read at the TOP BAR
-    When: rendered
-    Then: the BT glyph is NEUTRAL, not the green a stale `linked` would earn.
+    Given: a stale `linked` obdLink beside unread link layers, and live link
+           layers beside an unavailable OBD source
+    When: each is rendered at the TOP BAR
+    Then: the chain follows `link` alone -- hollow for the first, green for the
+          second.
 
-          Split from the tile assertion deliberately. On the producer's real
-          output the glyph is neutral for a SECOND, weaker reason -- the emitter
-          blanked `obdLink`, so `btGlyphState` would return neutral even if the
-          glyph consulted the wrong input entirely. Only a payload where the two
-          halves DISAGREE can tell which guarantee is holding, and the glyph's
-          own `obdOff ? "neutral"` branch is the one this story is about.
+          MOVED PIN (US-894-a): the BT glyph's `obdOff ? "neutral"` branch is
+          retired with btGlyphState. The chain reads link verbatim and ignores
+          source.obd (S109 publishes link regardless), so only a payload where
+          the two halves DISAGREE can show which input it reads.
     """
-    payload = _systemStatus()
-    payload["obdLink"] = {"state": "linked", "retries": 0}
-    assert _btGlyph(payload) == "neutral"
+    stale = _systemStatus()
+    stale["obdLink"] = {"state": "linked", "retries": 0}
+    assert _chain(stale) == _HOLLOW
+    live = _systemStatus(link=_layers("up", "up", "up"))
+    assert live["source"]["obd"]["available"] is False
+    assert _chain(live) == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
 
 
 def test_unavailableWithNoReason_stillPrintsAReason_neverABlankDetail():

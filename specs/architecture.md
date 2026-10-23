@@ -7502,7 +7502,25 @@ kiosk smoke on the panel, which remains the per-story on-Pi render check.
 #### System Status card + `system-status` emitter (US-400) [Atlas A-3]
 
 The **System Status** card (Card 1) renders the `system-status` state file at 4
-Hz: OBD-link / sync / power / drive tiles + the top-bar BT/sync/power glyphs.
+Hz: OBD-link / sync / power / drive tiles + the top-bar link-chain / sync / WiFi
+glyphs.
+
+**Top-bar link indicator = the three-layer link chain (US-894-a, spec
+`specs/v030-system-page-design.md` §4.2.1).** The single `BT` glyph is retired
+(with `btGlyphState`). `#glyph-bt` keeps its slot, id and title and holds one
+inline SVG (`.chain-mark`, declared `3ch × 1em`, relative units only): three
+dots BT → ADAPTER → ECU, each a `.chain-dot` with its own `data-layer` +
+`data-state`. `systemStatusView` returns `glyphs.bt = {bt, adapter, ecu}` from
+`linkChainGlyph`, which reads `system-status.link.<layer>.state` **verbatim**
+and ignores `source.obd` and `obdLink`: `up` → green, `connecting` → neutral,
+`retrying` → `--text-secondary`, `down` → `--text-tertiary`, null / an
+unpublished word → a **hollow** ring. **Amber is keyed to the verdict member,
+never to a state** (§4.0): a dot is amber only while its layer is a
+`verdict.members[].key` (`bt`, or `adapter` while BT is up). An unreadable
+system-status file resets the chain to three hollow dots (`resetSystemGlyphs`).
+The JS vocabulary copies (`LINK_CHAIN_LAYERS`, `LINK_STATE_LOOK`,
+`LINK_MEMBER_LAYERS`) are pinned to `system_status_emitter`'s constants by
+`tests/ui/test_topbar_chain_glyph.py`.
 
 **`system-status` emitter (`src/pi/splash/system_status_emitter.py`).** The
 **orchestrator/sync tier owns this emitter** (A-3): it holds the live BT-link,
@@ -7792,8 +7810,11 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
 `linked` (green) / `reconnecting` (amber, with `retries`) / `down`
 (red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
 flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
-tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
-reconnect, closing the I-033 "did it capture my drive?" blind spot).
+tile within ≤2 s (the operator finally *sees* the reconnect, closing the I-033
+"did it capture my drive?" blind spot). On the top bar the reconnect shows on
+the link chain's BT dot (US-894-a): amber while the provider counts `bt` as a
+verdict member (`link.bt` retrying while recording, or down), otherwise
+`--text-secondary`.
 
 **Power-mode SSOT (US-421 / F-098, Sprint 52 / V0.29.6).** The `power.mode`
 field (`car` / `wall` / `unknown`) reports the **deployment context** — Pi

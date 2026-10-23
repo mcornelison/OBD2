@@ -45,6 +45,8 @@
 # 2026-10-22    | Ralph (Rex)  | US-511-b -- MOVED PIN: clearButtonView's third input
 #                               is whether the raw gear is known: 'stop to clear'
 #                               (moving) vs 'gear unknown' (parked_unknown).
+# 2026-10-23    | Ralph (Rex)  | US-894-a -- MOVED PIN: glyphs.bt is the link chain
+#                               {bt, adapter, ecu}, read from link + verdict.
 # ================================================================================
 ################################################################################
 
@@ -322,8 +324,12 @@ assert.strictEqual(c.systemStatusView([]), null, 'array -> no view');
 // I-3: a reconnecting OBD link -> tile shows RECONNECTING (amber), retries
 // surfaced; the top-bar BT glyph flips amber.
 // MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+// MOVED PIN (US-894-a): the BT glyph is the link chain; its BT dot is amber
+// because `bt` is a verdict member, read from link + verdict, not obdLink.
 const reconn = {
   obdLink: {state: 'reconnecting', retries: 3},
+  link: {bt: {state: 'retrying'}, adapter: {state: null}, ecu: {state: null}},
+  verdict: {issueCount: 1, members: [{key: 'bt', reason: 'Link dropped. Retrying.'}]},
   sync: {lastOkTs: '2026-06-30T19:40:00Z', rows: 10, pending: 0, stale: false},
   power: {mode: 'car', source: 'external'},
   drive: {state: 'recording', driveId: 27},
@@ -333,7 +339,7 @@ const rv = c.systemStatusView(reconn);
 assert.strictEqual(rv.tiles.obdLink.level, 'amber', 'reconnect tile amber');
 assert.ok(/RECONNECTING/i.test(rv.tiles.obdLink.value), 'tile says RECONNECTING');
 assert.ok(/3/.test(rv.tiles.obdLink.detail), 'retries surfaced');
-assert.strictEqual(rv.glyphs.bt, 'amber', 'BT glyph amber on reconnect');
+assert.strictEqual(rv.glyphs.bt.bt, 'amber', 'BT dot amber on a bt member');
 
 // I-4: a stale-while-driving sync -> sync tile amber + sync glyph amber.
 const stale = JSON.parse(JSON.stringify(reconn));
@@ -347,6 +353,8 @@ assert.strictEqual(sv.glyphs.sync, 'amber', 'sync glyph amber when stale');
 // green/ok tile or glyph.
 const degraded = {
   obdLink: {state: 'down', retries: 0},
+  link: {bt: {state: 'down'}, adapter: {state: null}, ecu: {state: null}},
+  verdict: {issueCount: 1, members: [{key: 'bt', reason: 'x'}]},
   sync: {lastOkTs: null, rows: 0, pending: 12, stale: true},
   power: {mode: 'car', source: 'battery'},
   drive: {state: 'idle', driveId: null},
@@ -358,13 +366,16 @@ assert.strictEqual(dv.tiles.sync.level, 'amber', 'stale sync not ok');
 assert.strictEqual(dv.tiles.power.level, 'amber', 'battery power not ok');
 // US-696 dropped `glyphs.power` -- the tile assertion directly above is now
 // where a degraded supply is caught, so F-1 keeps both of its halves.
-const dglyphs = [dv.glyphs.bt, dv.glyphs.sync];
+// MOVED PIN (US-894-a): glyphs.bt is the chain {bt, adapter, ecu}.
+const dglyphs = [dv.glyphs.bt.bt, dv.glyphs.bt.adapter, dv.glyphs.bt.ecu, dv.glyphs.sync];
 assert.ok(dglyphs.indexOf('ok') === -1, 'no glyph is ok when degraded');
 assert.strictEqual(dv.glyphs.power, undefined, 'power glyph survived US-696');
 
 // A healthy state DOES render green (the positive control -- ok is reachable).
 const healthy = {
   obdLink: {state: 'linked', retries: 0},
+  link: {bt: {state: 'up'}, adapter: {state: 'up'}, ecu: {state: 'up'}},
+  verdict: {issueCount: 0, members: []},
   sync: {lastOkTs: '2026-06-30T19:41:50Z', rows: 50, pending: 0, stale: false},
   power: {mode: 'car', source: 'external'},
   drive: {state: 'recording', driveId: 27},
@@ -372,7 +383,7 @@ const healthy = {
 };
 const hv = c.systemStatusView(healthy);
 assert.strictEqual(hv.tiles.obdLink.level, 'ok', 'linked -> ok');
-assert.strictEqual(hv.glyphs.bt, 'ok', 'BT glyph ok when linked');
+assert.deepStrictEqual(hv.glyphs.bt, {bt: 'ok', adapter: 'ok', ecu: 'ok'}, 'chain ok when all up');
 // US-696: `ok` is still reachable for external power, on the tile that outlived
 // the bolt. Re-pointed rather than deleted -- this is the positive control that
 // keeps the degraded assertion above from passing on an unreachable green.
@@ -381,7 +392,9 @@ assert.strictEqual(hv.tiles.power.level, 'ok', 'external power tile ok');
 // A missing sub-object -> that tile is `unavailable`, never green.
 const partial = c.systemStatusView({ts: '2026-06-30T19:42:00Z'});
 assert.strictEqual(partial.tiles.obdLink.level, 'unavailable', 'missing link tile');
-assert.strictEqual(partial.glyphs.bt, 'neutral', 'missing link glyph neutral');
+// MOVED PIN (US-894-a): a missing link is three HOLLOW dots, not neutral.
+assert.deepStrictEqual(partial.glyphs.bt, {bt: 'hollow', adapter: 'hollow', ecu: 'hollow'},
+                       'missing link chain hollow');
 
 console.log('US400_OK');
 """

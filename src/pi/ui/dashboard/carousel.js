@@ -933,12 +933,63 @@
   }
 
   // Top-bar glyph states (bound to data-state CSS in dashboard.css).
-  function btGlyphState(o) {
-    if (!isObj(o)) return "neutral";
-    if (o.state === "linked") return "ok";
-    if (o.state === "reconnecting") return "amber";
-    if (o.state === "down") return "down";
-    return "neutral";
+  //
+  // US-894-a (spec s4.2.1, closes US-713 + ARCH-061): the single BT glyph is
+  // retired with btGlyphState. The slot holds the three-layer link chain, one
+  // dot per layer, read VERBATIM from system-status.link -- never from obdLink,
+  // and never forced by source.obd (S109 publishes link regardless). Copies of
+  // the provider vocabulary (pi.splash.system_status_emitter LINK_LAYERS /
+  // LINK_* / VERDICT_*), pinned equal by tests/ui/test_topbar_chain_glyph.py.
+  var LINK_CHAIN_LAYERS = ["bt", "adapter", "ecu"];
+  // The colour rule (s4.0): amber is keyed to a verdict MEMBER's layer, never to
+  // a state, so no state maps to amber here. A key absent from this table --
+  // null, or a word the provider has not published -- is a dot we did not
+  // read: hollow, never the solid `down` look (ARCH-062).
+  var LINK_STATE_LOOK = {
+    up: "ok",
+    connecting: "neutral",
+    retrying: "secondary",
+    down: "tertiary",
+  };
+  // The verdict member keys that name a chain layer (s4.1): only these two can
+  // paint a dot amber. The ECU is never a member.
+  var LINK_MEMBER_LAYERS = ["bt", "adapter"];
+
+  // The verdict members' keys as a set. A malformed verdict names nobody, so it
+  // paints no amber: an amber dot is a claim the provider has to have made.
+  function verdictMemberKeys(data) {
+    var keys = {};
+    var verdict = isObj(data) ? data.verdict : null;
+    var members = isObj(verdict) && Array.isArray(verdict.members) ? verdict.members : [];
+    for (var i = 0; i < members.length; i++) {
+      if (isObj(members[i]) && typeof members[i].key === "string") {
+        keys[members[i].key] = true;
+      }
+    }
+    return keys;
+  }
+
+  // One look per layer -> {bt, adapter, ecu}. The page applies no threshold:
+  // a member's layer is amber whatever its state, everything else is the
+  // lookup above.
+  function linkChainGlyph(data) {
+    var link = isObj(data) && isObj(data.link) ? data.link : {};
+    var members = verdictMemberKeys(data);
+    var looks = {};
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var layer = LINK_CHAIN_LAYERS[i];
+      var block = link[layer];
+      var state = isObj(block) ? block.state : null;
+      if (LINK_MEMBER_LAYERS.indexOf(layer) !== -1 && members[layer] === true) {
+        looks[layer] = "amber";
+      } else if (typeof state === "string"
+                 && Object.prototype.hasOwnProperty.call(LINK_STATE_LOOK, state)) {
+        looks[layer] = LINK_STATE_LOOK[state];
+      } else {
+        looks[layer] = "hollow";
+      }
+    }
+    return looks;
   }
   function syncGlyphState(s) {
     if (!isObj(s)) return "neutral";
@@ -1236,7 +1287,8 @@
       drill: systemDrill(tiles, data),
       tiles: tiles,
       glyphs: {
-        bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
+        // US-894-a: the link chain ignores source.obd (s4.2.1).
+        bt: linkChainGlyph(data),
         sync: syncGlyphState(data.sync),
         wifi: wifiGlyphState(data),
       },
@@ -5344,7 +5396,10 @@
     syncTile: syncTile,
     powerTile: powerTile,
     driveTile: driveTile,
-    btGlyphState: btGlyphState,
+    linkChainGlyph: linkChainGlyph,
+    LINK_CHAIN_LAYERS: LINK_CHAIN_LAYERS,
+    LINK_STATE_LOOK: LINK_STATE_LOOK,
+    LINK_MEMBER_LAYERS: LINK_MEMBER_LAYERS,
     syncGlyphState: syncGlyphState,
     systemSummary: systemSummary,
     sysRowFreshness: sysRowFreshness,
@@ -5586,7 +5641,7 @@
         if (view.tiles.capture) appendTile(grid, view.tiles.capture, true);
         body.appendChild(grid);
       }
-      if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
+      paintLinkChain(glyphEls.bt, view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
       // ARCH-007: render the emitter's verdict. The display applies NO
       // threshold of its own (ruling s2.1) -- two rules for one fact disagree
@@ -5702,10 +5757,25 @@
       if (el) el.hidden = true;
     }
 
+    // US-894-a: each `.chain-dot` in #glyph-bt carries its own data-state, keyed
+    // by its data-layer. A dot the view has no look for falls to hollow rather
+    // than keeping a previous paint (no stale-green).
+    function paintLinkChain(chainEl, looks) {
+      if (!chainEl) return;
+      var dots = chainEl.querySelectorAll(".chain-dot");
+      for (var i = 0; i < dots.length; i++) {
+        var layer = dots[i].getAttribute("data-layer");
+        var look = isObj(looks) && typeof looks[layer] === "string" ? looks[layer] : "hollow";
+        dots[i].setAttribute("data-state", look);
+      }
+    }
+
     // Honest-instrument reset: a missing/malformed system-status file returns the
     // glyphs to neutral so a prior good read can't linger green (no stale-green).
+    // US-894-a: the chain resets to three HOLLOW dots -- an unreadable file is
+    // no reading of any layer (spec s4.2.1, AC 4).
     function resetSystemGlyphs(glyphEls) {
-      if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
+      paintLinkChain(glyphEls.bt, linkChainGlyph(null));
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
       if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", "neutral");
     }

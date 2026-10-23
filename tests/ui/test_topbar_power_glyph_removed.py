@@ -16,7 +16,7 @@
 #   equally true of a top bar that failed to render at all, of a carousel.js that
 #   threw on load, and of a `glyphs` block someone removed wholesale. Every
 #   absence asserted below is therefore read in the SAME pass as the siblings
-#   that must survive it -- BT, sync and WiFi in the markup; `btGlyphState` /
+#   that must survive it -- BT, sync and WiFi in the markup; `linkChainGlyph` /
 #   `syncGlyphState` / `wifiGlyphState` in the source; the other three keys in
 #   the view. That is this office's standing lesson (US-638): an absence measured
 #   on a surface that did not render is not a measurement.
@@ -56,6 +56,8 @@
 #               |              | that the sensed source outlived its display.
 # 2026-09-10    | Ralph (Rex)  | US-720 -- band-budget note amended to the
 #               |              | measured-advance finding (comment only).
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): btGlyphState retired for
+#               |              | linkChainGlyph; glyphs.bt is the chain object.
 # ================================================================================
 ################################################################################
 
@@ -115,7 +117,9 @@ SURVIVING_GLYPH_IDS = ("glyph-bt", "glyph-sync", "glyph-wifi")
 
 # The state functions that MUST outlive `powerGlyphState`. Same purpose: a
 # truncated or unreadable carousel.js cannot satisfy the removal by accident.
-SURVIVING_GLYPH_FNS = ("btGlyphState", "syncGlyphState", "wifiGlyphState")
+# MOVED PIN (US-894-a): btGlyphState retired; the BT slot's state function is
+# the link chain's.
+SURVIVING_GLYPH_FNS = ("linkChainGlyph", "syncGlyphState", "wifiGlyphState")
 
 _NOW = "2026-09-10T14:20:00Z"
 
@@ -269,10 +273,12 @@ def test_glyphView_carriesTheOtherThreeStates_andNoPowerKey():
     satisfied by returning `{}`, which would blank the whole bar and is the
     single most likely way to over-delete here.
     """
-    view = _view("systemStatusView", _systemStatus())
+    # MOVED PIN (US-894-a): glyphs.bt is the link chain, read from `link`.
+    up = {"state": "up", "ts": _NOW, "lastOkTs": _NOW}
+    view = _view("systemStatusView", _systemStatus(link={"bt": up, "adapter": up, "ecu": up}))
 
     assert sorted(view["glyphs"]) == ["bt", "sync", "wifi"]
-    assert view["glyphs"]["bt"] == "ok"
+    assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
     assert view["glyphs"]["sync"] == "ok"
 
 

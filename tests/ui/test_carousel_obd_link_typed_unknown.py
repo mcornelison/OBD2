@@ -76,6 +76,8 @@
 #               |              | the never-connected reason ("OBD: off" ->
 #               |              | "never connected", Atlas's reversal of this
 #               |              | file's own recorded call).
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): #glyph-bt is the link
+#               |              | chain; an unread chain is three hollow dots.
 # ================================================================================
 ################################################################################
 
@@ -271,12 +273,20 @@ def _obdTile(payload: Any) -> dict:
     }
 
 
-def _btGlyph(payload: Any) -> str:
+def _chain(payload: Any) -> dict[str, str]:
+    """MOVED PIN (US-894-a): #glyph-bt is the link chain -> {layer: data-state}."""
     surface = _surface(payload)
     path = surface.pathById("glyph-bt")
     assert path is not None, "no #glyph-bt in the rendered DOM"
     assert surface.rendered(path), "#glyph-bt is in the DOM but not displayed"
-    return path[-1].get("attrs", {}).get("data-state")
+    dots = surface.pathsByClass("chain-dot")
+    assert len(dots) == 3, f"the chain paints {len(dots)} dots, not 3"
+    return {
+        dot[-1]["attrs"]["data-layer"]: dot[-1]["attrs"].get("data-state") for dot in dots
+    }
+
+
+_HOLLOW = {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
 
 
 _needsNode = pytest.mark.skipif(
@@ -737,18 +747,21 @@ def test_aLiveCarStillPaintsTheLink_soTheAbsencesAboveAreNotUnconditional(tmp_pa
 
 
 @_needsNode
-def test_anUnreadableLinkGlyphIsNeutral_neverDown(tmp_path):
+def test_anUnreadableLinkChainIsHollow_neverDown(tmp_path):
     """
     Given: the unreadable-status payload
-    When: the BT glyph is read off the rendered panel
-    Then: it is neutral.
+    When: the top-bar link chain is read off the rendered panel
+    Then: all three dots are hollow (not read), never the `down` look.
+
+          MOVED PIN (US-894-a): this pinned the single BT glyph `neutral`; the
+          chain's "not read" look is hollow (spec s4.2.1, ARCH-062).
 
           "We could not look" is not "no signal". The colour is unchanged by this
           story -- deliberately: the fix is to the WORD, and pinning the glyph
           here is what proves the word changed without the colour drifting with
           it.
     """
-    assert _btGlyph(_emit(tmp_path, connection=_raisingConnection())) == "neutral"
+    assert _chain(_emit(tmp_path, connection=_raisingConnection())) == _HOLLOW
 
 
 # ---------------------------------------------------------------------------
@@ -804,11 +817,15 @@ def test_oneUnlinkedCarNowPublishesONEAvailabilityAcrossTheRetryCycle(tmp_path):
 
 
 @_needsNode
-def test_thatFlapNoLongerReachesTheGlyph_bothSamplesReadNeutral(tmp_path):
+def test_thatFlapNoLongerReachesTheTopBar_bothSamplesReadTheSameChain(tmp_path):
     """
     Given: the two payloads above
     When: the SHIPPED panel renders each
-    Then: the BT glyph reads neutral on BOTH.
+    Then: the top-bar chain reads the same on BOTH (hollow: no layer read).
+
+          MOVED PIN (US-894-a): this pinned the BT glyph neutral on both. The
+          chain does not read obdLink or source.obd at all, so the retry phase
+          cannot reach the top bar; it shows what `link` publishes.
 
           🔴 RE-RECORDED. This previously asserted amber then neutral -- the
           strobe, on the rendered panel, from the real producer.
@@ -831,5 +848,5 @@ def test_thatFlapNoLongerReachesTheGlyph_bothSamplesReadNeutral(tmp_path):
         tmp_path / "disconnected",
         connection=_connection(state="disconnected", retryCount=1, totalConnections=0),
     )
-    assert _btGlyph(connecting) == "neutral"
-    assert _btGlyph(disconnected) == "neutral"
+    assert _chain(connecting) == _HOLLOW
+    assert _chain(disconnected) == _HOLLOW

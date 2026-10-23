@@ -268,6 +268,22 @@ html, body {
   fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round;
 }
 #glyph-wifi .wifi-mark circle { fill: currentColor; stroke: none; }
+/* US-894-a (spec s4.2.1): the three-layer link chain BT -> ADAPTER -> ECU in the
+   BT slot. A 3ch x 1em SVG (letter-spacing does not reach it, so 3ch is exact);
+   each dot paints its own data-state through currentColor. Amber is a verdict
+   MEMBER's layer only (s4.0); `hollow` is a layer not read -- a ring, never the
+   solid `down` look (ARCH-062). The joining lines stay --text-secondary. */
+#glyph-bt .chain-mark {
+  width: 3ch; height: 1em; vertical-align: -0.1em;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
+}
+#glyph-bt .chain-dot { fill: currentColor; stroke: currentColor; color: var(--text-secondary); }
+#glyph-bt .chain-dot[data-state="ok"]        { color: var(--green-ok); }
+#glyph-bt .chain-dot[data-state="neutral"]   { color: var(--text-secondary); }
+#glyph-bt .chain-dot[data-state="secondary"] { color: var(--text-secondary); }
+#glyph-bt .chain-dot[data-state="tertiary"]  { color: var(--text-tertiary); }
+#glyph-bt .chain-dot[data-state="amber"]     { color: var(--amber-warn); }
+#glyph-bt .chain-dot[data-state="hollow"]    { fill: none; color: var(--text-tertiary); }
 /* US-898-a (F-127; specs/v030-warnings-page-design.md s4.2): the warnings icon.
    A FIXED three-character slot -- `▲99` is the widest content, 3 x (1ch +
    --glyph-ls) -- so the cluster never reflows as the count changes; min-width

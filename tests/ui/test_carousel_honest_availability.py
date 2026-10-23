@@ -25,6 +25,8 @@
 #               |              | active is the NOT CHECKED header + empty state.
 # 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-899-a2): takeoverView/ribbonView
 #               |              | cases retired with the deleted functions.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): glyphs.bt is the link
+#               |              | chain {bt, adapter, ecu}.
 # ================================================================================
 ################################################################################
 
@@ -90,7 +92,9 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
     assert view["tiles"]["obdLink"]["value"] == "NA"
     assert view["tiles"]["obdLink"]["detail"] == "OBD: off"
     assert view["tiles"]["obdLink"]["level"] == "unavailable"
-    assert view["glyphs"]["bt"] == "neutral"
+    # MOVED PIN (US-894-a): glyphs.bt is the link chain, read from `link` and
+    # never forced by source.obd; no link published -> three hollow dots.
+    assert view["glyphs"]["bt"] == {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
     # US-668: the power tile renders the SENSED source now, not the removed
     # operator-declared mode. The point of the assertion is unchanged -- one
     # source going unavailable must not disturb another.
@@ -103,6 +107,8 @@ def test_systemStatusView_obdAvailable_rendersRealLink():
         "systemStatusView",
         {
             "obdLink": {"state": "linked", "retries": 0},
+            # MOVED PIN (US-894-a): the chain reads the layers, not obdLink.
+            "link": {"bt": {"state": "up"}, "adapter": {"state": "up"}, "ecu": {"state": "up"}},
             "sync": {"lastOkTs": None, "rows": 0, "pending": 0, "stale": False},
             "power": {"mode": "car", "source": "external"},
             "drive": {"state": "idle", "driveId": None},
@@ -111,7 +117,7 @@ def test_systemStatusView_obdAvailable_rendersRealLink():
         },
     )
     assert view["tiles"]["obdLink"]["value"] == "LINKED"
-    assert view["glyphs"]["bt"] == "ok"
+    assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
 
 
 # ---------------------------------------------------------------------------
