@@ -244,10 +244,12 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   var R = {
     btRetry: "Link dropped. Retrying.", btDown: "Not linked. Check the OBD dongle.",
     adapter: "Bluetooth up; adapter not answering.", capture: "OBD feed stalled.", captureUps: "UPS feed stalled.", wifi: "WiFi couldn't be read.",
-    piCpu: "CPU 80.2 °C, limit 80 °C.", piMulti: "Over limit: CPU temp, throttling, disk."
+    piCpu: "CPU 80.2 °C, limit 80 °C.", piMulti: "Over limit: CPU temp, throttling, disk.",
+    // S113 `sensor` members (UIDEV-014): one per faulted feed, each carrying `feed`.
+    sensorImuAbsent: "IMU sensor not found.", sensorLightAbsent: "Light sensor not found.", sensorUpsRead: "UPS gauge read failed."
   };
   function L(state, sinceAgo, lastOkAgo) { return { state: state, ts: sinceAgo == null ? null : iso(sinceAgo), lastOkTs: lastOkAgo == null ? null : iso(lastOkAgo) }; }
-  function M(key, reason) { return { key: key, reason: reason }; }
+  function M(key, reason, feed) { var m = { key: key, reason: reason }; if (feed) m.feed = feed; return m; }
   function V(members) { return { issueCount: members.length, members: members }; }
   var FEEDS_IDLE = [["OBD", "idle", 95], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "writing", 5]];
   var FEEDS_REC = [["OBD", "writing", 2], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "writing", 5]];
@@ -288,6 +290,11 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     // A4 VC 2: top-level ok, the UPS feed stalled, ECU up => stalled, 1 member.
     "capture-ups-feed-stalled": sc({ verdict: V([M("capture", R.captureUps)]), link: { bt: L("up", 21 * MIN, SEC), adapter: L("up", 21 * MIN, SEC), ecu: L("up", 20 * MIN, SEC) },
       capture: { state: "ok", reason: null, lastRowSecondsAgo: 2, feeds: [["OBD", "writing", 2], ["LIGHT", "writing", 1], ["IMU", "writing", 1], ["UPS", "stalled", 140]] } }),
+    // S113 (UIDEV-014): a faulted feed is a `sensor` member; the DATA value stays `recording`, never `stalled`.
+    "sensor-imu-absent": sc({ verdict: V([M("sensor", R.sensorImuAbsent, "imu")]), link: { bt: L("up", 21 * MIN, SEC), adapter: L("up", 21 * MIN, SEC), ecu: L("up", 20 * MIN, SEC) },
+      capture: { state: "recording", feeds: [["OBD", "writing", 2], ["LIGHT", "writing", 1], ["IMU", "faulted", null], ["UPS", "writing", 5]] } }),
+    "sensor-two-faults": sc({ verdict: V([M("sensor", R.sensorLightAbsent, "light"), M("sensor", R.sensorUpsRead, "ups")]), link: { bt: L("up", 21 * MIN, SEC), adapter: L("up", 21 * MIN, SEC), ecu: L("up", 20 * MIN, SEC) },
+      capture: { state: "recording", feeds: [["OBD", "writing", 2], ["LIGHT", "faulted", null], ["IMU", "writing", 1], ["UPS", "faulted", 40]] } }),
     "away-from-home": sc({ sync: { lastOkTs: iso(3 * H), rowsWaiting: 3880, edrRowsWaiting: 0, notCounted: [], stale: true },
       wifi: { state: "weak", ssid: "Starbucks", rssiDbm: -79, home: false } }),
     "rows-not-counted": sc({ sync: { lastOkTs: iso(25 * MIN), rowsWaiting: 12345, edrRowsWaiting: 1, notCounted: ["battery_health_log", "startup_log"], stale: false } }),
@@ -354,7 +361,8 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
   function clockText() { return fmtTimeOfDay(new Date(), false).replace(/ [AP]M$/, ""); }
   function member(d, key) { if (!d.verdict) return null; for (var i = 0; i < d.verdict.members.length; i++) if (d.verdict.members[i].key === key) return d.verdict.members[i]; return null; }
   // every amber element names its member: the amber set must equal the member set (AC 7)
-  function amb(key) { return ' data-m="' + key + '"'; }
+  function amb(key, feed) { return ' data-m="' + key + '"' + (feed ? ' data-feed="' + feed + '"' : ""); }
+  function membersOf(d, key) { return d.verdict ? d.verdict.members.filter(function (m) { return m.key === key; }) : []; }
 
   // ---- OBD chain ----
   function layerLook(d, layerKey) {
@@ -432,13 +440,17 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     else { cls = "c-off"; val = "--"; }
     var valHTML = '<span class="' + cls + '"' + (mCap ? amb("capture") : "") + ">" + val + '</span><span class="c-neu"> · ' + syncWhen(d.sync.lastOkTs) + "</span>";
     if (mCap) parts.push('<span class="c-warn"' + amb("capture") + ">" + esc(mCap.reason) + "</span>");
+    // S113: every `sensor` member's reason, one amber span each, in FEED_NAMES order; they never change the value.
+    var sens = membersOf(d, "sensor");
+    if (sens.length) parts.push(sens.map(function (m) { return '<span class="c-warn"' + amb("sensor", m.feed) + ">" + esc(m.reason) + "</span>"; }).join(" "));
+    if (mCap) { /* the capture reason already spoke */ }
     else if (c === "nomember") {
       // A4: a cause is named only from the fact that carries it.
       if (ecuSilent) parts.push("ECU not answering");
       else if (cap.reason === "never_written") parts.push("no row logged this session");
       else if (cap.lastRowSecondsAgo != null) parts.push("last row " + agoText(iso(cap.lastRowSecondsAgo * SEC)));
     }
-    else if (c === "recording") parts.push("all 4 feeds writing");
+    else if (c === "recording") { if (!sens.length) parts.push("all 4 feeds writing"); }
     else if (c === "idle") parts.push("not driving");
     else parts.push("capture not read yet");
     if (d.wifi.home === false) parts.push("away from home");
@@ -522,6 +534,12 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
     } else if (view === "data") {
       out += '<div class="sec">FEEDS</div><div class="feeds">' + d.capture.feeds.map(function (f) {
         var m = f[1] === "stalled" && member(d, "capture") ? "capture" : null;
+        if (f[1] === "faulted") {
+          // S113: the feed's own `sensor` member speaks on its line.
+          var sm = membersOf(d, "sensor").filter(function (x) { return x.feed === f[0].toLowerCase(); })[0];
+          return '<div class="kv"><span class="kk">' + f[0] + '</span><span class="kvv c-warn"' + (sm ? amb("sensor", sm.feed) : "") + ">" +
+            esc(sm ? sm.reason : "fault") + '</span><span class="ks">last row ' + (freshAgo(f[2]) || "--") + "</span></div>";
+        }
         var cls = f[1] === "writing" ? "c-ok" : f[1] === "stalled" ? (m ? "c-warn" : "c-neu") : f[1] === "idle" ? "c-neu" : "c-off";
         return kv(f[0], f[1] || "--", "last row " + (freshAgo(f[2]) || "--"), cls, m);
       }).join("") + "</div>";
@@ -714,6 +732,9 @@ code { font-family: var(--font-mono); font-size: .92em; color: var(--ink); }
       F("capture-never-written-ecu-up", "Cold boot, ECU up, no feed stalled: <code>no rows</code>, <code>no row logged this session</code>, 0 members, no ECU words (A4 VC 1).", "capture-never-written-ecu-up"),
       F("capture-ups-feed-stalled", "Top-level ok, UPS feed stalled: <code>stalled</code> amber, <code>UPS feed stalled.</code>, 1 member (A4 VC 2). The detail marks the UPS feed.", "capture-ups-feed-stalled"),
       F("capture-ups-feed-stalled, detail", "The member's amber sits on the feed that stalled.", "capture-ups-feed-stalled", "data"),
+      F("sensor-imu-absent", "S113 <code>sensor</code> member: <code>1 ISSUE</code>, DATA still <code>recording</code>, sentence <code>IMU sensor not found.</code> in amber, no <code>all 4 feeds writing</code>.", "sensor-imu-absent"),
+      F("sensor-two-faults", "Two <code>sensor</code> members: <code>2 ISSUES</code>, two amber spans <code>Light sensor not found. UPS gauge read failed.</code>, each with its own <code>data-feed</code>.", "sensor-two-faults"),
+      F("sensor-two-faults, detail", "Each faulted feed's line carries its member's reason in amber.", "sensor-two-faults", "data"),
       F("away-from-home", "Another network, weak, away: neutral and uncounted. <code>away from home · 3,880 rows waiting</code>.", "away-from-home"),
       F("rows-not-counted", "<code>12,345+ rows waiting</code>: the <code>+</code> sits on the number, so an ellipsis can't hide it.", "rows-not-counted"),
       F("rows-not-counted, detail", "The uncounted tables by name, never folded into the count; the last sync as a full stamp.", "rows-not-counted", "data", { scroll: 999 }),

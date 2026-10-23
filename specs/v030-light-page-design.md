@@ -65,11 +65,14 @@
 | Condition | Word | AMBIENT | Reason |
 |---|---|---|---|
 | no `states/light` payload (file absent or fetch fails) | `--` (no glyph) | `--` | `no light data` (117.4 px) |
+| `reasons.lux` = `sensor_absent` (S113, US-869-a: the bridge saw presence ABSENT; Atlas A1) | `--` (no glyph) | `--` | `sensor not found` (144.5 px) |
 | `ts` null or unparseable | as published, dimmed | as published, dimmed | `no timestamp` (108.4 px), in place of the age |
 | `reasons.lux` = `at_limit` (`channelAtLimit` true, `lux` null) | `--` (no glyph) | `--` | `sensor at limit` (135.5 px) |
 | `reasons.lux` = `no_reading`, or an unknown code | `--` (no glyph) | `--` | `no reading` (90.3 px) |
 
-- Retired: `from a limited channel` (the provider never publishes a lux from a limited channel) and `sensor not found` (the page can only see that the file is missing, not that the sensor is).
+- **`sensor_absent` is checked first** among the `reasons.lux` codes: a missing sensor explains every other absence. Same words as the boot checklist and the System page's `sensor` member (`Light sensor not found.`), one meaning on three surfaces.
+- Retired: `from a limited channel` (the provider never publishes a lux from a limited channel).
+- **`sensor not found` is back (UIDEV-014, 2026-10-23).** It was retired because the page could only see that the file was missing, not that the sensor was. From S113 the provider says so itself (`reasons.lux` = `sensor_absent`, written on presence ABSENT even with no sample ever), so the words now name a published fact. A missing **file** still reads `no light data`.
 
 ### 4.2 Curve
 - Drawn from **provider curve data, never page maths:** `states/light.curve {points: [[lux, level], ...], luxMin, luxFull, minLevel}`. Points come from the bridge's own `brightnessLevel()` on a log grid (`0.3 × 10^(i/10)`, i = 0..50) plus the exact breakpoints `luxMin`, the knee and `luxFull`, sorted, with a grid point within relative 1e-9 of a breakpoint dropped so the exact config values are published (Atlas A4: 51 points with the shipped config).
@@ -117,6 +120,7 @@
 | gain, integration ms | `states/light.gain` (`low` / `med` / `high` / `max`) / `integrationMs` | exist | — |
 | channel at limit | `states/light.channelAtLimit` (bool or null, the OR of the two) **+ `atLimit {ir, full}`** (bool or null each) | **built** (US-893-a) | — |
 | lux reason | `states/light.reasons.lux` = `at_limit` / `no_reading`, present only when `lux` is null | **built** (US-893-a) | — |
+| sensor absent | `states/light.reasons.lux` = `sensor_absent` + top-level `unavailableReason` `sensor_absent`, written on presence ABSENT (the IMU bridge's shape) | **S113 US-869-a** (Atlas A1) | Ralph |
 | word | `states/light.lightBand` | **built** (US-893-a) | — |
 | brightness level + mode | `states/light.brightnessLevel` + `brightnessMode` (`auto` / `default`). The bridge publishes the auto level; `appliedBrightness` is the one applier | **built** (US-893-a) | — |
 | fixed level | `fixed` is an **applied basis only** (`appliedBrightness` → `{overrideLevel, 'fixed'}`, after STOP, before the bridge level). The value comes **only** from the per-request settings blob: **states/light gains no key, and the bridge is untouched** (Atlas B4, S110 US-878-c). Do not add a `fixed` mode to the bridge | S110 | Ralph |
@@ -137,9 +141,10 @@
 10. **DoD (R15): CIO judgement in the car, day and night.**
 11. Status text: a no-reading or stale fixture ⇒ `BRIGHTNESS nn % (default, no reading)`, never `AUTO`; STOP-forced ⇒ `BRIGHTNESS 100 % (alert)`. No status variant clips.
 12. VISIBLE null ⇒ `--`, never `0`.
+13. **`sensor-absent` fixture** (built by the real bridge on presence ABSENT, no sample ever): word `--`, AMBIENT `--`, reason `sensor not found`. A payload carrying both `sensor_absent` and `at_limit`/`no_reading` shows `sensor not found` (checked first). `LIGHT_REASON_TEXT` gains the one key.
 
 ## 7. Fixtures
-As built in S105 (`tests/ui/fixtures/states/light/`): `night-0.6lux` · `dusk-22lux` · `day-1400lux` · `sun-at-limit` · `light-stale` · `light-null` (mode `default`) · `stop-override` (was `stop-alert-forced` here) · `dot-off-curve` · `config-retuned-boundaries`. **`dot-off-curve`** = a file built by `buildLightState` (lux 22, level 0.75, ts T) read at `nowMs = T + luxStaleSec + 1` with an injected `defaultLevel` 1.0 ⇒ dot y 1.0, dimmed, with the age: the provider writes the file, the clock makes it stale. Waiting for F-126: `override-60` · `parked-shortcut`.
+As built in S105 (`tests/ui/fixtures/states/light/`): `night-0.6lux` · `dusk-22lux` · `day-1400lux` · `sun-at-limit` · `light-stale` · `light-null` (mode `default`) · `stop-override` (was `stop-alert-forced` here) · `dot-off-curve` · `config-retuned-boundaries` · **`sensor-absent`** (S113, AC 13). **`dot-off-curve`** = a file built by `buildLightState` (lux 22, level 0.75, ts T) read at `nowMs = T + luxStaleSec + 1` with an injected `defaultLevel` 1.0 ⇒ dot y 1.0, dimmed, with the age: the provider writes the file, the clock makes it stale. Waiting for F-126: `override-60` · `parked-shortcut`.
 
 ## 8. Out of scope
 Editing the curve on this page (F-126 holds settings) · colour temperature / night-mode palette (not requested) · auto-dim re-tuning itself (a separate measurement task this page enables).
