@@ -15,9 +15,9 @@
 |---|---|---|
 | Hand-off by `plymouth quit --retain-splash`, kiosk unit `After=` plymouth-quit | **lightdm quits Plymouth itself** (`Conflicts=` + `After=plymouth-quit.service`) | ADR 2026-08-30 §11.3 (design A, 10-16): the compositor unit that carried `--retain-splash` was retired |
 | "Phase 1 starts on `boot-state.healthy`" | Phase 1 starts at the **splash page's first painted logo**; `healthy` gates the hand-off | The shipped splash (US-393/525) starts before `healthy` and is the thing that polls for it |
-| Ready = OBD sample, **or** IMU + LIGHT + UPS ready and the ceiling passed | Ready = **every feed ready, or the ceiling passed**; a feed missing at the ceiling reads `waiting` | Atlas O5: a late UPS (362 s, wall boot 10-22) would hold the splash for 6 min |
-| `handoffCeilingSec` null until the baseline | **A number, never null**, on the uptime clock. Interim **75 s**, pending the CIO | Atlas O5: null read literally loops spin 2 forever and hides the dashboard |
-| Checklist ticks `✓`; label `OBD · waiting for ECU` | The words in §1.3: `ready` / `starting` / `waiting for <layer>` | The Michroma subset has no `✓` and no `·`; the cause comes from the link chain (Atlas A4: name a cause only from the fact that carries it) |
+| Ready = OBD sample, **or** IMU + LIGHT + UPS ready and the ceiling passed | Ready = **IMU, LIGHT and UPS each FINISHED** (ready **or** faulted). **OBD never holds the hand-off.** **No timer, no ceiling** | **CIO ruled 2026-10-23 (R1/R2):** *"there should [not] be any code that puts in any "sleep" or wait commands … each step can proceed when the prior step is finished."* Supersedes Atlas O5's 75 s and the 10-23 morning draft |
+| `handoffCeilingSec` null until the baseline | **The key does not exist.** No uptime threshold either | CIO R1/R2 |
+| Checklist ticks `✓`; label `OBD · waiting for ECU` | The words in §1.3: `ready` / `waiting` / `waiting for <layer>` / the fault words | The Michroma subset has no `✓` and no `·`; the cause comes from the link chain (Atlas A4: name a cause only from the fact that carries it) |
 | `confirmed` = rows the server confirmed | `confirmed` from the **acked sync marks**, never summed `storedCount` | Atlas O3/O6: a re-send (US-871) would over-count |
 | Away / at home / stall: 3 labels | One label per sync outcome (§2.2), keyed to `OutcomeKind` | The shipped drain ends in 8 ways (`power_watch/contract.py`), not 3 |
 | Warning text in mixed case with full stops | `KEEP YOUR EYES / ON THE ROAD`, `DO NOT OPERATE / THIS DISPLAY / WHILE DRIVING` | Same words, set in the shipped 38-glyph Michroma subset (A–Z, 0–9, space, hyphen) |
@@ -34,7 +34,7 @@
 | **0b · Splash page loads** | `splash-boot` first frame | **The same WARNING image** (the page shows the same PNG), until the logo has painted, then a 0.5 s cross-fade |
 | **1 · Our software starts** | splash page | **Spin 1: exactly one rotation, dimmest** |
 | **2 · Our code boots** | services, OBD connect, sensors | **Spin 2: brighter, loops**, + the **4-feed checklist** `OBD · IMU · LIGHT · UPS` (§1.3) |
-| **3 · Ready** | every feed ready, **or** the ceiling passed; and `boot-state.healthy` | **Spin 3: brightest, one rotation**, then the **Driving page** |
+| **3 · Ready** | IMU, LIGHT and UPS each **finished** (ready or faulted), and `boot-state.healthy` | **Spin 3: brightest, one rotation**, then the **Driving page**, with OBD still `waiting…` if it is silent |
 
 ### 1.1 Rules
 - **No touch at any point** (R5): the warning has **no OK button** (the Pioneer reference's button is dropped).
@@ -55,11 +55,14 @@
 
   ⚠️ The shipped `splash.svg` is a **fixed 6.5 s timeline** inside an `<object>`. The page can neither hold spin 2 nor start spin 3 on a signal, so the spins must become page-driven (a build note for Ralph, not a design change).
 - **Checklist ticks come from real readiness signals**: each feed's **first live sample this eclipse-obd process**, `capture-health.feeds.<feed>.firstSampleTs` (US-873, shipped; Atlas O4: no splash reads it yet, US-869 is the first consumer). Never a timer, never a database row (DoD 11). A process restart re-arms it, so the checklist can honestly run again.
-- **The ceiling** (Atlas O5): key **`pi.display.boot.handoffCeilingSec`**, measured on the **uptime clock** (seconds since kernel start), the same clock as the `boot_milestone` first-sample milestones.
-  - **A number, never null**, in the shipped validator. **Interim 75 s**, pending the CIO (§7). MEASURED on the current stack (4 car-power boots, 10-22): IMU/LIGHT/UPS ready at 42–49 s, OBD at 53–56 s.
-  - At the ceiling, every feed without a first sample reads `waiting…` (§1.3), and spin 3 still plays. **Spin 3 means "the software is ready", not "everything is connected."** The dashboard opens and fills in as each feed arrives.
-  - An early hand-off shows `waiting` for a few seconds; a late one hides the dashboard. The ceiling errs early on purpose.
-- **Degraded** (shipped F-103, unchanged in behaviour): `boot-state.degraded` freezes the logo, shows the amber ring, and prints the emitter's `degradedReason` verbatim (`<service>: failed to start`, `dashboard assets not installed`, `<service>: not ready (<state>)`, `boot did not reach healthy state`, or the page's own `boot-progress instrument not reporting`). It persists until reboot. **Degraded is about `healthy` only:** a feed missing at the ceiling is never degraded.
+- **The hand-off is event-driven. There is no timer and no ceiling** (CIO 2026-10-23, R1/R2, verbatim: *"No wait. there should [not] be any code that puts in any "sleep" or wait commands. The boot sequence should follow the sequence I have designed before. each step can proceed when the prior step is finished. therefore getting to the dashboard should be as quick as possible given the sequence I have defined"*).
+  - **A feed is FINISHED when it reports ready (its `firstSampleTs` is non-null) or reports a fault** (sensor missing, read failed). Either one ends that step. A feed that is silent and not faulted is **not** finished: it reads `waiting` and holds the hand-off.
+  - **Spin 3 starts when IMU, LIGHT and UPS are all finished** (and `boot-state.healthy`). **OBD is never waited for** (R1): if it is silent (key in ACC, a link fault), the dashboard opens with `OBD` reading `waiting for ECU` (or the layer the chain names, §1.3), and its values fill in when it answers.
+  - **Spin 3 means "the software is ready", not "everything is connected."**
+  - MEASURED on the current stack (Atlas O5, 4 car-power boots, 10-22): IMU/LIGHT/UPS ready at 42–49 s, OBD at 53–56 s. So on a normal car boot the rule opens the dashboard about 6 s **before** OBD's first sample, with OBD reading `waiting for ECU` for those seconds. That is the CIO's sequence, as fast as it allows.
+  - ⚠️ **R2 holds only if each feed publishes its fault.** `capture-health.feeds.<feed>.state` today reads `unknown` for "no sample yet", and has no fault value (`capture_health.py` :296-335). Until IMU, LIGHT and UPS each publish a terminal fault that the page can read, a dead sensor holds the splash for good: the 10-22 wall boot with UPS ready only at 362 s would have held it for 6 minutes. **Atlas names the fault field per feed, or the gap becomes S114 work** (PM ask (a)). No timer is the fallback.
+- **Degraded** (shipped F-103, unchanged in behaviour): `boot-state.degraded` freezes the logo, shows the amber ring, and prints the emitter's `degradedReason` verbatim (`<service>: failed to start`, `dashboard assets not installed`, `<service>: not ready (<state>)`, `boot did not reach healthy state`, or the page's own `boot-progress instrument not reporting`). It persists until reboot. **Degraded is about `healthy` only:** a feed that is `waiting` or faulted is never degraded.
+  - ⚠️ The shipped degraded path is itself on timers: the page's `HARD_CAP_MS` (12 s) and the emitter's `hardCapSeconds` turn "not healthy yet" into degraded, and `MIN_PLAY_MS` (2.5 s) holds the yield. Under the CIO's rule these are waits. **Atlas rules whether they go**, with the shutdown `BLACK_TAIL_CAP` (PM ask (c)). The spin rotations are not waits: they are the CIO's own sequence (spin 1 always one rotation).
 - `prefers-reduced-motion`: the spins become brightness steps without rotation, at the same moments.
 
 ### 1.2 The WARNING image (phase 0 and 0b)
@@ -95,17 +98,20 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 
 | Word | Colour | When |
 |---|---|---|
-| `ready` | `--green-ok` | the feed's `firstSampleTs` is non-null |
-| `starting` | `--text-secondary` | no first sample, ceiling not passed |
-| `waiting for Bluetooth` | `--text-secondary` | **OBD only**, ceiling passed, no first sample: `link.bt` is not `up` |
+| `ready` | `--green-ok` | the feed's `firstSampleTs` is non-null. **Finished** |
+| `sensor not found` | `--amber-warn` | **IMU, LIGHT, UPS:** the feed's fault says the sensor is missing. **Finished** |
+| `read failed` | `--amber-warn` | … the fault says a read failed. **Finished** |
+| `fault` | `--amber-warn` | … any other fault token (it still finishes the step; no literal twins: the page keys on the fault field Atlas names) |
+| `waiting` | `--text-secondary` | no first sample and no fault. **Not finished** (IMU/LIGHT/UPS hold the hand-off). Also OBD while its link chain is unread |
+| `waiting for Bluetooth` | `--text-secondary` | **OBD only**, no first sample: `link.bt` is not `up` |
 | `waiting for adapter` | `--text-secondary` | … `link.bt` up, `link.adapter` not `up` |
 | `waiting for ECU` | `--text-secondary` | … `link.bt` and `link.adapter` up, `link.ecu` not `up` |
-| `waiting` | `--text-secondary` | ceiling passed, no first sample: **IMU, LIGHT, UPS** (no cause is published for them), or OBD with the link layer that should name the cause `null` or unread |
 | `not read` | `--text-tertiary` | `capture-health` or its `feeds` block missing or unreadable |
 
 - **The OBD cause is the first link layer that isn't `up`**, read from `system-status.link.{bt, adapter, ecu}` (the System page's chain, ARCH-061), never guessed. Key in ACC: BT and adapter up, ECU silent ⇒ `waiting for ECU`, matching the dashboard's link chain grey at ECU.
-- **`waiting`, never `failed`, and never amber:** the ceiling is a wait limit, not a fault test. A key in ACC is normal. Faults belong to the System page, which opens next.
-- **No promise words** (no `yet`, no `soon`): `starting` and `waiting` describe the software, and promise nothing about the car.
+- **`waiting` is never amber:** a silent feed is not a fault, and a key in ACC is normal. **Amber only for a fault the feed itself published** (R2), the same fact the System page counts. The OBD link words stay grey: the dashboard's link chain owns the OBD fault.
+- **`not read` finishes nothing:** with no `capture-health` the page cannot know any feed finished, so it holds. That is a gap for Atlas's (a), not a reason for a timer.
+- **No promise words** (no `yet`, no `soon`): `waiting` describes the software, and promises nothing about the car.
 - The wordmark `ECLIPSE OBD-II` (Michroma `--fs-label`, `--text-secondary`) and the version chip (`--font-mono` `--fs-meta`, `--text-tertiary`) stay, as shipped.
 
 ## 2. Shutdown sequence (CIO)
@@ -174,8 +180,8 @@ The label is two lines in `--font-mono`: **line 1** `--fs-label` `--text-primary
 | `boot-state.{healthy, degraded, degradedReason}` | shipped (US-494) | — |
 | Per-feed readiness: `capture-health.feeds.<feed>.{state, firstSampleTs, lastSampleSecondsAgo}` | **shipped** (US-873, `capture_health.py` :330-334) | — |
 | OBD cause: `system-status.link.{bt, adapter, ecu}.state` | shipped (ARCH-061/062) | — |
-| The uptime clock for the ceiling, on the page | **new**: the splash needs the uptime the milestones use (e.g. `boot-state.uptimeS`) | Atlas names it |
-| Boot ceiling: `pi.display.boot.handoffCeilingSec` | **new**; a number, never null; interim 75 s pending the CIO | CIO + Atlas |
+| A terminal **fault** per feed for IMU, LIGHT and UPS (sensor missing, read failed), readable by the page | **gap**: `capture-health.feeds` has none (`unknown` = no sample). The UPS has `power.source` reasons, which are about the source line, not the gauge feed | **Atlas names it per feed** (PM ask (a)) |
+| ~~Uptime clock, `handoffCeilingSec`~~ | **dropped**: no timer, no ceiling (CIO R1/R2) | — |
 | Shutdown: `shutdown-state.step{index, of, name}` | **new** (US-883). Today the emitter publishes only `phase`, `tGraceStartedAt`, `tGraceTotalS`, `tRemainingS`, `reason`, `ts` | Atlas · Ralph |
 | Shutdown: `shutdown-state.sync{waitingAtKeyOff, confirmed}` | **new** (US-883). **`confirmed` = rows waiting at key-off (per table, `source_id` ≤ that table's key-off high-water) whose `source_id` ≤ the table's acked mark now, capped at `waitingAtKeyOff`** (Atlas O3). Never a sum of `storedCount`: a re-send would over-count | Atlas · Ralph |
 | Shutdown: `shutdown-state.sync.state` (`away` / `joining` / `syncing` / `ended`) + `sync.outcome` (`OutcomeKind`) | **new, asked here**: the page can't tell away from at home, or name an outcome, without them. Names are Atlas's | Atlas |
@@ -189,19 +195,20 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 - Phase 0 is Plymouth under KMS, before any display server (US-885).
 - The gap after Plymouth is black (§1.1), which on labwc means the kiosk `rc.xml` session draws no background and no cursor.
 - `splash-boot` hands off by **exiting** (`OnSuccess=eclipse-dashboard`), and `splash-grace` draws on top of the dashboard. That's why the kiosk is labwc (multi-client), not cage (ADR §11.2).
-- The boot-time baseline and the ceiling are measured on the labwc stack that ships (Atlas O1 point 3). A number taken on X11 is void after the flip.
+- The boot-time baseline is measured on the labwc stack that ships (Atlas O1 point 3). A number taken on X11 is void after the flip.
 
 ## 5. Acceptance criteria (draft)
 1. **Key-on from fully off, n ≥ 5, on labwc:** the first pixels are the WARNING image; until spin 1 every frame is the WARNING image or `--bg` black. **No firmware rainbow, no Linux text, no cursor, no desktop** at any frame (phone video, the DoD 1 method).
 2. Spin 1 completes exactly one rotation; spin 2 loops until ready and finishes its rotation; spin 3 completes exactly one rotation, then the Driving page.
-3. Each checklist row reads `ready` only when its feed's `firstSampleTs` is non-null (fixture: hold one feed null and its row stays `starting`; a `restart-rearmed` fixture returns it to `starting`).
-4. **Ceiling fixtures** (`handoffCeilingSec` = 75, uptime 76):
-   - ECU silent, BT + adapter up ⇒ OBD `waiting for ECU`, spin 3 plays, dashboard opens with the link chain grey at ECU;
-   - BT down ⇒ `waiting for Bluetooth`; adapter silent ⇒ `waiting for adapter`; link layer `null` ⇒ `waiting`;
-   - UPS late, OBD ready ⇒ UPS `waiting` and the hand-off happens at the ceiling, not at UPS's first sample (Atlas O5);
-   - `capture-health` missing ⇒ every row `not read`, hand-off at the ceiling.
-5. The shipped validator rejects a null or missing `handoffCeilingSec`.
-6. Degraded fixture: logo frozen, amber ring, the emitter's `degradedReason` verbatim; a feed `waiting` at the ceiling never triggers degraded.
+3. Each checklist row reads `ready` only when its feed's `firstSampleTs` is non-null (fixture: hold one feed null and its row stays `waiting`; a `restart-rearmed` fixture returns it to `waiting`).
+4. **Hand-off fixtures (no clock in any of them):**
+   - IMU + LIGHT + UPS ready, ECU silent, BT + adapter up ⇒ spin 3 plays at once; the dashboard opens with OBD `waiting for ECU` and the link chain grey at ECU;
+   - BT down ⇒ `waiting for Bluetooth`; adapter silent ⇒ `waiting for adapter`; link chain unread ⇒ `waiting`; none of them delays the hand-off;
+   - UPS faulted (sensor missing), IMU + LIGHT ready ⇒ UPS `sensor not found` in amber, and the hand-off happens on that fault;
+   - UPS silent, no fault ⇒ UPS `waiting`; **the splash holds** however long the fixture runs; the moment UPS reports ready or a fault, spin 3 starts;
+   - `capture-health` missing ⇒ every row `not read`, and the splash holds.
+5. **No timer:** a grep of the splash page and its tests finds no `setTimeout` or timestamp comparison that gates the hand-off (the poll interval and the spin animations are not gates), and there is no `handoffCeilingSec` key in `config.json` or the validator.
+6. Degraded fixture: logo frozen, amber ring, the emitter's `degradedReason` verbatim; a feed `waiting` or faulted never triggers degraded.
 7. **Home shutdown fixture:** bar ≤ 75 % until `confirmed` = `waitingAtKeyOff`; line 1 `syncing`, line 2 `<c> of <w> rows`; then `shutting down` / `step i of n` to 100 %. **Replay one batch twice: `confirmed` and the bar are unchanged by the second push** (Atlas O3 VC).
 8. Away fixture: no sync part; `away from home` / `not syncing`; the bar is step-driven.
 9. **One fixture per `OutcomeKind` row in §2.2:** its exact two lines, its bar colour; the steps still run to 100 %; the rows remain queued (verified next sync).
@@ -215,7 +222,7 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 - **US-551 (splash visual verify) folds into AC 1, 2 and 13**: they are that check, run on the stack that ships. It closes when US-651 validates on labwc (the 10-13 proposal stands).
 - **US-760 (`MOTION LOADI`) is still real, but it isn't a boot defect, and it doesn't belong in S114.**
   - What it is: the V0.29 carousel's Motion card in its US-700 LOADING state, `loadingTile("MOTION")` (`carousel.js` :4064), whose value `LOADING` runs off the right edge of the panel. It's a dashboard tile, not the splash.
-  - What S114 removes: the **boot-time trigger**. Today the dashboard opens before the IMU has answered. Under §1 it opens only when IMU has its first sample, or at the ceiling with IMU shown `waiting`.
+  - What S114 removes: the **boot-time trigger**. Today the dashboard opens before the IMU has answered. Under §1 it opens only when IMU has finished: its first sample, or its published fault.
   - What remains: the tile is still reachable whenever the dashboard loads outside the boot sequence (a kiosk watchdog restart, a service restart) and the IMU takes longer than the 6 s grace. So the clip is a layout defect of that card.
   - **Ruling:** keep US-760 open and move it out of the boot set. It closes when the V0.30 Motion page replaces the carousel card: the frame's top bar carries the page name, so there's no card headline to clip. That build's AC needs a LOADING fixture at 480 px with nothing clipped. If the V0.29 card must ship again before then, it is a one-line fit fix on that card, nothing in this spec.
 
@@ -223,9 +230,11 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 
 | Item | Owner |
 |---|---|
-| ASK(CIO): ratify **75 s** as the interim `handoffCeilingSec`, until the R4 baseline on labwc replaces it (Atlas O5) | CIO |
+| ~~Ratify 75 s~~: **closed.** The CIO ruled no timer and no ceiling (2026-10-23, R1/R2) | — |
+| The fault field per feed for IMU, LIGHT and UPS, or the gap as S114 work (PM ask (a)). Without it a dead sensor holds the splash | Atlas |
+| Do the degraded `HARD_CAP_MS` / `hardCapSeconds` / `MIN_PLAY_MS` and the shutdown `BLACK_TAIL_CAP` go under the no-timer rule? (PM ask (c)) | Atlas |
 | Does lightdm quit Plymouth with `--retain-splash`? Measure in S113; either answer is acceptable (§1.1) | Atlas · Ralph (US-885/651) |
-| The uptime field the splash reads; `sync.state` + `sync.outcome` names | Atlas |
+| `sync.state` + `sync.outcome` names (the uptime field is moot under R2) | Atlas |
 | The Plymouth theme path (proposed `deploy/plymouth/eclipse/`) | Atlas (US-885) |
 
 ## 8. Out of scope
