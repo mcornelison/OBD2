@@ -4618,9 +4618,15 @@
   // precision. No approximately sign: the label already says "last 30 s".
   var FUEL_MPG_LAST30_CAP = 99;
   var FUEL_MPG_LAST30_CAP_TEXT = "99+";
+  // US-922: the unit after every MPG figure, painted into .fuel-unit as the
+  // airflow's g/s (fuel spec s4.3, CIO 2026-10-22: "just text"). A figure is
+  // noteKind "none"; every "--" (a reason, "not published", "resetting…")
+  // carries no unit -- its note already says why there is no number.
+  var FUEL_MPG_UNIT = "MPG";
 
   function fuelMpgSlot(text, note, noteKind) {
-    return { text: text, note: note, noteKind: noteKind, flag: "" };
+    var unit = noteKind === "none" ? FUEL_MPG_UNIT : "";
+    return { text: text, note: note, noteKind: noteKind, flag: "", unit: unit };
   }
 
   function fuelMpgReasonText(code) {
@@ -5856,6 +5862,9 @@
         slot.setAttribute("data-note", slotView.noteKind || "none");
         var valueEl = slot.querySelector(".fuel-value");
         if (valueEl) valueEl.textContent = slotView.text;
+        // US-922: the unit, as renderFuelAirflow paints g/s.
+        var unitEl = slot.querySelector(".fuel-unit");
+        if (unitEl) unitEl.textContent = slotView.unit || "";
         var flagEl = slot.querySelector(".fuel-flag");
         if (flagEl) {
           flagEl.textContent = slotView.flag;
