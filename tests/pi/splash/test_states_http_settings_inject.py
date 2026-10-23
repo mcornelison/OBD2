@@ -26,6 +26,8 @@
 # 2026-10-23    | Rex (US-878-c)| Every entry is {found, value} (Atlas B13).
 # 2026-10-23    | Rex (US-895-b)| MOVED PIN: base config gains autoDim; a saved
 #               |              | luxFull reaches DISPLAY_AUTODIM on the reload.
+# 2026-10-23    | Rex (US-895-c)| MOVED PIN: base config gains overrideLevel /
+#               |              | minLevel; the B13 null case runs unpatched.
 # ================================================================================
 ################################################################################
 
@@ -64,11 +66,15 @@ _INDEX = (
 # tests/common/test_config_overlay.py.
 # MOVED PIN (US-895-b): the autoDim lux ends are overridable, so the base
 # carries them (the shipped 3 / 300).
+# MOVED PIN (US-895-c): and overrideLevel at the shipped null (auto), beside
+# the shipped minLevel 0.75.
 _BASE_CONFIG = {
     "pi": {
         "display": {
             "carousel": {"autoRotateS": 8},
-            "autoDim": {"luxMin": 3.0, "luxFull": 300.0},
+            "autoDim": {
+                "luxMin": 3.0, "luxFull": 300.0, "minLevel": 0.75, "overrideLevel": None,
+            },
         },
         "calibration": {"mode": False},
         "alerts": {"audioAlerts": True},
@@ -146,6 +152,7 @@ def test_loadEffectiveSettings_returnsShippedDefaultsWhenNoOverlay(tmp_path):
     assert settings["pi.analysis.triggerAfterDrive"] == {"found": True, "value": True}
     assert settings["pi.display.autoDim.luxMin"] == {"found": True, "value": 3.0}
     assert settings["pi.display.autoDim.luxFull"] == {"found": True, "value": 300.0}
+    assert settings["pi.display.autoDim.overrideLevel"] == {"found": True, "value": None}
 
 
 def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
@@ -200,17 +207,20 @@ def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path)
     assert loadEffectiveSettings(configPath)["pi.calibration.mode"]["value"] is False
 
 
-def test_loadEffectiveSettings_resolvedNull_isFoundNotUnknown(tmp_path, monkeypatch):
+def test_loadEffectiveSettings_resolvedNull_isFoundNotUnknown(tmp_path):
     """US-878-c B13: a key that RESOLVES to null (overrideLevel = auto) is
     {found: true, value: null}; only an unresolvable key is found: false. A
-    bare null could not tell the band AUTO from Unknown."""
+    bare null could not tell the band AUTO from Unknown. MOVED PIN (US-895-c):
+    the key is in the REAL allow-list now, so no patch; `missing` is a config
+    whose autoDim lacks the key."""
     key = "pi.display.autoDim.overrideLevel"
-    monkeypatch.setattr(overlay, "OVERRIDABLE_KEYS", (*overlay.OVERRIDABLE_KEYS, key))
     config = json.loads(json.dumps(_BASE_CONFIG))
     config["pi"]["display"]["autoDim"] = {"overrideLevel": None}
+    lacking = json.loads(json.dumps(_BASE_CONFIG))
+    del lacking["pi"]["display"]["autoDim"]["overrideLevel"]
 
     resolved = loadEffectiveSettings(_writeConfig(tmp_path, config))
-    missing = loadEffectiveSettings(_writeConfig(tmp_path))
+    missing = loadEffectiveSettings(_writeConfig(tmp_path, lacking))
 
     assert resolved[key] == {"found": True, "value": None}
     assert missing[key] == {"found": False, "value": None}

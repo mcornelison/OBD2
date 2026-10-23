@@ -1107,6 +1107,12 @@ html, body {
 .set-step:disabled {
   background: transparent; color: var(--text-tertiary); cursor: default;
 }
+/* US-895-c (spec s4.7): BRIGHTNESS's FIXED segment with the effective minLevel
+   unreadable is drawn disabled the same way -- a floor it cannot know is a
+   level it cannot offer. */
+.set-btn:disabled {
+  background: transparent; color: var(--text-tertiary); cursor: default;
+}
 .settings-foot {
   margin: 2px 0 0; font-size: var(--fs-meta); color: var(--text-tertiary);
 }

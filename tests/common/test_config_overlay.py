@@ -79,13 +79,20 @@ def _writeConfig(tmp: Path, **overrides) -> Path:
     Docstring said "the 5 Slice-1 keys" until US-603; the allow-list has been 3
     keys since US-533 dropped ``pi.alerts.audioAlerts`` and ``pi.power.mode``.
     MOVED PIN (US-895-b): 5 keys -- the autoDim lux ends, at the shipped 3 / 300.
+    MOVED PIN (US-895-c): 6 keys -- overrideLevel null (auto), beside the
+    shipped minLevel 0.75 that floors it.
     """
     config = {
         "protocolVersion": "1.0.0",
         "pi": {
             "display": {
                 "carousel": {"autoRotateS": 8, "resumeIdleS": 45},
-                "autoDim": {"luxMin": 3.0, "luxFull": 300.0},
+                "autoDim": {
+                    "luxMin": 3.0,
+                    "luxFull": 300.0,
+                    "minLevel": 0.75,
+                    "overrideLevel": None,
+                },
             },
             "calibration": {"mode": False},
             "alerts": {"audioAlerts": False},
@@ -275,7 +282,9 @@ class TestSliceOneAllowList:
         """
         # MOVED PIN (US-895-b): the autoDim lux ends join (CIO reversed Atlas
         # ruling B 2026-10-19), first in the table.
+        # MOVED PIN (US-895-c): overrideLevel joins, first of all.
         assert set(OVERRIDABLE_KEYS) == {
+            "pi.display.autoDim.overrideLevel",
             "pi.display.autoDim.luxMin",
             "pi.display.autoDim.luxFull",
             "pi.display.carousel.autoRotateS",
@@ -316,22 +325,9 @@ def _autoDimBase(**autoDim) -> dict:
     return {"pi": {"display": {"autoDim": dict(autoDim)}}}
 
 
-def _isLevelOrNone(value) -> bool:
-    return value is None or (
-        not isinstance(value, bool) and isinstance(value, (int, float)) and 0 <= value <= 1
-    )
-
-
-@pytest.fixture
-def autoDimOverridable(monkeypatch):
-    """US-878-c B1: overrideLevel is not overridable yet (US-895-c adds it), so
-    its resolve/POST paths are proved with the allow-list PATCHED to carry it.
-    The seam itself never reads the allow-list. MOVED PIN (US-895-b): the lux
-    ends are in the REAL allow-list now, so the patch no longer adds them."""
-    validators = dict(overlayModule._VALIDATORS)
-    validators[_OVERRIDE_KEY] = _isLevelOrNone
-    monkeypatch.setattr(overlayModule, "_VALIDATORS", validators)
-    monkeypatch.setattr(overlayModule, "OVERRIDABLE_KEYS", tuple(validators))
+# MOVED PIN (US-895-c): the autoDimOverridable fixture (and its _isLevelOrNone)
+# patched overrideLevel into the allow-list for US-878-c; the key is in the REAL
+# allow-list now, so every path below runs unpatched.
 
 
 def _seamWarnings(caplog) -> list[str]:
@@ -435,7 +431,7 @@ class TestCrossKeySeam:
             enforceCrossKeyRules(_autoDimBase(minLevel=0.75), {_OVERRIDE_KEY: 0.5})
 
     def test_resolve_overrideBelowMinLevel_droppedWithOneWarningNamingTheRule(
-        self, autoDimOverridable, caplog
+        self, caplog
     ):
         """
         Given: overrideLevel 0.5 overridable and in the overlay, minLevel 0.75
@@ -529,13 +525,56 @@ class TestCrossKeySeam:
         assert crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 2.0) is not None
         assert crossKeyRefusal(str(configPath), _LUX_FULL_KEY, 5.0) is None
 
-    def test_onlyTheLuxEndsJoinTheAllowList_firstAndInOrder(self):
+    def test_overrideLevelThenTheLuxEndsLeadTheAllowList_minLevelNever(self):
         """Scope fence. MOVED PIN (US-895-b): was test_noKeyJoinsTheAllowListInThisStory.
-        US-895-b adds luxMin/luxFull FIRST (Atlas B11); overrideLevel is US-895-c's
-        and minLevel nobody's."""
-        assert OVERRIDABLE_KEYS[:2] == (_LUX_MIN_KEY, _LUX_FULL_KEY)
-        for key in (_OVERRIDE_KEY, _MIN_LEVEL_KEY):
-            assert key not in OVERRIDABLE_KEYS
+        MOVED PIN (US-895-c): was test_onlyTheLuxEndsJoinTheAllowList_firstAndInOrder.
+        overrideLevel goes FIRST, then luxMin/luxFull (DISPLAY order: brightness,
+        auto-dim ends, rotate); minLevel is nobody's -- it is the floor."""
+        assert OVERRIDABLE_KEYS[:3] == (_OVERRIDE_KEY, _LUX_MIN_KEY, _LUX_FULL_KEY)
+        assert _MIN_LEVEL_KEY not in OVERRIDABLE_KEYS
+
+    @pytest.mark.parametrize("value", [None, 0, 0.0, 0.5, 0.75, 0.8, 1, 1.0])
+    def test_overrideLevel_takesNullOrAFiniteNumberInZeroToOne(self, value):
+        """US-895-c: null = auto; the minLevel floor is the cross-key rule's."""
+        assert validateOverlayValue(_OVERRIDE_KEY, value) == (True, value)
+
+    @pytest.mark.parametrize(
+        "value", [-0.01, 1.01, 2, True, False, "0.8", float("inf"), float("nan"), [0.8]]
+    )
+    def test_overrideLevel_refusesAnythingElse(self, value):
+        assert validateOverlayValue(_OVERRIDE_KEY, value) == (False, None)
+
+    def test_boot_handEditedOverrideBelowMinLevel_oneWarningNamingTheRule_noFixedLevel(
+        self, tmp_path, caplog
+    ):
+        """
+        Given: config.json minLevel 0.75, config.local.json overrideLevel 0.5
+               (hand-edited; the key is overridable now)
+        When: the orchestrator's read path loads and validates the config
+        Then: it validates (eclipse-obd starts); exactly one WARNING names
+              'overrideLevel >= minLevel'; overrideLevel stays null -- no fixed
+              brightness (US-895-c validationCriteria 3, real allow-list)
+        """
+        configPath = _writeConfig(tmp_path)
+        _writeOverlay(configPath, {_OVERRIDE_KEY: 0.5})
+
+        with caplog.at_level(logging.WARNING):
+            config = loadConfigWithSecrets(str(configPath))
+        ConfigValidator(requiredKeys=[])._validateDisplayAutoDim(config)
+
+        assert config["pi"]["display"]["autoDim"]["overrideLevel"] is None
+        warnings = _seamWarnings(caplog)
+        assert len(warnings) == 1
+        assert _OVERRIDE_KEY in warnings[0]
+        assert "overrideLevel >= minLevel" in warnings[0]
+
+    def test_boot_overrideAtOrAboveMinLevel_isApplied(self, tmp_path):
+        configPath = _writeConfig(tmp_path)
+        _writeOverlay(configPath, {_OVERRIDE_KEY: 0.8})
+
+        config = loadConfigWithSecrets(str(configPath))
+
+        assert config["pi"]["display"]["autoDim"]["overrideLevel"] == 0.8
 
     @pytest.mark.parametrize("value", [0, -1, 0.0, True, "5", None, float("inf"), float("nan")])
     def test_luxEnds_takeOnlyAFinitePositiveNumber(self, value):

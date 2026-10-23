@@ -1965,8 +1965,15 @@ validator sees at boot; `from .validator import DEFAULTS`). Rules (`CROSS_KEY_RU
 - **autoDim luxMin/luxFull overridable -- CIO reversed ruling B 2026-10-19** (Atlas
   acked; US-895-b). Both are in `OVERRIDABLE_KEYS`, FIRST (finite numbers > 0, the
   validator's rule), so `luxFull > luxMin` is now judged on real overlay values at
-  both seams. overrideLevel is still not overridable (US-895-c); its seam tests patch
-  the allow-list until then.
+  both seams.
+- **overrideLevel overridable (US-895-c, CIO 2026-10-19 US-878-c IN).**
+  `pi.display.autoDim.overrideLevel` is in `OVERRIDABLE_KEYS`, FIRST of all (DISPLAY
+  order: brightness, auto-dim ends, rotate): null (auto) or a finite number in [0, 1]
+  (`_isLevelOrNone`). Its floor is NOT the per-key rule's: `overrideLevel >= minLevel`
+  stays the cross-key seam's (Atlas A5), so a hand-edited `config.local.json`
+  overrideLevel under the effective minLevel is dropped at boot with ONE warning naming
+  that rule (no fixed brightness), and a POST of one is refused 400. The seam tests run
+  on the real allow-list; the US-878-c allow-list patch is retired.
 
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
@@ -7071,7 +7078,8 @@ write is the chosen seconds through the same `autoRotateS` key. No new
 generated `tests/ui/fixtures/states/system/settings-*` fixtures (the 8 s hold is
 driven by the clock: 7 s locked, 8 s unlocked).
 
-**AUTO-DIM ENDS (US-895-b, spec s4.7, Iris I11).** The first DISPLAY row: `luxMin`
+**AUTO-DIM ENDS (US-895-b, spec s4.7, Iris I11).** The DISPLAY row after BRIGHTNESS
+(first until US-895-c): `luxMin`
 (`DIM-START`) and `luxFull` (`FULL-BRIGHT`) are two `SETTINGS_SPECS` of the new kind
 **`ladder`**, drawn as ONE `.set-row` (their shared `row: "AUTO-DIM ENDS"`; the row
 carries the first key, each end is a `.set-end` with its own `data-key`). Each end is
@@ -7087,6 +7095,28 @@ state `light-reading`, **"applies at the next light reading"** (Atlas B12: the l
 bridge re-reads on its next burst; no time claim). The two ends share the row's one
 apply tag, which shows the status note of the last real paint. Pinned by
 `tests/ui/test_settings_lux_ends.py`.
+
+**BRIGHTNESS (US-895-c, spec s4.7, Atlas A5/B12-B14, Iris I11).** The first DISPLAY
+row, before the auto-dim ends: `overrideLevel` as the new kind **`level`** -- an
+`AUTO | FIXED` segmented control, then a `− nn % +` stepper. `AUTO` is pressed only for
+a key FOUND as null (B13); not found reads `Unknown` with nothing pressed. `AUTO` writes
+null; `FIXED` steps in integer percent, `SETTINGS_LEVEL_STEP_PCT` (5) apart, from the
+**effective minLevel** -- `window.DISPLAY_AUTODIM.minLevel`, resolved per request -- to
+100 % (`settingsLevelSteps`; an off-grid minLevel is itself the lowest step, rounded up
+to a whole percent so it never sits under the seam's floor), storing `round(pct)/100`
+(B14). No literal floor exists in carousel.js (spec AC 9). A minLevel that is not a
+level in [0, 1] (missing, null) disables `FIXED` (drawn, no listener) and the stepper
+reads `Unknown`. `AUTO → FIXED` writes the level last applied to `#screen`
+(`lastAppliedLevel`, set by `applyBrightness`) rounded to the nearest 5 % and clamped to
+[floor, 100 %], or 100 % when none has been applied (I11). The stepper hides only under
+a known `AUTO` with a known floor; the chosen segment carries no listener. Apply tag
+`reload` ("applies on reload", B12): a confirmed save reloads the page and
+`appliedBrightness` reads `{level, 'fixed'}` from the per-request settings blob, which
+survives a dead light sensor. `settingsSaveResult` gains `found` (the body carried a
+re-read), so a re-read null repaints AUTO, not Unknown. Pinned by
+`tests/ui/test_settings_brightness_row.py` over the generated
+`settings-floor-from-minlevel` fixture (the real loader's DISPLAY_AUTODIM for minLevel
+0.75 and for a config with none).
 
 **Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
 mean *the car is stopped*, which is what lets parked-only controls read them

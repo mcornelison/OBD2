@@ -19,6 +19,8 @@
 #               |                | Off/On for every declared spec.
 # 2026-10-23    | Rex (US-895-a) | MOVED PIN: the 'steps' kind declares its own
 #               |                | choices; 'seconds' is gone.
+# 2026-10-23    | Rex (US-895-c) | MOVED PIN: kind 'level' (BRIGHTNESS) offers
+#               |                | AUTO | FIXED.
 # ================================================================================
 ################################################################################
 """US-421: the renderer branches only on settings kinds that actually exist."""
@@ -108,6 +110,14 @@ def test_everyDeclaredSpec_rendersTheTwoChoiceControl():
     # MOVED PIN (US-895-a): auto-rotate moved from kind 'seconds' (Off/On) to
     # kind 'steps' -- its choices are its declared Off · 5 s ... 30 s.
     for spec in _view("settingsSpecs"):
+        # MOVED PIN (US-895-c): kind 'level' (BRIGHTNESS) is AUTO | FIXED; the
+        # value FIXED writes is the floor's (settingsLevelChoiceWrite), not a choice.
+        if spec["kind"] == "level":
+            assert _view("settingsChoices", spec) == [
+                {"value": "AUTO", "label": "AUTO"},
+                {"value": "FIXED", "label": "FIXED"},
+            ], spec["key"]
+            continue
         # MOVED PIN (US-895-b): kind 'ladder' (the lux ends) offers its rungs in lux.
         if spec["kind"] == "ladder":
             assert _view("settingsChoices", spec) == [

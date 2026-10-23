@@ -23,6 +23,8 @@
 # 2026-08-07    | Ralph (Rex)  | Initial implementation (US-531 settings write).
 # 2026-10-23    | Rex (US-895-b)| MOVED PIN: the lux ends are in the REAL
 #               |              | allow-list; _VALID_VALUES + base config grow.
+# 2026-10-23    | Rex (US-895-c)| MOVED PIN: overrideLevel is in the REAL
+#               |              | allow-list; the autoDimServer patch retires.
 # ================================================================================
 ################################################################################
 
@@ -36,7 +38,6 @@ from pathlib import Path
 
 import pytest
 
-from common.config import overlay as overlayModule
 from common.config.overlay import (
     OVERLAY_FILENAME,
     OVERRIDABLE_KEYS,
@@ -59,7 +60,9 @@ _BASE_CONFIG = {
     "pi": {
         "display": {
             "carousel": {"autoRotateS": 8},
-            "autoDim": {"luxMin": 3.0, "luxFull": 300.0},
+            "autoDim": {
+                "luxMin": 3.0, "luxFull": 300.0, "minLevel": 0.75, "overrideLevel": None,
+            },
         },
         "calibration": {"mode": False},
         "alerts": {"audioAlerts": False},
@@ -78,7 +81,9 @@ _BASE_CONFIG = {
 # could not see it either: duplicates collapse before the comparison runs.
 # MOVED PIN (US-895-b): the autoDim lux ends joined the allow-list; each value
 # keeps luxFull > luxMin against the base config's 3 / 300.
+# MOVED PIN (US-895-c): overrideLevel joined, at FIXED 80 % (>= minLevel 0.75).
 _VALID_VALUES = {
+    "pi.display.autoDim.overrideLevel": 0.8,
     "pi.display.autoDim.luxMin": 5,
     "pi.display.autoDim.luxFull": 500,
     _AUTO_ROTATE_KEY: 0,
@@ -348,7 +353,8 @@ def test_settingsWrite_invalidValue_400_carriesTheReReadValueToSnapBackTo(
 
 # ---------------------------------------------------------------------------
 # US-878-c: the cross-key seam guards the write. MOVED PIN (US-895-b): the lux
-# ends go through the REAL allow-list; only overrideLevel (US-895-c) is patched.
+# ends go through the REAL allow-list. MOVED PIN (US-895-c): so does
+# overrideLevel -- the allow-list patch (and its _isLevelOrNone) is retired.
 # ---------------------------------------------------------------------------
 
 _LUX_MIN_KEY = "pi.display.autoDim.luxMin"
@@ -356,18 +362,8 @@ _LUX_FULL_KEY = "pi.display.autoDim.luxFull"
 _OVERRIDE_KEY = "pi.display.autoDim.overrideLevel"
 
 
-def _isLevelOrNone(value) -> bool:
-    return value is None or (
-        not isinstance(value, bool) and isinstance(value, (int, float)) and 0 <= value <= 1
-    )
-
-
 @pytest.fixture
-def autoDimServer(tmp_path, monkeypatch):
-    validators = dict(overlayModule._VALIDATORS)
-    validators[_OVERRIDE_KEY] = _isLevelOrNone
-    monkeypatch.setattr(overlayModule, "_VALIDATORS", validators)
-    monkeypatch.setattr(overlayModule, "OVERRIDABLE_KEYS", tuple(validators))
+def autoDimServer(tmp_path):
     config = json.loads(json.dumps(_BASE_CONFIG))
     config["pi"]["display"]["autoDim"] = {
         "luxMin": 3.0, "luxFull": 300.0, "minLevel": 0.75, "overrideLevel": None,
@@ -416,6 +412,42 @@ def test_settingsWrite_overrideBelowMinLevel_400_noWrite(autoDimServer, overlayF
         "value": None,
         "error": "overrideLevel must be at least minLevel",
     }
+    assert not overlayFile.exists()
+
+
+def test_settingsWrite_fixed80_isStored_andReReadAs0_8(server, overlayFile, tmp_path):
+    """
+    Given: the REAL allow-list, config minLevel 0.75 (US-895-c validationCriteria 1)
+    When: FIXED 80 % is saved -- POST {key: overrideLevel, value: 0.8}
+    Then: 200 with the re-read 0.8, and a fresh effective read is 0.8 too
+    """
+    resp = _postSetting(server, _OVERRIDE_KEY, 0.8)
+
+    assert resp.status == 200
+    assert _bodyOf(resp) == {"ok": True, "key": _OVERRIDE_KEY, "value": 0.8}
+    assert readEffectiveValue(str(tmp_path / "config.json"), _OVERRIDE_KEY) == (True, 0.8)
+
+
+def test_settingsWrite_auto_storesNull_reReadNull(server, overlayFile):
+    """AUTO writes null; a stored null is found, and the re-read says so."""
+    overlayFile.write_text(json.dumps({_OVERRIDE_KEY: 0.9}), encoding="utf-8")
+
+    resp = _postSetting(server, _OVERRIDE_KEY, None)
+
+    assert resp.status == 200
+    assert _bodyOf(resp) == {"ok": True, "key": _OVERRIDE_KEY, "value": None}
+    assert json.loads(overlayFile.read_text(encoding="utf-8")) == {_OVERRIDE_KEY: None}
+
+
+@pytest.mark.parametrize("value", [1.5, -0.1, True, "0.8"])
+def test_settingsWrite_overrideOutOfRangeOrWrongType_400_noWrite(server, overlayFile, value):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _postSetting(server, _OVERRIDE_KEY, value)
+
+    assert exc.value.code == 400
+    assert json.loads(exc.value.read().decode("utf-8"))["error"] == (
+        "invalid value for this setting"
+    )
     assert not overlayFile.exists()
 
 

@@ -2226,6 +2226,14 @@
   // validator's autoDim DEFAULTS grounding; the shipped 3 / 300 sit on it).
   var SETTINGS_LUX_LADDER = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500, 1000];
 
+  // US-895-c (spec s4.7 "Step: 5 %"): the FIXED stepper's grid, in integer
+  // percent. The TOP is 100 % because full is the top of the 0..1 range (the
+  // STOP_ALARM_LEVEL definition), not a tunable. There is deliberately NO
+  // floor here: the floor is the effective minLevel (spec AC 9).
+  var SETTINGS_LEVEL_STEP_PCT = 5;
+  var SETTINGS_LEVEL_TOP_PCT = 100;
+  var SETTINGS_LEVEL_MODES = { auto: "AUTO", fixed: "FIXED" };
+
   // AUTO-ROTATE is "reload", NOT "restart" -- and the difference is load-bearing.
   // Atlas's original GAP 1 remedy was an eclipse-states-http bounce, but that
   // unit runs User=mcornelison and polkit's manage-units grant deliberately
@@ -2260,7 +2268,17 @@
   // strictly below / above (luxFull > luxMin), so the page can disable the
   // crossing step; the seam's 400 is still the rule. First in the table
   // because they are first in OVERRIDABLE_KEYS (Atlas B11).
+  //
+  // US-895-c (spec s4.7, Atlas A5/B12-B14, Iris I11): BRIGHTNESS is kind
+  // "level" -- an AUTO | FIXED segmented control, then a `− nn % +` stepper
+  // while FIXED. AUTO writes null; FIXED writes round(pct)/100. Its floor is
+  // the EFFECTIVE minLevel the server injects per request (DISPLAY_AUTODIM),
+  // never a number written here. "reload": the applier reads the override
+  // from the per-request settings blob on the reload the band triggers. First,
+  // as in OVERRIDABLE_KEYS (DISPLAY order: brightness, auto-dim ends, rotate).
   var SETTINGS_SPECS = [
+    { key: "pi.display.autoDim.overrideLevel", label: "BRIGHTNESS",
+      section: "DISPLAY", kind: "level", apply: "reload" },
     { key: "pi.display.autoDim.luxMin", label: "DIM-START", row: "AUTO-DIM ENDS",
       section: "DISPLAY", kind: "ladder", steps: SETTINGS_LUX_LADDER,
       below: "pi.display.autoDim.luxFull", apply: "light-reading" },
@@ -2367,10 +2385,79 @@
       }
       return out;
     }
+    // US-895-c: kind "level" is the AUTO | FIXED segmented control. A choice
+    // is a MODE; the value it writes is settingsLevelChoiceWrite's.
+    if (spec && spec.kind === "level") {
+      return [
+        { value: SETTINGS_LEVEL_MODES.auto, label: SETTINGS_LEVEL_MODES.auto },
+        { value: SETTINGS_LEVEL_MODES.fixed, label: SETTINGS_LEVEL_MODES.fixed },
+      ];
+    }
     return [
       { value: false, label: "Off" },
       { value: true, label: "On" },
     ];
+  }
+
+  // A 0..1 level as percent, with the binary-float noise taken off (0.29 * 100
+  // is 28.999999999999996), so a stored 0.8 is exactly 80.
+  function settingsLevelPct(level) {
+    return Math.round(level * 100 * 1e6) / 1e6;
+  }
+
+  function settingsIsLevel(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0 && value <= 1;
+  }
+
+  // US-895-c (spec s4.7, Atlas A5): the FIXED steps in integer percent, from
+  // the EFFECTIVE minLevel to 100 %, 5 % apart. An off-grid minLevel is itself
+  // the lowest step, then the next multiple of 5 (0.72 -> 72, 75, 80 ...); a
+  // fractional percent rounds UP so the lowest step never sits under the floor
+  // the seam enforces. A minLevel that is not a level (missing, null, outside
+  // 0..1) -> null: FIXED cannot be offered, because a guessed floor would be a
+  // fabricated one.
+  function settingsLevelSteps(minLevel) {
+    if (!settingsIsLevel(minLevel)) return null;
+    var floor = Math.ceil(settingsLevelPct(minLevel));
+    var out = [floor];
+    var next = floor - (floor % SETTINGS_LEVEL_STEP_PCT) + SETTINGS_LEVEL_STEP_PCT;
+    for (var p = next; p <= SETTINGS_LEVEL_TOP_PCT; p += SETTINGS_LEVEL_STEP_PCT) out.push(p);
+    return out;
+  }
+
+  // Iris I11: AUTO -> FIXED starts at the level the screen is applying NOW
+  // (appliedBrightness().level), rounded to the nearest 5 % and clamped to
+  // [floor, 100 %], so switching mode never jumps the panel; an unknown applied
+  // level starts at 100 %. Null when the floor is unknown (FIXED not offered).
+  function settingsLevelFirstFixed(appliedLevel, minLevel) {
+    var steps = settingsLevelSteps(minLevel);
+    if (steps === null) return null;
+    if (typeof appliedLevel !== "number" || !isFinite(appliedLevel)) {
+      return SETTINGS_LEVEL_TOP_PCT;
+    }
+    var pct = Math.round(settingsLevelPct(appliedLevel) / SETTINGS_LEVEL_STEP_PCT) *
+      SETTINGS_LEVEL_STEP_PCT;
+    return Math.min(SETTINGS_LEVEL_TOP_PCT, Math.max(steps[0], pct));
+  }
+
+  // Atlas B14: the stored value is round(pct) / 100.
+  function settingsLevelWrite(pct) {
+    return Math.round(pct) / 100;
+  }
+
+  // The value a tap on an AUTO | FIXED choice writes: AUTO is null (auto);
+  // FIXED is the I11 first value, or undefined when there is none to write
+  // (floor unknown) -- the renderer then wires no listener at all.
+  function settingsLevelChoiceWrite(mode, appliedLevel, minLevel) {
+    if (mode === SETTINGS_LEVEL_MODES.auto) return null;
+    var first = settingsLevelFirstFixed(appliedLevel, minLevel);
+    return first === null ? undefined : settingsLevelWrite(first);
+  }
+
+  // A stored level as shown: its percent, to 0.1 % so a hand-edited 0.825
+  // reads '82.5 %' rather than a rounded value nobody stored.
+  function settingsLevelLabel(pct) {
+    return String(Math.round(pct * 10) / 10) + " %";
   }
 
   // A steps spec's declared values, ascending; anything else declares none.
@@ -2426,6 +2513,17 @@
     return null;
   }
 
+  // The value one tap of a row's − / + moves to, as settingsStepNext rules it:
+  // a level row steps its percent over the floor-derived steps the view
+  // carries (null when not FIXED or the floor is unknown); others their value.
+  function settingsRowStepNext(spec, view, direction) {
+    if (spec && spec.kind === "level") {
+      if (!view || view.on !== SETTINGS_LEVEL_MODES.fixed || view.pct === null) return null;
+      return settingsStepNext({ steps: view.steps }, view.pct, direction);
+    }
+    return settingsStepNext(spec, view ? view.value : null, direction);
+  }
+
   // US-895-a (spec s4.7.2): the band's lock, from the module's ONE parked
   // fact (currentParked: the debounced `parked`, the raw `gearKnown`). Only a
   // strict true unlocks; locked, the line's word follows the raw gear.
@@ -2471,12 +2569,34 @@
   // US-895-a: a steps row shows its stored seconds EXACTLY, on a step or off
   // one ('12 s'); a value the overlay could never store (negative, not a
   // finite number) is Unknown.
-  function settingsRowView(spec, value) {
+  //
+  // US-895-c: a level row also needs `ctx` -- {found} (B13: AUTO shows only
+  // for a key FOUND as null; not found is Unknown) and {minLevel}, the
+  // effective floor. `on` is the mode (AUTO / FIXED); `display` is what the
+  // stepper reads, which is Unknown whenever the floor is (spec s4.7). The
+  // view adds `steps` (percent, null = floor unknown), `pct` (the stored
+  // percent while FIXED), `fixedAllowed` and `showValue` (the stepper is
+  // hidden only under a known AUTO with a known floor).
+  function settingsRowView(spec, value, ctx) {
     var kind = spec ? spec.kind : null;
     var known = false;
     var on = null;
     var display = "Unknown";
-    if (kind === "steps") {
+    var level = null;
+    if (kind === "level") {
+      level = { steps: settingsLevelSteps(ctx ? ctx.minLevel : null), pct: null };
+      var found = !!ctx && ctx.found === true;
+      if (found && value === null) {
+        known = true;
+        on = SETTINGS_LEVEL_MODES.auto;
+        display = SETTINGS_LEVEL_MODES.auto;
+      } else if (found && settingsIsLevel(value)) {
+        known = true;
+        on = SETTINGS_LEVEL_MODES.fixed;
+        level.pct = settingsLevelPct(value);
+        if (level.steps !== null) display = settingsLevelLabel(level.pct);
+      }
+    } else if (kind === "steps") {
       known = typeof value === "number" && isFinite(value) && value >= 0;
       if (known) display = settingsStepLabel(value);
     } else if (kind === "ladder") {
@@ -2491,7 +2611,7 @@
         display = on ? "On" : "Off";
       }
     }
-    return {
+    var view = {
       key: spec ? spec.key : null,
       label: spec ? spec.label : "",
       kind: kind,
@@ -2502,6 +2622,13 @@
       on: on,
       display: display,
     };
+    if (level !== null) {
+      view.steps = level.steps;
+      view.pct = level.pct;
+      view.fixedAllowed = level.steps !== null;
+      view.showValue = !(on === SETTINGS_LEVEL_MODES.auto && view.fixedAllowed);
+    }
+    return view;
   }
 
   // Is this choice the one currently stored? An unknown row selects NOTHING --
@@ -2519,7 +2646,11 @@
   // the overlay's validator takes bool only, so a truthy string would 400.
   function settingsWriteValue(spec, desired) {
     if (!spec) return null;
-    if (spec.kind === "steps" || spec.kind === "ladder") return desired;
+    // US-895-c: a level row's desired IS its write (null = AUTO, or a
+    // settingsLevelWrite value); coercing it would turn AUTO into false.
+    if (spec.kind === "steps" || spec.kind === "ladder" || spec.kind === "level") {
+      return desired;
+    }
     return !!desired;
   }
 
@@ -2533,10 +2664,13 @@
     var has =
       obj && Object.prototype.hasOwnProperty.call(res, "value");
     var ok = obj && res.ok === true;
+    // US-895-c: `found` -- the body carried a re-read at all. A level row needs
+    // it to tell a re-read null (AUTO) from no answer (Unknown).
     return {
       ok: ok,
       note: ok ? "saved" : "couldn't save",
       value: has ? res.value : null,
+      found: !!has,
     };
   }
 
@@ -5886,6 +6020,11 @@
     settingsReloadNeeded: settingsReloadNeeded,
     settingsChoices: settingsChoices,
     settingsStepNext: settingsStepNext,
+    settingsRowStepNext: settingsRowStepNext,
+    settingsLevelSteps: settingsLevelSteps,
+    settingsLevelFirstFixed: settingsLevelFirstFixed,
+    settingsLevelWrite: settingsLevelWrite,
+    settingsLevelChoiceWrite: settingsLevelChoiceWrite,
     settingsStepCrosses: settingsStepCrosses,
     settingsLockView: settingsLockView,
     settingsBandView: settingsBandView,
@@ -5996,7 +6135,12 @@
     // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
     // software dim -- the browser kiosk can't drive the panel backlight). Setting
     // a var (not style.filter) keeps the CSS the single owner of the filter rule.
+    // US-895-c (Iris I11): the level last applied, which the Settings band's
+    // AUTO -> FIXED starts from. Null until the first tick applies one.
+    var lastAppliedLevel = null;
+
     function applyBrightness(level) {
+      lastAppliedLevel = level;
       var screenEl = document.getElementById("screen");
       if (screenEl) screenEl.style.setProperty("--display-brightness", String(level));
     }
@@ -7842,7 +7986,9 @@
       // Deliberately NO confirm: these are non-destructive preferences, and
       // borrowing the service-control confirm would train the operator to
       // dismiss the modal that guards a service stop (Iris §4).
-      function postSetting(spec, desired, render, currentValue) {
+      // US-895-c: `currentFound` rides with `currentValue` so a level row's
+      // pending paint keeps AUTO (a found null) rather than reading Unknown.
+      function postSetting(spec, desired, render, currentValue, currentFound) {
         // US-895-a (spec s4.7.2): while not parked a tap does NOTHING -- no
         // write, no `saving…`. Asked here, the one write path, so no control
         // can reach the route around it (`disabled` alone is a paint).
@@ -7850,7 +7996,7 @@
         // The pending paint keeps the value we already know is stored -- it must
         // not show the REQUESTED one, which is the optimistic success Iris ruled
         // out wearing a nicer label.
-        render(currentValue, settingsPendingNote());
+        render(currentValue, settingsPendingNote(), false, currentFound);
         var headers = { "Content-Type": "application/json" };
         if (token) headers["X-Splash-Token"] = token;
         fetch("/settings", {
@@ -7869,7 +8015,7 @@
             // Repaint FIRST, unconditionally: the operator must see the REAL
             // stored value even if the reload below is slow, blocked, or never
             // due -- the truth must not depend on the apply mechanism firing.
-            render(out.value, out.note);
+            render(out.value, out.note, false, out.found);
             // US-533 B1: the row said "applies on reload", so this is where the
             // band keeps that promise. The server resolves pi.display.carousel
             // per request, so the reloaded page picks the new period up with NO
@@ -7882,7 +8028,7 @@
           })
           .then(null, function () {
             // A rejected fetch tells us nothing about what is stored -> Unknown.
-            render(null, settingsSaveResult(null).note);
+            render(null, settingsSaveResult(null).note, false, false);
           });
       }
 
@@ -7985,12 +8131,14 @@
         // This end's last painted value, kept per key for the repaints; the
         // status note is the shell's, so the lock's repaint never drops a
         // pending or settled note.
-        var state = { value: null };
+        var state = { value: null, found: false };
 
         function stepButton(view, direction, locked) {
           // Locked: no − / + at all; at an end, that end's is hidden.
-          var next = settingsStepNext(spec, view.value, direction);
+          var next = settingsRowStepNext(spec, view, direction);
           if (locked || next === null) return;
+          // US-895-c: a level row steps in percent and stores round(pct)/100.
+          var write = spec.kind === "level" ? settingsLevelWrite(next) : next;
           var btn = document.createElement("button");
           btn.className =
             "set-step " + (direction < 0 ? "set-step-minus" : "set-step-plus") + " tap-target";
@@ -8001,10 +8149,47 @@
             btn.disabled = true;
           } else {
             btn.addEventListener("click", function () {
-              postSetting(spec, next, render, view.value);
+              postSetting(spec, write, render, view.value, view.known);
             });
           }
           controls.appendChild(btn);
+        }
+
+        // US-895-c (spec s4.7): BRIGHTNESS -- AUTO | FIXED, then the
+        // `− nn % +` stepper. A segment that cannot write (locked, the one
+        // already chosen, FIXED with the floor unknown) carries NO listener.
+        function renderLevel(view, locked) {
+          for (var c = 0; c < choices.length; c++) {
+            (function (choice) {
+              var btn = document.createElement("button");
+              btn.className = "set-btn tap-target";
+              btn.textContent = choice.label;
+              var active = settingsChoiceActive(view, choice.value);
+              btn.setAttribute("aria-pressed", String(active));
+              var minLevel = displayAutoDim ? displayAutoDim.minLevel : null;
+              // Disabled iff the choice has nothing to write; the write itself
+              // is taken at the TAP, from the level applied at that moment.
+              if (locked || settingsLevelChoiceWrite(choice.value, null, minLevel) === undefined) {
+                btn.disabled = true;
+              }
+              if (!btn.disabled && !active) {
+                btn.addEventListener("click", function () {
+                  postSetting(
+                    spec, settingsLevelChoiceWrite(choice.value, lastAppliedLevel, minLevel),
+                    render, view.value, view.known
+                  );
+                });
+              }
+              controls.appendChild(btn);
+            })(choices[c]);
+          }
+          if (!view.showValue) return;
+          stepButton(view, -1, locked);
+          var shown = document.createElement("span");
+          shown.className = "set-value";
+          shown.textContent = view.display;
+          controls.appendChild(shown);
+          stepButton(view, 1, locked);
         }
 
         // The ONE paint path for this row. Built with textContent (no
@@ -8012,9 +8197,13 @@
         // `repaint` (the lock edge, or the partner end changed): same value,
         // and the shared status note is left as the last real paint set it
         // -- a write in flight keeps `saving…` -- and nothing cascades.
-        function render(value, statusNote, repaint) {
+        function render(value, statusNote, repaint, found) {
           state.value = value;
-          var view = settingsRowView(spec, value);
+          state.found = found === true;
+          var view = settingsRowView(spec, value, {
+            found: state.found,
+            minLevel: displayAutoDim ? displayAutoDim.minLevel : null,
+          });
           shell.values[spec.key] = view.value;
           var locked = settingsLock().locked;
           if (!repaint) shell.noteText = statusNote || "";
@@ -8025,6 +8214,10 @@
           // The partner's crossing step follows this end's value.
           if (!repaint && partnerKey && shell.repaints[partnerKey]) {
             shell.repaints[partnerKey]();
+          }
+          if (spec.kind === "level") {
+            renderLevel(view, locked);
+            return;
           }
           if (spec.kind === "steps" || spec.kind === "ladder") {
             stepButton(view, -1, locked);
@@ -8047,7 +8240,7 @@
               // Locked: readable, inert (spec s4.7.2); postSetting refuses too.
               if (locked) btn.disabled = true;
               btn.addEventListener("click", function () {
-                postSetting(spec, choice.value, render, view.value);
+                postSetting(spec, choice.value, render, view.value, view.known);
               });
               controls.appendChild(btn);
             })(choices[c]);
@@ -8055,12 +8248,14 @@
         }
 
         function repaint() {
-          render(state.value, "", true);
+          render(state.value, "", true, state.found);
         }
         settingsRepaints.push(repaint);
         shell.repaints[spec.key] = repaint;
         // US-878-c: a not-found entry is null here, i.e. Unknown.
-        render(settingsEntry(settingsSource, spec.key).value, "");
+        // US-895-c: and its `found`, which tells a level row AUTO from Unknown.
+        render(settingsEntry(settingsSource, spec.key).value, "", false,
+          settingsEntry(settingsSource, spec.key).found);
       }
 
       if (menuBtn) {

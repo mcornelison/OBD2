@@ -54,6 +54,9 @@
 # 2026-10-23    | Ralph (Rex)  | US-895-a: the five settings-* fixtures (gear
 #               |              | from buildGearState; band-state stub + a
 #               |              | recorded real /settings response).
+# 2026-10-23    | Ralph (Rex)  | US-895-c: settings-floor-from-minlevel (the
+#               |              | DISPLAY_AUTODIM the REAL loader serves for
+#               |              | minLevel 0.75 and for a config without one).
 # 2026-10-23    | Ralph (Rex)  | US-895-b: settings-lux-cross-rejected (a stale
 #               |              | band stub; the recorded real cross-key 400).
 # ================================================================================
@@ -610,6 +613,16 @@ _LUX_CONFIG = copy.deepcopy(_SETTINGS_CONFIG)
 _LUX_CONFIG["pi"]["display"]["autoDim"] = {"luxMin": 3.0, "luxFull": 300.0}
 _LUX_OVERLAY = {"pi.display.autoDim.luxMin": 200.0}
 
+# US-895-c (spec s7, AC 9): BRIGHTNESS stored FIXED at 75 %, the floor. The
+# page's floor is the window.DISPLAY_AUTODIM the state server injects, recorded
+# from the REAL loader (loadDisplayAutoDimConfig) over two configs: the shipped
+# minLevel 0.75, and an autoDim section with no minLevel at all (unresolvable).
+_FLOOR_STORED = {"pi.display.autoDim.overrideLevel": 0.75}
+_FLOOR_CONFIG = copy.deepcopy(_SETTINGS_CONFIG)
+_FLOOR_CONFIG["pi"]["display"]["autoDim"] = {"minLevel": 0.75, "overrideLevel": 0.75}
+_FLOOR_CONFIG_UNRESOLVABLE = copy.deepcopy(_SETTINGS_CONFIG)
+_FLOOR_CONFIG_UNRESOLVABLE["pi"]["display"]["autoDim"] = {"overrideLevel": 0.75}
+
 SETTINGS_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     "settings-locked-hold": (
         "AC 8: stopped, engine idling, gear N read for under 8 s (inside the "
@@ -663,7 +676,31 @@ SETTINGS_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
          "settings-overlay": _LUX_OVERLAY,
          "settings-write": {"key": "pi.display.autoDim.luxFull", "value": 200}},
     ),
+    "settings-floor-from-minlevel": (
+        "US-895-c / AC 9: parked; BRIGHTNESS stored FIXED 75 %. With the "
+        "effective minLevel 0.75 (display-autodim) the lowest FIXED step is "
+        "75 %, so its − is hidden; with no readable minLevel "
+        "(display-autodim-unresolvable) FIXED is disabled and the stepper "
+        "reads 'Unknown'. Both DISPLAY_AUTODIM payloads are the real loader's.",
+        {"system-status": _systemInputs(_upChain()), "gear": _GEAR_NEUTRAL,
+         "settings": {**_FLOOR_STORED, **_SETTINGS_STORED},
+         "display-autodim-config": _FLOOR_CONFIG,
+         "display-autodim-unresolvable-config": _FLOOR_CONFIG_UNRESOLVABLE},
+    ),
 }
+
+
+def _recordDisplayAutoDim(config: dict[str, Any]) -> Any:
+    """The window.DISPLAY_AUTODIM the REAL state-server loader serves for ``config``."""
+    import tempfile
+
+    from pi.splash.states_http_server import loadDisplayAutoDimConfig
+
+    with tempfile.TemporaryDirectory() as tmp:
+        configPath = os.path.join(tmp, "config.json")
+        with open(configPath, "w", encoding="utf-8") as fh:
+            json.dump(config, fh)
+        return loadDisplayAutoDimConfig(configPath)
 
 
 def _recordSettingsWrite(
@@ -736,6 +773,9 @@ def _buildSettingsFixture(name: str) -> dict[str, Any]:
             write["key"], write["value"],
             inputs.get("settings-config", _SETTINGS_CONFIG), inputs.get("settings-overlay"),
         )
+    for name in ("display-autodim", "display-autodim-unresolvable"):
+        if f"{name}-config" in inputs:
+            payloads[name] = _recordDisplayAutoDim(inputs[f"{name}-config"])
     return {
         "description": description,
         "now": NOW,

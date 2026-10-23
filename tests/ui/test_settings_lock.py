@@ -66,6 +66,7 @@ _CSS = os.path.join(_DASH, "dashboard.css")
 
 _AUTO_ROTATE = "pi.display.carousel.autoRotateS"
 _CALIB = "pi.calibration.mode"
+_OVERRIDE_LEVEL = "pi.display.autoDim.overrideLevel"
 
 STOP_TO_CHANGE = "🔒 view only — stop to change"
 GEAR_UNKNOWN = "🔒 view only — gear unknown"
@@ -417,8 +418,10 @@ def test_stepsWriteTheChosenSeconds():
 @_needsNode
 def test_specsCarryASection_displayThenSystem_andUpperCaseNames():
     # MOVED PIN (US-895-b): the two lux ends lead DISPLAY (OVERRIDABLE_KEYS order).
+    # MOVED PIN (US-895-c): BRIGHTNESS goes before them.
     specs = _view("settingsSpecs")
     assert [(s["key"], s["section"]) for s in specs] == [
+        ("pi.display.autoDim.overrideLevel", "DISPLAY"),
         ("pi.display.autoDim.luxMin", "DISPLAY"),
         ("pi.display.autoDim.luxFull", "DISPLAY"),
         (_AUTO_ROTATE, "DISPLAY"),
@@ -428,7 +431,7 @@ def test_specsCarryASection_displayThenSystem_andUpperCaseNames():
     for spec in specs:
         assert spec["label"] == spec["label"].upper(), spec
     assert [s["label"] for s in specs] == [
-        "DIM-START", "FULL-BRIGHT", "ROTATE PAGES", "CALIBRATION MODE", "ANALYZE EACH DRIVE",
+        "BRIGHTNESS", "DIM-START", "FULL-BRIGHT", "ROTATE PAGES", "CALIBRATION MODE", "ANALYZE EACH DRIVE",
     ]
 
 
@@ -506,7 +509,8 @@ def test_theSettingsLinkShowsInEveryState_andNeverOpensThePiDetail(tmp_path):
 def test_validation_lockedHold_bandVisible_controlsLocked_stopToChange(tmp_path):
     out = _run(tmp_path, "settings-locked-hold",
                _BOOT + [{"advanceMs": 3000, "flush": 2}] + _OPEN_SYSTEM + [
-                   {"clickNth": {"selector": ".set-btn", "index": 1}}, {"flush": 1}])
+                   # MOVED PIN (US-895-c): CALIBRATION On, after BRIGHTNESS's two.
+                   {"clickNth": {"selector": ".set-btn", "index": 3}}, {"flush": 1}])
     surface = out["surface"]
     assert _menuOpen(surface)
     assert _lockLine(surface) == STOP_TO_CHANGE
@@ -552,7 +556,13 @@ def test_validation_neutralHeld8s_unlocksInPlace_withNoReopen(tmp_path):
     assert _attrs(_band(surface))["data-locked"] == "false"
     assert _lockLine(surface) is None
     assert len(surface.pathsByClass("set-step-plus")) == 1
-    assert all(_attrs(b).get("disabled") is None for b in surface.pathsByClass("set-btn"))
+    # MOVED PIN (US-895-c): BRIGHTNESS's FIXED stays disabled here for its OWN
+    # reason -- this page has no DISPLAY_AUTODIM, so no minLevel floor -- not the
+    # lock's; every other segment is enabled.
+    unlocked = [b for b in surface.pathsByClass("set-btn")
+                if not any(_attrs([n]).get("data-key") == _OVERRIDE_LEVEL for n in b)]
+    assert len(unlocked) == len(surface.pathsByClass("set-btn")) - 2
+    assert all(_attrs(b).get("disabled") is None for b in unlocked)
 
 
 @_needsNode
@@ -561,7 +571,8 @@ def test_aTapOnALockedSegmentWritesNothing(tmp_path):
     accessor says not parked (the tap does nothing: no write, no saving…)."""
     out = _run(tmp_path, "settings-locked-driving",
                _BOOT + _OPEN_KEBAB + [
-                   {"clickNth": {"selector": ".set-btn", "index": 3}}, {"flush": 1}])
+                   # MOVED PIN (US-895-c): AUTO | FIXED lead the band, +2.
+                   {"clickNth": {"selector": ".set-btn", "index": 5}}, {"flush": 1}])
     assert _posts(out) == []
 
 
@@ -602,7 +613,8 @@ def test_validation_inFlightWriteAcrossTheEdge_endsSavedOnTheLockedGlass(tmp_pat
     out = _run(
         tmp_path, "settings-locked-driving",
         _BOOT + _HOLD_8S + _OPEN_KEBAB + [
-            {"clickNth": {"selector": ".set-btn", "index": 1}},
+            # MOVED PIN (US-895-c): CALIBRATION On, after BRIGHTNESS's two.
+            {"clickNth": {"selector": ".set-btn", "index": 3}},
             {"setRoutes": {"/gear": fx["payloads"]["gear"]}},
             {"flush": 1},
             {"advanceMs": 3000, "flush": 1},

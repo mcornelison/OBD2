@@ -157,7 +157,8 @@ def test_theEndsAreTwoLadderSpecs_drawnAsOneRow_thatMustNotCross():
         assert spec["applyNote"] == _APPLY
     assert (luxMin["below"], luxMin["above"]) == (_LUX_FULL, None)
     assert (luxFull["below"], luxFull["above"]) == (None, _LUX_MIN)
-    assert [s["key"] for s in _view("settingsSpecs")][:3] == [_LUX_MIN, _LUX_FULL, _AUTO_ROTATE]
+    # MOVED PIN (US-895-c): BRIGHTNESS is first; the ends follow it.
+    assert [s["key"] for s in _view("settingsSpecs")][1:4] == [_LUX_MIN, _LUX_FULL, _AUTO_ROTATE]
 
 
 @_needsNode
@@ -255,9 +256,9 @@ def test_oneRow_namedAutoDimEnds_withBothEndsAndOneApplyTag(tmp_path):
     assert (_endValue(surface, _LUX_MIN), _endValue(surface, _LUX_FULL)) == (
         "3 lux", "300 lux",
     )
-    # DISPLAY opens on it, before ROTATE PAGES.
+    # MOVED PIN (US-895-c): DISPLAY opens on BRIGHTNESS, then it, then ROTATE PAGES.
     keys = [_attrs(p)["data-key"] for p in surface.pathsByClass("set-row")]
-    assert keys[:2] == [_LUX_MIN, _AUTO_ROTATE]
+    assert keys[:3] == ["pi.display.autoDim.overrideLevel", _LUX_MIN, _AUTO_ROTATE]
 
 
 @_needsNode

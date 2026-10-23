@@ -60,12 +60,16 @@ _TRIGGER_AFTER_DRIVE = "pi.analysis.triggerAfterDrive"
 _AUDIO_ALERTS = "pi.alerts.audioAlerts"
 _LUX_MIN = "pi.display.autoDim.luxMin"
 _LUX_FULL = "pi.display.autoDim.luxFull"
+_OVERRIDE_LEVEL = "pi.display.autoDim.overrideLevel"
 
 # The apply-state each key EARNED in this story, with the consumer that proves
 # it. This is the Python side of a cross-language pin: the display cannot import
 # it, so the risk is drift, and this map is what fails when a consumer changes
 # and its label does not (US-532's key-list guard, applied to apply-states).
 _EXPECTED_APPLY = {
+    # MOVED PIN (US-895-c, Atlas B12): appliedBrightness reads overrideLevel from
+    # the per-request settings blob, so it lands on the reload the band triggers.
+    _OVERRIDE_LEVEL: "reload",
     # MOVED PIN (US-895-b, Atlas B12): light_state_bridge re-reads config.json +
     # config.local.json (mtime-checked) on its next burst -- "at the next light
     # reading", with no time claim (no sensor, no reading, nothing applies it).

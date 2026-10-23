@@ -30,6 +30,9 @@
 #               |              | refuses the POST.
 # 2026-10-23    | Rex (US-895-b)| pi.display.autoDim.luxMin / luxFull join the
 #               |              | allow-list (finite positive numbers), first.
+# 2026-10-23    | Rex (US-895-c)| pi.display.autoDim.overrideLevel joins the
+#               |              | allow-list (null or finite in [0, 1]), first;
+#               |              | its minLevel floor stays the cross-key rule.
 # ================================================================================
 ################################################################################
 
@@ -136,6 +139,19 @@ def _isPositiveNumber(value: Any) -> bool:
     return math.isfinite(value) and value > 0
 
 
+def _isLevelOrNone(value: Any) -> bool:
+    """True for None (auto) or a finite int/float in [0, 1] (bool is NOT a number).
+
+    The fixed-brightness rule. The floor is the EFFECTIVE minLevel, which lives
+    in another key, so it is CROSS_KEY_RULES' job (Atlas A5), never this one's.
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and 0 <= value <= 1
+
+
 # Slice-1 overridable keys. Adding a key here is the ONLY way to make a setting
 # operator-writable -- both the read gate and the US-531 write gate consult this
 # one table, so a key cannot become writable without also becoming readable.
@@ -153,7 +169,12 @@ def _isPositiveNumber(value: Any) -> bool:
 # lux ends are overridable. Dict order is OVERRIDABLE_KEYS order and the band's
 # SETTINGS_SPECS order, nothing more (Atlas B11). The pair must still satisfy
 # luxFull > luxMin -- CROSS_KEY_RULES below, at both the read and write seams.
+#
+# US-895-c (CIO 2026-10-19, US-878-c IN): overrideLevel (the Settings FIXED
+# brightness; null = auto) goes FIRST -- DISPLAY order is brightness, auto-dim
+# ends, rotate. Its floor is overrideLevel >= minLevel, a cross-key rule.
 _VALIDATORS = {
+    "pi.display.autoDim.overrideLevel": _isLevelOrNone,
     "pi.display.autoDim.luxMin": _isPositiveNumber,
     "pi.display.autoDim.luxFull": _isPositiveNumber,
     "pi.display.carousel.autoRotateS": _isNonNegativeNumber,
