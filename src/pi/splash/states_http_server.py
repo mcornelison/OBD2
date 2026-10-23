@@ -42,6 +42,11 @@
 # 2026-10-20    | Rex (US-899-a1)| DISPLAY_STALE gains alertsAckConfirmSec and
 #               |              | alertsAckNoticeSec (the takeover ack windows),
 #               |              | the fuelResetConfirmSec rules.
+# 2026-10-22    | Atlas (ARCH) | POST drains an over-bound body (to 64 KB, in
+#               |              | 4 KB chunks) before answering, so the answer is
+#               |              | never a reset; above 64 KB, 413 + close. One
+#               |              | reader, _readBoundedBody. Handler socket timeout
+#               |              | 2.0 s, so a stalled client cannot hang the server.
 # ================================================================================
 ################################################################################
 
@@ -67,7 +72,7 @@ import mimetypes
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit
 
 from common.config import overlay
@@ -204,6 +209,49 @@ _DTC_STATE_FILENAME = "dtc"
 # Largest action request body we will read (tiny {unit, verb} / {confirm} JSON).
 _MAX_ACTION_BODY = 4096
 
+# Largest over-bound body we read and DISCARD before answering. Answering while
+# the client is still sending resets the connection (WinError 10053 on Windows),
+# so the route's answer must follow the drain. Above this: 413 + close.
+_MAX_DRAIN_BODY = 65536
+
+# The discard reads happen in chunks of this size, so memory stays bounded.
+_DRAIN_CHUNK = 4096
+
+# Socket timeout for every request (Atlas B1, 2026-10-22). The server is
+# single-threaded, so a stalled client freezes every kiosk poll until this
+# fires: it must stay under pi.display.stale.obdLiveSec (5 s), and a localhost
+# request finishes in milliseconds.
+_SOCKET_TIMEOUT_SEC = 2.0
+
+
+def _readBoundedBody(rfile: BinaryIO, length: int) -> tuple[bytes, bool]:
+    """Read a POST body within the bounds. The ONLY reader of ``rfile``.
+
+    Args:
+        rfile: The request stream.
+        length: The request's Content-Length (already parsed, may be <= 0).
+
+    Returns:
+        ``(body, tooLarge)``. Up to ``_MAX_ACTION_BODY`` the body is returned.
+        Up to ``_MAX_DRAIN_BODY`` it is read in ``_DRAIN_CHUNK`` pieces and
+        discarded, so the route sees ``b""`` exactly as for an empty body.
+        Above that nothing is read and ``tooLarge`` is True: the caller answers
+        413 and closes the connection.
+    """
+    if length > _MAX_DRAIN_BODY:
+        return b"", True
+    if length > _MAX_ACTION_BODY:
+        remaining = length
+        while remaining > 0:
+            chunk = rfile.read(min(_DRAIN_CHUNK, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+        return b"", False
+    if length > 0:
+        return rfile.read(length), False
+    return b"", False
+
 
 def _isSafeFile(baseDir: str, name: str) -> Path | None:
     """Resolve ``name`` under ``baseDir`` and return it only if it stays inside.
@@ -303,16 +351,25 @@ def makeStatesHandler(
     displayConfigJson = json.dumps(displayConfig)
 
     class _StatesHandler(BaseHTTPRequestHandler):
+        # Applied to the connection by StreamRequestHandler.setup; the stdlib
+        # closes the connection on the TimeoutError (handle_one_request).
+        timeout = _SOCKET_TIMEOUT_SEC
+
         # Silence default stderr request logging -- the journal captures stdout.
         def log_message(self, *args, **kwargs):  # noqa: N802 (stdlib signature)
             return
 
-        def _send(self, status: int, body: bytes, contentType: str) -> None:
+        def _send(
+            self, status: int, body: bytes, contentType: str, *, close: bool = False
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", contentType)
             self.send_header("Content-Length", str(len(body)))
             # Always no-store: the kiosk polls at 250ms and must never see stale.
             self.send_header("Cache-Control", "no-store")
+            if close:
+                self.send_header("Connection", "close")
+                self.close_connection = True
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -371,11 +428,18 @@ def makeStatesHandler(
             # Drain the request body FIRST (bounded). Responding to a POST before
             # consuming its body resets the connection on some clients/platforms
             # (WinError 10053); read it up front so every error path is clean.
+            # An over-bound body is drained and discarded, so the route answers
+            # it as an empty body; only a body past the drain bound is refused.
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = 0
-            rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
+            rawBody, tooLarge = _readBoundedBody(self.rfile, length)
+            if tooLarge:
+                self._send(
+                    413, b'{"error":"payload too large"}', "application/json", close=True
+                )
+                return
 
             # Exactly five write routes (US-403 service-control, US-407
             # dtc-clear, US-531 settings, US-881-d fuel-reset, US-897-c
