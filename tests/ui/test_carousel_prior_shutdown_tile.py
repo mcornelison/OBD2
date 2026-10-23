@@ -204,8 +204,9 @@ def test_clockUnsyncedVerdict_marksTheAgeAsUnreliable():
 
 def _lastStop(view: dict) -> dict:
     """MOVED PIN (US-894-e): LAST STOP lives in the UPS detail (spec s4.6.1,
-    Iris I7), no longer in the drill's diagnostics."""
-    assert view["drill"]["diagnostics"] == []
+    Iris I7), no longer in the drill's diagnostics.
+    MOVED PIN (US-894-f): the drill itself is deleted (US-759 closed)."""
+    assert "drill" not in view
     return view["upsDetail"]["lastStop"]
 
 
@@ -225,7 +226,8 @@ def test_theVerdictIsInTheUpsDetail_readFromThePublishedKey():
     assert row["label"] == "LAST STOP"
     assert row["text"].startswith("CLEAN · ")
     assert row["level"] == "neutral"
-    assert "priorShutdown" not in view["tiles"]
+    # MOVED PIN (US-894-f): the tiles went with the drill.
+    assert "tiles" not in view
     assert "priorShutdown" not in [r["key"] for r in view["rows"]]
 
 
@@ -263,8 +265,9 @@ def test_aVerdictIsNeverAnIssue_theSummaryStaysOk():
         _sysState(priorShutdown=_block(verdict="ungraceful", label="UNGRACEFUL: x")),
     )
 
-    assert view["verdict"]["level"] != "amber"
-    assert view["drill"]["rows"] == []
+    assert view["verdict"]["level"] not in ("amber", "issues")
+    # MOVED PIN (US-894-f): no issue list exists; nothing is a pi member.
+    assert view["piLine"] is None
     # MOVED PIN (US-894-e): the verdict reads in the UPS detail, neutral.
     assert "UNGRACEFUL" in _lastStop(view)["text"]
     assert _lastStop(view)["level"] == "neutral"

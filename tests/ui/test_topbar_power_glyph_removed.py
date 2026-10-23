@@ -34,6 +34,8 @@
 #   reason, not chrome, and the ruling was about the top bar. Pinned here rather
 #   than left to the drill-down suite, because "the CIO asked for the power
 #   display to go" is exactly the sentence a future session would over-apply.
+#   MOVED PIN (US-894-f): the drill-down (systemIssueRows) is deleted (US-759
+#   closed by the design); the UPS row is where the sensed source stays.
 #
 #   BAND BUDGET (F-127): removing a glyph FREES space, and the confirmation the
 #   story asks for lives in test_topbar_three_column_grid.py where the width
@@ -65,6 +67,9 @@
 #               |              | the sensed source is rendered by the System
 #               |              | page's UPS row (upsRowView), so AC-3 and the
 #               |              | power-row pin read it there.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-f): the drill-down
+#               |              | (systemIssueRows) is deleted, US-759 (comment
+#               |              | only; the UPS-row pins are unchanged).
 # ================================================================================
 ################################################################################
 

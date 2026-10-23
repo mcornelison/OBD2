@@ -7529,13 +7529,13 @@ a change of either value (the page repaints its taps on the edge). Not parked,
 no tap opens and no `›` shows. A parked tap on the OBD row opens the **OBD
 detail** in `#sys-detail` (per layer: state, `since` = `ts`, `last success` =
 `lastOkTs`, `--` where unpublished; then the sentence in full; no MAC and no
-retry count — no publish field); a parked tap on the verdict opens the US-509
-drill. `#version-chip` shows in the drill (the future Pi detail's line) and
+retry count — no publish field); a parked tap on the verdict opens the **Pi
+detail** (US-894-f, below). `#version-chip` shows only in the Pi detail and
 never in a row's detail (Iris I8).
 
 **DATA row (US-894-c, spec §4.3, §4.6; Atlas A4, Iris I3/I4/W3).** The second
 row (`dataRowView(data, captureData)`), replacing the SYNC / DRIVE / CAPTURE
-tiles (`syncTile` / `driveTile` / `captureTile` and their drill rows are gone).
+tiles (`syncTile` / `driveTile` / `captureTile` are gone).
 **Value** = the capture word, then ` · synced <when>`: `stalled` (amber) **if
 and only if** a `capture` verdict member exists — the member comes from
 `feeds.*.state` alone; otherwise from `capture-health`'s top-level `state`:
@@ -7579,8 +7579,8 @@ rule through the one shared `freshAgeText` Motion uses — floor, clamp 0,
 `charging`, `crate`. The tick's system-status branch fetches
 `states/battery-health` through `stateOnce` (Atlas P8). The parked **UPS
 detail** (`upsDetailView`, in `#sys-detail`) is described with the emitter
-below. LAST STOP moved there from the drill's diagnostics, so with the POWER
-tile gone the drill has no tiles and no diagnostics until US-894-f retires it.
+below. LAST STOP moved there from the drill's diagnostics (the drill itself is
+deleted by US-894-f).
 
 **Top-bar link indicator = the three-layer link chain (US-894-a, spec
 `specs/v030-system-page-design.md` §4.2.1).** The single `BT` glyph is retired
@@ -7941,38 +7941,51 @@ sync exceeds the threshold — and treats an absent/unparseable last-sync as sta
 and supplied by config: the emitter takes `syncStaleThresholdS` as a required
 parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
 
-**Summary drill-down (US-509, Sprint 68 / V0.29.23).** Since US-894-b the
-**verdict line** is the tap target (parked only, `currentParked()`), and the
-US-489 `SYSTEM · N ISSUE` line and its grid are gone; the drill stays until
-US-894-f retires it. The line is **tappable → a drill-down overlay** (`#sys-detail`,
-`carousel.js#systemIssueRows` / `#systemDrill`), one row per non-OK source,
-**worst-first**: source label + state chip + the tile's own reason + freshness,
-with a `‹ Back` that always returns. It is a **presentation of the same tiles**
-the 2×2 grid renders — the drill rows travel on `systemStatusView().drill`, so
-one read of the state file feeds the grid, the summary **and** the overlay, and
-the overlay is structurally incapable of contradicting the card behind it. No
-source state is recomputed. Four decisions are load-bearing:
+**Verdict → Pi detail; the amber set IS the member set (US-894-f, spec §4.0,
+§4.1, §4.6.2, AC 7; Iris I8/I9; Atlas P1/P2/P8/A5).** The US-509 summary
+drill-down — `systemIssueRows` / `systemDrill` / `systemDiagnostics`, its
+worst-first rank (`sysLevelRank`) and its typed-absent freshness pair
+(`sysRowFreshness` / `SYS_NO_AGE`) — is **deleted**, and with it US-759 is
+closed **by the design, not by a list**: there is no issue list to order, omit
+or date. The thing that is counted is marked where it is shown.
 
-- **The listing floor is `unavailable`, not `amber`.** `ok` is never listed (a
-  green source in a fault list is a *fabricated* fault) and `neutral` is not
-  either — `DRIVE=IDLE` means "not recording", **not broken**, so listing it
-  would report a fault in the commonest state there is. But a known-**unknown**
-  *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
-  excluding unavailables would make a tappable headline open an **empty**
-  overlay — the exact dead end this surface exists to remove.
-- **Freshness is never fabricated.** No source publishes a per-source age (the
-  always-null `obdLink.lastSeenS` was removed, US-876-a), so every row's
-  freshness reads **"age not reported"**, never
-  `"seen 0s ago"` (which would claim we had just seen a source we never timed —
-  the zeroed-altitude lie of US-508 in a different costume).
-- **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a
-  healthy card never advertises detail it does not have.
+- **The colour gate (AC 7, Atlas A5).** An *amber element* is any element with
+  `data-level="amber"` on the System page, in `#sys-detail` and in the top bar.
+  Every one carries `data-member="<key>"` naming exactly **one**
+  `verdict.members[].key`, and every member has **at least one** (the BT step,
+  its top-bar dot and the OBD row are three elements for one `bt` member —
+  legal). One renderer helper (`setMemberLevel`) is the only way an element
+  gets its level; top-bar glyphs go through `paintGlyph` (an amber dot's member
+  is its own layer, the WiFi glyph's `wifi`, the sync glyph's `sync`), and any
+  non-amber repaint drops a stale `data-member`. An amber **look** set on
+  `data-state` always also sets `data-level="amber"`, so nothing amber is
+  invisible to the gate. The verdict **count** is `data-level="issues"` (same
+  amber hue): it is the member set itself, not an element of one member, so it
+  carries no `data-member`. `tests/ui/test_system_page_amber_equals_members.py`
+  runs the gate over every `tests/ui/fixtures/states/system/` fixture except
+  `settings-*`, with each detail open in turn, and proves it bites (an orphan
+  key and a member with none both fail).
+- **The verdict opens the Pi detail** (parked only, `currentParked()`; ` ›` on
+  the verdict while the tap works). **The Pi line** (`piLineView`) sits under
+  the verdict only while `pi` is a member: one mono `--fs-meta` amber line,
+  the member's `reason` verbatim, + ` ›` (space + U+203A) **only while parked**
+  (I9); parked, it opens the Pi detail too.
+- **The Pi detail** (`piDetailView`, in `#sys-detail`) reads the S109 `pi` block
+  verbatim: CPU `cpuTempC` at 0.1 °C + `limit <cpuTempLimitC> °C` (the published
+  limit, never a page constant); THROTTLING now / since boot in words + the
+  hex; DISK `diskFreeBytes` in GiB floored to 0.1 (the emitter's integer floor)
+  + `limit <diskThresholdBytes> GiB`; UPTIME `under 1 min` / `42 min` /
+  `3 h 2 min` / `2 days 3 h` (`1 day 3 h`), null `--`. Each value shows its
+  **own** read time (`cpuTempTs` / `throttledTs` / `diskTs` / `uptimeTs`) —
+  the block has no ts, and a block stamp would date a 10-minute-old disk read
+  as now. A value is amber only when its name is in `overLimit` **and** the
+  `pi` member exists. The version is `#version-chip` — the ONE
+  `.deploy-version` reader (Atlas P8) — shown only in this detail.
 - **An open overlay repaints on every poll** rather than freezing on the
-  snapshot that opened it — a frozen age readout is the same fabrication the
-  g-dot (US-497) and the rotate bar (US-506) are guarded against.
+  snapshot that opened it (unchanged from US-509).
 
 The overlay **reuses the US-406 per-code detail shell** (`.detail-head` /
-`.detail-body` / `.detail-card`, the same `‹ Back`) so the two drill-downs speak
+`.detail-body` / `.detail-card`, the same `‹ Back`) so every detail speaks
 one interaction language, and it inherits the auto-rotate pause from the single
 document-level `pointerdown` seam US-506 established — no per-overlay pause call
 site to forget.

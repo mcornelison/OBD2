@@ -95,7 +95,8 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
             "ts": "2026-07-02T00:00:00Z",
         },
     )
-    assert "obdLink" not in view["tiles"]
+    # MOVED PIN (US-894-f): the tiles went with the drill (US-759).
+    assert "tiles" not in view
     assert view["rows"][0]["steps"] == ["dashed", "dashed", "dashed"]
     assert view["rows"][0]["sentence"] == "Bluetooth not read yet"
     # MOVED PIN (US-894-a): glyphs.bt is the link chain, read from `link` and

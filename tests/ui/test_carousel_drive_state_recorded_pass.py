@@ -98,6 +98,11 @@
 #                               not decide the word, an unreadable drive block
 #                               moves nothing and lists no row, and the page
 #                               prints no drive id.
+# 2026-10-23    | Ralph (Rex)  | US-894-f -- MOVED PIN: the issue list behind the
+#                               verdict is deleted (US-759 closed by the design);
+#                               the verdict opens the Pi detail. The idle case
+#                               reads that OPENED detail (asserted open, never
+#                               vacuous), and the view carries no drill/tiles.
 # ================================================================================
 ################################################################################
 
@@ -337,9 +342,10 @@ def _surface(
 
 _NOW_MS = 1788187560000  # _NOW as epoch ms
 
-# The drill-down is rendered only while the overlay is OPEN, so reaching it means
+# The detail is rendered only while the overlay is OPEN, so reaching it means
 # TAPPING the line the way the operator does. MOVED PIN (US-894-b): that line is
 # the verdict (`.sys-verdict`), and the tap only works parked.
+# MOVED PIN (US-894-f): the verdict opens the Pi detail; the issue list is gone.
 _OPEN_DRILL = [
     {"flush": 4},
     {"advanceMs": 9000, "flush": 4},
@@ -392,12 +398,15 @@ def _systemCardText(payload: Any, **kwargs: Any) -> list[str]:
 
 
 def _drillRows(payload: Any) -> list[str]:
-    """The drill-down's issue rows, as printed, with the overlay OPEN."""
+    """The detail behind the verdict, as printed, with the overlay OPEN.
+
+    MOVED PIN (US-894-f): the overlay's head and body text (the Pi detail);
+    an overlay that did not open fails here rather than reading empty.
+    """
     surface = _surface(payload, steps=_OPEN_DRILL, parked=True)
-    return [
-        " ".join(_textOf(path[-1]))
-        for path in surface.pathsByClass("sys-issue-row")
-    ]
+    assert surface.pathById("sys-detail")[-1]["attrs"].get("hidden") is None
+    assert _textOf(surface.pathById("sys-detail-head")[-1]) == ["PI"]
+    return _textOf(surface.pathById("sys-detail-body")[-1])
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +500,8 @@ def test_idleIsNominalNotAFault_theVerdictIsNotMovedByIt():
 
 def test_idleIsNeverListedAsAnIssueInTheDrillDown():
     """
-    Given: the drill-down lists every source at or above the `unavailable` floor
+    Given: the verdict opens the detail behind it (US-894-f: the Pi detail;
+           the US-509 issue list is deleted)
     When: the overlay is opened on a parked but otherwise healthy Pi
     Then: no DRIVE row appears.
 
@@ -521,8 +531,10 @@ def test_unreadableDriveBlock_movesNothingAndListsNoRow():
     assert _dataRow(_withoutDriveBlock(), capture) == _dataRow(_systemStatus(), capture)
     view = _view(_withoutDriveBlock(), capture)
     assert view["verdict"]["text"] == "ALL OK"
-    assert "drive" not in view["tiles"]
-    assert [r for r in view["drill"]["rows"] if r["label"] == "DRIVE"] == []
+    # MOVED PIN (US-894-f): the drill and its tiles are deleted (US-759), so
+    # no DRIVE tile or drill row can exist at all.
+    assert "tiles" not in view
+    assert "drill" not in view
 
 
 # ---------------------------------------------------------------------------

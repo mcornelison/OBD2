@@ -272,7 +272,8 @@ def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
     assert view["rows"][1]["key"] == "data"
     assert view["rows"][1]["value"].endswith("no sync on record")
     # MOVED PIN (US-894-c): the DRIVE tile is retired (spec s4.3 I3).
-    assert "drive" not in view["tiles"]
+    # MOVED PIN (US-894-f): the tiles went with the drill (US-759).
+    assert "tiles" not in view
 
 
 # ---------------------------------------------------------------------------

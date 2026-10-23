@@ -48,6 +48,9 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-e: the two UPS-row fixtures the story
 #               |              | names (ups-on-battery, ups-gauge-unreadable),
 #               |              | priorShutdown from computePriorShutdownSummary.
+# 2026-10-23    | Ralph (Rex)  | US-894-f: the three Pi fixtures the story names
+#               |              | (pi-hot, pi-multi-limit, two-issues), the pi
+#               |              | block from pi_health.buildPiHealthBlock.
 # ================================================================================
 ################################################################################
 
@@ -69,9 +72,15 @@ for _root in (_REPO_ROOT, _SRC):
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
+from pi.diagnostics.disk_space_guard import (  # noqa: E402
+    LOW_DISK_THRESHOLD_BYTES,
+    DiskSpaceState,
+    DiskVerdict,
+)
 from pi.diagnostics.prior_shutdown_summary import (  # noqa: E402
     computePriorShutdownSummary,
 )
+from pi.hardware.pi_health import buildPiHealthBlock, parseThrottled  # noqa: E402
 from pi.network.wifi_reader import (  # noqa: E402
     WIFI_REASON_NMCLI_ABSENT,
     WIFI_REASON_READ_FAILED,
@@ -186,6 +195,38 @@ def _battery(**overrides: Any) -> dict:
     }
     inputs.update(overrides)
     return inputs
+
+
+_GIB = 2**30
+# The effective pi.health.limits.cpuTempC on shipped config (validator default).
+_CPU_TEMP_LIMIT_C = 80.0
+# The fast reads (temp, throttled, uptime) land every 10 s; the disk every
+# 600 s, so its read time is older -- each value carries its OWN ts.
+_PI_FAST_TS = "2026-10-22T23:09:55Z"
+_PI_DISK_TS = "2026-10-22T23:01:12Z"
+
+
+def _piHealth(
+    *, cpuTempC: float = 58.4, throttled: str = "0x0", diskFreeBytes: int = int(41.3 * _GIB),
+    uptimeS: float = 10920.6,
+) -> dict:
+    """The `pi` block exactly as pi_health.buildPiHealthBlock assembles it
+    (overLimit derived there, never written here)."""
+    verdict = (DiskVerdict.BREACHED if diskFreeBytes < LOW_DISK_THRESHOLD_BYTES
+               else DiskVerdict.HEALTHY)
+    return buildPiHealthBlock(
+        cpuTempC=cpuTempC,
+        cpuTempTs=_PI_FAST_TS,
+        cpuTempLimitC=_CPU_TEMP_LIMIT_C,
+        throttled=parseThrottled(f"throttled={throttled}"),
+        throttledTs=_PI_FAST_TS,
+        disk=DiskSpaceState(
+            verdict=verdict, freeBytes=diskFreeBytes, thresholdBytes=LOW_DISK_THRESHOLD_BYTES,
+        ),
+        diskTs=_PI_DISK_TS,
+        uptimeS=uptimeS,
+        uptimeTs=_PI_FAST_TS,
+    )
 
 
 def _capture(
@@ -490,6 +531,36 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
                 upsAvailable=False, upsUnavailableReason=REASON_UPS_UNREADABLE,
             ),
         },
+    ),
+    # --- US-894-f: the Pi line and the Pi detail (spec s4.1, s4.6.2, s7) ----
+    "pi-hot": (
+        "The CPU at 80.2 C against the published 80 C limit -> the pi member, "
+        "1 ISSUE, the Pi line under the verdict (the reason verbatim, ' ›' "
+        "only while parked); in the Pi detail only the CPU value is amber.",
+        {"system-status": _systemInputs(_upChain(), piHealth=_piHealth(cpuTempC=80.2))},
+    ),
+    "pi-multi-limit": (
+        "CPU temp, throttling (under-voltage now and since boot, 0x50005) and "
+        "the disk under its 20 GiB limit -> one pi member, 'Over limit: CPU "
+        "temp, throttling, disk.', the three crossed values amber, uptime not.",
+        {"system-status": _systemInputs(_upChain(), piHealth=_piHealth(
+            cpuTempC=81.4, throttled="0x50005", diskFreeBytes=int(19.97 * _GIB),
+        ))},
+    ),
+    "two-issues": (
+        "A drive recording, the link dropped (bt retrying) and the CPU hot -> "
+        "bt + pi, 2 ISSUES; amber exactly on the BT step, its sentence, its "
+        "top-bar dot and the Pi line -- the amber set equals the member set.",
+        {"system-status": _systemInputs(
+            _link(
+                _layer("retrying", lastOkTs=_EARLIER),
+                _layer("retrying", lastOkTs=_EARLIER),
+                _layer("retrying", lastOkTs=_EARLIER),
+            ),
+            driveState="recording",
+            driveId=212,
+            piHealth=_piHealth(cpuTempC=80.2),
+        )},
     ),
 }
 

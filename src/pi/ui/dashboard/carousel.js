@@ -848,6 +848,11 @@
   // s4.1: `ALL OK` when the provider counted nothing, `n ISSUE` / `n ISSUES`
   // otherwise. An absent or malformed verdict is `--`, never ALL OK: ALL OK is
   // the provider's claim that it looked.
+  //
+  // US-894-f (AC 7, Atlas A5): the count's level is `issues`, painted amber,
+  // and deliberately NOT `amber`. `data-level="amber"` is reserved for an
+  // element that belongs to exactly ONE member; the count belongs to all of
+  // them at once, so it is the member set itself, not an element of it.
   function systemVerdictView(data) {
     var verdict = isObj(data) ? data.verdict : null;
     var n = isObj(verdict) ? verdict.issueCount : null;
@@ -855,7 +860,7 @@
       return { text: SYS_NO_DATA, level: "unavailable" };
     }
     if (n === 0) return { text: "ALL OK", level: "ok" };
-    return { text: n + (n === 1 ? " ISSUE" : " ISSUES"), level: "amber" };
+    return { text: n + (n === 1 ? " ISSUE" : " ISSUES"), level: "issues" };
   }
 
   // The OBD row's step labels, chain order (spec s3).
@@ -897,18 +902,24 @@
       && Object.prototype.hasOwnProperty.call(LINK_STATE_LOOK, state) ? state : null;
   }
 
-  // The reason of the first verdict member whose key is in `keys`, verbatim;
-  // null when none of them is a member (or its reason is not a string).
-  function verdictMemberReason(data, keys) {
+  // The first verdict member whose key is in `keys` (with a string reason);
+  // null when none of them is a member.
+  function verdictMember(data, keys) {
     var verdict = isObj(data) ? data.verdict : null;
     var members = isObj(verdict) && Array.isArray(verdict.members) ? verdict.members : [];
     for (var i = 0; i < members.length; i++) {
       var m = members[i];
       if (isObj(m) && keys.indexOf(m.key) !== -1 && typeof m.reason === "string") {
-        return m.reason;
+        return m;
       }
     }
     return null;
+  }
+
+  // That member's reason, verbatim; null when there is none.
+  function verdictMemberReason(data, keys) {
+    var m = verdictMember(data, keys);
+    return m !== null ? m.reason : null;
   }
 
   function obdWalkSentence(data) {
@@ -935,13 +946,15 @@
       var look = looks[LINK_CHAIN_LAYERS[i]];
       steps.push(look === "hollow" ? "dashed" : look);
     }
-    var reason = verdictMemberReason(data, LINK_MEMBER_LAYERS);
+    var member = verdictMember(data, LINK_MEMBER_LAYERS);
     return {
       key: "obd",
       label: "OBD",
       steps: steps,
-      sentence: reason !== null ? reason : obdWalkSentence(data),
-      level: reason !== null ? "amber" : "secondary",
+      sentence: member !== null ? member.reason : obdWalkSentence(data),
+      level: member !== null ? "amber" : "secondary",
+      // AC 7: the member the row's amber belongs to (null when neutral).
+      member: member !== null ? member.key : null,
     };
   }
 
@@ -970,7 +983,9 @@
           ? fmtStamp(block.lastOkTs) : SYS_NO_DATA,
       });
     }
-    return { head: "OBD", layers: layers, sentence: row.sentence, level: row.level };
+    return {
+      head: "OBD", layers: layers, sentence: row.sentence, level: row.level, member: row.member,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -1105,6 +1120,7 @@
       parts: parts,
       sentence: texts.join(" · "),
       level: capture.basis === "member" ? "amber" : "secondary",
+      member: capture.basis === "member" ? CAPTURE_MEMBER_KEY : null,
     };
   }
 
@@ -1153,6 +1169,7 @@
       atHome: wifi.home === true ? "yes" : wifi.home === false ? "no" : "unknown",
       sentence: row.sentence,
       level: row.level,
+      member: row.member,
     };
   }
 
@@ -1191,127 +1208,112 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-509 (F-124) -- the drill-down behind the verdict line (US-894-b: the
-  // summary line and the 2x2 grid it sat over are gone; the drill stays until
-  // US-894-f retires it). The rows are a PRESENTATION of the view's tiles --
-  // no second read, no re-derivation.
+  // US-894-f (spec s4.1, s4.6.2; Iris I8/I9; Atlas P1/P2) -- Pi health. The
+  // `pi` block (S109 US-877-a) is read VERBATIM: the provider computed every
+  // value, every limit (cpuTempLimitC is published, never a page constant)
+  // and the overLimit list. The page compares nothing; a limit is amber only
+  // when it is in overLimit AND the `pi` member exists (s4.0, AC 7).
+  //
+  // US-759 is closed by the design, not by a list: the US-509 issue list
+  // behind the verdict (its rows, its freshness pair, its rank) is gone. The
+  // amber element IS the marked, counted thing; there is nothing to list.
   // -------------------------------------------------------------------------
 
-  // Severity rank over the tile-level vocabulary. Three buckets, not two:
-  //   ok            -- genuinely good.
-  //   neutral       -- nominal but inactive (DRIVE=IDLE: "not recording").
-  //   unavailable   -- a known-UNKNOWN.
-  //   amber / down  -- the worst rows, listed first.
-  var SYS_LEVEL_RANK = { ok: 0, neutral: 1, unavailable: 2, amber: 3, down: 4 };
+  // Copies of pi.hardware.pi_health OVER_LIMIT_* and system_status_emitter
+  // VERDICT_PI, pinned equal by tests/ui/test_system_page_pi_detail.py.
+  var PI_MEMBER_KEY = "pi";
+  var PI_OVER_CPU_TEMP = "cpuTemp";
+  var PI_OVER_THROTTLED = "throttled";
+  var PI_OVER_DISK = "disk";
+  // s4.6.2: disk free prints GiB (2^30), floored to 0.1 -- the emitter's unit.
+  var PI_BYTES_PER_GIB = 1073741824;
 
-  // A level this mapper has not been taught resolves to `unavailable`, NEVER to
-  // ok -- a future tile level must not be able to drop out of the list.
-  function sysLevelRank(level) {
-    return Object.prototype.hasOwnProperty.call(SYS_LEVEL_RANK, level)
-      ? SYS_LEVEL_RANK[level]
-      : SYS_LEVEL_RANK.unavailable;
+  function piBlock(data) {
+    return isObj(data) && isObj(data.pi) ? data.pi : {};
   }
 
-  // The listing floor. Deliberately `unavailable`, not `amber`:
-  //   * `ok`      -- never listed. A green source in a fault list is a
-  //                  FABRICATED fault.
-  //   * `neutral` -- never listed either. DRIVE=IDLE is the only neutral this
-  //                  card produces and it means "not recording", NOT "broken";
-  //                  listing it would report a fault in the commonest state
-  //                  there is (key on, no drive started) -- crying wolf.
-  //   * `unavailable` and worse -- listed. Excluding known-unknowns would
-  //                  make a tappable headline open an EMPTY overlay, which is
-  //                  the exact dead end US-509 removed.
-  var SYS_ROW_FLOOR = SYS_LEVEL_RANK.unavailable;
-
-  // The typed absence for a source that publishes no age at all. No source
-  // publishes a per-source age today (the OBD link's was always null and was
-  // removed, US-876-a), so every row MUST say the age was not reported rather
-  // than render "seen 0s ago" -- which would claim we had just seen a source we
-  // never timed. Same fabrication as a zeroed altitude (US-508): an unmeasured
-  // quantity is an absence, never a zero.
-  var SYS_NO_AGE = "age not reported";
-
-  // One source's freshness for its drill-down row: always the typed absence
-  // until a provider publishes a real per-source age.
-  function sysRowFreshness() {
-    return SYS_NO_AGE;
+  function finiteNumber(v) {
+    return typeof v === "number" && isFinite(v);
   }
 
-  // Worst-first rows, one per non-OK source. Ties keep the view's tile order
-  // (US-894-b: SYS_TILE_ORDER went with the grid), so the list never
-  // reshuffles between polls under the operator's eyes. Built by
-  // walking the rank buckets top-down rather than sorting, which makes that
-  // stability a property of the construction instead of the sort algorithm.
-  function systemIssueRows(tiles, data) {
-    var rows = [];
-    if (!isObj(tiles)) return rows;
-    var rank = SYS_LEVEL_RANK.down;
-    for (; rank >= SYS_ROW_FLOOR; rank--) {
-      var keys = Object.keys(tiles);
-      for (var i = 0; i < keys.length; i++) {
-        var key = keys[i];
-        var tile = tiles[key];
-        if (!isObj(tile) || sysLevelRank(tile.level) !== rank) continue;
-        var freshness = sysRowFreshness();
-        var detail = typeof tile.detail === "string" ? tile.detail : "";
-        rows.push({
-          key: key,
-          label: tile.label,
-          value: tile.value,
-          // The row carries the TILE's level verbatim -- the chip and the grid
-          // cell behind it are then incapable of disagreeing.
-          level: tile.level,
-          // The emitter's own words. The drill-down explains what the card
-          // already said; it does not re-diagnose. Dropped when it only repeats
-          // the freshness the row prints beside it.
-          reason: detail === freshness ? "" : detail,
-          freshness: freshness,
-        });
-      }
+  // A limit as the emitter prints one (Python `:g`, six significant digits),
+  // so `limit 80 °C` / `limit 20 GiB`, never `80.000`.
+  function piLimitText(n) {
+    return String(parseFloat(n.toPrecision(6)));
+  }
+
+  // s4.6.2 (I9): `under 1 min` / `42 min` / `3 h 2 min` / `2 days 3 h`
+  // (`1 day 3 h`); null, junk or a negative -> `--`.
+  function uptimeText(s) {
+    if (!finiteNumber(s) || s < 0) return SYS_NO_DATA;
+    if (s < 60) return "under 1 min";
+    if (s < 3600) return Math.floor(s / 60) + " min";
+    if (s < 86400) return Math.floor(s / 3600) + " h " + Math.floor((s % 3600) / 60) + " min";
+    var days = Math.floor(s / 86400);
+    return days + (days === 1 ? " day " : " days ") + Math.floor((s % 86400) / 3600) + " h";
+  }
+
+  // The Pi line under the verdict (s4.1): only while `pi` is a member, its
+  // reason verbatim. The ` ›` is the renderer's, and only while parked (I9).
+  function piLineView(data) {
+    var member = verdictMember(data, [PI_MEMBER_KEY]);
+    if (member === null) return null;
+    return { text: member.reason, level: "amber", member: PI_MEMBER_KEY };
+  }
+
+  // Each value's OWN read time (cpuTempTs, throttledTs, diskTs, uptimeTs) --
+  // the block has no ts of its own, and a block stamp would date a value
+  // read ten minutes earlier (the disk) as if it were read now.
+  function piReadText(ts) {
+    return "read " + (typeof ts === "string" ? fmtStamp(ts) : SYS_NO_DATA);
+  }
+
+  // The Pi detail (s4.6.2, parked; opened from the verdict and the Pi line):
+  // CPU, THROTTLING, DISK, UPTIME, each {value, note, read}; the version is
+  // the #version-chip itself (Atlas P8: the ONE .deploy-version reader), so
+  // it is not a field here. A row is amber only as the `pi` member's.
+  function piDetailView(data) {
+    var pi = piBlock(data);
+    var over = Array.isArray(pi.overLimit) ? pi.overLimit : [];
+    var member = verdictMember(data, [PI_MEMBER_KEY]) !== null;
+    function level(name) {
+      return member && over.indexOf(name) !== -1 ? "amber" : "neutral";
     }
-    return rows;
-  }
-
-  // US-559: the SYNC counts moved off the tile (CIO 2026-08-20) and land here.
-  // Reference facts, NOT faults -- so they are a section of their own rather
-  // than a row in the issue list, where a healthy source would read as a
-  // fabricated fault (the US-509 floor above still holds, untouched).
-  //
-  // Taken VERBATIM off the tile the grid renders. The overlay presents a fact
-  // the card already computed; it never re-derives one, so the two cannot
-  // disagree -- the same rule the issue rows follow.
-  // US-744 adds the PREVIOUS shutdown's verdict here, and deliberately NOT as a
-  // sixth grid tile: the card is held to a 4-fact ceiling (US-557 / Iris), which
-  // a sixth tile breaks -- and the story forbids re-budgeting the band or
-  // shrinking type to make room. It belongs in this section on its own merits
-  // anyway: it is a REFERENCE FACT about a boot that already ended, not a live
-  // source, so it is neither a fault (it would cry wolf all session) nor a
-  // status tile (it describes the past, not now).
-  //
-  // US-894-e (Iris I7, re-hunt 2026-10-22): LAST STOP MOVED to the UPS detail
-  // (upsDetailView), through the same priorShutdownTile, unchanged. Nothing
-  // is left in this section; the drill and this function go with US-894-f.
-  function systemDiagnostics(tiles, data) {
-    return [];
-  }
-
-  // The summary line is a tap target ONLY when something is behind it -- an
-  // affordance that opens an empty list is a misleading control.
-  //
-  // US-559 widened WHAT counts as "something", and deliberately not the rule
-  // itself: US-509 gated this on faults because faults were all the overlay
-  // held. Now the counts live here too, so a healthy card is tappable. Left
-  // gated on faults, a non-zero PENDING backlog on an otherwise-OK sync would
-  // have been unreachable and "moved to the drill-down" would have meant
-  // deleted. The gate still reads real content -- it is not pinned open.
-  function systemDrill(tiles, data) {
-    var rows = systemIssueRows(tiles, data);
-    var diagnostics = systemDiagnostics(tiles, data);
+    function row(key, label, value, note, ts, rowLevel) {
+      return {
+        key: key, label: label, value: value, note: note, read: piReadText(ts),
+        level: rowLevel, member: rowLevel === "amber" ? PI_MEMBER_KEY : null,
+      };
+    }
+    var throttled = SYS_NO_DATA;
+    if (typeof pi.throttled === "boolean") {
+      throttled = (pi.throttled ? "throttled now" : "not throttled now") + " · "
+        + (pi.throttledSinceBoot === true ? "throttled since boot"
+           : pi.throttledSinceBoot === false ? "not since boot" : "since boot " + SYS_NO_DATA);
+    }
+    var disk = SYS_NO_DATA;
+    if (finiteNumber(pi.diskFreeBytes) && pi.diskFreeBytes >= 0) {
+      // Toward the breach, never up to the limit (the emitter's floor).
+      var tenths = Math.floor(pi.diskFreeBytes * 10 / PI_BYTES_PER_GIB);
+      disk = Math.floor(tenths / 10) + "." + (tenths % 10) + " GiB";
+    }
     return {
-      rows: rows,
-      diagnostics: diagnostics,
-      tappable: rows.length > 0 || diagnostics.length > 0,
+      head: "PI",
+      rows: [
+        row("cpuTemp", "CPU",
+            finiteNumber(pi.cpuTempC) ? pi.cpuTempC.toFixed(1) + " °C" : SYS_NO_DATA,
+            finiteNumber(pi.cpuTempLimitC) ? "limit " + piLimitText(pi.cpuTempLimitC) + " °C" : null,
+            pi.cpuTempTs, level(PI_OVER_CPU_TEMP)),
+        row("throttled", "THROTTLING", throttled,
+            typeof pi.throttledHex === "string" ? pi.throttledHex : null,
+            pi.throttledTs, level(PI_OVER_THROTTLED)),
+        row("disk", "DISK", disk,
+            finiteNumber(pi.diskThresholdBytes)
+              ? "limit " + piLimitText(pi.diskThresholdBytes / PI_BYTES_PER_GIB) + " GiB" : null,
+            pi.diskTs, level(PI_OVER_DISK)),
+        // Uptime has no limit, so it is never amber.
+        row("uptime", "UPTIME", uptimeText(pi.uptimeS), null, pi.uptimeTs, "neutral"),
+      ],
     };
   }
 
@@ -1408,6 +1410,7 @@
       value: word,
       sentence: sentence,
       level: isMember ? "amber" : "secondary",
+      member: isMember ? WIFI_MEMBER_KEY : null,
     };
   }
 
@@ -1447,6 +1450,7 @@
       home: home === true ? "yes" : home === false ? "no" : "unknown",
       reason: reason,
       reasonLevel: row.level,
+      member: row.member,
     };
   }
 
@@ -1620,19 +1624,18 @@
   //
   // US-894-b: the page is `verdict` + `rows` (spec s3 layout A); the OBD row
   // is the first row, and the rows not yet built are absent. The obdLink tile
-  // is gone with the block it read (Atlas A2/P6). `tiles` now only feed the
-  // drill-down behind the verdict until their rows land (US-894-c/e/f).
+  // is gone with the block it read (Atlas A2/P6).
   //
   // US-894-c: the DATA row is the second row; the SYNC / DRIVE / CAPTURE
-  // tiles and their drill rows are gone (the drill keeps POWER until US-894-e).
+  // tiles are gone.
   // US-894-d: the WIFI row is the third.
   // US-894-e: the UPS row is the fourth, reading a THIRD state file
   // (states/battery-health, `batteryData`) against the tick's `nowMs`. The
-  // POWER tile (powerTile) is gone with it, so the drill has no tiles left
-  // until US-894-f retires it.
+  // POWER tile (powerTile) is gone with it.
+  // US-894-f: the Pi line (only with a `pi` member) and the Pi detail behind
+  // the verdict. The US-509 drill and its `tiles` are gone (US-759 closed).
   function systemStatusView(data, captureData, batteryData, nowMs) {
     if (!isObj(data)) return null;
-    var tiles = {};
     return {
       // s4.1: the provider's count, never the page's.
       verdict: systemVerdictView(data),
@@ -1645,10 +1648,10 @@
       dataDetail: dataDetailView(data, captureData),
       wifiDetail: wifiDetailView(data),
       upsDetail: upsDetailView(data, batteryData, nowMs),
-      // US-509: the drill-down behind the verdict -- one read of the state
-      // file feeds the page AND the overlay.
-      drill: systemDrill(tiles, data),
-      tiles: tiles,
+      // s4.1 / s4.6.2: the Pi line under the verdict, and the Pi detail the
+      // verdict (and the line) open -- the same read again.
+      piLine: piLineView(data),
+      piDetail: piDetailView(data),
       glyphs: {
         // US-894-a: the link chain ignores source.obd (s4.2.1).
         bt: linkChainGlyph(data),
@@ -5705,10 +5708,9 @@
     currentParked: currentParked,
     onParkedChange: onParkedChange,
     publishParked: publishParked,
-    sysRowFreshness: sysRowFreshness,
-    systemIssueRows: systemIssueRows,
-    systemDiagnostics: systemDiagnostics,
-    systemDrill: systemDrill,
+    piLineView: piLineView,
+    piDetailView: piDetailView,
+    uptimeText: uptimeText,
     systemStatusView: systemStatusView,
     dataRowView: dataRowView,
     dataDetailView: dataDetailView,
@@ -5890,10 +5892,25 @@
       parent.appendChild(el);
     }
 
+    // US-894-f (spec AC 7, Atlas A5): THE one way an element is painted on
+    // its level. An amber element names the ONE verdict member it belongs to
+    // (data-member), so the page-wide gate can check that the amber set is
+    // the member set; any other level carries no member (and a repaint of a
+    // reused element drops a stale one).
+    function setMemberLevel(el, level, member) {
+      el.setAttribute("data-level", level);
+      if (level === "amber" && typeof member === "string") {
+        el.setAttribute("data-member", member);
+      } else {
+        el.removeAttribute("data-member");
+      }
+    }
+
     // US-894-b (spec s3 layout A): the verdict line, then one row per
     // subsystem. Built with textContent (no innerHTML) so provider values --
     // a member's reason above all -- render verbatim, never as markup. Rows
     // are `.sys-row`, never `.tile`.
+    // US-894-f: the verdict's tap opens the Pi detail (s4.1, parked only).
     function appendSysVerdict(body, verdict, tappable) {
       var line = document.createElement("div");
       line.className = "sys-verdict";
@@ -5912,7 +5929,31 @@
         chevron.className = "sys-chevron";
         chevron.textContent = " ›";
         line.appendChild(chevron);
-        line.onclick = function () { openSysDetail("drill"); };
+        line.onclick = function () { openSysDetail("pi"); };
+      }
+      body.appendChild(line);
+    }
+
+    // s4.1: the Pi line -- one amber mono line under the verdict, the `pi`
+    // member's reason verbatim. Parked, it opens the Pi detail and carries
+    // ` ›` (space + U+203A, I9); not parked it opens nothing and shows none.
+    function appendPiLine(body, piLine, tappable) {
+      var line = document.createElement("div");
+      line.className = "sys-pi-line";
+      setMemberLevel(line, piLine.level, piLine.member);
+      var text = document.createElement("span");
+      text.className = "sys-pi-reason";
+      text.textContent = piLine.text;
+      line.appendChild(text);
+      if (tappable) {
+        line.classList.add("sys-tappable");
+        line.setAttribute("role", "button");
+        line.setAttribute("tabindex", "0");
+        var chevron = document.createElement("span");
+        chevron.className = "sys-pi-chevron";
+        chevron.textContent = " ›";
+        line.appendChild(chevron);
+        line.onclick = function () { openSysDetail("pi"); };
       }
       body.appendChild(line);
     }
@@ -5934,6 +5975,8 @@
         step.className = "obd-step";
         step.setAttribute("data-layer", layer);
         step.setAttribute("data-state", steps[i]);
+        // An amber step is its own layer's member (linkChainGlyph's rule).
+        if (steps[i] === "amber") setMemberLevel(step, "amber", layer);
         step.textContent = OBD_STEP_LABELS[layer];
         chain.appendChild(step);
       }
@@ -5944,7 +5987,7 @@
       var el = document.createElement("div");
       el.className = "sys-row";
       el.setAttribute("data-row", row.key);
-      el.setAttribute("data-level", row.level);
+      setMemberLevel(el, row.level, row.member);
       var label = document.createElement("span");
       label.className = "sys-row-label";
       label.textContent = row.label;
@@ -5960,6 +6003,7 @@
         var word = document.createElement("span");
         word.className = "sys-row-word";
         word.setAttribute("data-state", row.look);
+        if (row.look === "amber") setMemberLevel(word, "amber", row.member);
         word.textContent = row.word;
         value.appendChild(word);
         var tail = document.createElement("span");
@@ -5977,7 +6021,7 @@
         for (var p = 0; p < row.parts.length; p++) {
           var part = document.createElement("span");
           part.className = "sys-row-part";
-          part.setAttribute("data-level", row.parts[p].level);
+          setMemberLevel(part, row.parts[p].level, row.member);
           part.textContent = (p > 0 ? " · " : "") + row.parts[p].text;
           sentence.appendChild(part);
         }
@@ -6006,7 +6050,8 @@
       if (!body) return;
       body.textContent = "";
       var parked = currentParked().parked === true;
-      appendSysVerdict(body, view.verdict, parked && !!view.drill && view.drill.tappable);
+      appendSysVerdict(body, view.verdict, parked);
+      if (view.piLine) appendPiLine(body, view.piLine, parked);
       var rows = document.createElement("div");
       rows.className = "sys-rows";
       for (var i = 0; i < view.rows.length; i++) appendSysRow(rows, view.rows[i], parked);
@@ -6022,11 +6067,11 @@
       if (sysDetailOpen()) renderSysDetail(view);
       renderSystemBody(card, view);
       paintLinkChain(glyphEls.bt, view.glyphs.bt);
-      if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
+      paintGlyph(glyphEls.sync, view.glyphs.sync, "sync");
       // ARCH-007: render the emitter's verdict. The display applies NO
       // threshold of its own (ruling s2.1) -- two rules for one fact disagree
       // the first time either moves.
-      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", view.glyphs.wifi);
+      paintGlyph(glyphEls.wifi, view.glyphs.wifi, "wifi");
     }
 
     // s4.1: system-status unreadable -> the verdict is `--`, never ALL OK, and
@@ -6054,9 +6099,10 @@
     // overlay is fed by exactly the same poll that painted the page.
     var lastSysView = null;
     var lastSysCard = null;
-    // US-894-b: which detail #sys-detail shows -- "drill" (behind the verdict)
-    // or a row's key ("obd"). Every detail renders in the one overlay (I8).
-    var sysDetailKind = "drill";
+    // US-894-b: which detail #sys-detail shows -- a row's key ("obd",
+    // "data", "wifi", "ups") or "pi" (US-894-f: behind the verdict and the Pi
+    // line). Every detail renders in the one overlay (I8).
+    var sysDetailKind = "pi";
 
     // Elements are looked up LAZILY rather than captured at init: this renderer
     // lives in the shared render scope (not the browser-only block below), and a
@@ -6066,11 +6112,10 @@
       var bodyEl = document.getElementById("sys-detail-body");
       if (!bodyEl) return;
       bodyEl.textContent = "";
-      // I8: the version chip shows only in the Pi detail. Until that detail
-      // lands (US-894-e/f) the drill behind the verdict -- the line the Pi
-      // detail will be opened from -- keeps it; a row's detail never shows it.
+      // I8: the version chip -- the ONE .deploy-version reader (Atlas P8) --
+      // shows only in the Pi detail; every row's detail hides it.
       var chip = document.getElementById("version-chip");
-      if (chip) chip.hidden = sysDetailKind !== "drill";
+      if (chip) chip.hidden = sysDetailKind !== "pi";
       if (sysDetailKind === "obd") {
         renderObdDetail(bodyEl, view);
         return;
@@ -6087,52 +6132,46 @@
         renderUpsDetail(bodyEl, view);
         return;
       }
+      renderPiDetail(bodyEl, view);
+    }
+
+    // s4.6.2 Pi detail (US-894-f): per value its label, the value (amber only
+    // as the `pi` member's crossed limit), the limit / hex note and its OWN
+    // read time; the version is the #version-chip below the body. A view that
+    // is gone (the file went unreadable while open) shows every value `--`.
+    function renderPiDetail(bodyEl, view) {
+      var detail = view && view.piDetail ? view.piDetail : piDetailView(null);
       var head = document.getElementById("sys-detail-head");
-      // The head repeats the LINE THE OPERATOR TAPPED verbatim (the verdict).
-      if (head) head.textContent = view && view.verdict ? view.verdict.text : "";
-      var rows = view && view.drill ? view.drill.rows : [];
-      if (!rows.length) {
-        // Reachable while the overlay is OPEN and the last fault clears, and --
-        // since US-559 -- the NORMAL state of a healthy card, which is now
-        // reachable for its diagnostics. Saying so is the honest move; an empty
-        // box reads as a broken overlay, and closing it would yank the surface
-        // out from under the operator.
-        var none = document.createElement("div");
-        none.className = "sys-issue-none";
-        none.textContent = "all sources OK";
-        bodyEl.appendChild(none);
-      }
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
+      if (head) head.textContent = detail.head;
+      for (var i = 0; i < detail.rows.length; i++) {
+        var row = detail.rows[i];
         var el = document.createElement("div");
-        el.className = "detail-card sys-issue-row";
-        // The row's level came straight off the tile.
-        el.setAttribute("data-level", row.level);
+        el.className = "detail-card pi-row";
+        el.setAttribute("data-row", row.key);
+        setMemberLevel(el, row.level, row.member);
         var rowHead = document.createElement("div");
         rowHead.className = "sys-issue-head";
         var label = document.createElement("span");
         label.className = "sys-issue-label";
         label.textContent = row.label;
-        var chip2 = document.createElement("span");
-        chip2.className = "sys-issue-chip";
-        chip2.textContent = row.value;
+        var value = document.createElement("span");
+        value.className = "pi-value";
+        value.textContent = row.value;
         rowHead.appendChild(label);
-        rowHead.appendChild(chip2);
+        rowHead.appendChild(value);
         el.appendChild(rowHead);
-        // Omitted when the view found it only repeated the freshness beside it.
-        if (row.reason) {
-          var reason = document.createElement("span");
-          reason.className = "sys-issue-reason";
-          reason.textContent = row.reason;
-          el.appendChild(reason);
+        if (row.note !== null) {
+          var note = document.createElement("span");
+          note.className = "obd-layer-fact pi-note";
+          note.textContent = row.note;
+          el.appendChild(note);
         }
-        var fresh = document.createElement("span");
-        fresh.className = "sys-issue-freshness";
-        fresh.textContent = row.freshness;
-        el.appendChild(fresh);
+        var read = document.createElement("span");
+        read.className = "obd-layer-fact pi-read";
+        read.textContent = row.read;
+        el.appendChild(read);
         bodyEl.appendChild(el);
       }
-      renderSysDiagnostics(bodyEl, view && view.drill ? view.drill.diagnostics : []);
     }
 
     // s4.6 OBD detail: per layer its state, since when and last success, then
@@ -6152,6 +6191,7 @@
         var label = document.createElement("span");
         label.className = "obd-step";
         label.setAttribute("data-state", layer.look);
+        if (layer.look === "amber") setMemberLevel(label, "amber", layer.layer);
         label.textContent = layer.label;
         var state = document.createElement("span");
         state.className = "obd-layer-state";
@@ -6171,7 +6211,7 @@
       }
       var sentence = document.createElement("div");
       sentence.className = "detail-card obd-detail-sentence";
-      sentence.setAttribute("data-level", detail.level);
+      setMemberLevel(sentence, detail.level, detail.member);
       sentence.textContent = detail.sentence;
       bodyEl.appendChild(sentence);
     }
@@ -6211,6 +6251,7 @@
         var state = document.createElement("span");
         state.className = "sys-row-word data-feed-state";
         state.setAttribute("data-state", feed.look);
+        if (feed.look === "amber") setMemberLevel(state, "amber", detail.member);
         state.textContent = feed.state;
         rowHead.appendChild(label);
         rowHead.appendChild(state);
@@ -6228,7 +6269,7 @@
       appendDataFact(bodyEl, "AT HOME", detail.atHome);
       var sentence = document.createElement("div");
       sentence.className = "detail-card obd-detail-sentence";
-      sentence.setAttribute("data-level", detail.level);
+      setMemberLevel(sentence, detail.level, detail.member);
       sentence.textContent = detail.sentence;
       bodyEl.appendChild(sentence);
     }
@@ -6245,6 +6286,7 @@
       if (word) {
         word.className = "sys-diag-text sys-row-word";
         word.setAttribute("data-state", detail.state.look);
+        if (detail.state.look === "amber") setMemberLevel(word, "amber", detail.member);
         word.textContent = detail.state.text;
       }
       appendDataFact(bodyEl, "NETWORK", detail.network);
@@ -6253,7 +6295,7 @@
       appendDataFact(bodyEl, "HOME NETWORK", detail.home);
       if (detail.reason !== null) {
         var reasonEl = appendDataFact(bodyEl, "REASON", detail.reason, "wifi-reason");
-        reasonEl.setAttribute("data-level", detail.reasonLevel);
+        setMemberLevel(reasonEl, detail.reasonLevel, detail.member);
       }
     }
 
@@ -6297,26 +6339,6 @@
       bodyEl.appendChild(el);
     }
 
-    // US-559: the reference facts, below the faults. Built with textContent (no
-    // innerHTML) like every other row here, so emitter values render verbatim
-    // and never as markup.
-    function renderSysDiagnostics(bodyEl, diags) {
-      if (!diags || !diags.length) return;
-      for (var i = 0; i < diags.length; i++) {
-        var el = document.createElement("div");
-        el.className = "detail-card sys-diag-row";
-        var label = document.createElement("span");
-        label.className = "sys-diag-label";
-        label.textContent = diags[i].label;
-        var text = document.createElement("span");
-        text.className = "sys-diag-text";
-        text.textContent = diags[i].text;
-        el.appendChild(label);
-        el.appendChild(text);
-        bodyEl.appendChild(el);
-      }
-    }
-
     function sysDetailOpen() {
       var el = document.getElementById("sys-detail");
       return !!el && el.hidden === false;
@@ -6324,12 +6346,10 @@
 
     // Opens a detail ONLY while parked (Atlas B9: row and verdict taps), read
     // at tap time from the one accessor -- a stale listener left on a row
-    // painted while parked cannot open it after the car moves off. The drill
-    // is also gated on having something behind it.
+    // painted while parked cannot open it after the car moves off.
     function openSysDetail(which) {
       var el = document.getElementById("sys-detail");
       if (!el || !lastSysView || currentParked().parked !== true) return;
-      if (which === "drill" && !lastSysView.drill.tappable) return;
       sysDetailKind = which;
       renderSysDetail(lastSysView);
       el.hidden = false;
@@ -6349,7 +6369,22 @@
       for (var i = 0; i < dots.length; i++) {
         var layer = dots[i].getAttribute("data-layer");
         var look = isObj(looks) && typeof looks[layer] === "string" ? looks[layer] : "hollow";
-        dots[i].setAttribute("data-state", look);
+        paintGlyph(dots[i], look, layer);
+      }
+    }
+
+    // A top-bar glyph's look on data-state; an amber look also carries the
+    // member it belongs to (AC 7: the chain dot's member is its own layer,
+    // the WiFi glyph's is `wifi`, the sync glyph's `sync`). Any other look
+    // clears both, so a repaint never leaves a stale member behind.
+    function paintGlyph(el, look, member) {
+      if (!el) return;
+      el.setAttribute("data-state", look);
+      if (look === "amber") {
+        setMemberLevel(el, "amber", member);
+      } else {
+        el.removeAttribute("data-level");
+        el.removeAttribute("data-member");
       }
     }
 
@@ -6359,9 +6394,9 @@
     // no reading of any layer (spec s4.2.1, AC 4).
     function resetSystemGlyphs(glyphEls) {
       paintLinkChain(glyphEls.bt, linkChainGlyph(null));
-      if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
+      paintGlyph(glyphEls.sync, "neutral", "sync");
       // US-894-d: no reading -> dim arcs, no slash (s4.4).
-      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", wifiGlyphState(null));
+      paintGlyph(glyphEls.wifi, wifiGlyphState(null), "wifi");
     }
 
     // --- US-401 Battery Health DOM render (browser only) --------------------

@@ -51,6 +51,10 @@
 #                               retired (9 -> 8 cards); the power-source and
 #                               battery-health render scripts read the UPS row
 #                               and detail; the ladder CSS pin is inverted.
+# 2026-10-23    | Ralph (Rex)  | US-894-f -- MOVED PIN: the view carries no tiles
+#                               (the drill is deleted, US-759), so the retired-
+#                               tile pins read `tiles` undefined; the count's
+#                               level is `issues` (AC 7).
 # ================================================================================
 ################################################################################
 
@@ -345,7 +349,10 @@ const reconn = {
   ts: '2026-06-30T19:42:00Z'
 };
 const rv = c.systemStatusView(reconn);
-assert.strictEqual(rv.tiles.obdLink, undefined, 'the OBD LINK tile is retired');
+// MOVED PIN (US-894-f): no tiles at all -- the drill they fed is deleted.
+assert.strictEqual(rv.tiles, undefined, 'the OBD LINK tile is retired (no tiles left)');
+assert.strictEqual(rv.drill, undefined, 'the US-509 drill is deleted (US-759)');
+assert.strictEqual(rv.verdict.level, 'issues', 'the count names no one member (AC 7)');
 assert.strictEqual(rv.rows[0].steps[0], 'amber', 'OBD row BT step amber');
 assert.strictEqual(rv.rows[0].sentence, 'Link dropped. Retrying.', 'member reason verbatim');
 assert.strictEqual(rv.verdict.text, '1 ISSUE', 'the provider counted it');
@@ -358,7 +365,7 @@ assert.strictEqual(rv.glyphs.bt.bt, 'amber', 'BT dot amber on a bt member');
 const stale = JSON.parse(JSON.stringify(reconn));
 stale.sync.stale = true;
 const sv = c.systemStatusView(stale);
-assert.strictEqual(sv.tiles.sync, undefined, 'the SYNC tile is retired');
+assert.strictEqual(sv.tiles, undefined, 'the SYNC tile is retired (no tiles left)');
 assert.strictEqual(sv.glyphs.sync, 'neutral', 'stale sync glyph neutral without a member');
 assert.ok(/synced /.test(sv.rows[1].value), 'the DATA row carries the stamp');
 const counted = JSON.parse(JSON.stringify(stale));

@@ -249,9 +249,11 @@ class TestItReachesThePage:
         # MOVED PIN (US-894-e): the UPS row follows the WIFI row.
         assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi", "ups"]
         assert view["rows"][1]["word"] == "stalled"
-        assert "capture" not in view["tiles"]
-        assert "drive" not in view["tiles"]
-        assert all(r["label"] != "CAPTURE" for r in view["drill"]["rows"])
+        # MOVED PIN (US-894-f): the drill and its tiles are deleted (US-759
+        # closed by the design) -- there is no CAPTURE tile or drill row left
+        # anywhere for the capture fact to hide in.
+        assert "tiles" not in view
+        assert "drill" not in view
 
     def test_systemStatusView_withNoCaptureArgument_readsNotYetRead(self) -> None:
         """A caller that passes no capture payload still gets the page: the

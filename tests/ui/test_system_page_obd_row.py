@@ -37,6 +37,9 @@
 #               |              | the drill behind the verdict has nothing left
 #               |              | (POWER tile + LAST STOP moved), so a parked
 #               |              | verdict tap opens nothing until US-894-f.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-f): the count's level is
+#               |              | `issues` (AC 7), and a parked verdict tap opens
+#               |              | the Pi detail with the version chip.
 # ================================================================================
 ################################################################################
 
@@ -278,7 +281,9 @@ def test_validation_btRetrying_oneIssue_btAmber_theMemberReasonByteForByte():
     members = status["verdict"]["members"]
     assert [m["key"] for m in members] == ["bt"]
     view = _views(["bt-retrying"])["bt-retrying"]
-    assert view["verdict"] == {"text": "1 ISSUE", "level": "amber"}
+    # MOVED PIN (US-894-f, AC 7): the count's level is `issues` (painted
+    # amber); `amber` names exactly one member's element.
+    assert view["verdict"] == {"text": "1 ISSUE", "level": "issues"}
     row = view["rows"][0]
     assert row["steps"][0] == "amber"
     assert row["sentence"] == members[0]["reason"]
@@ -351,9 +356,10 @@ def test_theOtherFixtures_readAsTheSpecSays():
     ("verdict", "expected"),
     [
         ({"issueCount": 0, "members": []}, {"text": "ALL OK", "level": "ok"}),
-        ({"issueCount": 1, "members": []}, {"text": "1 ISSUE", "level": "amber"}),
-        ({"issueCount": 2, "members": []}, {"text": "2 ISSUES", "level": "amber"}),
-        ({"issueCount": 12, "members": []}, {"text": "12 ISSUES", "level": "amber"}),
+        # MOVED PIN (US-894-f): a count is `issues`, never `amber` (AC 7).
+        ({"issueCount": 1, "members": []}, {"text": "1 ISSUE", "level": "issues"}),
+        ({"issueCount": 2, "members": []}, {"text": "2 ISSUES", "level": "issues"}),
+        ({"issueCount": 12, "members": []}, {"text": "12 ISSUES", "level": "issues"}),
     ],
 )
 def test_theVerdictLine_isTheProvidersCount(verdict, expected):
@@ -803,7 +809,9 @@ def test_parked_theObdRowOpensTheObdDetail_inSysDetail_withoutTheVersionChip():
     )
     # MOVED PIN (US-894-c): verdict + OBD row + DATA row.
     # MOVED PIN (US-894-d): + the WIFI row.
-    assert len(surface.pathsByClass("sys-chevron")) == 4
+    # MOVED PIN (US-894-f): + the UPS row, and the verdict (it opens the Pi
+    # detail while parked).
+    assert len(surface.pathsByClass("sys-chevron")) == 5
     detail = surface.pathById("sys-detail")
     assert detail[-1]["attrs"].get("hidden") is None, "the OBD detail did not open"
     assert _text(surface.pathById("sys-detail-head")[-1]) == "OBD"
@@ -818,21 +826,24 @@ def test_parked_theObdRowOpensTheObdDetail_inSysDetail_withoutTheVersionChip():
 
 @_needsNode
 @pytest.mark.skipif(not _hasGearBuilder(), reason="gear builder unavailable")
-def test_parked_theVerdictWithNothingBehindIt_opensNothing():
+def test_parked_theVerdictOpensThePiDetail_withTheVersionChip():
     """MOVED PIN (US-894-e; was `..._theVerdictOpensTheDrill_whichKeeps
     TheVersionChip`): the drill's last tile (POWER) became the UPS row and its
-    last fact (LAST STOP) moved to the UPS detail, so nothing is behind the
-    verdict. By US-509's own rule it is then no tap target, even parked: no
-    ` ›` (I9) and no overlay. The Pi detail (US-894-f) is what it opens next."""
+    last fact (LAST STOP) moved to the UPS detail.
+    MOVED PIN (US-894-f): the verdict now opens the Pi detail (spec s4.1),
+    which is always built -- so, parked, it carries ` ›` and opens the PI
+    detail with the version chip (I8), even on ALL OK."""
     surface = _render(
         _status("all-ok-driving"), parked=True,
         steps=[{"clickNth": {"selector": ".sys-verdict", "index": 0}}, {"flush": 1}],
     )
     detail = surface.pathById("sys-detail")
-    assert detail[-1]["attrs"].get("hidden") is not None
+    assert detail[-1]["attrs"].get("hidden") is None
+    assert _text(surface.pathById("sys-detail-head")[-1]) == "PI"
+    assert surface.pathById("version-chip")[-1]["attrs"].get("hidden") is None
     verdict = surface.pathsByClass("sys-verdict")
     assert len(verdict) == 1
-    assert "›" not in _text(verdict[0][-1])
+    assert _text(verdict[0][-1]).endswith(" ›")
 
 
 @_needsNode

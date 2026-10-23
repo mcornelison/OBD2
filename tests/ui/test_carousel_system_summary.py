@@ -43,6 +43,9 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the battery card is retired, so
 #                               the 2-arg appendTile pin reads the typed-NA / LOADING
 #                               callers.
+# 2026-10-23    | Ralph (Rex)  | US-894-f -- MOVED PIN: the view carries no tiles
+#                               (US-759), and the count's level is `issues`, not
+#                               `amber` (AC 7: amber names exactly one member).
 # ================================================================================
 ################################################################################
 
@@ -122,7 +125,8 @@ _NODE_TESTS = pytest.mark.skipif(
 def test_theSummaryAndItsTileGridAreRetired():
     view = _view("systemStatusView", _sysState())
     assert "summary" not in view
-    assert "obdLink" not in view["tiles"]
+    # MOVED PIN (US-894-f): the tiles went with the drill (US-759).
+    assert "tiles" not in view
     proc = subprocess.run(
         [_NODE, "-e",
          "const c=require(process.argv[1]);"
@@ -143,7 +147,10 @@ def test_theVerdictIsGreenOnlyOnTheProvidersAllOk():
 @_NODE_TESTS
 def test_aDegradedCardIsNotGreen_whenTheProviderCountsIt():
     """The F-1 fixture from US-400 (every source degraded): the provider's two
-    members make the line amber -- never the one green thing on the card."""
+    members make the line amber -- never the one green thing on the card.
+
+    MOVED PIN (US-894-f, AC 7): the count's level is `issues` (painted amber,
+    pinned below): `amber` is reserved for an element of ONE member."""
     members = [
         {"key": "bt", "reason": "Not linked. Check the OBD dongle."},
         {"key": "pi", "reason": "Over limit: disk."},
@@ -152,7 +159,7 @@ def test_aDegradedCardIsNotGreen_whenTheProviderCountsIt():
         "systemStatusView",
         _sysState(verdict={"issueCount": 2, "members": members}),
     )
-    assert view["verdict"] == {"text": "2 ISSUES", "level": "amber"}
+    assert view["verdict"] == {"text": "2 ISSUES", "level": "issues"}
 
 
 @_NODE_TESTS
@@ -190,7 +197,8 @@ def test_verdictOk_isTheSsotGreen_notALiteral():
 
 
 def test_verdictAmber_isTheSsotAmber_neverRed():
-    block = _ruleBlock(_read(_CSS), '.sys-verdict[data-level="amber"] .sys-verdict-text')
+    # MOVED PIN (US-894-f): the count paints amber on `issues`, not `amber`.
+    block = _ruleBlock(_read(_CSS), '.sys-verdict[data-level="issues"] .sys-verdict-text')
     assert "var(--amber-warn)" in block
     assert "var(--critical-red)" not in block
 

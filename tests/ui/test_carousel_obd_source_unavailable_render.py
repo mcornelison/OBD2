@@ -27,6 +27,9 @@
 #   `unavailable` level, the BT glyph goes NEUTRAL rather than `down` ("we could
 #   not look" is not "no signal"), the summary line refuses to say OK over it,
 #   and the drill-down row carries the reason WITHOUT fabricating a seen-age.
+#   MOVED PIN (US-894-f): the drill-down and its 'age not reported' pair are
+#   DELETED (US-759 closed by the design); no seen-age can be fabricated on a
+#   list that no longer exists.
 #
 #   THE LOAD-BEARING PIN IS THE OVERRIDE. `sourceUnavailable()` beats `obdLink`
 #   outright, so a source marked unavailable renders NA even when a STALE
@@ -78,6 +81,9 @@
 #               |              | source.obd (spec s4.2); the PRODUCER half -- one
 #               |              | typed reason per cause in source.obd -- is
 #               |              | unchanged and still pinned end to end.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-f): the drill row and its
+#               |              | freshness pair are deleted (US-759; comment
+#               |              | only, no assertion read them any more).
 # ================================================================================
 ################################################################################
 

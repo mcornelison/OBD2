@@ -37,6 +37,9 @@
 # 2026-10-23    | Rex (US-894-e)| MOVED PIN: LAST STOP moved to the UPS detail
 #               |              | and the POWER tile is gone, so the drill has
 #               |              | nothing behind it and is not tappable.
+# 2026-10-23    | Rex (US-894-f)| MOVED PIN: the drill is deleted (US-759); the
+#               |              | gate and diagnostics-renderer tests retire, the
+#               |              | rest read the view's piDetail.
 # ================================================================================
 ################################################################################
 
@@ -432,84 +435,48 @@ def test_dataRow_theTimeOnTheRowIsTheSharedTwelveHourFace():
 def test_systemDrill_carriesNoSyncCountsAnyMore():
     """
     Given: the whole-system payload
-    When: the drill-down view is built
-    Then: no `sync` diagnostic, no `pending` anywhere in it.
+    When: the page view is built
+    Then: no `sync` tile and no `pending` anywhere in it.
 
           MOVED PIN (US-894-e): the prior-shutdown verdict that was the only
           reference fact here moved to the UPS detail (Iris I7).
+          MOVED PIN (US-894-f): the drill and its tiles are DELETED (US-759
+          closed by the design), so the counts have nowhere left to hide.
     """
     view = _probe("systemStatusView", _sysState())
-    diags = view["drill"]["diagnostics"]
 
-    assert diags == []
+    assert "drill" not in view
+    assert "tiles" not in view
     assert view["upsDetail"]["lastStop"]["label"] == "LAST STOP"
-    assert "pending" not in json.dumps(view["drill"])
-    assert "sync" not in view["tiles"]
+    assert "pending" not in json.dumps(view)
 
 
 def test_systemDrill_healthySystem_isStillReachable():
     """
     Given: every source healthy -- the COMMON case
-    When: the summary line is built
-    Then: it is tappable, because the counts now live behind it.
+    When: the page view is built
+    Then: the verdict still has something behind it.
 
-          THIS PIN MOVED, IT WAS NOT DELETED. US-509 asserted the opposite
-          (`allGood -> tappable is False`) and its stated reason was "an
-          affordance that opens an EMPTY list is misleading". That invariant is
-          unchanged and still enforced below; what changed is the CONTENT -- the
-          CIO moved the counts here on 2026-08-20, so the list is no longer
-          empty on a healthy card. Had `tappable` stayed gated on faults, a
-          non-zero PENDING backlog on an otherwise-OK sync would have become
-          unreachable, and "moved to the drill-down" would have meant deleted.
-
-          MOVED PIN (US-894-e): the counts left with US-894-c and LAST STOP
-          with US-894-e (to the UPS detail), so a healthy card has NOTHING
-          behind the line -- and the US-509 invariant above says it is then
-          not a tap target. The facts are reached from the rows' details.
+          THIS PIN MOVED, IT WAS NOT DELETED. US-509 gated the line on an
+          issue list; US-894-e left that list empty on a healthy card.
+          MOVED PIN (US-894-f): the issue list is gone (US-759) and the
+          verdict opens the Pi detail (spec s4.1), which is always built --
+          so the line is a real tap target (parked) on a healthy card too.
+          The parked-only gate is pinned in test_system_page_pi_detail.py.
     """
     view = _probe("systemStatusView", _sysState())
 
-    assert view["drill"]["tappable"] is False
-    assert view["drill"]["rows"] == []
+    assert view["piDetail"]["head"] == "PI"
+    assert [r["label"] for r in view["piDetail"]["rows"]] == [
+        "CPU", "THROTTLING", "DISK", "UPTIME",
+    ]
     assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi", "ups"]
 
 
-def test_systemDrill_nothingBehindTheLine_isNotATapTarget():
-    """
-    Given: the sync source absent entirely, so it contributes NO counts
-    When: the summary line is built
-    Then: still tappable, because an ABSENT source is itself listed as a row.
-          Asserted so the widened gate is shown to be driven by content rather
-          than pinned open: `tappable` still reads two independent inputs.
-
-          US-744: the sync COUNTS are still absent here -- what this test was
-          pinning -- and the prior-shutdown verdict is now listed beside them
-          on every real card. The negative self-test below (empty tiles -> an
-          empty drill) is what proves the gate is not hard-coded true.
-    """
-    view = _probe("systemStatusView", _sysState(sync=None))
-
-    # MOVED PIN (US-894-c): the SYNC tile is retired, so an absent sync block
-    # lists no drill row any more.
-    # MOVED PIN (US-894-e): the prior-shutdown fact moved to the UPS detail,
-    # so nothing is left behind the line and it is not a tap target.
-    assert view["drill"]["diagnostics"] == []
-    assert view["drill"]["rows"] == []
-    assert view["drill"]["tappable"] is False
-
-
-def test_systemDrill_negativeSelfTest_gateIsNotHardCodedTrue():
-    """
-    Given: a payload with neither issue rows nor diagnostics
-    When: the drill is built directly from empty tiles
-    Then: NOT tappable. Without this, `tappable: true` would satisfy every
-          assertion above while destroying the US-509 guarantee outright.
-    """
-    drill = _probe("systemDrill", {}, {})
-
-    assert drill["rows"] == []
-    assert drill["diagnostics"] == []
-    assert drill["tappable"] is False
+# MOVED PIN (US-894-f): test_systemDrill_nothingBehindTheLine_isNotATapTarget
+# and test_systemDrill_negativeSelfTest_gateIsNotHardCodedTrue are RETIRED with
+# the gate they pinned: systemDrill and its `tappable` are deleted (US-759
+# closed by the design). The verdict's tap is now gated on parked alone.
 
 
 # ---------------------------------------------------------------------------
@@ -539,16 +506,7 @@ def test_emitterStillPublishesRawIso_theDisplayOwnsThePresentation():
     assert "strftime" not in body.split('"lastOkTs"')[1][:400]
 
 
-def test_carouselJs_rendererPaintsTheDiagnosticsItComputes():
-    """
-    Given: the drill-down renderer
-    When: its source is read
-    Then: it paints the diagnostics. A field the view computes and nobody
-          renders is not a readout (US-508) -- and here it would mean the
-          counts were moved into a structure that never reaches the glass.
-    """
-    js = _codeOnly(_read(_JS))
-    start = js.index("function renderSysDetail(")
-    body = js[start : start + 2600]
-
-    assert "diagnostics" in body
+# MOVED PIN (US-894-f): test_carouselJs_rendererPaintsTheDiagnosticsItComputes
+# is RETIRED: the diagnostics section and its renderer (renderSysDiagnostics)
+# are deleted with the drill (US-759). The Pi detail's painted fields are
+# pinned in tests/ui/test_system_page_pi_detail.py.
