@@ -7562,6 +7562,26 @@ waiting, event rows, `not counted: <table>, …` and at home `yes` / `no` /
 `sync.stale` has no verdict member (Atlas P9, Iris I4), so the glyph is amber
 only while a `sync` member exists (US-917).
 
+**UPS row (US-894-e, spec §4.5, §4.6.1; Atlas A1/A3/A4/P8, Iris I6/I7/W2).**
+The fourth row (`upsRowView(data, batteryData, nowMs)`), replacing the Battery
+card (9 cards → 8) and the POWER tile (`powerTile`, with its `wall/car power`
+detail and battery amber, is gone). **Two files, two facts** (Atlas A1):
+**value** = `states/battery-health` `vcellV` (`4.12 V`, `--text-primary`;
+null / no payload → `--`; `source.ups` unavailable → `--` + the typed reason,
+e.g. `-- · gauge unreadable`, the US-429 rule); **sentence** = the SENSED
+`system-status.power.source` → `on external power` / `on battery` / anything
+else `power source unknown` — never derived from battery-health, never `wall`
+or `car` — then ` · <age>`, the cell's **freshness** age (Iris I6: the S105 M7
+rule through the one shared `freshAgeText` Motion uses — floor, clamp 0,
+`N s ago`, cap `999+ s ago`; never `agoText`'s `just now`) against the tick's
+`nowMs`; undated → no age. **Never amber**: there is no UPS verdict member, so
+`on battery` is neutral (Atlas A4). Never on the row: SOC, a runtime,
+`charging`, `crate`. The tick's system-status branch fetches
+`states/battery-health` through `stateOnce` (Atlas P8). The parked **UPS
+detail** (`upsDetailView`, in `#sys-detail`) is described with the emitter
+below. LAST STOP moved there from the drill's diagnostics, so with the POWER
+tile gone the drill has no tiles and no diagnostics until US-894-f retires it.
+
 **Top-bar link indicator = the three-layer link chain (US-894-a, spec
 `specs/v030-system-page-design.md` §4.2.1).** The single `BT` glyph is retired
 (with `btGlyphState`). `#glyph-bt` keeps its slot, id and title and holds one
@@ -7895,8 +7915,10 @@ installed in-car vs. bench/wall power — which is a *different fact* from
 acquisition path is `PowerModeProvider` (`src/pi/power/`), which reads the
 static config key **`pi.power.mode ∈ {car, wall, unknown}`** (validator DEFAULT
 `unknown`) and is THE SSOT for the fact (zero other acquisition paths). The
-provider is wired through `system_status_emitter.buildSystemStatusState` into
-`carousel.js#powerTile`, which renders CAR / WALL / **unknown**. An
+provider is wired through `system_status_emitter.buildSystemStatusState`; the
+`carousel.js#powerTile` that rendered it is retired (US-668 dropped the mode
+from the display; US-894-e deleted the tile — the sensed source is the UPS
+row's words, never `wall` or `car`). An
 absent/stale/invalid config resolves to `unknown` — **never a confident wrong
 mode** (honest-instrument). The seam is designed so acquisition can later swap
 config → a GPIO sense line behind the same `PowerModeProvider` interface with
@@ -7955,17 +7977,46 @@ one interaction language, and it inherits the auto-rotate pause from the single
 document-level `pointerdown` seam US-506 established — no per-overlay pause call
 site to forget.
 
-#### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+#### UPS row + detail (ex-Battery Health card) + `battery-health` emitter (US-401, US-894-e) [Atlas A-3]
 
 > **VERDICT SUPERSEDED — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source.**
 > Same card, same `health` vocabulary (`good`/`degraded`/`replace`/`unknown`) and F-9 line; the verdict is T (battery time to the
 > reserve floor) vs J (the at-home job). The six `reasons.health` codes, `timeToFloorS`/`jobAvgS`/`jobMaxS`/`provisional`, and
 > `runtimeToCutoffS` (now = T) are defined there. Where this section and that file disagree, that file governs.
 
-The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
-Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder
-**only during a real drain**. The cell is the **Pi UPS-HAT LiPo (MAX17048 fuel
-gauge), never the car's 12 V lead-acid (F-11)**.
+**The Battery card is RETIRED (US-894-e, CIO 2026-10-19; spec §4.5 / §4.6.1).**
+The `battery-health` state file now feeds the System page's **UPS row** (VCELL +
+age, above) and its parked **UPS detail** (`carousel.js#upsDetailView`, in
+`#sys-detail`), labelled `Pi UPS battery`. The cell is the **Pi UPS-HAT LiPo
+(MAX17048 fuel gauge), never the car's 12 V lead-acid (F-11)**. The detail
+carries, all neutral (no UPS member):
+
+- **CELL** — `vcellTile`'s `4.12 V` + the M7 freshness age; with `source.ups`
+  unavailable, the typed NA alone (`-- · gauge unreadable`) and no health or
+  SOC line beside it.
+- **SOURCE** — the sensed `power.source` words, and for an unresolved source
+  its typed `power.reasons.source` in words (Iris W2): `provider_absent` → `no
+  power sensor running`, `source_unreadable` → `power sensor unreadable`,
+  `read_failed` → `power sensor read failed`; any other reason prints no words,
+  and nothing ever says `no UPS fitted`. `POWER_SOURCE_REASON_WORDS`' keys are
+  pinned to `card_state_emitter.POWER_SOURCE_UNKNOWN_REASONS` by
+  `tests/ui/test_system_page_ups_row.py`.
+- **HEALTH** — `healthValue` `GOOD` / `DEGRADED` / `REPLACE` / `--`, coloured by
+  `healthLevel` (green for good, neutral otherwise; never amber or red, Spool),
+  then the unknown reason (`healthReasonText`) or a resolved verdict's T-vs-J
+  margin (`healthMarginText`, `11 min vs 40 s job` — exempt from "never a
+  runtime": detail only, resolved verdict only, always with its `vs n s job`
+  half), then **always** the F-9 `last health check · <date> (<age>)` line.
+- **SOC** — `≈ 92 % (modelled)` when `socCalibrated === true`, else
+  `≈ 92 % (modelled, uncalibrated)`; only when `soc` is a real number (F-8).
+- **LAST STOP** — the US-744 prior-shutdown verdict through the shipped
+  `priorShutdownTile`, unchanged (Iris I7), from `system-status.priorShutdown`.
+
+**Dropped with the card:** the drain ladder and its `~N min to cutoff` (a banned
+runtime — capacity unmeasured), pack epoch and voltage trend (no field),
+`batteryHealthView` / `ladderView` / `socTile` / `renderBatteryHealthBody` /
+`appendLadder`, the `.ladder*` CSS and the card's `SOURCE_CARDS` entry. The
+emitter and its states file **stay** (drain_forensics reads it).
 
 **`battery-health` emitter (`src/pi/splash/battery_health_emitter.py`).** The
 **orchestrator/power tier owns this emitter** (A-3): it holds the live MAX17048
@@ -7990,9 +8041,9 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
   misnamed `*_soc` columns that stored volts were dropped in US-426. The emitter
   has **no code path from `vcellV` to `soc`** —
   the percent comes only from the MAX17048 SoC register, and a `null` register read
-  passes through as `soc:null`. `carousel.js#batteryHealthView`/`socTile` renders
-  the percent **only when `soc` is a real number** (tagged `(uncalibrated)` when
-  `socCalibrated:false`); a `null` soc omits the percent and the card shows volts
+  passes through as `soc:null`. The UPS detail (`upsDetailView`) renders the
+  SOC line **only when `soc` is a real number** (`(modelled, uncalibrated)` when
+  `socCalibrated:false`); a `null` soc omits the line and the cell shows volts
   (`vcellTile`, `"3.44 V"`). The trap is locked by **absence** — a voltage can
   never be painted as a percent.
 - **Stale-green guard (F-9).** A GREEN verdict **always** carries
@@ -8004,15 +8055,16 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
   US-632 machine reasons in `reasons.health` (`battery_health_verdict.UNKNOWN_REASONS`).
   `carousel.js#BATTERY_HEALTH_REASON_TEXT` is the ONE renderer table for them;
   its keys equal `UNKNOWN_REASONS` exactly (guard:
-  `tests/ui/test_carousel_battery_health_reason_text.py`). The HEALTH tile's
-  detail reads `"<reason text> · last health check · <date> (<age>)"` -- the F-9
-  line is kept whole, never swapped out. Fallbacks are typed and never equal a
+  `tests/ui/test_carousel_battery_health_reason_text.py`). The UPS detail's
+  HEALTH line is followed by the reason text, then the F-9 line -- kept whole,
+  never swapped out. Fallbacks are typed and never equal a
   known string: no usable reason -> `"reason not reported"`; an unrecognised
   code -> `"unrecognised reason (<code>)"`. A resolved verdict (good/degraded/
   replace) ignores any reason. The idle-home BATTERY fact is unchanged.
 
-**Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
-never a fabricated number.
+**Temp honest (F-10).** No temperature is rendered anywhere (US-504: the
+MAX17048 has no temperature register); `ambientTempC` survives in the schema for
+a future BMP390.
 
 **No-false-failsafe (A-6 / F-2).** The failsafe `ladder` block (stage + thresholds
 + runtime) renders **only when `draining === true`**. The invariant is enforced in
@@ -8020,8 +8072,8 @@ the **pure builder** (`buildBatteryHealthState` forces `ladder=None` whenever
 `draining` is false, even if a caller supplies one) — the SSOT, so a buggy caller
 can't light a phantom drain. The **live runtime-remaining + ladder thresholds
 (3.70/3.55/3.45 V) are Spool-owned (S-2, failsafe-only)** and arrive inside the
-caller's `ladder` dict; the emitter/render **never fabricate** them — a draining
-pack with no Spool data shows the stage + volts only, no minutes.
+caller's `ladder` dict; the emitter **never fabricates** them. Since US-894-e
+no display renders the ladder (spec §4.6.1).
 
 **C-5 states-dir writers.** The `battery-health` emitter is the third post-boot
 writer into the F-103-provisioned `states/` tmpfs dir, after `system-status` and

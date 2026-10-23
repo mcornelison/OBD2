@@ -22,6 +22,11 @@
 #               |              | monthly_test_stale / too_few_syncs replace the
 #               |              | three retired drain reasons); a resolved verdict
 #               |              | puts its T-vs-J margin in front of the F-9 line.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the Battery card retired;
+#               |              | every rule re-pointed at the System page's UPS
+#               |              | detail (upsDetailView: health.note = reason or
+#               |              | margin, healthCheck = the F-9 line). The JS-to-
+#               |              | Python reason parity guard stays.
 # ================================================================================
 ################################################################################
 
@@ -76,9 +81,22 @@ def _battery(**extra: object) -> dict:
     return payload
 
 
+# MOVED PIN (US-894-e): the HEALTH tile of the retired Battery card is now the
+# UPS detail's health block. The system-status beside it only supplies the
+# source + LAST STOP; nowMs null (the age is not under test here).
+_STATUS = {"power": {"source": "external", "reasons": {}}, "ts": _TS}
+_F9 = "last health check · 2026-05-16 (118 days ago)"
+
+
+def _detail(**extra: object) -> dict:
+    return _view("upsDetailView", _STATUS, _battery(**extra), None)
+
+
 def _healthTile(**extra: object) -> dict:
-    view = _view("batteryHealthView", _battery(**extra))
-    return view["health"]
+    detail = _detail(**extra)
+    health = dict(detail["health"])
+    health["healthCheck"] = detail["healthCheck"]
+    return health
 
 
 def _js() -> str:
@@ -102,25 +120,25 @@ def _tableKeys() -> set[str]:
 def test_unknownVerdict_detailNamesThePublishedReason(reason):
     """
     Given: an unknown verdict carrying one of the six published reasons
-    When: the Battery view is built
-    Then: the HEALTH tile carries readable words for it (not the snake_case
-          code) in front of the F-9 last-check line, which is kept whole.
+    When: the UPS detail is built (MOVED PIN (US-894-e): was the Battery view)
+    Then: the health note carries readable words for it (not the snake_case
+          code), and the F-9 last-check line is kept whole beside it.
     """
     tile = _healthTile(reasons={"health": reason})
 
-    text = tile["reason"]
+    text = tile["note"]
     assert isinstance(text, str) and text.strip(), tile
     assert "_" not in text, tile
-    assert tile["detail"].startswith(text + " " + _MIDDOT + " "), tile
-    assert tile["detail"].endswith("last health check · 2026-05-16 (118 days ago)"), tile
-    assert tile["value"] == "—"
+    assert tile["healthCheck"] == _F9, tile
+    # MOVED PIN (US-894-e): spec s4.6.1 -- unknown reads `--`, not an em dash.
+    assert tile["value"] == "--"
     assert tile["level"] == "unavailable"
 
 
 @needsNode
 def test_theSixReasons_renderAsSixDistinctStrings():
     """Today all six render identically. Six facts, six strings."""
-    texts = {_healthTile(reasons={"health": r})["reason"] for r in UNKNOWN_REASONS}
+    texts = {_healthTile(reasons={"health": r})["note"] for r in UNKNOWN_REASONS}
     assert len(texts) == len(UNKNOWN_REASONS) == 6, texts
 
 
@@ -154,7 +172,7 @@ def test_thereIsOnlyOneBatteryReasonTable():
 
 
 def _knownTexts() -> set[str]:
-    return {_healthTile(reasons={"health": r})["reason"] for r in UNKNOWN_REASONS}
+    return {_healthTile(reasons={"health": r})["note"] for r in UNKNOWN_REASONS}
 
 
 @needsNode
@@ -171,23 +189,25 @@ def _knownTexts() -> set[str]:
 )
 def test_unknownWithNoUsableReason_rendersTypedFallback(extra):
     tile = _healthTile(**extra)
-    assert tile["reason"] == "reason not reported", tile
-    assert tile["reason"] not in _knownTexts()
-    assert tile["detail"].startswith("reason not reported " + _MIDDOT + " "), tile
+    # MOVED PIN (US-894-e): the reason is the health note; the F-9 line is its
+    # own line (was one `reason · last health check` detail string).
+    assert tile["note"] == "reason not reported", tile
+    assert tile["note"] not in _knownTexts()
+    assert tile["healthCheck"] == _F9, tile
 
 
 @needsNode
 def test_unrecognisedReason_isNamedAndDistinctFromEveryKnownOne():
     tile = _healthTile(reasons={"health": "flux_capacitor"})
-    assert tile["reason"] == "unrecognised reason (flux_capacitor)", tile
-    assert tile["reason"] not in _knownTexts()
-    assert tile["reason"] != "reason not reported"
+    assert tile["note"] == "unrecognised reason (flux_capacitor)", tile
+    assert tile["note"] not in _knownTexts()
+    assert tile["note"] != "reason not reported"
 
 
 @needsNode
 def test_unrecognisedReasonThatLooksLikeAKeyInheritedFromObject_isNotAKnownText():
     tile = _healthTile(reasons={"health": "toString"})
-    assert tile["reason"] == "unrecognised reason (toString)", tile
+    assert tile["note"] == "unrecognised reason (toString)", tile
 
 
 # ---------------------------------------------------------------------------
@@ -199,22 +219,23 @@ def test_unrecognisedReasonThatLooksLikeAKeyInheritedFromObject_isNotAKnownText(
 @pytest.mark.parametrize("verdict", ["good", "degraded", "replace"])
 def test_resolvedVerdict_ignoresAStrayReason(verdict):
     tile = _healthTile(health=verdict, reasons={"health": "too_few_syncs"})
-    assert tile["reason"] is None, tile
-    assert tile["detail"] == "last health check · 2026-05-16 (118 days ago)", tile
+    # MOVED PIN (US-894-e): no margin numbers -> no note; the F-9 line alone.
+    assert tile["note"] is None, tile
+    assert tile["healthCheck"] == _F9, tile
 
 
 @needsNode
-def test_upsUnavailable_keepsTheWholeCardNa():
-    """The typed whole-card NA (US-429) is untouched by the health reason."""
-    view = _view(
-        "batteryHealthView",
-        _battery(
-            reasons={"health": "no_database"},
-            source={"ups": {"available": False, "reason": "gauge unreadable"}},
-        ),
+def test_upsUnavailable_keepsTheCellSectionNa():
+    """The typed NA (US-429) is untouched by the health reason. MOVED PIN
+    (US-894-e): the whole-card NA is now the UPS detail's cell section -- the
+    cell reads `-- · <reason>` and no health line stands beside it."""
+    detail = _detail(
+        reasons={"health": "no_database"},
+        source={"ups": {"available": False, "reason": "gauge unreadable"}},
     )
-    assert view["unavailable"] is True
-    assert view["reason"] == "gauge unreadable"
+    assert detail["health"] is None
+    assert detail["healthCheck"] is None
+    assert detail["cell"] == "-- " + _MIDDOT + " gauge unreadable"
 
 
 # ---------------------------------------------------------------------------
@@ -244,36 +265,43 @@ def test_producerStillDeclaresExactlySixReasonConstants():
 @needsNode
 def test_resolvedVerdict_putsTheMarginInFrontOfTheF9Line():
     tile = _healthTile(health="good", timeToFloorS=18000, jobAvgS=300, provisional=True)
-    assert tile["detail"].startswith("300 min vs 300 s job (provisional) " + _MIDDOT + " "), tile
-    assert tile["detail"].endswith("last health check · 2026-05-16 (118 days ago)"), tile
+    # MOVED PIN (US-894-e): the margin is the health note, the F-9 line its own.
+    assert tile["note"] == "300 min vs 300 s job (provisional)", tile
+    assert tile["healthCheck"] == _F9, tile
 
 
 @needsNode
 def test_resolvedVerdict_calibratedMargin_carriesNoProvisionalTag():
     tile = _healthTile(health="degraded", timeToFloorS=600, jobAvgS=550, provisional=False)
-    assert tile["detail"].startswith("10 min vs 550 s job " + _MIDDOT + " "), tile
+    assert tile["note"] == "10 min vs 550 s job", tile  # MOVED PIN (US-894-e)
 
 
 @needsNode
 def test_resolvedVerdict_withoutNumbers_isTheF9LineAlone():
     tile = _healthTile(health="good")
-    assert tile["detail"] == "last health check · 2026-05-16 (118 days ago)", tile
+    assert tile["note"] is None, tile  # MOVED PIN (US-894-e)
+    assert tile["healthCheck"] == _F9, tile
 
 
 @needsNode
 def test_anUnknownVerdict_neverShowsAMargin_evenIfNumbersLinger():
     tile = _healthTile(reasons={"health": "too_few_syncs"}, timeToFloorS=18000, jobAvgS=300)
-    assert "min vs" not in tile["detail"], tile
+    # MOVED PIN (US-894-e): the note is the reason, never the margin.
+    assert tile["note"] == "too few home syncs to judge", tile
+    assert "min vs" not in tile["note"] and "min vs" not in tile["healthCheck"], tile
 
 
 # ---------------------------------------------------------------------------
-# The DOM renderer paints the tile the view built (a correct view the renderer
-# never paints renders nothing).
+# The DOM renderer paints the note the view built (a correct view the renderer
+# never paints renders nothing). MOVED PIN (US-894-e): renderBatteryHealthBody
+# is gone with the card; the UPS detail renderer paints the health block.
 # ---------------------------------------------------------------------------
 
 
-def test_renderBatteryHealthBody_paintsTheHealthTile():
+def test_renderUpsDetail_paintsTheHealthVerdictAndItsNote():
     from tests.ui.render_harness import _fnBody
 
-    body = _fnBody(_js(), "renderBatteryHealthBody")
-    assert "appendTile(body, view.health)" in body
+    body = _fnBody(_js(), "renderUpsDetail")
+    assert "detail.health.value" in body
+    assert "detail.health.note" in body
+    assert "detail.healthCheck" in body

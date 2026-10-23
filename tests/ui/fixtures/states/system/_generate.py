@@ -45,6 +45,9 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-d: the four WIFI-row fixtures the story
 #               |              | names (weak-home, not-read, nmcli-absent,
 #               |              | read-failed).
+# 2026-10-23    | Ralph (Rex)  | US-894-e: the two UPS-row fixtures the story
+#               |              | names (ups-on-battery, ups-gauge-unreadable),
+#               |              | priorShutdown from computePriorShutdownSummary.
 # ================================================================================
 ################################################################################
 
@@ -66,6 +69,9 @@ for _root in (_REPO_ROOT, _SRC):
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
+from pi.diagnostics.prior_shutdown_summary import (  # noqa: E402
+    computePriorShutdownSummary,
+)
 from pi.network.wifi_reader import (  # noqa: E402
     WIFI_REASON_NMCLI_ABSENT,
     WIFI_REASON_READ_FAILED,
@@ -80,6 +86,7 @@ from pi.splash.battery_health_emitter import (  # noqa: E402
     VERDICT_GOOD,
     buildBatteryHealthState,
 )
+from pi.splash.source_availability import REASON_UPS_UNREADABLE  # noqa: E402
 from pi.splash.system_status_emitter import (  # noqa: E402
     REASON_WIFI_UNKNOWN,
     buildSystemStatusState,
@@ -138,6 +145,47 @@ def _upChain() -> dict:
         _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
         _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
     )
+
+
+def _priorShutdown(clean: int, reason: str) -> dict:
+    """The priorShutdown block as the producer publishes it, from one
+    startup_log row (US-728 computePriorShutdownSummary, US-744)."""
+    return computePriorShutdownSummary({
+        "boot_id": "b-ups-fixture",
+        "prior_boot_clean": clean,
+        "prior_boot_reason": reason,
+        "prior_boot_last_stage": "poweroff",
+        "prior_last_entry_ts": "2026-10-22T03:14:55Z",
+        "recorded_at": "2026-10-22T20:05:10Z",
+        "data_quality": None,
+    }).toStatePayload()
+
+
+def _battery(**overrides: Any) -> dict:
+    """battery-health emit inputs for the Pi UPS cell; each fixture
+    overrides what its name says."""
+    inputs = {
+        "vcellV": 4.12,
+        "soc": 92,
+        "socCalibrated": False,
+        "crate": None,
+        "charging": False,
+        "draining": False,
+        "restedVcellV": 4.15,
+        "weakEvents30d": 0,
+        "restedHistory": [],
+        "health": VERDICT_GOOD,
+        "fullChargeReached": True,
+        "runtimeToCutoffS": 660,
+        "ambientTempC": None,
+        "lastHealthCheckTs": "2026-10-20T03:00:00Z",
+        "ladder": None,
+        "nowIso": "2026-10-22T23:09:48Z",
+        "timeToFloorS": 660,
+        "jobAvgS": 40,
+    }
+    inputs.update(overrides)
+    return inputs
 
 
 def _capture(
@@ -405,6 +453,43 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
             _upChain(), wifiAvailable=False, wifiSsid=None, wifiRssiDbm=None,
             wifiHome=None, wifiUnavailableReason=WIFI_REASON_READ_FAILED,
         )},
+    ),
+    # --- US-894-e: the UPS row (spec s4.5, s4.6.1, s7) ---------------------
+    "ups-on-battery": (
+        "External power lost, the Pi riding the UPS down: power.source battery, "
+        "VCELL 4.02 V read 3 s ago, the pack draining with a failsafe ladder "
+        "published -> UPS '4.02 V', 'on battery · 3 s ago', neutral (no UPS "
+        "member, the verdict unchanged); the detail carries LAST STOP and no "
+        "ladder, no 'min to cutoff'.",
+        {
+            "system-status": _systemInputs(
+                _upChain(), powerSource="battery",
+                priorShutdown=_priorShutdown(1, "clean_poweroff"),
+            ),
+            "battery-health": _battery(
+                vcellV=4.02, soc=81, draining=True,
+                ladder={
+                    "stage": "WARNING",
+                    "thresholds": {"warning": 3.7, "imminent": 3.55, "trigger": 3.45},
+                    "runtimeRemainingS": 540,
+                },
+                nowIso="2026-10-22T23:09:57Z",
+            ),
+        },
+    ),
+    "ups-gauge-unreadable": (
+        "The MAX17048 read failed: battery-health source.ups unavailable "
+        "('gauge unreadable') on external power -> UPS '--' plus the typed "
+        "reason, 'on external power', no health or SOC line beside the NA.",
+        {
+            "system-status": _systemInputs(
+                _upChain(), priorShutdown=_priorShutdown(1, "clean_poweroff"),
+            ),
+            "battery-health": _battery(
+                vcellV=None, soc=None, restedVcellV=None,
+                upsAvailable=False, upsUnavailableReason=REASON_UPS_UNREADABLE,
+            ),
+        },
     ),
 }
 

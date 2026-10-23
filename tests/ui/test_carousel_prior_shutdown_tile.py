@@ -17,6 +17,10 @@
 # ================================================================================
 # 2026-09-22    | Rex (US-744)   | Initial -- verdict, typed absences, age, and
 #               |                | the read-only rule.
+# 2026-10-23    | Ralph (Rex)    | MOVED PIN (US-894-e): LAST STOP moved from the
+#               |                | drill's diagnostics into the UPS detail
+#               |                | (upsDetailView.lastStop, Iris I7); the three
+#               |                | drill tests now read it there.
 # ================================================================================
 ################################################################################
 """US-744: the prior-shutdown tile renders the published verdict, honestly."""
@@ -198,27 +202,31 @@ def test_clockUnsyncedVerdict_marksTheAgeAsUnreliable():
 # ------------------------------------------------------------- read-only rule
 
 
-def _diag(view: dict, key: str) -> dict:
-    rows = [d for d in view["drill"]["diagnostics"] if d["key"] == key]
-    assert len(rows) == 1, view["drill"]["diagnostics"]
-    return rows[0]
+def _lastStop(view: dict) -> dict:
+    """MOVED PIN (US-894-e): LAST STOP lives in the UPS detail (spec s4.6.1,
+    Iris I7), no longer in the drill's diagnostics."""
+    assert view["drill"]["diagnostics"] == []
+    return view["upsDetail"]["lastStop"]
 
 
 @_NODE_TESTS
-def test_theVerdictIsInTheDrillDown_readFromThePublishedKey():
+def test_theVerdictIsInTheUpsDetail_readFromThePublishedKey():
     """
     Given: a system-status payload carrying the verdict
     When: the card view is built
-    Then: the drill-down lists it as a reference fact. It is NOT a sixth grid
-        tile: the card is held to a 4-fact ceiling (US-557), and this story
-        forbids re-budgeting the band to make room
+    Then: the UPS detail lists it as one neutral LAST STOP line. It is NOT a
+        row on the page.
+
+        MOVED PIN (US-894-e): was the drill-down's reference fact.
     """
     view = _view("systemStatusView", _sysState())
 
-    row = _diag(view, "priorShutdown")
+    row = _lastStop(view)
     assert row["label"] == "LAST STOP"
     assert row["text"].startswith("CLEAN · ")
+    assert row["level"] == "neutral"
     assert "priorShutdown" not in view["tiles"]
+    assert "priorShutdown" not in [r["key"] for r in view["rows"]]
 
 
 @_NODE_TESTS
@@ -233,8 +241,8 @@ def test_theVerdictIsAlwaysListed_evenWhenTheProducerIsDark():
     """
     view = _view("systemStatusView", _sysState(priorShutdown=None))
 
-    assert _diag(view, "priorShutdown")["text"].startswith("— · not read")
-    assert view["drill"]["tappable"] is True
+    # MOVED PIN (US-894-e): listed in the UPS detail, which is always built.
+    assert _lastStop(view)["text"].startswith("— · not read")
 
 
 @_NODE_TESTS
@@ -257,7 +265,10 @@ def test_aVerdictIsNeverAnIssue_theSummaryStaysOk():
 
     assert view["verdict"]["level"] != "amber"
     assert view["drill"]["rows"] == []
-    assert "UNGRACEFUL" in _diag(view, "priorShutdown")["text"]
+    # MOVED PIN (US-894-e): the verdict reads in the UPS detail, neutral.
+    assert "UNGRACEFUL" in _lastStop(view)["text"]
+    assert _lastStop(view)["level"] == "neutral"
+    assert all(r["level"] != "amber" for r in view["rows"])
 
 
 def test_theRendererComputesNoVerdictOfItsOwn():

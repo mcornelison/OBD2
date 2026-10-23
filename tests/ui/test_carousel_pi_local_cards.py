@@ -40,6 +40,8 @@
 #               |              | states/alerts; noDataView carries no dtc entry
 #               |              | and its absence is warningsPageView's '--' +
 #               |              | 'no warnings data'.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: an absent power block is the
+#               |              | UPS row's 'power source unknown'.
 # ================================================================================
 ################################################################################
 
@@ -263,7 +265,10 @@ def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
             "ts": _TS,
         },
     )
-    assert view["tiles"]["power"]["level"] == "unavailable"
+    # MOVED PIN (US-894-e): the POWER tile is retired; an absent power block
+    # is the UPS row's `power source unknown`, never a guessed source.
+    assert view["rows"][3]["key"] == "ups"
+    assert view["rows"][3]["sentence"] == "power source unknown"
     assert view["rows"][1]["key"] == "data"
     assert view["rows"][1]["value"].endswith("no sync on record")
     # MOVED PIN (US-894-c): the DRIVE tile is retired (spec s4.3 I3).

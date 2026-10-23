@@ -25,6 +25,8 @@
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-887-c top-bar page name.
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card (bar name MOTION).
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired; BATTERY
+#                               leaves the bar-name map.
 # ================================================================================
 ################################################################################
 
@@ -80,7 +82,8 @@ BAR_NAMES = {
     "Motion": "MOTION",
     "Alerts": "ALERTS",
     "System Status": "SYSTEM",
-    "Battery": "BATTERY",
+    # MOVED PIN (US-894-e): the Battery card is retired (9 cards -> 8); its
+    # cell is the System page's UPS row.
     "Light": "LIGHT",
 }
 

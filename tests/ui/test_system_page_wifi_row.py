@@ -30,6 +30,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-d System page WIFI row.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the UPS row follows WIFI.
 # ================================================================================
 ################################################################################
 
@@ -488,7 +489,8 @@ def test_dom_theRowsAreObdDataWifi_inOrder(monkeypatch):
     monkeypatch.setenv("TZ", _ZONE)
     surface = _render(_status("wifi-weak-home"))
     rows = surface.pathsByClass("sys-row")
-    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data", "wifi"]
+    # MOVED PIN (US-894-e): the UPS row follows the WIFI row.
+    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data", "wifi", "ups"]
 
 
 @_needsNode

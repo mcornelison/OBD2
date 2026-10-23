@@ -27,6 +27,8 @@
 #               |              | cases retired with the deleted functions.
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): glyphs.bt is the link
 #               |              | chain {bt, adapter, ecu}.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the UPS source and the power
+#               |              | witness read the UPS row.
 # ================================================================================
 ################################################################################
 
@@ -48,10 +50,11 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _view(fn: str, arg: dict | None) -> dict | None:
-    """Evaluate one carousel.js export against a fixture via the node probe."""
+def _view(fn: str, arg: dict | None, *more: object) -> dict | None:
+    """Evaluate one carousel.js export against a fixture via the node probe
+    (extra positional arguments are passed through, JSON-encoded)."""
     proc = subprocess.run(
-        [_NODE, _PROBE, fn, json.dumps(arg)],
+        [_NODE, _PROBE, fn, json.dumps(arg), *(json.dumps(m) for m in more)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -101,7 +104,10 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
     # US-668: the power tile renders the SENSED source now, not the removed
     # operator-declared mode. The point of the assertion is unchanged -- one
     # source going unavailable must not disturb another.
-    assert view["tiles"]["power"]["value"] == "EXTERNAL"  # other sources unaffected
+    # MOVED PIN (US-894-e): the POWER tile is retired; the sensed source is the
+    # UPS row's sentence.
+    assert view["rows"][3]["key"] == "ups"
+    assert view["rows"][3]["sentence"] == "on external power"  # other sources unaffected
 
 
 def test_systemStatusView_obdAvailable_rendersRealLink():
@@ -126,30 +132,38 @@ def test_systemStatusView_obdAvailable_rendersRealLink():
 
 
 # ---------------------------------------------------------------------------
-# Battery Health -- the UPS source (single source -> whole-card NA).
+# Battery Health -- the UPS source (single source -> typed NA).
+# MOVED PIN (US-894-e): the Battery card is retired; the UPS source now
+# governs the System page's UPS row (upsRowView) and its UPS detail.
 # ---------------------------------------------------------------------------
 
+_SYS_EXTERNAL = {"power": {"source": "external", "reasons": {}}, "ts": "2026-07-02T00:00:00Z"}
+_NOW_MS = 1782950400000  # 2026-07-02T00:00:00Z
 
-def test_batteryHealthView_upsUnavailable_wholeCardTypedNa():
-    """UPS source unavailable -> the whole card is a typed NA with the reason;
-    never a blank or a stale last-real cell reading."""
-    view = _view(
-        "batteryHealthView",
+
+def test_upsRow_upsUnavailable_isTheTypedNa():
+    """UPS source unavailable -> the UPS row's cell is a typed NA with the
+    reason; never a blank or a stale last-real cell reading."""
+    row = _view(
+        "upsRowView",
+        _SYS_EXTERNAL,
         {
             "vcellV": None,
             "soc": None,
             "source": _unavailable("ups", "gauge unreadable"),
             "ts": "2026-07-02T00:00:00Z",
         },
+        _NOW_MS,
     )
-    assert view["unavailable"] is True
-    assert view["reason"] == "gauge unreadable"
+    assert row["word"] == "--"
+    assert row["value"] == "-- · gauge unreadable"
 
 
-def test_batteryHealthView_upsAvailable_rendersTiles():
-    """UPS source available -> the normal tiled view (not unavailable)."""
-    view = _view(
-        "batteryHealthView",
+def test_upsRow_upsAvailable_rendersTheCell():
+    """UPS source available -> the real cell reading (not unavailable)."""
+    row = _view(
+        "upsRowView",
+        _SYS_EXTERNAL,
         {
             "vcellV": 4.02,
             "soc": 76,
@@ -161,9 +175,9 @@ def test_batteryHealthView_upsAvailable_rendersTiles():
             "source": _available("ups"),
             "ts": "2026-07-02T00:00:00Z",
         },
+        _NOW_MS,
     )
-    assert view["unavailable"] is False
-    assert view["vcell"]["value"] == "4.02 V"
+    assert row["value"] == "4.02 V"
 
 
 # ---------------------------------------------------------------------------

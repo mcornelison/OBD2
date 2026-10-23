@@ -36,6 +36,13 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-b MOVED PIN: the summary line is the
 #               |              | verdict line (parked-only tap); the OBD LINK
 #               |              | tile is retired, so the view case reads POWER.
+# 2026-10-23    | Ralph (Rex)  | US-894-e MOVED PIN: the POWER tile is retired
+#               |              | (UPS row) and LAST STOP moved to the UPS
+#               |              | detail, so systemStatusView feeds the drill no
+#               |              | tiles and no diagnostics: it lists nothing and
+#               |              | is not a tap target until US-894-f retires it.
+#               |              | The renderer-field scan reads the whole
+#               |              | function, not a fixed 2200-char window.
 # ================================================================================
 ################################################################################
 
@@ -407,13 +414,18 @@ def test_systemStatusView_carriesTheDrillDownAlongsideTheSummary():
     """
     # MOVED PIN (US-894-b): the OBD LINK tile is retired; a battery POWER
     # tile is the degraded source the drill lists first.
+    # MOVED PIN (US-894-e): the POWER tile is retired too -- on battery is the
+    # UPS row's neutral words (spec s4.5). No tile is left, so the drill the
+    # view carries lists nothing: it is still derived from the view's own
+    # (now empty) tiles, never a second read.
     view = _view(
         "systemStatusView",
         _sysState(power={"mode": "car", "source": "battery"}),
     )
 
-    assert view["drill"]["rows"][0]["label"] == "POWER"
-    assert view["drill"]["rows"][0]["level"] == view["tiles"]["power"]["level"]
+    assert view["tiles"] == {}
+    assert view["drill"]["rows"] == []
+    assert {r["key"]: r for r in view["rows"]}["ups"]["sentence"] == "on battery"
 
 
 # ---------------------------------------------------------------------------
@@ -445,19 +457,20 @@ def test_systemStatusView_allGood_listsNoIssueRows():
 
 
 @_NODE_TESTS
-def test_systemStatusView_allGood_isStillReachableForItsDiagnostics():
+def test_systemStatusView_allGood_hasNothingBehindTheLine():
     """
     Given: every source is good -- the COMMON case
     When: the card view is built
-    Then: the summary IS tappable, because the sync counts live behind it.
-          Had the gate stayed on faults alone, a non-zero pending backlog on an
-          otherwise-OK sync would have been unreachable and US-559's "counts
-          move to the drill-down" would have meant "counts deleted".
+    Then: MOVED PIN (US-894-e; was `..._isStillReachableForItsDiagnostics`):
+          the sync counts left with US-894-c and LAST STOP with US-894-e (to
+          the UPS detail), so nothing is behind the line and, by US-509's own
+          rule, it is NOT a tap target. Each fact is reached from its row.
     """
     view = _view("systemStatusView", _sysState())
 
-    assert view["drill"]["tappable"] is True
-    assert view["drill"]["diagnostics"]
+    assert view["drill"]["tappable"] is False
+    assert view["drill"]["diagnostics"] == []
+    assert view["upsDetail"]["lastStop"]["label"] == "LAST STOP"
 
 
 @_NODE_TESTS
@@ -477,18 +490,23 @@ def test_systemDrill_nothingBehindTheLine_isStillNotATapTarget():
 
 
 @_NODE_TESTS
-def test_systemStatusView_degradedSource_summaryBecomesATapTarget():
+def test_systemStatusView_degradedSource_isOnItsRow_notBehindTheLine():
     """
     Given: the sync source has gone stale
     When: the card view is built
-    Then: the summary is tappable
+    Then: MOVED PIN (US-894-e; was `..._summaryBecomesATapTarget`): no tile
+          feeds the drill any more (the last one, POWER, is the UPS row), so a
+          degraded source is read on its row, and the line opens nothing.
+          The pure systemIssueRows / systemDrill gate tests above still pin
+          the gate itself.
     """
     view = _view(
         "systemStatusView",
         _sysState(sync={"lastOkTs": None, "rows": 50, "pending": 9, "stale": True}),
     )
 
-    assert view["drill"]["tappable"] is True
+    assert view["drill"]["tappable"] is False
+    assert "data" in [r["key"] for r in view["rows"]]
 
 
 # ---------------------------------------------------------------------------
@@ -582,7 +600,9 @@ def test_carouselJs_drillDownRendererPaintsEveryRowField():
     """
     js = _stripJsComments(_read(_JS))
     start = js.index("function renderSysDetail(")
-    body = js[start : start + 2200]
+    # MOVED PIN (US-894-e): the UPS-detail branch pushed the row painter past
+    # a fixed window; read the whole function (up to the next renderer).
+    body = js[start : js.index("function renderObdDetail(", start)]
 
     for field in (".label", ".value", ".reason", ".freshness", ".level"):
         assert field in body, f"renderSysDetail never paints row{field}"

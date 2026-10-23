@@ -676,6 +676,8 @@ html, body {
 .sys-row-word[data-state="secondary"] { color: var(--text-secondary); }
 .sys-row-word[data-state="tertiary"]  { color: var(--text-tertiary); }
 .sys-row-word[data-state="amber"]     { color: var(--amber-warn); }
+/* US-894-e (s4.5): the UPS row's VCELL value is --text-primary. */
+.sys-row-word[data-state="primary"]   { color: var(--text-primary); }
 .sys-row-tail { color: var(--text-secondary); }
 .sys-row-part[data-level="secondary"] { color: var(--text-secondary); }
 .sys-row-part[data-level="amber"]     { color: var(--amber-warn); }
@@ -698,29 +700,6 @@ html, body {
 .obd-layer-fact { font-size: var(--fs-label); color: var(--text-secondary); }
 .obd-detail-sentence { font-size: var(--fs-label); color: var(--text-secondary); }
 .obd-detail-sentence[data-level="amber"] { color: var(--amber-warn); }
-
-/* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
-/* The drain ladder block is appended ONLY when battery-health.draining===true;
-   it never renders otherwise (no false failsafe). The amber/red staging mirrors
-   the honest-instrument palette. */
-.ladder {
-  margin-top: 8px; padding: 8px 10px;
-  display: flex; flex-direction: column; gap: 2px;
-  border: 1px solid var(--amber-warn); border-radius: 4px;
-  background: rgba(255, 196, 0, 0.06);
-}
-.ladder-banner {
-  font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
-  color: var(--amber-warn);
-}
-/* US-488: TRIGGER is the ladder's TERMINAL stage -- the failsafe is about to
-   halt the Pi -- so it earns the state-alarm red. The earlier stages stay amber
-   above, or the escalation would not read as an escalation. This is a SYSTEM
-   critical state, not the engine one: the banner copy stays "DRAINING · TRIGGER"
-   (carousel.js), never the STOP takeover's directive. */
-.ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
-.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
-.ladder-runtime { font-size: var(--fs-label); color: var(--text-secondary); }
 
 /* --- US-420 fuel-trim trend (F-096; the "Fuel Trim" section since US-507) --- */
 /* An insufficient trend renders a muted, plainly non-green headline (honest-
@@ -1352,6 +1331,13 @@ html, body {
 }
 /* US-894-d WIFI detail: the reason is amber only as the `wifi` member's. */
 .wifi-reason[data-level="amber"] .sys-diag-text { color: var(--amber-warn); }
+/* US-894-e (s4.6.1): the UPS detail. Every line is neutral (no UPS member);
+   the health verdict is green for GOOD and never amber or red (Spool). */
+.ups-label, .ups-health-note, .ups-health-check {
+  font-size: var(--fs-label); color: var(--text-secondary);
+}
+.ups-health .sys-diag-text[data-level="ok"] { color: var(--green-ok); }
+.ups-soc .sys-diag-text { color: var(--text-secondary); }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)

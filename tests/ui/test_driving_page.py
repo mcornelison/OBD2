@@ -37,6 +37,8 @@
 #               |              | only (+ planted bare-animation control).
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
+#               |              | (9 -> 8).
 # ================================================================================
 ################################################################################
 
@@ -87,9 +89,11 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 # MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
 # MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
+# MOVED PIN (US-894-e): the Battery card is retired (9 -> 8); its cell is
+# the System page's UPS row.
 CARD_ORDER = [
     "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
-    "System Status", "Battery",
+    "System Status",
 ]
 
 # The five readings and where layout B puts them (spec s3, D-12).

@@ -56,6 +56,12 @@
 # 2026-10-19    | Rex (US-893-b)| MOVED PIN (US-893-b): the three Light cases read
 #               |              | the Light page view (ambient value/unit, the
 #               |              | provider's word) instead of the two tiles.
+# 2026-10-23    | Rex (US-894-e)| MOVED PIN (US-894-e): the Battery card is
+#               |              | retired. RETIRED the three battery-section cases
+#               |              | and the absent-light-vs-battery case (the UPS
+#               |              | detail is pinned by test_system_page_ups_row.py;
+#               |              | the drain ladder is deleted); battery lines drop
+#               |              | from the composition, gate and wiring cases.
 # ================================================================================
 ################################################################################
 
@@ -265,8 +271,9 @@ def test_sourceCardSpecs_carriesTheThreeSourcesInTheLockedOrder():
     tests/ui/test_carousel_card_set.py pins from the markup side.
     """
     specs = _view("sourceCardSpecs")
+    # MOVED PIN (US-894-e): the Battery card is retired (its cell is the
+    # System page's UPS row), so two source cards remain.
     assert [s["key"] for s in specs] == [  # type: ignore[union-attr]
-        "battery-health",
         "light",
         "ltft-trend",
     ]
@@ -293,7 +300,7 @@ def test_sourceCardView_sectionTitlesNameTheirInstrument():
     in the markup, because it is also the word a typed-NA body has to be
     readable beside."""
     view = _cards()
-    assert _section(view, "battery-health")["title"] == "Battery"
+    # MOVED PIN (US-894-e): the Battery card is retired.
     assert _section(view, "light")["title"] == "Light"
 
 
@@ -302,35 +309,10 @@ def test_sourceCardView_sectionTitlesNameTheirInstrument():
 # ---------------------------------------------------------------------------
 
 
-def test_sourceCardView_batterySection_keepsTheStaleGreenGuard():
-    """
-    Given: a GOOD battery verdict whose last health check is a month old
-    Then: the section still carries the "last health check ... (N days ago)"
-          line
-
-    F-9 is the trap this card was built around: a month-old GOOD must never
-    read as live. Relocating the card must not drop the guard that made it
-    honest.
-    """
-    sec = _section(_cards(), "battery-health")
-    assert sec["view"]["health"]["value"] == "GOOD"
-    assert "last health check" in sec["view"]["health"]["detail"]
-    assert "30 days ago" in sec["view"]["health"]["detail"]
-
-
-def test_sourceCardView_batterySection_keepsVoltsNeverPercent():
-    """F-8: a null SoC omits the percent and shows volts. A voltage rendered as
-    a percent is the render-breaking trap Spool named for this source."""
-    sec = _section(_cards(battery=_battery(soc=None)), "battery-health")
-    assert sec["view"]["vcell"]["value"] == "4.02 V"
-    assert sec["view"]["soc"]["shown"] is False
-
-
-def test_sourceCardView_batterySection_keepsTheDrainLadder():
-    """F-2/A-6: the failsafe ladder exists ONLY while actually draining -- it
-    rides along with the section rather than being lost in the merge."""
-    sec = _section(_cards(battery=_battery(draining=True)), "battery-health")
-    assert sec["view"]["ladder"] is not None
+# MOVED PIN (US-894-e): the three battery-section cases (F-9 stale-green
+# guard, volts never percent, drain ladder) are RETIRED with the card; F-8/F-9
+# now live in the UPS detail (tests/ui/test_system_page_ups_row.py) and the
+# ladder is deleted (spec s4.6.1).
 
 
 def test_sourceCardView_lightSection_rendersTheRealLux():
@@ -384,18 +366,16 @@ def test_sourceCardView_deadUpsDoesNotBlankTheLiveLightReading():
     """
     dead = {"source": {"ups": {"available": False, "reason": "UPS: I2C read failed"}}}
     view = _cards(battery=dead)
-    battery = _section(view, "battery-health")
+    # MOVED PIN (US-894-e): the Battery card is retired, so a dead UPS has no
+    # card of its own to gray (its NA is the UPS row's); the Light card's
+    # independence from it is what stays pinned.
+    assert "battery-health" not in view
     light = _section(view, "light")
-    assert battery["view"]["unavailable"] is True
     assert light["view"]["ambient"]["value"] == "412"  # MOVED PIN (US-893-b): unit apart
 
 
-def test_sourceCardView_absentLightFileDoesNotBlankTheBatterySection():
-    """The inverse direction -- an ABSENT state file (not merely a degraded
-    source) must also stay contained to its own section."""
-    view = _cards(light=None)
-    assert _section(view, "light")["unavailable"] is True
-    assert _section(view, "battery-health")["view"]["health"]["value"] == "GOOD"
+# MOVED PIN (US-894-e): the absent-light-file-vs-Battery case is RETIRED: no
+# Battery card remains for the Light file's absence to blank.
 
 
 def test_sourceCardView_absentSection_namesItsSilentInstrument():
@@ -407,7 +387,7 @@ def test_sourceCardView_absentSection_namesItsSilentInstrument():
     deep, a bare "unavailable" no longer says which of three readouts died.
     """
     view = _cards(battery=None, light=None)
-    assert _section(view, "battery-health")["na"]["reason"].lower().startswith("no data")
+    # MOVED PIN (US-894-e): the Battery card is retired.
     assert "no data" in _section(view, "light")["na"]["reason"].lower()
 
 
@@ -474,14 +454,13 @@ def test_sourceCardView_gatedAndBrokenAreDistinctStates():
     assert sec["na"]["reason"] != "no engine data"
 
 
-def test_sourceCardView_batteryAndLightAreNeverVehicleGated():
-    """AC-2: Battery + Light stay available regardless of a vehicle -- they are
+def test_sourceCardView_lightIsNeverVehicleGated():
+    """AC-2: Light stays available regardless of a vehicle -- they are
     PI-LOCAL sensors that read on a bench with no car. Gating them would blank a
     working instrument, the exact bench-validatability US-496 fought for."""
     view = _cards(obdAvailable=False)
-    assert _section(view, "battery-health")["gated"] is False
+    # MOVED PIN (US-894-e): the Battery card is retired; Light stays ungated.
     assert _section(view, "light")["gated"] is False
-    assert _section(view, "battery-health")["view"]["health"]["value"] == "GOOD"
 
 
 # ---------------------------------------------------------------------------
@@ -494,8 +473,8 @@ def test_dashboardHtml_shipsOneCardPerSource():
     The tick discovers cards from the markup, so no card = no readout, whatever
     the JS says (US-494)."""
     html = _read(_HTML)
+    # MOVED PIN (US-894-e): the Battery card is retired.
     for label, state in (
-        ("Battery", "battery-health"),
         ("Light", "light"),
         ("Fuel", "ltft-trend"),
     ):
@@ -559,7 +538,8 @@ def test_carouselJs_sourceCardsReuseTheTokenizedTile():
     src/pi/ui/tokens.css. A bespoke per-card palette is exactly the drift the
     SSOT rule exists to prevent."""
     render = _fnBody(_read(_JS), "renderSourceCard")
-    for body in ("renderBatteryHealthBody", "renderLightBody", "renderFuelTrendBody"):
+    # MOVED PIN (US-894-e): renderBatteryHealthBody is deleted with the card.
+    for body in ("renderLightBody", "renderFuelTrendBody"):
         assert body in render, f"{body} is not reachable from the card renderer"
     assert "renderNaBody" in render
 

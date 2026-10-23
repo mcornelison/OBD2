@@ -31,6 +31,11 @@
 # 2026-07-27    | Ralph (Rex)  | Initial -- US-488 non-STOP alarm-tier sweep.
 # 2026-10-19    | Ralph (Rex)  | US-909: the two .ltft-bar tests retire with
 #               |              | the dead bar-row CSS.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the three battery-ladder
+#               |              | tests retire with the drain ladder (Battery
+#               |              | card removed; spec s4.6.1 drops the ladder and
+#               |              | its `min to cutoff`). One guard pins that the
+#               |              | ladder surface and its red are really gone.
 # ================================================================================
 ################################################################################
 
@@ -125,39 +130,24 @@ def test_dtcClearResultReset_rendersAmber_notBrandRed():
 
 
 # ---------------------------------------------------------------------------
-# AC2 -- the battery failsafe TRIGGER is the ONE non-DTC --critical-red surface.
+# AC2 -- MOVED PIN (US-894-e): the battery failsafe TRIGGER WAS the one non-DTC
+# --critical-red surface. The drain ladder that carried it is retired with the
+# Battery card (spec s4.6.1: the ladder and `~N min to cutoff` are dropped), so
+# the three ladder tests (TRIGGER red, earlier stages amber, banner copy) have
+# no subject left. --critical-red keeps exactly one meaning: the DTC STOP tier.
 # ---------------------------------------------------------------------------
 
 
-def test_batteryLadderTrigger_rendersCriticalRed_notBrandRed():
-    """TRIGGER is terminal + act-now (the failsafe is about to halt the Pi), so
-    it earns the state-alarm red -- but as a SYSTEM-critical state, not the
-    engine "PULL OVER" one."""
-    css = _read(_CSS)
-    border = _ruleBlock(css, '.ladder[data-stage="TRIGGER"]')
-    banner = _ruleBlock(css, '.ladder[data-stage="TRIGGER"] .ladder-banner')
-    for block in (border, banner):
-        assert "var(--critical-red)" in block
-        assert not _brandRedsIn(block)
-
-
-def test_batteryLadderEarlierStages_stayAmber():
-    """Escalation integrity: if every ladder stage were red, TRIGGER would not
-    read as worse than the stage before it."""
-    css = _read(_CSS)
-    assert "var(--amber-warn)" in _ruleBlock(css, ".ladder {")
-    assert "var(--amber-warn)" in _ruleBlock(css, ".ladder-banner {")
-
-
-def test_batteryLadderBannerCopy_staysSystemAppropriate():
-    """--critical-red is shared with the DTC STOP tier, the WORDS are not: the
-    ladder is a SYSTEM state (the Pi is about to halt) and must never borrow the
-    engine tier's "PULL OVER" directive (AC2)."""
-    match = re.search(r"banner\.textContent\s*=\s*([^;]+);", _read(_JS))
-    assert match, "the ladder banner copy moved -- re-point this guard"
-    copy = match.group(1).upper()
-    assert "PULL OVER" not in copy
-    assert "DRAINING" in copy
+def test_batteryLadder_isRetired_noLadderRuleAndNoLadderBannerRemain():
+    """MOVED PIN (US-894-e): no `.ladder*` rule is left in the stylesheet and no
+    DRAINING banner / runtime is built in carousel.js -- a red rule with no
+    surface would be a colour nobody can see, and a banner with no card would
+    be a branch nothing reaches."""
+    css = re.sub(r"/\*.*?\*/", "", _read(_CSS), flags=re.S)
+    assert re.search(r"(^|[\s,}])\.ladder", css) is None
+    js = _read(_JS)
+    assert re.search(r"banner\.textContent\s*=\s*[^;]*DRAINING", js) is None
+    assert "min to cutoff\"" not in js
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,8 @@
 #   US-502) and other consumers read it. Removing a DISPLAY must not remove a
 #   MEASUREMENT, and the two are one keystroke apart in this file's diff.
 #
+#   MOVED PIN (US-894-e): the POWER tile/drill row below is now the System
+#   page's UPS row (spec s4.5), which still renders the sensed source.
 #   THE SYSTEM STATUS CARD'S POWER ROW STAYS. It is a drill-down with a typed
 #   reason, not chrome, and the ruling was about the top bar. Pinned here rather
 #   than left to the drill-down suite, because "the CIO asked for the power
@@ -58,6 +60,11 @@
 #               |              | measured-advance finding (comment only).
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): btGlyphState retired for
 #               |              | linkChainGlyph; glyphs.bt is the chain object.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): powerTile and the drill's
+#               |              | POWER row are retired with the Battery card;
+#               |              | the sensed source is rendered by the System
+#               |              | page's UPS row (upsRowView), so AC-3 and the
+#               |              | power-row pin read it there.
 # ================================================================================
 ################################################################################
 
@@ -285,16 +292,18 @@ def test_glyphView_carriesTheOtherThreeStates_andNoPowerKey():
 # ---------------------------------------------------------------------------
 
 
+# MOVED PIN (US-894-e): the tile's value/level became the UPS row's words; on
+# battery is NEUTRAL there (spec s4.0/s4.5: no UPS member, Atlas A4).
 @pytest.mark.parametrize(
-    "source,value,level",
+    "source,words",
     [
-        ("external", "EXTERNAL", "ok"),
-        ("battery", "BATTERY", "amber"),
-        ("unknown", "—", "unavailable"),
+        ("external", "on external power"),
+        ("battery", "on battery"),
+        ("unknown", "power source unknown"),
     ],
 )
 def test_theMeasurementSurvivedTheDisplay_sourceIsSensedAndStillRendered(
-    source: str, value: str, level: str
+    source: str, words: str
 ):
     """`power.source` is the SENSED fact, not chrome -- other consumers read it.
 
@@ -310,24 +319,22 @@ def test_theMeasurementSurvivedTheDisplay_sourceIsSensedAndStillRendered(
 
     assert payload["power"]["source"] == source
 
-    tile = _view("powerTile", payload["power"])
-    assert tile["value"] == value
-    assert tile["level"] == level
+    row = _view("upsRowView", payload, None, None)
+    assert row["sentence"] == words
+    assert row["level"] == "secondary"
 
 
-def test_theSystemStatusCard_stillCarriesItsPowerRow():
-    """The drill-down Power row STAYS -- it is a typed reason, not chrome, and
-    the ruling was about the top bar.
+def test_theSystemPage_stillCarriesThePowerSource_onItsUpsRow():
+    """The source is still on the page -- the ruling was about the top bar.
 
-    Driven from a BATTERY payload on purpose: `systemIssueRows` lists what is
-    not ok, so a healthy external supply would be absent from it for the right
-    reason and this test would pass with the row deleted.
+    MOVED PIN (US-894-e): was `test_theSystemStatusCard_stillCarriesItsPowerRow`
+    (the drill's POWER row from powerTile, both retired with the Battery card).
+    Driven from a BATTERY payload on purpose: that is the state a lit screen
+    cannot tell you, so it is the one that must still be on the glass.
     """
     payload = _systemStatus(powerSource="battery")
     view = _view("systemStatusView", payload)
 
-    assert view["tiles"]["power"]["value"] == "BATTERY"
-    assert view["tiles"]["power"]["level"] == "amber"
-
-    labels = [row["label"] for row in view["drill"]["rows"]]
-    assert "POWER" in labels, f"the Power row left with the glyph: {labels}"
+    rows = {row["key"]: row for row in view["rows"]}
+    assert "ups" in rows, f"the source left with the glyph: {list(rows)}"
+    assert rows["ups"]["sentence"] == "on battery"

@@ -31,6 +31,7 @@
 # 2026-10-23    | Rex (US-894-c)| MOVED PIN: the tile is retired; the same rules
 #               |              | on the DATA row (A4: stalled iff a member).
 # 2026-10-23    | Rex (US-894-d)| MOVED PIN: the WIFI row follows the DATA row.
+# 2026-10-23    | Rex (US-894-e)| MOVED PIN: the UPS row follows the WIFI row.
 # ================================================================================
 ################################################################################
 
@@ -245,7 +246,8 @@ class TestItReachesThePage:
         view = _view("systemStatusView", _sys(_CAPTURE_MEMBER), _capture("ok"))
 
         # MOVED PIN (US-894-d): the WIFI row follows the DATA row.
-        assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi"]
+        # MOVED PIN (US-894-e): the UPS row follows the WIFI row.
+        assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi", "ups"]
         assert view["rows"][1]["word"] == "stalled"
         assert "capture" not in view["tiles"]
         assert "drive" not in view["tiles"]

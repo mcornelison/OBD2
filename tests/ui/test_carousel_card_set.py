@@ -40,6 +40,9 @@
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-540-b card set 4 -> 6, Health out.
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
+#               |              | (9 -> 8); its retired-fact and live-beside-the-gate
+#               |              | cases drop Battery.
 # ================================================================================
 ################################################################################
 
@@ -81,9 +84,11 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 # MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
 # MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
+# MOVED PIN (US-894-e): the Battery card is retired (9 -> 8); its cell is the
+# System page's UPS row.
 _CARD_SET = [
     "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
-    "System Status", "Battery",
+    "System Status",
 ]
 
 # The AC's capacity ceiling: ~3 facts, 4 in a 2x2. Pinned against the RENDERED
@@ -250,7 +255,8 @@ class TestCardSet:
     def test_theThreeRetiredFactsEachDeclareTheirOwnStateFile(self):
         """
         Given: the shipped dashboard markup
-        Then: Battery / Fuel Trim / Light each carry their own `data-state`
+        Then: Fuel Trim / Light each carry their own `data-state`
+        (MOVED PIN (US-894-e): Battery is retired; its cell is the UPS row)
 
         "Health is gone" is trivially true if the facts went with it. The
         redistribution is what makes the retirement honest, so it is asserted
@@ -258,7 +264,6 @@ class TestCardSet:
         """
         track = _trackMarkup(_read(_HTML))
         for label, state in [
-            ("Battery", "battery-health"),
             ("Fuel", "ltft-trend"),
             ("Light", "light"),
         ]:
@@ -419,10 +424,11 @@ class TestFuelTrimGateSurvivesTheSplit:
         assert "2.5" not in text, f"a gated fuel trim leaked its trend: {text!r}"
         assert "no engine data" in text, f"the gate did not speak: {text!r}"
 
-    def test_theBatteryAndLightCardsStayLiveBesideTheGate(self):
+    def test_theLightCardStaysLiveBesideTheGate(self):
         """
         Given: the same bench (fuel trim gated)
-        Then: Battery and Light still render real readings
+        Then: Light still renders a real reading (MOVED PIN (US-894-e): the
+        Battery card is retired; its cell is the System page's UPS row)
 
         Independence was the merged card's hardest property to keep; splitting
         must not lose it in the other direction, where one card's gate is
@@ -433,10 +439,8 @@ class TestFuelTrimGateSurvivesTheSplit:
         # MOVED PIN (US-893-b): the Light page shows its reading in its own
         # AMBIENT value, not a `.tile`.
         live = {
-            "Battery": _cardText(surface, "tile-value", "Battery"),
             "Light": _cardText(surface, "light-ambient-value", "Light"),
         }
-        assert "4.02" in live["Battery"], f"battery reading absent: {live['Battery']!r}"
         assert "120" in live["Light"], f"light reading absent: {live['Light']!r}"
 
 

@@ -33,6 +33,10 @@
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-b System page OBD row.
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-d): the WIFI row is the third.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the UPS row is the fourth;
+#               |              | the drill behind the verdict has nothing left
+#               |              | (POWER tile + LAST STOP moved), so a parked
+#               |              | verdict tap opens nothing until US-894-f.
 # ================================================================================
 ################################################################################
 
@@ -700,7 +704,8 @@ def test_thePage_rendersTheVerdictLineAndTheObdRow_neverATile():
     rows = surface.pathsByClass("sys-row")
     # MOVED PIN (US-894-c): the DATA row follows the OBD row.
     # MOVED PIN (US-894-d): then the WIFI row.
-    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data", "wifi"]
+    # MOVED PIN (US-894-e): then the UPS row.
+    assert [r[-1]["attrs"]["data-row"] for r in rows] == ["obd", "data", "wifi", "ups"]
     steps = surface.pathsByClass("obd-step")
     assert [p[-1]["attrs"]["data-state"] for p in steps] == ["ok", "ok", "neutral"]
     assert [_text(p[-1]) for p in steps] == ["BT", "ADAPTER", "ECU"]
@@ -813,16 +818,21 @@ def test_parked_theObdRowOpensTheObdDetail_inSysDetail_withoutTheVersionChip():
 
 @_needsNode
 @pytest.mark.skipif(not _hasGearBuilder(), reason="gear builder unavailable")
-def test_parked_theVerdictOpensTheDrill_whichKeepsTheVersionChip():
+def test_parked_theVerdictWithNothingBehindIt_opensNothing():
+    """MOVED PIN (US-894-e; was `..._theVerdictOpensTheDrill_whichKeeps
+    TheVersionChip`): the drill's last tile (POWER) became the UPS row and its
+    last fact (LAST STOP) moved to the UPS detail, so nothing is behind the
+    verdict. By US-509's own rule it is then no tap target, even parked: no
+    ` ›` (I9) and no overlay. The Pi detail (US-894-f) is what it opens next."""
     surface = _render(
         _status("all-ok-driving"), parked=True,
         steps=[{"clickNth": {"selector": ".sys-verdict", "index": 0}}, {"flush": 1}],
     )
     detail = surface.pathById("sys-detail")
-    assert detail[-1]["attrs"].get("hidden") is None
-    assert _text(surface.pathById("sys-detail-head")[-1]) == "ALL OK"
-    chip = surface.pathById("version-chip")
-    assert chip[-1]["attrs"].get("hidden") is None
+    assert detail[-1]["attrs"].get("hidden") is not None
+    verdict = surface.pathsByClass("sys-verdict")
+    assert len(verdict) == 1
+    assert "›" not in _text(verdict[0][-1])
 
 
 @_needsNode

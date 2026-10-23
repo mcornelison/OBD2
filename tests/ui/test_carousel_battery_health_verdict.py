@@ -18,6 +18,8 @@
 #   Pure logic runs through the shared node probe; the browser-only DOM wiring
 #   is pinned by reading the shipped artifact, because a correct view the
 #   renderer never paints renders nothing (US-494/US-495/US-503).
+#   US-894-e: the Battery card is retired; these rules now hold on the System
+#   page's UPS detail (upsDetailView), its successor.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-01
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -27,10 +29,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- US-504 verdict vocab + TEMP removal.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the Battery card retired;
+#               |              | every rule re-pointed at the System page's UPS
+#               |              | detail (upsDetailView / systemStatusView). The
+#               |              | unknown verdict reads `--` (spec s4.6.1); the
+#               |              | F-9 line is the detail's healthCheck.
 # ================================================================================
 ################################################################################
 
-"""US-504: the Battery section speaks Spool's verdict and never alarms."""
+"""US-504: the UPS detail speaks Spool's verdict and never alarms."""
 
 import json
 import os
@@ -61,6 +68,10 @@ _VERDICTS = ("good", "degraded", "replace", "unknown")
 # The tile level that paints alarm red. No battery verdict may ever reach it.
 _ALARM_LEVEL = "down"
 
+# MOVED PIN (US-894-e): the Battery card's view is now the UPS detail. The
+# system-status beside the cell supplies only the source + LAST STOP.
+_STATUS = {"power": {"source": "external", "reasons": {}}, "ts": _TS}
+
 
 def _view(fn: str, *args: object) -> object:
     cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
@@ -86,6 +97,10 @@ def _battery(**extra: object) -> dict:
     return payload
 
 
+def _detail(battery: dict) -> dict:
+    return _view("upsDetailView", _STATUS, battery, None)
+
+
 def _js() -> str:
     with open(_JS, encoding="utf-8") as fh:
         return fh.read()
@@ -93,28 +108,29 @@ def _js() -> str:
 
 # ---------------------------------------------------------------------------
 # AC-1 -- the TEMP tile is gone (no source can ever fill it).
+# MOVED PIN (US-894-e): pinned on the UPS detail, the card's successor.
 # ---------------------------------------------------------------------------
 
 
-def test_batteryHealthView_hasNoTempTile():
+def test_upsDetail_hasNoTemp():
     """The MAX17048 has no temperature register, so the tile had no source."""
-    view = _view("batteryHealthView", _battery())
-    assert "temp" not in view
+    detail = _detail(_battery())
+    assert not any("temp" in k.lower() for k in detail)
 
 
-def test_batteryHealthView_ignoresAnAmbientTempEvenWhenPresent():
+def test_upsDetail_ignoresAnAmbientTempEvenWhenPresent():
     """Even a populated ambient_temp_c does not resurrect the tile -- removal
     is structural, not a null-check. (The COLUMN stays for a future BMP390.)"""
-    view = _view("batteryHealthView", _battery(ambientTempC=21.5))
-    assert "temp" not in view
+    detail = _detail(_battery(ambientTempC=21.5))
+    assert not any("temp" in k.lower() for k in detail)
+    assert "21.5" not in json.dumps(detail)
 
 
-def test_renderBatteryHealthBody_paintsNoTempTile():
-    """The DOM renderer must have lost the tile too: a view key removed while
-    the renderer still appends it is a runtime crash, and a renderer still
-    painting a tile the view no longer builds is the US-494 shape."""
-    body = _fnBody(_js(), "renderBatteryHealthBody")
-    assert "view.temp" not in body
+def test_renderUpsDetail_paintsNoTemp():
+    """The DOM renderer must not paint a temperature either (MOVED PIN
+    (US-894-e): renderBatteryHealthBody is gone with the card)."""
+    body = _fnBody(_js(), "renderUpsDetail")
+    assert "temp" not in body.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -128,23 +144,21 @@ def test_renderBatteryHealthBody_paintsNoTempTile():
         ("good", "GOOD"),
         ("degraded", "DEGRADED"),
         ("replace", "REPLACE"),
-        ("unknown", "—"),
+        # MOVED PIN (US-894-e): spec s4.6.1 -- `--`, the page's no-data mark.
+        ("unknown", "--"),
     ],
 )
 def test_healthTile_rendersTheSpoolVerdictWord(verdict, expected):
-    view = _view("batteryHealthView", _battery(health=verdict))
-    assert view["health"]["value"] == expected
+    assert _detail(_battery(health=verdict))["health"]["value"] == expected
 
 
 def test_goodVerdict_readsOk():
-    view = _view("batteryHealthView", _battery(health="good"))
-    assert view["health"]["level"] == "ok"
+    assert _detail(_battery(health="good"))["health"]["level"] == "ok"
 
 
 def test_unknownVerdict_readsUnavailableNotOk():
     """The honest end-state of this subsystem today: no confident claim."""
-    view = _view("batteryHealthView", _battery(health="unknown"))
-    assert view["health"]["level"] == "unavailable"
+    assert _detail(_battery(health="unknown"))["health"]["level"] == "unavailable"
 
 
 @pytest.mark.parametrize("verdict", ["degraded", "replace"])
@@ -152,16 +166,16 @@ def test_degradedAndReplace_areInformationalNotAPassClaim(verdict):
     """Spool: informational at EVERY state including `replace`. `ok` would
     claim health the data does not support; `down` would alarm. Neutral is the
     only tier that is neither."""
-    view = _view("batteryHealthView", _battery(health=verdict))
-    assert view["health"]["level"] == "neutral"
+    assert _detail(_battery(health=verdict))["health"]["level"] == "neutral"
 
 
 @pytest.mark.parametrize("verdict", _VERDICTS)
 def test_noVerdictEverPaintsAlarmRed(verdict):
     """The load-bearing severity rule -- a thinned UPS margin is not a car
     risk and must never own the screen."""
-    view = _view("batteryHealthView", _battery(health=verdict))
-    assert view["health"]["level"] != _ALARM_LEVEL
+    level = _detail(_battery(health=verdict))["health"]["level"]
+    # MOVED PIN (US-894-e): the UPS detail is never amber either (s4.6.1).
+    assert level not in (_ALARM_LEVEL, "amber")
 
 
 def test_theRetiredDisplayTiersAreGone():
@@ -169,57 +183,58 @@ def test_theRetiredDisplayTiersAreGone():
     mapped keeps a live red path reachable by a value nothing emits -- exactly
     how a future producer would resurrect the alarm this story forbids."""
     for retired in ("green", "attn", "low"):
-        view = _view("batteryHealthView", _battery(health=retired))
-        assert view["health"]["value"] == "—"
-        assert view["health"]["level"] == "unavailable"
+        health = _detail(_battery(health=retired))["health"]
+        assert health["value"] == "--"  # MOVED PIN (US-894-e): was an em dash
+        assert health["level"] == "unavailable"
 
 
 # ---------------------------------------------------------------------------
-# AC-4 -- last-health-check travels with every verdict.
+# AC-4 -- last-health-check travels with every verdict. MOVED PIN (US-894-e):
+# the F-9 line is the UPS detail's own healthCheck line (was the tail of the
+# HEALTH tile's detail string).
 # ---------------------------------------------------------------------------
 
 
 def test_healthDetail_carriesTheLastCheckDateAndAge():
-    view = _view("batteryHealthView", _battery(health="good"))
-    assert view["health"]["detail"] == "last health check · 2026-07-25 (7 days ago)"
+    detail = _detail(_battery(health="good"))
+    assert detail["healthCheck"] == "last health check · 2026-07-25 (7 days ago)"
 
 
 def test_unknownVerdict_stillShowsWhenTheLastRealCheckWas():
-    """The honest state the card ships in: verdict unknown, but the DATE of the
-    last real check is itself the signal -- not hidden behind the unknown."""
-    view = _view(
-        "batteryHealthView",
-        _battery(health="unknown", lastHealthCheckTs="2026-05-16T09:00:00Z"),
-    )
-    assert "2026-05-16" in view["health"]["detail"]
-    assert "77 days ago" in view["health"]["detail"]
+    """The honest state: verdict unknown, but the DATE of the last real check
+    is itself the signal -- not hidden behind the unknown."""
+    detail = _detail(_battery(health="unknown", lastHealthCheckTs="2026-05-16T09:00:00Z"))
+    assert "2026-05-16" in detail["healthCheck"]
+    assert "77 days ago" in detail["healthCheck"]
 
 
 def test_noHealthCheckEver_readsNeverNotToday():
-    view = _view("batteryHealthView", _battery(lastHealthCheckTs=None))
-    assert view["health"]["detail"] == "last health check · never"
+    detail = _detail(_battery(lastHealthCheckTs=None))
+    assert detail["healthCheck"] == "last health check · never"
 
 
 # ---------------------------------------------------------------------------
-# The Battery CARD carries all of the above (the card view, not just the source
-# view -- a correct view the card never asks for renders nothing). US-540-b
-# retired the merged Health card these two used to reach through; the seam they
-# actually need is unchanged, so they now go through sourceCardView directly.
+# The System PAGE carries all of the above (the page view, not just the detail
+# view -- a correct view the page never asks for renders nothing). MOVED PIN
+# (US-894-e): the Battery card and its sourceCardSpec entry are retired; the
+# seam is now systemStatusView, whose upsDetail the overlay paints.
 # ---------------------------------------------------------------------------
 
 
-def _batteryCard(battery: dict) -> dict:
-    spec = _view("sourceCardSpec", "battery-health")
-    sysData = {"ts": _TS, "obd": {"connected": False}}
-    return _view("sourceCardView", spec, battery, sysData, {}, 0)
+def _systemPage(battery: dict) -> dict:
+    return _view("systemStatusView", _STATUS, None, battery, None)
 
 
-def test_batteryCard_carriesTheVerdictWord():
-    card = _batteryCard(_battery(health="replace"))
-    assert card["view"]["health"]["value"] == "REPLACE"
-    assert card["view"]["health"]["level"] != _ALARM_LEVEL
+def test_theBatteryCardIsRetired():
+    assert _view("sourceCardSpec", "battery-health") is None
 
 
-def test_batteryCard_hasNoTempTile():
-    card = _batteryCard(_battery())
-    assert "temp" not in card["view"]
+def test_systemPage_carriesTheVerdictWord():
+    page = _systemPage(_battery(health="replace"))
+    assert page["upsDetail"]["health"]["value"] == "REPLACE"
+    assert page["upsDetail"]["health"]["level"] != _ALARM_LEVEL
+
+
+def test_systemPage_hasNoTempTile():
+    page = _systemPage(_battery())
+    assert not any("temp" in k.lower() for k in page["upsDetail"])

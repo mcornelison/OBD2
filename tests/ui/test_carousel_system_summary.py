@@ -40,6 +40,9 @@
 #                               line: green only on the provider's ALL OK, the
 #                               token SSOT, no brand red, a neutral base, and the
 #                               JS emits what the CSS styles.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the battery card is retired, so
+#                               the 2-arg appendTile pin reads the typed-NA / LOADING
+#                               callers.
 # ================================================================================
 ################################################################################
 
@@ -252,5 +255,8 @@ def test_appendTileIsTheTwoArgFormForTheShippedStackedCards():
     body = js[start : js.index("\n    }", start)]
     assert "withDot" not in body
     assert 'el.className = "tile"' in body
-    assert "appendTile(body, view.health)" in js
-    assert "appendTile(body, view.vcell)" in js
+    # MOVED PIN (US-894-e): the battery card that called it with view.health /
+    # view.vcell is retired; the surviving two-arg callers are the typed-NA
+    # and LOADING tiles.
+    assert "appendTile(body, naTile(label, reason))" in js
+    assert "appendTile(body, loadingTile(label))" in js

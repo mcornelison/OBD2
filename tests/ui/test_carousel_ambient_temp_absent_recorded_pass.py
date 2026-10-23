@@ -93,6 +93,10 @@
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-640 punch-list 4.4 recorded pass,
 #               |              | the structural-absence correction + the BMP390
 #               |              | inverse-defect and renderer tripwires.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the Battery card is retired;
+#               |              | the panel half reads the System page UPS row and
+#               |              | the parked UPS detail. The SOC control reads
+#               |              | `96 %` inside `≈ 96 % (modelled...)`.
 # ================================================================================
 ################################################################################
 
@@ -123,6 +127,8 @@ from pi.hardware.ups_monitor import (  # noqa: E402
     REGISTER_VCELL,
     UpsMonitor,
 )
+from pi.obdii.gear_derivation import GEAR_PARK, REASON_PARK, GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
     CardStateEmitterMixin,
 )
@@ -131,6 +137,7 @@ from pi.splash.battery_health_emitter import (  # noqa: E402
     buildBatteryHealthState,
     makeBatteryHealthEmitter,
 )
+from pi.splash.system_status_emitter import buildSystemStatusState  # noqa: E402
 
 _NODE = shutil.which("node")
 
@@ -156,10 +163,10 @@ LIVE_VCELL_RAW = 53299          # 0xD033 -> 4.163984375 V -> "4.16 V"
 LIVE_SOC_RAW = 0x6040           # 96.25 % -> "96%"
 CRATE_DISABLED_ON_THIS_CHIP = 0xFFFF  # US-235: this variant never populates CRATE
 LIVE_VCELL_PRINTED = "4.16 V"
-LIVE_SOC_PRINTED = "96%"
+# MOVED PIN (US-894-e): the UPS detail's SOC line, `≈ 96 % (modelled...)`.
+LIVE_SOC_PRINTED = "96 %"
 
 CELL = "CELL"
-CHARGE = "CHARGE"
 HEALTH = "HEALTH"
 
 # The temperatures this file feeds through the producer. Each is chosen for a
@@ -309,13 +316,44 @@ def _emitWithAmbient(tmp_path, ambientTempC: float | None) -> dict:
 
 # ---------------------------------------------------------------------------
 # Reading the rendered panel.
+#
+# MOVED PIN (US-894-e): the Battery card is RETIRED (spec s4.5 / s4.6.1). Its
+# cell is the System page's UPS row and its surviving lines are the parked UPS
+# detail, so "the Battery card" below reads BOTH: the System page is rendered
+# parked and the UPS row is tapped open.
 # ---------------------------------------------------------------------------
 
+# A fixed page clock, later than any stamp the real emitter writes, so the
+# row's freshness age is deterministic whatever day this runs.
+_NOW_ISO = "2030-01-01T00:00:00Z"
+_NOW_MS = 1893456000000
+_OPEN_UPS = [{"clickNth": {"selector": ".sys-row", "index": 3}}, {"flush": 1}]
 
-def _surface(routes: dict[str, Any]):
+
+def _routes(payload: Any) -> dict[str, Any]:
+    return {
+        "/system-status": buildSystemStatusState(
+            syncLastOkTs=_NOW_ISO, syncStale=False, powerSource="external",
+            driveState="idle", driveId=None, nowIso=_NOW_ISO,
+        ),
+        "/gear": buildGearState(GearReading(True, GEAR_PARK, REASON_PARK), nowIso=_NOW_ISO),
+        "/battery-health": payload,
+        "/light": _LIGHT_PAYLOAD,
+    }
+
+
+def _surface(routes: dict[str, Any], steps: list[dict[str, Any]] | None = None):
     """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet."""
-    tree = rh.runDashboard(routes=routes, viewport=PANEL)["tree"]
+    tree = rh.runDashboard(
+        routes=routes, steps=steps, viewport=PANEL, nowMs=_NOW_MS
+    )["tree"]
     return rh.dashboardSurface(tree, viewport=PANEL)
+
+
+def _upsSurface(payload: Any):
+    """The System page, parked, with the UPS detail open."""
+    steps = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}] + _OPEN_UPS
+    return _surface(_routes(payload), steps)
 
 
 def _textOf(node: dict) -> list[str]:
@@ -335,16 +373,33 @@ def _cardPath(surface, stateKey: str):
     return None
 
 
-def _cardText(payload: Any, stateKey: str = "battery-health") -> list[str]:
-    """Every word a card paints, in reading order.
+def _upsPaths(surface) -> list:
+    """The UPS row and the open UPS detail body (only when it opened)."""
+    out = [p for p in surface.pathsByClass("sys-row")
+           if p[-1].get("attrs", {}).get("data-row") == "ups"]
+    head = surface.pathById("sys-detail-head")
+    if head is not None and _textOf(head[-1]) == ["UPS"]:
+        out.append(surface.pathById("sys-detail-body"))
+    return out
 
-    Read from the card DOWN rather than tile by tile, because the absence
-    assertions here ("no temperature anywhere on this card") are claims about the
-    WHOLE card -- a degree symbol that landed in the title, the health detail line
-    or a stray tile would slip straight past a per-tile lookup.
+
+def _cardText(payload: Any, stateKey: str = "battery-health") -> list[str]:
+    """Every word a surface paints, in reading order.
+
+    Read from the surface DOWN rather than line by line, because the absence
+    assertions here ("no temperature anywhere") are claims about the WHOLE
+    surface -- a degree symbol that landed in a label, the health line or a
+    stray fact would slip straight past a per-line lookup. `battery-health` is
+    the UPS row + UPS detail (MOVED PIN US-894-e); any other key is that card.
     """
-    routes: dict[str, Any] = {"/battery-health": payload, "/light": _LIGHT_PAYLOAD}
-    surface = _surface(routes)
+    if stateKey == "battery-health":
+        surface = _upsSurface(payload)
+        out: list[str] = []
+        for path in _upsPaths(surface):
+            if surface.rendered(path):
+                out.extend(_textOf(path[-1]))
+        return out
+    surface = _surface(_routes(payload))
     path = _cardPath(surface, stateKey)
     if path is None or not surface.rendered(path):
         return []
@@ -368,20 +423,22 @@ def _view(fn: str, *args: object) -> Any:
 
 
 def _labelsOn(payload: Any) -> list[str]:
-    """The printed LABEL of every rendered `.tile` on the Battery card.
+    """The printed LABEL of every fact line in the open UPS detail.
 
-    A tile's label is its first text node. Collected separately from the card's
-    full text because "no tile is called TEMP" and "no degree symbol is painted"
-    are different guarantees -- a resurrected tile could carry either without the
-    other, and a single assertion covering both would not say which broke.
+    Collected separately from the full text because "no line is called TEMP"
+    and "no degree symbol is painted" are different guarantees -- a resurrected
+    line could carry either without the other, and a single assertion covering
+    both would not say which broke. MOVED PIN (US-894-e): the detail's
+    `.sys-diag-label`s replace the retired card's tile labels.
     """
-    surface = _surface({"/battery-health": payload})
-    card = _cardPath(surface, "battery-health")
-    if card is None:
+    surface = _upsSurface(payload)
+    paths = _upsPaths(surface)
+    if len(paths) < 2:
         return []
+    body = paths[-1][-1]
     labels: list[str] = []
-    for path in surface.pathsByClass("tile"):
-        if not any(node is card[-1] for node in path):
+    for path in surface.pathsByClass("sys-diag-label"):
+        if not any(node is body for node in path):
             continue
         if not surface.rendered(path):
             continue
@@ -413,10 +470,11 @@ def _joined(texts: list[str]) -> str:
 
 
 def test_theBatteryCardActuallyRenders_negativeControl(tmp_path):
-    """The card paints its real tiles in the same payload the absences are read
-    from -- so "no temperature here" is a measurement, not a blank card."""
+    """The UPS row and detail paint their real readings in the same payload the
+    absences are read from -- so "no temperature here" is a measurement, not a
+    blank surface."""
     text = _cardText(_emit(tmp_path, _liveGauge()))
-    assert text, "the Battery card rendered nothing at all"
+    assert text, "the UPS row and detail rendered nothing at all"
     assert LIVE_VCELL_PRINTED in _joined(text), _joined(text)
     assert LIVE_SOC_PRINTED in _joined(text), _joined(text)
 
@@ -425,7 +483,7 @@ def test_theReaderCanSeeAUnitSymbol_negativeControl(tmp_path):
     """A unit symbol on the card IS visible to `_cardText`.
 
     Without this, "no degree symbol on the card" could be true because the reader
-    never sees units at all. The CELL tile's "V" proves symbols reach the text --
+    never sees units at all. The UPS row's "V" proves symbols reach the text --
     an absence claim from a reader with a blind spot is not evidence.
     """
     text = _joined(_cardText(_emit(tmp_path, _liveGauge())))
@@ -572,7 +630,7 @@ def test_noTileOnTheBatteryCardIsATemperature(tmp_path):
     the shape US-504 removed.
     """
     labels = _labelsOn(_emit(tmp_path, _liveGauge()))
-    assert labels, "no tiles rendered at all -- the absence claim is vacuous"
+    assert labels, "no detail lines rendered at all -- the absence claim is vacuous"
     assert HEALTH in labels and CELL in labels, labels
     for forbidden in ("TEMP", "TEMPERATURE", "AMBIENT"):
         assert forbidden not in labels, labels
@@ -725,8 +783,11 @@ def test_characterisation_theViewBuildsNoTempTile(tmp_path):
     rather than only by a fixture nobody updated.
     """
     payload = _emitWithAmbient(tmp_path, ROOM_C)
-    view = _view("batteryHealthView", payload)
+    # MOVED PIN (US-894-e): batteryHealthView is gone; the UPS detail is the
+    # structured view that carries the cell now.
+    view = _view("upsDetailView", None, payload, _NOW_MS)
     assert isinstance(view, dict), view
     assert "temp" not in view, view
+    assert DEGREE not in json.dumps(view, ensure_ascii=False), view
     # The control: the view is the real, fully-built one, not an error object.
-    assert view.get("vcell") is not None and view.get("health") is not None
+    assert view.get("cell", "").startswith("4.16 V") and view.get("health") is not None

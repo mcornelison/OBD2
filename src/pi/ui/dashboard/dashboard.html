@@ -488,22 +488,11 @@
                data-page-name="SYSTEM">
         <div class="card-body">unavailable</div>
       </section>
-      <!-- US-540-b (F-127): the US-507 merged "Health" card RETIRES and its
-           three readouts become cards again (4 -> 6). US-507 merged them
-           because the CIO called six screens too many; the US-540-a legibility
-           scale changes the arithmetic under that call -- at secondary 26px a
-           card affords ~3 facts, and Health was carrying six. A container of
-           three unrelated facts is the one thing the scale cannot pay for, so
-           the screen count is the cheaper thing to spend.
-
-           Each card consumes its OWN state file through the SAME view function
-           it used as a section (and as a standalone card before that), so this
-           is a RELOCATION in the opposite direction, not a redesign. The
-           per-source independence the merge had to fight for is now free: a
-           dead UPS cannot reach the Light card at all. -->
-      <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
-        <div class="card-body">unavailable</div>
-      </section>
+      <!-- US-894-e (spec s4.5 / s4.6.1, CIO 2026-10-19): the Battery card is
+           RETIRED (9 cards -> 8). Its cell is the System page's UPS row, and
+           what survives of the card is the UPS detail in #sys-detail. The
+           battery-health emitter and its states file stay (drain_forensics
+           reads it). -->
     </div>
   </main>
 

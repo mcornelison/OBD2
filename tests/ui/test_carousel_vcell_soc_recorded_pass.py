@@ -64,6 +64,12 @@
 #               |              | the unreachable-F-8-fallback characterisation.
 # 2026-09-14    | Ralph (Rex)  | US-736: HEALTH detail now leads with the unknown
 #               |              | reason (`no_database` for this fixture).
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the Battery card is retired.
+#               |              | The panel half now reads the System page UPS row
+#               |              | (VCELL) and the parked UPS detail (SOC line,
+#               |              | HEALTH) -- the same chain, a new surface. The
+#               |              | typed absence is `--` + the reason (no NA tile);
+#               |              | the SOC reads `≈ 96 % (modelled...)`, never bare.
 # ================================================================================
 ################################################################################
 
@@ -73,6 +79,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from types import SimpleNamespace
@@ -94,10 +101,13 @@ from pi.hardware.ups_monitor import (  # noqa: E402
     REGISTER_VCELL,
     UpsMonitor,
 )
+from pi.obdii.gear_derivation import GEAR_PARK, REASON_PARK, GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
     CardStateEmitterMixin,
 )
 from pi.splash.source_availability import REASON_UPS_UNREADABLE  # noqa: E402
+from pi.splash.system_status_emitter import buildSystemStatusState  # noqa: E402
 
 _NODE = shutil.which("node")
 
@@ -115,6 +125,11 @@ PANEL = (480, 320)
 # precaution US-633's and US-638's files both take).
 EM_DASH = "—"
 MIDDOT = "·"
+APPROX = "≈"
+# MOVED PIN (US-894-e): the page's one no-data mark (spec s4.4), and the
+# --text-primary token the UPS row's VCELL value resolves to (s4.5).
+NO_DATA = "--"
+PRIMARY = "var(--text-primary)"
 
 # ---------------------------------------------------------------------------
 # Atlas's punch-list 4.1 reading, expressed as the REGISTER WORDS a MAX17048
@@ -134,7 +149,8 @@ ATLAS_VCELL_VOLTS = ATLAS_VCELL_RAW * MAX17048_VCELL_LSB_V  # 4.163984375
 ATLAS_VCELL_PRINTED = "4.16 V"
 ATLAS_SOC_RAW = 0x6040
 ATLAS_SOC_PERCENT = 96
-ATLAS_SOC_PRINTED = "96%"
+# MOVED PIN (US-894-e): the SOC line reads `≈ 96 % (modelled...)` (s4.6.1).
+ATLAS_SOC_PRINTED = APPROX + " 96 % (modelled"
 CRATE_DISABLED_ON_THIS_CHIP = 0xFFFF
 
 # What the SAME wire bytes would print if the big-endian/little-endian swap were
@@ -258,13 +274,45 @@ def _emit(tmp_path, upsMonitor: Any) -> dict:
 
 # ---------------------------------------------------------------------------
 # Reading the rendered panel.
+#
+# MOVED PIN (US-894-e): the Battery card is RETIRED (spec s4.5 / s4.6.1). The
+# cell voltage is the System page's UPS row value, and the SOC and HEALTH lines
+# live in the parked UPS detail (#sys-detail). The helpers below render the
+# System page with a parked gear, open the UPS detail, and read both -- so
+# every claim this file makes about "the panel" is still made on pixels the
+# shipped carousel.js painted from the file the shipped producer wrote.
 # ---------------------------------------------------------------------------
+
+# A fixed page clock, later than any stamp the real emitter writes, so the
+# row's freshness age is deterministic (the M7 cap) whatever day this runs.
+_NOW_ISO = "2030-01-01T00:00:00Z"
+_NOW_MS = 1893456000000
+
+# Open the UPS detail: the fourth System row, tapped while parked.
+_OPEN_UPS = [{"clickNth": {"selector": ".sys-row", "index": 3}}, {"flush": 1}]
+
+
+def _systemStatus() -> dict:
+    """A system-status from the REAL builder: on external power, idle."""
+    return buildSystemStatusState(
+        syncLastOkTs=_NOW_ISO, syncStale=False, powerSource="external",
+        driveState="idle", driveId=None, nowIso=_NOW_ISO,
+    )
+
+
+def _gearParked() -> dict:
+    return buildGearState(GearReading(True, GEAR_PARK, REASON_PARK), nowIso=_NOW_ISO)
 
 
 def _surface(payload: Any, steps: list[dict[str, Any]] | None = None):
-    """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet."""
-    routes: dict[str, Any] = {} if payload is None else {"/battery-health": payload}
-    tree = rh.runDashboard(routes=routes, steps=steps, viewport=PANEL)["tree"]
+    """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet, parked,
+    with the UPS detail open; `steps` run after it opened (an open detail is
+    repainted by the same poll that paints the row)."""
+    routes: dict[str, Any] = {"/system-status": _systemStatus(), "/gear": _gearParked()}
+    if payload is not None:
+        routes["/battery-health"] = payload
+    allSteps = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}] + _OPEN_UPS + (steps or [])
+    tree = rh.runDashboard(routes=routes, steps=allSteps, viewport=PANEL, nowMs=_NOW_MS)["tree"]
     return rh.dashboardSurface(tree, viewport=PANEL)
 
 
@@ -278,70 +326,122 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _cardPath(surface):
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "battery-health":
+def _classes(path: list[dict]) -> set[str]:
+    return set((path[-1].get("attrs", {}).get("class") or "").split())
+
+
+def _upsRow(surface):
+    for path in surface.pathsByClass("sys-row"):
+        if path[-1].get("attrs", {}).get("data-row") == "ups":
             return path
     return None
 
 
-def _cardText(payload: Any, steps: list[dict[str, Any]] | None = None) -> list[str]:
-    """Every word the Battery card paints, in reading order.
-
-    Read from the card down rather than tile by tile, because the absence
-    assertions below ("no voltage anywhere on this card") are claims about the
-    WHOLE card -- a stale reading that migrated into the title or a stray tile
-    would slip past a per-tile lookup.
-    """
-    surface = _surface(payload, steps)
-    path = _cardPath(surface)
-    if path is None or not surface.rendered(path):
-        return []
-    return _textOf(path[-1])
+def _child(path: list[dict], cls: str):
+    """The first descendant path carrying `cls`, or None."""
+    stack = [path]
+    while stack:
+        cur = stack.pop(0)
+        if cur is not path and cls in _classes(cur):
+            return cur
+        for child in cur[-1].get("children", []):
+            if "text" not in child:
+                stack.append(cur + [child])
+    return None
 
 
-def _tile(payload: Any, label: str, steps: list[dict[str, Any]] | None = None):
-    """The rendered `.tile` on the Battery card whose printed label is `label`.
-
-    Found by its PRINTED LABEL rather than by grid position, so a tile that moved
-    in the layout still resolves and a tile that VANISHED returns None instead of
-    silently matching its neighbour. Carries the level the stylesheet is keyed on
-    AND the colour that level actually resolves to, because "visually distinct"
-    is a claim about the panel and a level token only means it while the sheet
-    agrees.
-    """
-    surface = _surface(payload, steps)
-    card = _cardPath(surface)
-    if card is None:
-        return None
-    for path in surface.pathsByClass("tile"):
-        if not any(node is card[-1] for node in path):
+def _fact(surface, label: str):
+    """The UPS detail fact row whose printed label is `label`: its value text,
+    the colour the value resolves to and its data-level, or None."""
+    for path in surface.pathsByClass("data-fact-row"):
+        head = _child(path, "sys-diag-label")
+        if head is None or " ".join(_textOf(head[-1])) != label:
             continue
-        printed = _textOf(path[-1])
-        if not printed or printed[0] != label:
-            continue
-        if not surface.rendered(path):
-            continue
-        value = ""
-        detail = ""
-        valuePath = None
-        for child in path[-1].get("children", []):
-            classes = (child.get("attrs", {}).get("class") or "").split()
-            if "tile-value" in classes:
-                value = " ".join(_textOf(child))
-                valuePath = path + [child]
-            elif "tile-detail" in classes:
-                detail = " ".join(_textOf(child))
-        declaration = (
-            surface.winningDeclaration(valuePath, "color") if valuePath else None
-        )
+        value = _child(path, "sys-diag-text")
+        declaration = surface.winningDeclaration(value, "color") if value else None
         return {
-            "value": value,
-            "detail": detail,
-            "level": path[-1].get("attrs", {}).get("data-level"),
+            "value": " ".join(_textOf(value[-1])) if value else "",
+            "level": value[-1].get("attrs", {}).get("data-level") if value else None,
             "colour": declaration[0] if declaration else "",
         }
     return None
+
+
+def _cellText(payload: Any, steps: list[dict[str, Any]] | None = None) -> list[str]:
+    """Every word the CELL surfaces paint: the UPS row's value (word + tail),
+    the detail's CELL and SOC lines. The row's sentence (the power source and
+    the payload's age) and LAST STOP are deliberately NOT here: they are other
+    facts, and an age's digits are not a reading's digits."""
+    surface = _surface(payload, steps)
+    out: list[str] = []
+    row = _upsRow(surface)
+    if row is not None:
+        value = _child(row, "sys-row-value")
+        if value is not None:
+            out.extend(_textOf(value[-1]))
+    for label in ("CELL", "SOC"):
+        fact = _fact(surface, label)
+        if fact is not None:
+            out.append(fact["value"])
+    return out
+
+
+def _cardText(payload: Any, steps: list[dict[str, Any]] | None = None) -> list[str]:
+    """Every word the UPS row and the UPS detail paint, in reading order.
+
+    Read from the row and the detail DOWN rather than line by line, because the
+    absence assertions below ("no voltage anywhere") are claims about the WHOLE
+    surface -- a stale reading that migrated into a label or a stray line would
+    slip past a per-line lookup.
+    """
+    surface = _surface(payload, steps)
+    row = _upsRow(surface)
+    body = surface.pathById("sys-detail-body")
+    out = _textOf(row[-1]) if row is not None else []
+    return out + (_textOf(body[-1]) if body is not None else [])
+
+
+def _tile(payload: Any, label: str, steps: list[dict[str, Any]] | None = None):
+    """The reading the operator sees under `label`, or None when nothing shows.
+
+    CELL is the UPS row's value (`.sys-row-word`, its look and its resolved
+    colour); CHARGE is the detail's SOC line; HEALTH is the detail's HEALTH
+    line with its reason and the F-9 line as `detail`. A line that VANISHED
+    returns None instead of silently matching its neighbour.
+    """
+    surface = _surface(payload, steps)
+    if label == CELL:
+        row = _upsRow(surface)
+        word = _child(row, "sys-row-word") if row is not None else None
+        if word is None or not surface.rendered(word):
+            return None
+        sentence = _child(row, "sys-row-sentence")
+        declaration = surface.winningDeclaration(word, "color")
+        return {
+            "value": " ".join(_textOf(word[-1])),
+            "detail": " ".join(_textOf(sentence[-1])) if sentence else "",
+            "look": word[-1].get("attrs", {}).get("data-state"),
+            "colour": declaration[0] if declaration else "",
+        }
+    if label == CHARGE:
+        return _fact(surface, "SOC")
+    if label == HEALTH:
+        fact = _fact(surface, "HEALTH")
+        if fact is None:
+            return None
+        lines = []
+        for cls in ("ups-health-note", "ups-health-check"):
+            for path in surface.pathsByClass(cls):
+                lines.append(" ".join(_textOf(path[-1])))
+        fact["detail"] = (" " + MIDDOT + " ").join(lines)
+        return fact
+    raise AssertionError(f"no such reading: {label}")
+
+
+def _socOf(value: str) -> int | None:
+    """The integer percent of a SOC line `≈ 96 % (modelled...)`, else None."""
+    m = re.match(r"^" + APPROX + r" (\d+) % \(modelled", value)
+    return int(m.group(1)) if m else None
 
 
 # A panel that reads a good gauge, then reads a state file the producer has
@@ -380,16 +480,18 @@ def test_theHarnessActuallyReadsBothTiles_negativeControl(tmp_path):
     """
     payload = _emit(tmp_path, _atlasGauge())
 
+    # MOVED PIN (US-894-e): CELL is the UPS row value, CHARGE the detail's SOC
+    # line; the look and resolved colour replace the retired tile level.
     cell = _tile(payload, CELL)
-    assert cell is not None, "no CELL tile in the rendered DOM"
+    assert cell is not None, "no UPS row value in the rendered DOM"
     assert cell["value"] != "", f"harness read no CELL value: {cell!r}"
-    assert cell["level"] == "neutral", f"harness read no CELL level: {cell!r}"
+    assert cell["look"] == "primary", f"harness read no CELL look: {cell!r}"
     assert cell["colour"] != "", f"harness resolved no CELL colour: {cell!r}"
 
     charge = _tile(payload, CHARGE)
-    assert charge is not None, "no CHARGE tile in the rendered DOM"
+    assert charge is not None, "no SOC line in the rendered UPS detail"
     assert charge["value"] != "", f"harness read no CHARGE value: {charge!r}"
-    assert charge["level"] == "neutral", f"harness read no CHARGE level: {charge!r}"
+    assert charge["colour"] != "", f"harness resolved no CHARGE colour: {charge!r}"
 
 
 def test_theFakeBusIsActuallyRead_negativeControl(tmp_path):
@@ -420,7 +522,9 @@ def test_theStylesheetSeparatesALiveReadingFromATypedAbsence(tmp_path):
     """
     Given: this file claims a dead gauge is "visually distinct" from a live one
     When: the shipped stylesheet is resolved for the two levels in question
-    Then: `neutral` and `unavailable` do NOT resolve to the same colour.
+    Then: the live look (`primary`) and the no-data look (`tertiary`) do NOT
+          resolve to the same colour. MOVED PIN (US-894-e): the UPS row's
+          `.sys-row-word` looks replace the retired tile's neutral/unavailable.
 
           Without this, "the level changed" is a claim about a data attribute
           and not about anything the driver can see -- a sheet that painted both
@@ -428,28 +532,18 @@ def test_theStylesheetSeparatesALiveReadingFromATypedAbsence(tmp_path):
           a live one looked the same on the panel.
     """
     surface = _surface(_emit(tmp_path, _atlasGauge()))
-    card = _cardPath(surface)
-    valuePath = None
-    tilePath = None
-    for path in surface.pathsByClass("tile"):
-        if not any(node is card[-1] for node in path):
-            continue
-        printed = _textOf(path[-1])
-        if printed and printed[0] == CELL:
-            tilePath = path
-    assert tilePath is not None
-    for child in tilePath[-1].get("children", []):
-        if "tile-value" in (child.get("attrs", {}).get("class") or "").split():
-            valuePath = tilePath + [child]
-    assert valuePath is not None
+    row = _upsRow(surface)
+    assert row is not None
+    wordPath = _child(row, "sys-row-word")
+    assert wordPath is not None
 
     resolved = {}
-    for level in ("neutral", "unavailable"):
-        tilePath[-1]["attrs"]["data-level"] = level
-        declaration = surface.winningDeclaration(valuePath, "color")
-        resolved[level] = declaration[0] if declaration else ""
+    for look in ("primary", "tertiary"):
+        wordPath[-1]["attrs"]["data-state"] = look
+        declaration = surface.winningDeclaration(wordPath, "color")
+        resolved[look] = declaration[0] if declaration else ""
 
-    assert resolved["neutral"] != resolved["unavailable"], resolved
+    assert resolved["primary"] != resolved["tertiary"], resolved
 
 
 # ---------------------------------------------------------------------------
@@ -462,19 +556,22 @@ def test_atlasVcellObservation_reachesThePanelInVolts(tmp_path):
     """
     Given: Atlas's punch-list 4.1 reading -- 4.164 V on a live MAX17048
     When: the shipped panel renders what the shipped producer wrote
-    Then: the CELL tile paints "4.16 V", labelled as the Pi's own UPS cell, at
-          the `neutral` level.
+    Then: the UPS row paints "4.16 V" in --text-primary, the detail is labelled
+          as the Pi's own UPS cell, and nothing is green.
 
-          THE RECORDED PASS for the voltage half. `neutral` and not `ok`: a cell
-          voltage is a reading, not a verdict -- the verdict is the HEALTH tile's
-          job and it is deliberately unknown on this Pi.
+          THE RECORDED PASS for the voltage half. Primary and not `ok`: a cell
+          voltage is a reading, not a verdict -- the verdict is the HEALTH line's
+          job and it is deliberately unknown on this Pi. MOVED PIN (US-894-e):
+          the CELL tile is the UPS row's value now.
     """
-    tile = _tile(_emit(tmp_path, _atlasGauge()), CELL)
+    payload = _emit(tmp_path, _atlasGauge())
+    tile = _tile(payload, CELL)
 
     assert tile is not None
     assert tile["value"] == ATLAS_VCELL_PRINTED, tile
-    assert tile["detail"] == BATTERY_LABEL, tile
-    assert tile["level"] == "neutral", tile
+    assert tile["look"] == "primary", tile
+    assert tile["colour"] == PRIMARY, tile
+    assert BATTERY_LABEL in _cardText(payload)
 
 
 def test_theVoltageOnThePanelTracksTheRegister_itIsNotAConstant(tmp_path):
@@ -509,7 +606,7 @@ def test_theBigEndianSwapIsInsideTheRenderedChain(tmp_path):
     texts = _cardText(_emit(tmp_path, _atlasGauge()))
 
     assert ATLAS_VCELL_PRINTED in texts, texts
-    assert UNSWAPPED_PRINTED not in texts, (UNSWAPPED_PRINTED, texts)
+    assert UNSWAPPED_PRINTED not in " ".join(texts), (UNSWAPPED_PRINTED, texts)
 
 
 def test_theVoltageIsRoundedForThePanel_notPrintedRaw(tmp_path):
@@ -554,15 +651,22 @@ def test_atlasSocObservation_reachesThePanelAsPercent(tmp_path):
     """
     Given: Atlas's punch-list 4.1 reading -- 96 % on a live MAX17048
     When: the shipped panel renders what the shipped producer wrote
-    Then: the CHARGE tile paints "96%" at the `neutral` level.
+    Then: the UPS detail's SOC line paints "≈ 96 % (modelled...)", in
+          --text-secondary, and the row carries no percent at all.
 
-          THE RECORDED PASS for the charge half.
+          THE RECORDED PASS for the charge half. MOVED PIN (US-894-e): the
+          CHARGE tile's bare "96%" is retired (s4.5: no SOC on the row; s4.6.1:
+          the detail line always carries its `(modelled` caveat).
     """
-    tile = _tile(_emit(tmp_path, _atlasGauge()), CHARGE)
+    payload = _emit(tmp_path, _atlasGauge())
+    tile = _tile(payload, CHARGE)
 
     assert tile is not None
-    assert tile["value"] == ATLAS_SOC_PRINTED, tile
-    assert tile["level"] == "neutral", tile
+    assert tile["value"].startswith(ATLAS_SOC_PRINTED), tile
+    assert _socOf(tile["value"]) == ATLAS_SOC_PERCENT, tile
+    assert tile["colour"] == "var(--text-secondary)", tile
+    assert "%" not in _tile(payload, CELL)["detail"]
+    assert "%" not in _tile(payload, CELL)["value"]
 
 
 def test_thePercentMovesWithTheSocRegisterAlone(tmp_path):
@@ -575,12 +679,12 @@ def test_thePercentMovesWithTheSocRegisterAlone(tmp_path):
           Half one of the independence pin. A percent lerped from voltage would
           be FROZEN here while the register swung from 10 % to 100 %.
     """
-    for raw, expected in ((0x0A00, "10%"), (0x4000, "64%"), (0xFF00, "100%")):
+    for raw, expected in ((0x0A00, 10), (0x4000, 64), (0xFF00, 100)):
         payload = _emit(tmp_path, _atlasGauge(soc=raw))
         charge = _tile(payload, CHARGE)
         cell = _tile(payload, CELL)
         assert charge is not None and cell is not None, raw
-        assert charge["value"] == expected, (hex(raw), charge)
+        assert _socOf(charge["value"]) == expected, (hex(raw), charge)
         assert cell["value"] == ATLAS_VCELL_PRINTED, (hex(raw), cell)
 
 
@@ -601,7 +705,7 @@ def test_thePercentDoesNotMoveWithTheVcellRegister(tmp_path):
         charge = _tile(payload, CHARGE)
         cell = _tile(payload, CELL)
         assert charge is not None and cell is not None, raw
-        assert charge["value"] == ATLAS_SOC_PRINTED, (raw, charge)
+        assert _socOf(charge["value"]) == ATLAS_SOC_PERCENT, (raw, charge)
         printedVolts.add(cell["value"])
 
     assert len(printedVolts) == 3, printedVolts
@@ -620,7 +724,7 @@ def test_theFractionalLowByteIsDropped_notRoundedUp(tmp_path):
     for raw in (0x6040, 0x60F0):
         tile = _tile(_emit(tmp_path, _atlasGauge(soc=raw)), CHARGE)
         assert tile is not None, hex(raw)
-        assert tile["value"] == ATLAS_SOC_PRINTED, (hex(raw), tile)
+        assert _socOf(tile["value"]) == ATLAS_SOC_PERCENT, (hex(raw), tile)
 
 
 def test_theDisabledCrateRegisterDoesNotSuppressTheLiveReadings(tmp_path):
@@ -641,7 +745,7 @@ def test_theDisabledCrateRegisterDoesNotSuppressTheLiveReadings(tmp_path):
     assert payload["draining"] is False, payload
     assert payload["ladder"] is None, payload
     assert _tile(payload, CELL)["value"] == ATLAS_VCELL_PRINTED
-    assert _tile(payload, CHARGE)["value"] == ATLAS_SOC_PRINTED
+    assert _socOf(_tile(payload, CHARGE)["value"]) == ATLAS_SOC_PERCENT
 
 
 def test_aLiveGaugeDoesNotBuyAHealthVerdict(tmp_path):
@@ -649,8 +753,9 @@ def test_aLiveGaugeDoesNotBuyAHealthVerdict(tmp_path):
     Given: a perfect live gauge and no drain history to judge it by
     When: the card is rendered
     Then: real numbers and an HONEST unknown verdict stand side by side -- the
-          HEALTH tile reads the em-dash at `unavailable` with "never" beside it,
-          while CELL and CHARGE carry live values.
+          HEALTH line reads `--` at `unavailable` with "never" beside it, while
+          CELL and CHARGE carry live values. MOVED PIN (US-894-e): the UPS
+          detail's HEALTH line, `--` the page's one no-data mark (s4.6.1).
 
           The composition nothing had pinned. Two correct halves in one card is
           exactly where a "the gauge is fine, so the battery is fine" shortcut
@@ -661,7 +766,7 @@ def test_aLiveGaugeDoesNotBuyAHealthVerdict(tmp_path):
     health = _tile(payload, HEALTH)
 
     assert health is not None
-    assert health["value"] == EM_DASH, health
+    assert health["value"] == NO_DATA, health
     assert health["level"] == "unavailable", health
     # US-736: the unknown verdict now says WHY in front of the F-9 line. This
     # fixture has no database handle, so the producer publishes `no_database`.
@@ -669,7 +774,7 @@ def test_aLiveGaugeDoesNotBuyAHealthVerdict(tmp_path):
         "no battery log database " + MIDDOT + " last health check " + MIDDOT + " never"
     ), health
     assert _tile(payload, CELL)["value"] == ATLAS_VCELL_PRINTED
-    assert _tile(payload, CHARGE)["value"] == ATLAS_SOC_PRINTED
+    assert _socOf(_tile(payload, CHARGE)["value"]) == ATLAS_SOC_PERCENT
 
 
 # ---------------------------------------------------------------------------
@@ -683,18 +788,20 @@ def test_anUnreadableGaugeRendersATypedAbsenceWithItsReason(tmp_path):
     """
     Given: the MAX17048 stops answering
     When: the card is rendered from what the producer wrote
-    Then: the whole card is one NA tile carrying the reason, at the
-          `unavailable` level -- not a blank card, and not a bare "unavailable"
-          that leaves the driver guessing which instrument went quiet.
+    Then: the UPS row and the detail's CELL line are the typed absence `--`
+          carrying the reason -- not a blank, and not a bare "unavailable" that
+          leaves the driver guessing which instrument went quiet -- and no SOC
+          or HEALTH line stands beside it. MOVED PIN (US-894-e): the whole-card
+          NA tile is the row's `--` + reason (s4.5).
     """
     payload = _emit(tmp_path, _deadGauge())
     texts = _cardText(payload)
 
-    assert "NA" in texts, texts
-    assert REASON_UPS_UNREADABLE in texts, texts
+    assert _tile(payload, CELL)["value"] == NO_DATA
+    assert (NO_DATA + " " + MIDDOT + " " + REASON_UPS_UNREADABLE) in " ".join(texts), texts
     assert BATTERY_LABEL in texts, texts
-    assert _tile(payload, CELL) is None, "a CELL tile survived a dead gauge"
-    assert _tile(payload, CHARGE) is None, "a CHARGE tile survived a dead gauge"
+    assert _tile(payload, CHARGE) is None, "a SOC line survived a dead gauge"
+    assert _tile(payload, HEALTH) is None, "a HEALTH line stood beside the NA"
 
 
 def test_anAbsentGaugeIsAsHonestAsADeadOne(tmp_path):
@@ -708,10 +815,11 @@ def test_anAbsentGaugeIsAsHonestAsADeadOne(tmp_path):
           Pinned separately because a fix to one branch cannot be assumed to
           reach the other.
     """
-    texts = _cardText(_emit(tmp_path, None))
+    texts = _cellText(_emit(tmp_path, None))
 
-    assert "NA" in texts, texts
-    assert REASON_UPS_UNREADABLE in texts, texts
+    # MOVED PIN (US-894-e): `--` + the reason on the UPS row.
+    assert NO_DATA in texts, texts
+    assert REASON_UPS_UNREADABLE in " ".join(texts), texts
 
 
 def test_noReadingSurvivesTheGaugeThatProducedIt(tmp_path):
@@ -719,7 +827,9 @@ def test_noReadingSurvivesTheGaugeThatProducedIt(tmp_path):
     Given: a panel that has been showing 4.16 V / 96 % for several poll rounds
     When: the gauge dies under it and the producer rewrites the state file
     Then: the panel repaints to the typed absence, and NO DIGIT of the old
-          reading is left anywhere on the card.
+          reading is left on the row value or the CELL / SOC lines (MOVED PIN
+          US-894-e: the row's sentence carries the payload's age, a different
+          fact, so the digit sweep covers the reading surfaces).
 
           THE LOAD-BEARING NEGATIVE TEST, and the one the acceptance criterion
           is actually about. "An NA payload renders NA" is true of a cold boot
@@ -730,12 +840,12 @@ def test_noReadingSurvivesTheGaugeThatProducedIt(tmp_path):
     live = _emit(tmp_path, _atlasGauge())
     dead = _emit(tmp_path, _deadGauge())
 
-    texts = _cardText(live, steps=_thenReplacedWith(dead))
+    texts = _cellText(live, steps=_thenReplacedWith(dead))
 
-    assert "NA" in texts, texts
-    assert REASON_UPS_UNREADABLE in texts, texts
-    assert ATLAS_VCELL_PRINTED not in texts, texts
-    assert ATLAS_SOC_PRINTED not in texts, texts
+    assert NO_DATA in texts, texts
+    assert REASON_UPS_UNREADABLE in " ".join(texts), texts
+    assert ATLAS_VCELL_PRINTED not in " ".join(texts), texts
+    assert ATLAS_SOC_PRINTED not in " ".join(texts), texts
     assert _digitsOf(texts) == "", f"a digit of the dead reading survived: {texts!r}"
 
 
@@ -749,28 +859,29 @@ def test_theControlProvesTheSecondRoundIsNotAReset(tmp_path):
           Without this, "the value disappeared" is not evidence about the state
           file -- it is evidence about the harness.
     """
-    texts = _cardText(_emit(tmp_path, _atlasGauge()), steps=_THEN_KEPT)
+    texts = _cellText(_emit(tmp_path, _atlasGauge()), steps=_THEN_KEPT)
 
     assert ATLAS_VCELL_PRINTED in texts, texts
-    assert ATLAS_SOC_PRINTED in texts, texts
+    assert ATLAS_SOC_PRINTED in " ".join(texts), texts
 
 
 def test_aVanishedStateFileTakesTheReadingWithIt(tmp_path):
     """
     Given: the emitter dying, or /run being cleared under a running kiosk
     When: the state file stops answering entirely after a good read
-    Then: the card names the silent feed and keeps no digit of the old reading.
+    Then: the row reads `--` and keeps no digit of the old reading.
 
           A third distinct failure mode -- 404, not an NA payload -- and the one
-          where nothing downstream is left to blank the numbers. It reaches a
-          DIFFERENT reason from the two above ("no data", not "gauge
-          unreadable"), which is the honest distinction: a file that is not
-          there is not the same fact as a chip that will not answer.
+          where nothing downstream is left to blank the numbers. It does NOT
+          carry "gauge unreadable", which is the honest distinction: a file that
+          is not there is not the same fact as a chip that will not answer.
+          MOVED PIN (US-894-e): the card's "no data" NA is the row's bare `--`
+          (s4.5: vcellV absent -> `--`).
     """
-    texts = _cardText(_emit(tmp_path, _atlasGauge()), steps=_thenReplacedWith(None))
+    texts = _cellText(_emit(tmp_path, _atlasGauge()), steps=_thenReplacedWith(None))
 
-    assert "NA" in texts, texts
-    assert "no data" in " ".join(texts), texts
+    assert NO_DATA in texts, texts
+    assert REASON_UPS_UNREADABLE not in " ".join(texts), texts
     assert _digitsOf(texts) == "", f"a digit survived a vanished state file: {texts!r}"
 
 
@@ -870,30 +981,32 @@ def test_anUnavailableSourceOverridesAReadingLeftBesideIt(tmp_path):
     assert forgotToBlank["vcellV"] == ATLAS_VCELL_VOLTS, "fixture lost its stale value"
     assert forgotToBlank["soc"] == ATLAS_SOC_PERCENT, "fixture lost its stale value"
 
-    texts = _cardText(forgotToBlank)
+    texts = _cellText(forgotToBlank)
 
-    assert "NA" in texts, texts
-    assert ATLAS_VCELL_PRINTED not in texts, texts
-    assert ATLAS_SOC_PRINTED not in texts, texts
+    # MOVED PIN (US-894-e): the typed absence is the row's `--` + reason.
+    assert NO_DATA in texts, texts
+    assert ATLAS_VCELL_PRINTED not in " ".join(texts), texts
+    assert ATLAS_SOC_PRINTED not in " ".join(texts), texts
 
 
 def test_theTypedAbsenceIsVisuallyDistinctFromALiveReading(tmp_path):
     """
     Given: an absence that LOOKS like a reading is the dishonest-instrument trap
     When: a dead gauge and a live gauge are rendered in turn
-    Then: the NA tile sits at `unavailable` and resolves to a different colour
-          from the live tile's `neutral`.
+    Then: the row's `--` sits at the `tertiary` look and resolves to a
+          different colour from the live value's `primary`.
 
-          The level alone would be a claim about an attribute; the resolved
-          colour is the claim about the panel.
+          The look alone would be a claim about an attribute; the resolved
+          colour is the claim about the panel. MOVED PIN (US-894-e): the NA
+          tile's `unavailable` vs `neutral` is the row word's look now.
     """
     liveTile = _tile(_emit(tmp_path, _atlasGauge()), CELL)
-    deadTile = _tile(_emit(tmp_path, _deadGauge()), BATTERY_LABEL)
+    deadTile = _tile(_emit(tmp_path, _deadGauge()), CELL)
 
     assert liveTile is not None and deadTile is not None
-    assert deadTile["value"] == "NA", deadTile
-    assert deadTile["level"] == "unavailable", deadTile
-    assert liveTile["level"] == "neutral", liveTile
+    assert deadTile["value"] == NO_DATA, deadTile
+    assert deadTile["look"] == "tertiary", deadTile
+    assert liveTile["look"] == "primary", liveTile
     assert deadTile["colour"] != liveTile["colour"], (deadTile, liveTile)
 
 
@@ -937,7 +1050,7 @@ def test_aSocRegisterFailureBlanksTheVoltageToo_theF8FallbackHasNoProducer(tmp_p
     Given: F-8's volts-only fallback -- `socTile` omits the percent and leaves
            the voltage standing when `soc` is null -- and one producer
     When: the VCELL register answers and the SOC register does not
-    Then: the card is a WHOLE-CARD typed absence. The readable voltage is
+    Then: the cell is a typed absence (`--` + reason; US-894-e). The readable voltage is
           discarded, `soc` never reaches the renderer as null-beside-a-number,
           and the fallback branch is therefore unreachable on the shipped path.
 
@@ -965,6 +1078,7 @@ def test_aSocRegisterFailureBlanksTheVoltageToo_theF8FallbackHasNoProducer(tmp_p
     assert payload["vcellV"] is None, "the readable voltage reached the file"
     assert payload["source"]["ups"]["available"] is False, payload
 
-    texts = _cardText(payload)
-    assert "NA" in texts, texts
-    assert ATLAS_VCELL_PRINTED not in texts, texts
+    texts = _cellText(payload)
+    # MOVED PIN (US-894-e): the whole-card NA is the row's `--` + reason.
+    assert NO_DATA in texts, texts
+    assert ATLAS_VCELL_PRINTED not in " ".join(texts), texts

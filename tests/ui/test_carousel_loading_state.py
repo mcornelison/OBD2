@@ -33,6 +33,8 @@
 #                               idleCardView) retire with that face; the homeFace
 #                               cases and the shipped-panel frames re-point at
 #                               motionView / #motion-card.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the two source-card loading
+#               |              | cases ride on the Light card (Battery retired).
 # ================================================================================
 ################################################################################
 
@@ -248,11 +250,13 @@ def test_motionView_pastTheBound_stopsSayingLoading():
 # ---------------------------------------------------------------------------
 
 
-def _batterySpec() -> dict:
+# MOVED PIN (US-894-e): the Battery card (and its source-card spec) is
+# retired; the Light card is the source card these two cases now ride on.
+def _lightSpec() -> dict:
     for spec in _view("sourceCardSpecs"):
-        if spec["key"] == "battery-health":
+        if spec["key"] == "light":
             return spec
-    raise AssertionError("no battery-health source card spec")
+    raise AssertionError("no light source card spec")
 
 
 def _fuelTrimSpec() -> dict:
@@ -263,7 +267,7 @@ def _fuelTrimSpec() -> dict:
 
 
 def test_sourceCardView_prefetch_isLoadingNotAConfidentFeedAbsent():
-    view = _view("sourceCardView", _batterySpec(), None, _status(), None,
+    view = _view("sourceCardView", _lightSpec(), None, _status(), None,
                  _NOW_MS, 0)
 
     assert view["loading"] is True
@@ -271,12 +275,12 @@ def test_sourceCardView_prefetch_isLoadingNotAConfidentFeedAbsent():
 
 
 def test_sourceCardView_noProducer_keepsTheShippedFeedAbsentWording():
-    view = _view("sourceCardView", _batterySpec(), None, _status(), None,
+    view = _view("sourceCardView", _lightSpec(), None, _status(), None,
                  _NOW_MS, None)
 
     assert view["loading"] is False
     assert view["unavailable"] is True
-    assert view["na"]["reason"] == "no data -- UPS feed absent"
+    assert view["na"]["reason"] == "no data -- light feed absent"
 
 
 def test_sourceCardView_gatedCardDuringTheWindow_staysGated():

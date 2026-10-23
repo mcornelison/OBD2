@@ -34,6 +34,9 @@
 # 2026-10-23    | Rex (US-894-c)| MOVED PIN: the SYNC tile and its counts are
 #               |              | retired; the stamp pins read the DATA row and
 #               |              | detail; the drill carries no sync counts.
+# 2026-10-23    | Rex (US-894-e)| MOVED PIN: LAST STOP moved to the UPS detail
+#               |              | and the POWER tile is gone, so the drill has
+#               |              | nothing behind it and is not tappable.
 # ================================================================================
 ################################################################################
 
@@ -430,13 +433,16 @@ def test_systemDrill_carriesNoSyncCountsAnyMore():
     """
     Given: the whole-system payload
     When: the drill-down view is built
-    Then: the only reference fact is the prior-shutdown verdict (US-744); no
-          `sync` diagnostic, no `pending` anywhere in it.
+    Then: no `sync` diagnostic, no `pending` anywhere in it.
+
+          MOVED PIN (US-894-e): the prior-shutdown verdict that was the only
+          reference fact here moved to the UPS detail (Iris I7).
     """
     view = _probe("systemStatusView", _sysState())
     diags = view["drill"]["diagnostics"]
 
-    assert [d["key"] for d in diags] == ["priorShutdown"]
+    assert diags == []
+    assert view["upsDetail"]["lastStop"]["label"] == "LAST STOP"
     assert "pending" not in json.dumps(view["drill"])
     assert "sync" not in view["tiles"]
 
@@ -455,11 +461,17 @@ def test_systemDrill_healthySystem_isStillReachable():
           empty on a healthy card. Had `tappable` stayed gated on faults, a
           non-zero PENDING backlog on an otherwise-OK sync would have become
           unreachable, and "moved to the drill-down" would have meant deleted.
+
+          MOVED PIN (US-894-e): the counts left with US-894-c and LAST STOP
+          with US-894-e (to the UPS detail), so a healthy card has NOTHING
+          behind the line -- and the US-509 invariant above says it is then
+          not a tap target. The facts are reached from the rows' details.
     """
     view = _probe("systemStatusView", _sysState())
 
-    assert view["drill"]["tappable"] is True
+    assert view["drill"]["tappable"] is False
     assert view["drill"]["rows"] == []
+    assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi", "ups"]
 
 
 def test_systemDrill_nothingBehindTheLine_isNotATapTarget():
@@ -478,10 +490,12 @@ def test_systemDrill_nothingBehindTheLine_isNotATapTarget():
     view = _probe("systemStatusView", _sysState(sync=None))
 
     # MOVED PIN (US-894-c): the SYNC tile is retired, so an absent sync block
-    # lists no drill row any more; the prior-shutdown fact keeps it tappable.
-    assert [d["key"] for d in view["drill"]["diagnostics"]] == ["priorShutdown"]
+    # lists no drill row any more.
+    # MOVED PIN (US-894-e): the prior-shutdown fact moved to the UPS detail,
+    # so nothing is left behind the line and it is not a tap target.
+    assert view["drill"]["diagnostics"] == []
     assert view["drill"]["rows"] == []
-    assert view["drill"]["tappable"] is True
+    assert view["drill"]["tappable"] is False
 
 
 def test_systemDrill_negativeSelfTest_gateIsNotHardCodedTrue():

@@ -697,35 +697,6 @@
     return nowMs - startedAtMs;
   }
 
-  // Power tile: running on battery (UPS backup) -> amber; external -> ok.
-  function powerTile(p) {
-    if (!isObj(p)) {
-      return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    // US-668: the tile now renders the SENSED SOURCE as its value.
-    //
-    // It used to render the operator-declared MODE (CAR/WALL) as the value, with
-    // the source only in the detail line. The CIO removed the mode on 2026-09-02
-    // -- "if I can see the screen then the power is on, it doesn't matter if it
-    // is car or wall, it is on" -- and he is right: the value slot was spending
-    // the tile's most prominent characters on a fact the viewer already knew by
-    // looking at the panel.
-    //
-    // What it says now is the fact the screen CANNOT tell you by being lit:
-    // external power, or running down the UPS battery. During the 2026-08-31 UPS
-    // test the panel stayed lit for the whole time the Pi ran on battery toward
-    // a graceful poweroff -- BATTERY is exactly the state a viewer cannot infer.
-    if (p.source === "battery") {
-      return { label: "POWER", value: "BATTERY", detail: "on UPS", level: "amber" };
-    }
-    if (p.source === "external") {
-      return { label: "POWER", value: "EXTERNAL", detail: "wall/car power", level: "ok" };
-    }
-    // Unresolved stays unavailable rather than guessing a source. US-628's typed
-    // reason travels in `reasons.source`, not here.
-    return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
-  }
-
   // -------------------------------------------------------------------------
   // US-744 -- the PREVIOUS shutdown's verdict, rendered.
   //
@@ -858,8 +829,7 @@
   // so restating it spent a slot in a band that has none to spare. The state
   // function went with its only consumer rather than lingering as residue.
   // The MEASUREMENT is untouched: `power.source` is still sensed and still
-  // rendered by `powerTile` on the System Status card, which keeps its Power
-  // row. Recorded here because the argument against removal is real and should
+  // rendered -- since US-894-e in the UPS row's words (upsRowView). Recorded here because the argument against removal is real and should
   // not have to be rediscovered: the glyph was the only on-screen signal during
   // a UPS ride-down. The CIO's call is that the automatic sequenced poweroff
   // makes that signal unactionable.
@@ -1318,30 +1288,12 @@
   // anyway: it is a REFERENCE FACT about a boot that already ended, not a live
   // source, so it is neither a fault (it would cry wolf all session) nor a
   // status tile (it describes the past, not now).
+  //
+  // US-894-e (Iris I7, re-hunt 2026-10-22): LAST STOP MOVED to the UPS detail
+  // (upsDetailView), through the same priorShutdownTile, unchanged. Nothing
+  // is left in this section; the drill and this function go with US-894-f.
   function systemDiagnostics(tiles, data) {
-    var diags = [];
-    if (!isObj(tiles)) return diags;
-    // US-894-c: the SYNC counts line is gone with syncTile and the retired
-    // sync.rows / sync.pending; the DATA row and its detail carry the backlog.
-    // Built from the payload the card was rendered from -- one read, so the
-    // overlay can never contradict it. Listed on every REAL card, including
-    // when the verdict is absent: the absence is itself the fact worth reading
-    // ("not read"), and a row that vanishes when the producer goes dark is how
-    // this verdict stayed invisible from US-728 until US-744 found it.
-    //
-    // Gated on the card having tiles at all, which keeps US-509's guarantee
-    // intact: a drill built over NO card still has nothing behind it and stays
-    // untappable. Pinning that gate open is the inert-guard shape its own test
-    // (test_systemDrill_nothingBehindTheLine_isStillNotATapTarget) forbids.
-    if (isObj(data) && Object.keys(tiles).length > 0) {
-      var ps = priorShutdownTile(data.priorShutdown, data.ts);
-      diags.push({
-        key: "priorShutdown",
-        label: ps.label,
-        text: ps.value + " · " + ps.detail,
-      });
-    }
-    return diags;
+    return [];
   }
 
   // The summary line is a tap target ONLY when something is behind it -- an
@@ -1519,6 +1471,143 @@
     return "dim";
   }
 
+  // -------------------------------------------------------------------------
+  // US-894-e (spec s4.5, s4.6.1; Atlas A1/A3/A4, Iris I6/I7/W2) -- the UPS
+  // row and its parked detail, replacing the Battery card. Two files, two
+  // facts (Atlas A1): the cell (VCELL, SOC, the health verdict) is
+  // states/battery-health; the SENSED power source is system-status
+  // power.source -- never derived from battery-health. There is no UPS
+  // verdict member (s4.1), so nothing here is ever amber: on battery is
+  // neutral (Atlas A4), and the words say it.
+  // -------------------------------------------------------------------------
+
+  // The sensed source in words. Never `wall` or `car` (CIO 2026-10-19).
+  var POWER_SOURCE_WORDS = { external: "on external power", battery: "on battery" };
+  var POWER_SOURCE_UNKNOWN = "power source unknown";
+  // W2: an unresolved source's typed `power.reasons.source` in words. Keys
+  // are card_state_emitter.POWER_SOURCE_UNKNOWN_REASONS verbatim, pinned
+  // equal by tests/ui/test_system_page_ups_row.py; a reason outside them
+  // prints no words. The words name the SENSOR, never the UPS or the pack.
+  var POWER_SOURCE_REASON_WORDS = {
+    provider_absent: "no power sensor running",
+    source_unreadable: "power sensor unreadable",
+    read_failed: "power sensor read failed",
+  };
+
+  function powerSourceWords(data) {
+    var power = isObj(data) && isObj(data.power) ? data.power : {};
+    return typeof power.source === "string"
+      && Object.prototype.hasOwnProperty.call(POWER_SOURCE_WORDS, power.source)
+      ? POWER_SOURCE_WORDS[power.source] : POWER_SOURCE_UNKNOWN;
+  }
+
+  // The typed reason in words, only beside an UNRESOLVED source (a reason
+  // explains an absence); null when there is none to print.
+  function powerSourceReasonWords(data) {
+    if (powerSourceWords(data) !== POWER_SOURCE_UNKNOWN) return null;
+    var power = isObj(data) && isObj(data.power) ? data.power : {};
+    var code = isObj(power.reasons) ? power.reasons.source : null;
+    return typeof code === "string"
+      && Object.prototype.hasOwnProperty.call(POWER_SOURCE_REASON_WORDS, code)
+      ? POWER_SOURCE_REASON_WORDS[code] : null;
+  }
+
+  // The cell reading: `4.12 V` (vcellTile's 2 decimals), `--` when vcellV is
+  // not a number or the payload is absent, and `--` + the typed reason when
+  // the gauge source is unavailable (the shipped US-429 rule: never a stale
+  // last-real cell reading).
+  function upsCellReading(batteryData) {
+    if (isObj(batteryData) && sourceUnavailable(batteryData, "ups")) {
+      return { text: SYS_NO_DATA, reason: sourceReason(batteryData, "ups"), usable: false };
+    }
+    if (!isObj(batteryData) || typeof batteryData.vcellV !== "number") {
+      return { text: SYS_NO_DATA, reason: null, usable: isObj(batteryData) };
+    }
+    return { text: vcellTile(batteryData).value, reason: null, usable: true };
+  }
+
+  // s4.5 (I6): the cell's FRESHNESS age -- the S105 M7 rule through the ONE
+  // shared helper Motion uses, never agoText (`just now` would hide `12 s
+  // ago`). `nowMs` is the tick's clock (US-496); undated -> no age.
+  function upsAgeText(batteryData, nowMs) {
+    return typeof nowMs === "number" ? freshAgeText(readAgeSec(batteryData, nowMs)) : null;
+  }
+
+  // The UPS row (s4.5): value = VCELL in --text-primary; sentence = the
+  // sensed source + ` · <age>`, neutral. Never a SOC, a runtime, `charging`
+  // or `crate` on the row.
+  function upsRowView(data, batteryData, nowMs) {
+    var cell = upsCellReading(batteryData);
+    var age = upsAgeText(batteryData, nowMs);
+    var words = powerSourceWords(data);
+    var tail = cell.reason !== null ? " · " + cell.reason : "";
+    return {
+      key: "ups",
+      label: "UPS",
+      word: cell.text,
+      look: cell.text === SYS_NO_DATA ? "tertiary" : "primary",
+      tail: tail,
+      value: cell.text + tail,
+      sentence: age !== null ? words + " · " + age : words,
+      level: "secondary",
+    };
+  }
+
+  // The SOC line (s4.6.1, I6; F-8): only when `soc` is a real number, with
+  // the shipped (uncalibrated) caveat. Never a readiness signal.
+  function upsSocText(batteryData) {
+    if (!isObj(batteryData) || typeof batteryData.soc !== "number"
+        || !isFinite(batteryData.soc)) {
+      return null;
+    }
+    return "≈ " + batteryData.soc + " % ("
+      + (batteryData.socCalibrated === true ? "modelled" : "modelled, uncalibrated") + ")";
+  }
+
+  // The UPS detail (s4.6.1, parked): VCELL + age; the source + its typed
+  // reason in words; the health verdict (never amber, never red) with its
+  // unknown reason or its T-vs-J margin, and ALWAYS the F-9 check line; the
+  // SOC line; LAST STOP through the shipped priorShutdownTile, unchanged
+  // (I7). No ladder, no `min to cutoff`, no pack epoch, no trend. With the
+  // gauge unreadable the cell section is the typed NA alone (US-429), so no
+  // health or SOC line stands beside it.
+  function upsDetailView(data, batteryData, nowMs) {
+    var cell = upsCellReading(batteryData);
+    var age = upsAgeText(batteryData, nowMs);
+    var health = null;
+    var healthCheck = null;
+    if (cell.usable) {
+      // US-736: the reason goes IN FRONT of the F-9 line, never in place of
+      // it; ARCH-065: so does a resolved verdict's margin -- detail only,
+      // resolved verdict only, always with its `vs n s job` half (I6).
+      var reason = healthReasonText(batteryData);
+      health = {
+        value: healthValue(batteryData.health),
+        level: healthLevel(batteryData.health),
+        note: reason !== null ? reason : healthMarginText(batteryData),
+      };
+      healthCheck = healthCheckLine(batteryData).label;
+    }
+    var stop = priorShutdownTile(isObj(data) ? data.priorShutdown : null,
+                                 isObj(data) ? data.ts : null);
+    return {
+      head: "UPS",
+      label: BATTERY_LABEL,
+      cell: cell.text + (cell.reason !== null ? " · " + cell.reason
+                         : age !== null ? " · " + age : ""),
+      source: powerSourceWords(data),
+      sourceReason: powerSourceReasonWords(data),
+      health: health,
+      healthCheck: healthCheck,
+      soc: cell.usable ? upsSocText(batteryData) : null,
+      lastStop: {
+        label: stop.label,
+        text: stop.value + " · " + stop.detail,
+        level: stop.level,
+      },
+    };
+  }
+
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
 
@@ -1537,19 +1626,25 @@
   // US-894-c: the DATA row is the second row; the SYNC / DRIVE / CAPTURE
   // tiles and their drill rows are gone (the drill keeps POWER until US-894-e).
   // US-894-d: the WIFI row is the third.
-  function systemStatusView(data, captureData) {
+  // US-894-e: the UPS row is the fourth, reading a THIRD state file
+  // (states/battery-health, `batteryData`) against the tick's `nowMs`. The
+  // POWER tile (powerTile) is gone with it, so the drill has no tiles left
+  // until US-894-f retires it.
+  function systemStatusView(data, captureData, batteryData, nowMs) {
     if (!isObj(data)) return null;
-    var tiles = {
-      power: powerTile(data.power),
-    };
+    var tiles = {};
     return {
       // s4.1: the provider's count, never the page's.
       verdict: systemVerdictView(data),
-      rows: [obdRowView(data), dataRowView(data, captureData), wifiRowView(data)],
+      rows: [
+        obdRowView(data), dataRowView(data, captureData), wifiRowView(data),
+        upsRowView(data, batteryData, nowMs),
+      ],
       // s4.6: the rows' details, from the SAME read.
       obdDetail: obdDetailView(data),
       dataDetail: dataDetailView(data, captureData),
       wifiDetail: wifiDetailView(data),
+      upsDetail: upsDetailView(data, batteryData, nowMs),
       // US-509: the drill-down behind the verdict -- one read of the state
       // file feeds the page AND the overlay.
       drill: systemDrill(tiles, data),
@@ -1566,10 +1661,11 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-401 Battery Health card -- pure render logic, node-testable (F-8/F-9/
-  // F-10/F-11/F-2). The card is an HONEST consumer of the `battery-health`
-  // emitter (Atlas A-3 schema) for the Pi UPS LiPo cell -- NEVER the car
-  // battery (F-11). The two render-breaking traps are locked here:
+  // US-401 battery-health view helpers -- pure render logic, node-testable
+  // (F-8/F-9/F-10/F-11). US-894-e retired the Battery card; these helpers feed
+  // the System page's UPS detail (upsDetailView). An HONEST consumer of the
+  // `battery-health` emitter (Atlas A-3 schema) for the Pi UPS LiPo cell --
+  // NEVER the car battery (F-11). The two render-breaking traps are locked here:
   //   F-8  the SoC percent is shown ONLY when `soc` is a real number; a null
   //        soc omits the percent and shows volts -- a voltage is NEVER painted
   //        as a percent.
@@ -1578,7 +1674,8 @@
   //        month-old reading is never mistaken for live. The producer adds a
   //        second layer upstream: it forces `unknown` once the pack's counted
   //        monthly test is over 45 days old (ARCH-065; US-504 used 90 days).
-  // The drain ladder DOM is present ONLY when `draining === true` (F-2 / A-6).
+  // US-894-e: the drain ladder and its `~N min to cutoff` are gone (s4.6.1: a
+  // banned runtime -- the pack capacity is unmeasured).
   // -------------------------------------------------------------------------
 
   var BATTERY_LABEL = "Pi UPS battery"; // F-11: never "vehicle/car battery".
@@ -1608,7 +1705,8 @@
     if (h === "good") return "GOOD";
     if (h === "degraded") return "DEGRADED";
     if (h === "replace") return "REPLACE";
-    return "—";
+    // s4.6.1: `--`, the page's one no-data mark.
+    return SYS_NO_DATA;
   }
 
   // US-736: WHY the verdict is unknown. US-632 publishes one of six machine
@@ -1735,88 +1833,12 @@
     };
   }
 
-  // SoC tile (F-8) -- the percent renders ONLY when `soc` is a real number from
-  // the MAX17048 register; null -> omit the percent (shown:false), the card
-  // falls back to volts. A voltage is NEVER rendered as a percent.
-  function socTile(d) {
-    if (typeof d.soc !== "number") {
-      return {
-        label: "CHARGE",
-        value: "—",
-        detail: "% unavailable · see volts",
-        level: "unavailable",
-        shown: false,
-      };
-    }
-    return {
-      label: "CHARGE",
-      value: d.soc + "%",
-      detail: d.socCalibrated === true ? "register" : "(uncalibrated)",
-      level: "neutral",
-      shown: true,
-    };
-  }
-
   // US-504: the TEMP tile is REMOVED. The MAX17048 is a voltage-based fuel
   // gauge (VCELL/SOC/CRATE/MODE/VERSION/HIBRT/CONFIG/VALRT/VRESET/STATUS) with
   // no temperature register at all, so the tile had no source it could ever
   // read and rendered "not captured" on every row ever logged. The
   // `ambient_temp_c` COLUMN survives -- a future BMP390 carries a temperature
   // channel that legitimately fills it, and the tile comes back with it.
-
-  // Failsafe ladder view (F-2 / A-6) -- present ONLY when draining is true. The
-  // runtime minutes render ONLY when the power tier supplied a real number
-  // (Spool S-2); otherwise the failsafe shows stage + volts, never a fabricated
-  // estimate. draining:false -> null (the DOM renderer draws no ladder).
-  function ladderView(d) {
-    if (d.draining !== true) return null;
-    var l = isObj(d.ladder) ? d.ladder : {};
-    var rt = typeof l.runtimeRemainingS === "number" ? l.runtimeRemainingS : null;
-    return {
-      stage: typeof l.stage === "string" ? l.stage : "DRAINING",
-      thresholds: isObj(l.thresholds) ? l.thresholds : null,
-      runtimeRemainingS: rt,
-    };
-  }
-
-  // The full structured view consumed by the DOM renderer + the node tests.
-  // Non-object payload -> null (the shell renders `unavailable`).
-  function batteryHealthView(data) {
-    if (!isObj(data)) return null;
-    // US-429: the UPS/MAX17048 is a single source -- when it is unavailable the
-    // WHOLE card is a typed NA ("gauge unreadable"), never a blank or a stale
-    // last-real cell reading.
-    if (sourceUnavailable(data, "ups")) {
-      return {
-        label: BATTERY_LABEL,
-        unavailable: true,
-        reason: sourceReason(data, "ups"),
-        ts: typeof data.ts === "string" ? data.ts : null,
-      };
-    }
-    // US-736: the reason goes IN FRONT of the F-9 line, never in place of it.
-    // ARCH-065: so does a resolved verdict's T-vs-J margin.
-    var reason = healthReasonText(data);
-    var margin = reason === null ? healthMarginText(data) : null;
-    var checkLabel = healthCheckLine(data).label;
-    return {
-      label: BATTERY_LABEL,
-      unavailable: false,
-      health: {
-        label: "HEALTH",
-        value: healthValue(data.health),
-        detail: reason !== null ? reason + " · " + checkLabel
-              : margin !== null ? margin + " · " + checkLabel : checkLabel,
-        level: healthLevel(data.health),
-        reason: reason,
-      },
-      vcell: vcellTile(data),
-      soc: socTile(data),
-      healthCheck: healthCheckLine(data),
-      ladder: ladderView(data),
-      ts: typeof data.ts === "string" ? data.ts : null,
-    };
-  }
 
   // -------------------------------------------------------------------------
   // US-420 / US-661 LTFT Trend card -- pure render logic, node-testable (F-096).
@@ -2022,10 +2044,6 @@
   // (it is still painted when the body is a typed NA).
   var SOURCE_CARDS = [
     {
-      key: "battery-health", title: "Battery",
-      noData: { label: "BATTERY", reason: "no data -- UPS feed absent" },
-    },
-    {
       key: "light", title: "Light",
       noData: { label: "AMBIENT", reason: "no data -- light feed absent" },
     },
@@ -2051,7 +2069,7 @@
   }
 
   // Build the per-source view. Kept as a switch on the key rather than a
-  // function reference in the table so the three signatures (which genuinely
+  // function reference in the table so the signatures (which genuinely
   // differ -- only the light view needs the dim config, a clock and the STOP
   // test) stay explicit.
   //
@@ -2061,7 +2079,6 @@
   function sourceView(key, data, cfg, nowMs, alarmActive, settings) {
     if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive, settings);
     if (cardAvailability(data) !== "available") return null;
-    if (key === "battery-health") return batteryHealthView(data);
     if (key === "ltft-trend") return fuelTrendView(data);
     return null;
   }
@@ -5675,7 +5692,6 @@
     feedObserved: feedObserved,
     feedWaitedMs: feedWaitedMs,
     LOADING_GRACE_MS: LOADING_GRACE_MS,
-    powerTile: powerTile,
     linkChainGlyph: linkChainGlyph,
     LINK_CHAIN_LAYERS: LINK_CHAIN_LAYERS,
     LINK_STATE_LOOK: LINK_STATE_LOOK,
@@ -5707,9 +5723,13 @@
     priorShutdownTile: priorShutdownTile,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
-    socTile: socTile,
-    ladderView: ladderView,
-    batteryHealthView: batteryHealthView,
+    upsRowView: upsRowView,
+    upsDetailView: upsDetailView,
+    POWER_SOURCE_REASON_WORDS: POWER_SOURCE_REASON_WORDS,
+    healthValue: healthValue,
+    healthLevel: healthLevel,
+    healthReasonText: healthReasonText,
+    healthMarginText: healthMarginText,
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
     fuelTrendView: fuelTrendView,
@@ -6063,6 +6083,10 @@
         renderWifiDetail(bodyEl, view);
         return;
       }
+      if (sysDetailKind === "ups") {
+        renderUpsDetail(bodyEl, view);
+        return;
+      }
       var head = document.getElementById("sys-detail-head");
       // The head repeats the LINE THE OPERATOR TAPPED verbatim (the verdict).
       if (head) head.textContent = view && view.verdict ? view.verdict.text : "";
@@ -6233,6 +6257,46 @@
       }
     }
 
+    // s4.6.1 UPS detail (US-894-e): the label, the cell + age, the source
+    // and its typed reason in words, the health verdict (never amber) with
+    // its reason or margin and the F-9 line, the SOC line, LAST STOP. All
+    // neutral: there is no UPS member. A view that is gone reads `--`.
+    function renderUpsDetail(bodyEl, view) {
+      var detail = view && view.upsDetail ? view.upsDetail : upsDetailView(null, null, null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      appendUpsLine(bodyEl, detail.label, "ups-label");
+      appendDataFact(bodyEl, "CELL", detail.cell, "ups-cell");
+      appendDataFact(bodyEl, "SOURCE", detail.source, "ups-source");
+      if (detail.sourceReason !== null) {
+        appendDataFact(bodyEl, "SENSOR", detail.sourceReason, "ups-source-reason");
+      }
+      if (detail.health !== null) {
+        var healthEl = appendDataFact(bodyEl, "HEALTH", "", "ups-health");
+        var word = healthEl.querySelector(".sys-diag-text");
+        if (word) {
+          word.textContent = detail.health.value;
+          word.setAttribute("data-level", detail.health.level);
+        }
+        // The unknown reason, or the margin (I6: detail only, always with its
+        // `vs n s job` half) -- in words, never in the verdict's colour.
+        if (detail.health.note !== null) {
+          appendUpsLine(bodyEl, detail.health.note, "ups-health-note");
+        }
+      }
+      // F-9: the line already names itself (`last health check · ...`).
+      if (detail.healthCheck !== null) appendUpsLine(bodyEl, detail.healthCheck, "ups-health-check");
+      if (detail.soc !== null) appendDataFact(bodyEl, "SOC", detail.soc, "ups-soc");
+      appendDataFact(bodyEl, detail.lastStop.label, detail.lastStop.text, "ups-last-stop");
+    }
+
+    function appendUpsLine(bodyEl, text, cls) {
+      var el = document.createElement("div");
+      el.className = "detail-card " + cls;
+      el.textContent = text;
+      bodyEl.appendChild(el);
+    }
+
     // US-559: the reference facts, below the faults. Built with textContent (no
     // innerHTML) like every other row here, so emitter values render verbatim
     // and never as markup.
@@ -6301,26 +6365,6 @@
     }
 
     // --- US-401 Battery Health DOM render (browser only) --------------------
-
-    // Render the failsafe ladder block (F-2 / A-6) -- built ONLY when draining.
-    // Minutes appear only when the power tier supplied a real runtimeRemainingS
-    // (Spool S-2); otherwise stage + volts only, no fabricated estimate.
-    function appendLadder(parent, ladder) {
-      var box = document.createElement("div");
-      box.className = "ladder";
-      box.setAttribute("data-stage", ladder.stage);
-      var banner = document.createElement("span");
-      banner.className = "ladder-banner";
-      banner.textContent = "DRAINING · " + ladder.stage;
-      box.appendChild(banner);
-      if (ladder.runtimeRemainingS != null) {
-        var rt = document.createElement("span");
-        rt.className = "ladder-runtime";
-        rt.textContent = "~" + Math.round(ladder.runtimeRemainingS / 60) + " min to cutoff";
-        box.appendChild(rt);
-      }
-      parent.appendChild(box);
-    }
 
     // US-429: render a whole-card typed NA -- one "NA (<reason>)" tile, honest
     // (never a blank or a stale last-real card) when the card's source is down.
@@ -6635,28 +6679,6 @@
       }
       bar.setAttribute("data-stale", view.stale ? "true" : "false");
       bar.setAttribute("data-redline", view.redline ? "true" : "false");
-    }
-
-    // US-507: the three merged renderers take a BODY element, not a card. They
-    // used to reach for their own `.card-body`, which silently assumed one
-    // source per card -- the assumption the Health card overturns. Taking the
-    // slot as an argument is what lets three of them paint into one card.
-    function renderBatteryHealthBody(body, view) {
-      if (!body || !view) return;
-      // US-429: UPS source unavailable -> the whole SECTION is a typed NA.
-      if (view.unavailable) {
-        renderNaBody(body, view.label, view.reason);
-        return;
-      }
-      body.textContent = "";
-      appendTile(body, view.health);
-      appendTile(body, view.vcell);
-      // F-8: render the percent tile only when a real SoC exists; a null soc
-      // omits the percent (volts already shown above), never a voltage-as-%.
-      if (view.soc.shown) appendTile(body, view.soc);
-      // US-504: no TEMP tile -- the MAX17048 has no temperature register.
-      // F-2 / A-6: the ladder DOM exists only when actually draining.
-      if (view.ladder) appendLadder(body, view.ladder);
     }
 
     // --- SVG helpers + the US-892-b Motion card render (browser only) -------
@@ -7193,8 +7215,7 @@
         renderNaBody(body, view.na.label, view.na.reason);
         return;
       }
-      if (view.key === "battery-health") renderBatteryHealthBody(body, view.view);
-      else if (view.key === "light") renderLightBody(body, view.view);
+      if (view.key === "light") renderLightBody(body, view.view);
       else if (view.key === "ltft-trend") renderFuelTrendBody(body, view.view);
     }
 
@@ -7816,8 +7837,9 @@
 
     // Honest-instrument poll: fetch each card's state file; missing/malformed ->
     // `unavailable` (never a crash, never green-when-broken). The shell sets the
-    // availability class; the per-card renderer (US-400 system-status; US-401
-    // battery-health) paints the fields on top when available.
+    // availability class; the per-card renderer (US-400 system-status, which
+    // since US-894-e also reads battery-health for its UPS row) paints the
+    // fields on top when available.
     function startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange) {
       async function fetchState(name) {
         try {
@@ -8769,12 +8791,13 @@
           var name = card.getAttribute("data-state");
           if (!name) continue;
           var data = await stateOnce(name);
-          // US-540-b: the three source cards route through their OWN view,
-          // deliberately BEFORE the generic availability path below. Two of
-          // them (battery, light) would survive that path; fuel trim would not
-          // -- its gate has to be evaluated before its data, and the generic
-          // path reads the data first. One route for all three keeps the rule
-          // "which card is this?" in exactly one place.
+          // US-540-b: the source cards route through their OWN view,
+          // deliberately BEFORE the generic availability path below. Light
+          // would survive that path; fuel trim would not -- its gate has to be
+          // evaluated before its data, and the generic path reads the data
+          // first. One route for all of them keeps the rule "which card is
+          // this?" in exactly one place. (US-894-e: the Battery card is gone;
+          // its cell is the System page's UPS row.)
           var spec = sourceCardSpec(name);
           if (spec) {
             // The gate resolves against the SAME system-status the rest of the
@@ -8838,8 +8861,13 @@
             // A null (producer dark / 404 / fetch aborted) yields NO capture
             // tile, which is the pre-US-688 card -- never a fabricated `ok`.
             var captureData = await stateOnce("capture-health");
+            // US-894-e (Atlas P8): with the Battery card gone, the UPS row's
+            // cell is fetched here -- the same cached read, so nothing else
+            // can resolve the cell against a different sample. A null yields
+            // `--`, never a fabricated reading.
+            var batteryData = await stateOnce("battery-health");
             renderSystemStatusCard(
-              card, systemStatusView(data, captureData), glyphEls
+              card, systemStatusView(data, captureData, batteryData, nowMs), glyphEls
             );
           }
           // US-508: the standalone Motion branch is GONE with the card it
