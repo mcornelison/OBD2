@@ -6417,8 +6417,8 @@ legacy AlertManager owns that section (config.json).
 - **Entries**: one per `verdict.members[]`, id `system:<key>:watch`, tier `watch` -- NEVER stop,
   so a system entry never takes over, never pulses and is never in `codeAlert`; it counts
   toward the icon. Title from the arbiter's table (`SYSTEM_TITLES`): bt `BLUETOOTH NOT LINKED`,
-  adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, wifi `WIFI NOT READ`, pi
-  `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
+  adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, sensor `SENSOR FAULT`
+  (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
   `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
   A key not in the table is skipped with one WARNING per key (A5).
 - **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
@@ -7824,7 +7824,7 @@ or `car` — then ` · <age>`, the cell's **freshness** age (Iris I6: the S105 M
 rule through the one shared `freshAgeText` Motion uses — floor, clamp 0,
 `N s ago`, cap `999+ s ago`; never `agoText`'s `just now`) against the tick's
 `nowMs`; undated → no age. **Never amber**: there is no UPS verdict member, so
-`on battery` is neutral (Atlas A4). Never on the row: SOC, a runtime,
+`on battery` is neutral (Atlas A4); a gauge read fault is amber through the sensor member on the DATA row, never on the UPS row (US-869-c, Atlas R7). Never on the row: SOC, a runtime,
 `charging`, `crate`. The tick's system-status branch fetches
 `states/battery-health` through `stateOnce` (Atlas P8). The parked **UPS
 detail** (`upsDetailView`, in `#sys-detail`) is described with the emitter
@@ -8097,7 +8097,7 @@ its own event-time ts:
 
 **`verdict` — every counted issue, named (US-877-b; Atlas Y-6, P4/P6/P7, E3).**
 Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
-`adapter`, `capture`, `wifi`, `pi`:
+`adapter`, `capture`, `sensor`, `wifi`, `pi` (`sensor` from US-869-c):
 
 ```json
 "verdict": {"issueCount": 1,
@@ -8120,12 +8120,36 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
     `link.ecu.state == "up"` (P6). The top-level capture-health state
     (`never_written` included) is never read; no `feeds` block or a None
     payload → no member.
+  - `sensor` (US-869-c; Atlas B2, R1–R8, C-Atlas-1): any of `feeds.light`,
+    `feeds.imu`, `feeds.ups` `state == "faulted"` — a missing or unreadable
+    IMU, light sensor or UPS gauge is a real fault. **UNGATED**: evaluated on
+    every call, the ECU down included (an absent chip is absent with the key
+    off); `capture` stays gated on `link.ecu` up. **ONE member per verdict**,
+    never one per feed: `{"key": "sensor", "reason": <sentence>, "feeds":
+    [<feed tokens>]}`, `feeds` in naming order light, imu, ups (no obd). The
+    feed reasons are two tokens, `capture_health.FEED_REASON_SENSOR_ABSENT`
+    (`sensor_absent`: the IMU / light bridges' own absent token, and the UPS
+    read site with no monitor) and `FEED_REASON_READ_FAILED` (`read_failed`:
+    the UPS read raised; IMU and LIGHT have no read-failure code — a chip
+    present but not reading is `stalled`). The reason is one sentence per
+    faulted feed, joined by one space (Iris): `Light sensor not found.`,
+    `IMU sensor not found.`, `UPS gauge not found.`, `UPS gauge read failed.`;
+    any other reason `Light sensor fault.` / `IMU sensor fault.` / `UPS gauge
+    fault.`. A second feed faulting changes the sentence and keeps the
+    `system:sensor:watch` episode (title `SENSOR FAULT`, WATCH only). A stalled
+    feed is `capture`, never `sensor` (a feed has one state). On the page the
+    member is amber on the DATA row only: each `.sys-row-part` names its own
+    member (`capture` for the stalled part, `sensor` for the faulted one) and
+    carries `data-feed` (the feeds it names, space-separated); each DATA
+    detail feed row carries its own member, a faulted feed reading `fault`.
+    With a sensor member the DATA sentence never says `all 4 feeds writing`.
   - `wifi`: `source.wifi.reason == "read_failed"` only. `nmcli_absent`,
     `not_read` and a measured WiFi down never count — absence is not an issue.
   - `pi`: `pi.overLimit` non-empty (the provider's verdict, never re-compared).
   - **Not counted:** ECU silent (`connecting`), away from home, any null. No
-    `sync` member (877-b-1: no sourced threshold) and no UPS member (P5: no
-    grounded band) — both banked.
+    `sync` member (877-b-1: no sourced threshold) and no UPS battery member
+    (P5: no grounded band) — both banked. A UPS **gauge** fault is the
+    `sensor` member's, not a UPS member (US-869-c).
 - **`reason` is the finished sentence** (Iris 2026-10-19 words; the page
   composes nothing): bt retrying `Link dropped. Retrying.`; bt down `Not
   linked. Check the OBD dongle.`; adapter `Bluetooth up; adapter not

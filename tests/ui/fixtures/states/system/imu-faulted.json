@@ -1,0 +1,195 @@
+{
+  "description": "Recording, every layer up; the IMU is not found (sensor_absent) and the light feed has stalled -> two members: capture 'Light feed stalled.' and sensor 'IMU sensor not found.' (feeds [imu]); the DATA row's stalled part is capture's, its faulted part sensor's.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "recording",
+      "driveId": 212,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      }
+    },
+    "capture-health": {
+      "lastRowSecondsAgo": 0.4,
+      "freshnessReason": null,
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": [
+          "2026-10-22T22:41:05Z",
+          0.4
+        ],
+        "light": [
+          "2026-10-22T22:41:05Z",
+          140.0
+        ],
+        "imu": [
+          null,
+          null
+        ],
+        "ups": [
+          "2026-10-22T22:41:05Z",
+          4.0
+        ]
+      },
+      "feedFaults": {
+        "imu": "sensor_absent"
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "recording",
+        "driveId": 212,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 2,
+        "members": [
+          {
+            "key": "capture",
+            "reason": "Light feed stalled."
+          },
+          {
+            "key": "sensor",
+            "reason": "IMU sensor not found.",
+            "feeds": [
+              "imu"
+            ]
+          }
+        ]
+      }
+    },
+    "capture-health": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.4,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-22T23:10:00Z",
+      "feeds": {
+        "obd": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.4
+        },
+        "imu": {
+          "state": "faulted",
+          "reason": "sensor_absent",
+          "firstSampleTs": null,
+          "lastSampleSecondsAgo": null
+        },
+        "light": {
+          "state": "stalled",
+          "reason": null,
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 140.0
+        },
+        "ups": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 4.0
+        }
+      }
+    }
+  }
+}

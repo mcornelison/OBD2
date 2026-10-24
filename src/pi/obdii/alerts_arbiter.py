@@ -47,6 +47,7 @@
 #                                verbatim), removed when it clears; systemSource()
 #                                and buildAlertsState(systemSource=) -- not_read
 #                                until a verdict was read; system ranks with engine.
+# 2026-10-24    | Rex (US-869-c) | SYSTEM_TITLES gains 'sensor': 'SENSOR FAULT'.
 # ================================================================================
 ################################################################################
 
@@ -212,6 +213,8 @@ SYSTEM_TITLES = {
     "bt": "BLUETOOTH NOT LINKED",
     "adapter": "ADAPTER NOT ANSWERING",
     "capture": "DATA FEED STALLED",
+    # US-869-c (Iris C-Iris-1): one title whatever the member's `feeds`.
+    "sensor": "SENSOR FAULT",
     "wifi": "WIFI NOT READ",
     "pi": "PI OVER LIMIT",
 }

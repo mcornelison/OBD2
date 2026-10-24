@@ -136,6 +136,8 @@
 #               |              | _recordSyncOutcome stays (US-518 re-anchor).
 # 2026-10-23    | Rex (US-869-b)| capture-health feed faults: the bridges'
 #               |              | presenceFault + _upsFault from the UPS read.
+# 2026-10-24    | Rex (US-869-c)| _upsFault: sensor_absent (no monitor) or
+#               |              | read_failed (read raised), Atlas C-Atlas-1.
 # ================================================================================
 ################################################################################
 
@@ -2728,14 +2730,18 @@ class CardStateEmitterMixin:
         if emitter is None:
             return
 
-        from pi.splash.source_availability import REASON_UPS_UNREADABLE
+        from pi.obdii.capture_health import (
+            FEED_REASON_READ_FAILED,
+            FEED_REASON_SENSOR_ABSENT,
+        )
 
         hw = self._hardwareManager
         ups = getattr(hw, "upsMonitor", None) if hw is not None else None
         if ups is None:
             # US-869-b: no gauge to read is the UPS feed's fault, recorded at
             # the read site -- the same typed-NA this card publishes.
-            self._upsFault = REASON_UPS_UNREADABLE
+            # US-869-c: absent and read-raised are two tokens (C-Atlas-1).
+            self._upsFault = FEED_REASON_SENSOR_ABSENT
             emitter(**self._batteryHealthKwargs(upsAvailable=False))
             return
         try:
@@ -2751,7 +2757,7 @@ class CardStateEmitterMixin:
         except Exception:  # noqa: BLE001 -- gauge unreadable -> typed NA
             # The verdict's source is the drain LOG, not the gauge, so a dead
             # MAX17048 must not blank a health history that is still real.
-            self._upsFault = REASON_UPS_UNREADABLE
+            self._upsFault = FEED_REASON_READ_FAILED
             emitter(**self._batteryHealthKwargs(upsAvailable=False))
             return
 

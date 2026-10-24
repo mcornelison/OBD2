@@ -1,5 +1,5 @@
 {
-  "description": "The MAX17048 read failed: battery-health source.ups unavailable ('gauge unreadable') on external power -> UPS '--' plus the typed reason, 'on external power', no health or SOC line beside the NA.",
+  "description": "The MAX17048 read failed: battery-health source.ups unavailable ('gauge unreadable') on external power -> UPS '--' plus the typed reason, 'on external power', no health or SOC line beside the NA. US-869-c: the same read fault is the UPS feed's read_failed -> the sensor member 'UPS gauge read failed.', amber on the DATA row only, never on the UPS row (Atlas R7).",
   "now": "2026-10-22T23:10:00Z",
   "zone": "America/Chicago",
   "inputs": {
@@ -47,6 +47,33 @@
         "notAfterLabel": "next boot recorded (upper bound)",
         "caveat": null,
         "dataQuality": null
+      }
+    },
+    "capture-health": {
+      "lastRowSecondsAgo": 0.4,
+      "freshnessReason": null,
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": [
+          "2026-10-22T22:41:05Z",
+          0.4
+        ],
+        "light": [
+          "2026-10-22T22:41:05Z",
+          0.9
+        ],
+        "imu": [
+          "2026-10-22T22:41:05Z",
+          0.1
+        ],
+        "ups": [
+          null,
+          null
+        ]
+      },
+      "feedFaults": {
+        "ups": "read_failed"
       }
     },
     "battery-health": {
@@ -160,8 +187,49 @@
       },
       "ts": "2026-10-22T23:10:00Z",
       "verdict": {
-        "issueCount": 0,
-        "members": []
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "sensor",
+            "reason": "UPS gauge read failed.",
+            "feeds": [
+              "ups"
+            ]
+          }
+        ]
+      }
+    },
+    "capture-health": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.4,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-22T23:10:00Z",
+      "feeds": {
+        "obd": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.4
+        },
+        "imu": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.1
+        },
+        "light": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.9
+        },
+        "ups": {
+          "state": "faulted",
+          "reason": "read_failed",
+          "firstSampleTs": null,
+          "lastSampleSecondsAgo": null
+        }
       }
     },
     "battery-health": {

@@ -1004,8 +1004,13 @@
   var CAPTURE_REASON_NEVER_WRITTEN = "never_written";
   // s4.6 feed order and labels (OBD, light, IMU, UPS).
   var CAPTURE_FEEDS = [["obd", "OBD"], ["light", "LIGHT"], ["imu", "IMU"], ["ups", "UPS"]];
-  var CAPTURE_FEED_WORD = { ok: "writing", stalled: "stalled", idle: "idle" };
+  // US-869-c (Iris C-Iris-2): a faulted feed reads `fault`.
+  var CAPTURE_FEED_WORD = { ok: "writing", stalled: "stalled", idle: "idle", faulted: "fault" };
+  var CAPTURE_STATE_FAULTED = "faulted";
   var CAPTURE_MEMBER_KEY = "capture";
+  // US-869-c (Atlas R4/R5): the ONE member naming every faulted feed
+  // (system_status_emitter.VERDICT_SENSOR); its `feeds` lists them.
+  var SENSOR_MEMBER_KEY = "sensor";
   // A4: the ECU states whose fact carries `ECU not answering`. A member-less
   // stall names that cause only from link.ecu; with the ECU up, or not read,
   // no cause is printed (on a cold boot it would be false).
@@ -1090,23 +1095,87 @@
     return "last row " + agoSecsText(Math.floor(age));
   }
 
+  function isFeedName(name) {
+    for (var i = 0; i < CAPTURE_FEEDS.length; i++) {
+      if (CAPTURE_FEEDS[i][0] === name) return true;
+    }
+    return false;
+  }
+
+  // The feeds a part speaks for, as data-feed's space-separated tokens (in
+  // CAPTURE_FEEDS order); null when it names none.
+  function feedTokens(names) {
+    var out = [];
+    for (var i = 0; i < CAPTURE_FEEDS.length; i++) {
+      if (names.indexOf(CAPTURE_FEEDS[i][0]) !== -1) out.push(CAPTURE_FEEDS[i][0]);
+    }
+    return out.length > 0 ? out.join(" ") : null;
+  }
+
+  // The stalled feeds the `capture` member's reason names.
+  function stalledFeedNames(captureData) {
+    var feeds = isObj(captureData) && isObj(captureData.feeds) ? captureData.feeds : {};
+    var out = [];
+    for (var i = 0; i < CAPTURE_FEEDS.length; i++) {
+      var feed = feeds[CAPTURE_FEEDS[i][0]];
+      if (isObj(feed) && feed.state === CAPTURE_STATE_STALLED) out.push(CAPTURE_FEEDS[i][0]);
+    }
+    return out;
+  }
+
+  // The `sensor` member's feeds, known names only.
+  function sensorFeedNames(member) {
+    var feeds = member !== null && Array.isArray(member.feeds) ? member.feeds : [];
+    var out = [];
+    for (var i = 0; i < feeds.length; i++) {
+      if (isFeedName(feeds[i])) out.push(feeds[i]);
+    }
+    return out;
+  }
+
   // The DATA row: value = the capture word (its own look) + ` · synced
   // <when>` (neutral); the sentence as parts, so only the member's reason
-  // is amber and the rows waiting beside it stay neutral (s4.0).
+  // is amber and the rows waiting beside it stay neutral (s4.0). Each part
+  // names its own member (US-869-c, Atlas R4): a stalled part is `capture`,
+  // a faulted part `sensor`, each carrying data-feed for the feeds it names.
   function dataRowView(data, captureData) {
     var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
     var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
     var capture = dataCaptureWord(data, captureData);
+    var sensor = verdictMember(data, [SENSOR_MEMBER_KEY]);
     var parts = [];
     var first = dataCaptureSentence(data, captureData, capture);
-    if (first !== null) {
-      parts.push({ text: first, level: capture.basis === "member" ? "amber" : "secondary" });
+    // A faulted feed is not writing: with a sensor member, `all 4 feeds
+    // writing` would be false, and the member's reason says what is.
+    if (first !== null && !(sensor !== null && capture.basis === "recording")) {
+      var isMember = capture.basis === "member";
+      parts.push({
+        text: first,
+        level: isMember ? "amber" : "secondary",
+        member: isMember ? CAPTURE_MEMBER_KEY : null,
+        feed: isMember ? feedTokens(stalledFeedNames(captureData)) : null,
+      });
+    }
+    if (sensor !== null) {
+      parts.push({
+        text: sensor.reason,
+        level: "amber",
+        member: SENSOR_MEMBER_KEY,
+        feed: feedTokens(sensorFeedNames(sensor)),
+      });
     }
     // s4.3 (F-155): neutral, never counted; a null home is no word at all.
-    if (wifi.home === false) parts.push({ text: "away from home", level: "secondary" });
-    parts.push({ text: rowsWaitingText(sync.rowsWaiting, sync.notCounted), level: "secondary" });
+    if (wifi.home === false) {
+      parts.push({ text: "away from home", level: "secondary", member: null, feed: null });
+    }
+    parts.push({
+      text: rowsWaitingText(sync.rowsWaiting, sync.notCounted),
+      level: "secondary", member: null, feed: null,
+    });
     var events = eventRowsText(sync.edrRowsWaiting);
-    if (events !== null) parts.push({ text: events, level: "secondary" });
+    if (events !== null) parts.push({ text: events, level: "secondary", member: null, feed: null });
+    var rowMember = capture.basis === "member" ? CAPTURE_MEMBER_KEY
+      : sensor !== null ? SENSOR_MEMBER_KEY : null;
     var texts = [];
     for (var i = 0; i < parts.length; i++) texts.push(parts[i].text);
     var tail = " · " + syncWhenText(sync.lastOkTs, isObj(data) ? data.ts : null);
@@ -1119,8 +1188,8 @@
       value: capture.word + tail,
       parts: parts,
       sentence: texts.join(" · "),
-      level: capture.basis === "member" ? "amber" : "secondary",
-      member: capture.basis === "member" ? CAPTURE_MEMBER_KEY : null,
+      level: rowMember !== null ? "amber" : "secondary",
+      member: rowMember,
     };
   }
 
@@ -1128,12 +1197,15 @@
   // (`lastSampleSecondsAgo` -- lastRowSecondsAgo is top-level only), then
   // sync: last data stored (full stamp), rows waiting, event rows, the
   // uncounted tables by name, and at home. A stalled feed is amber only while
-  // the `capture` member exists (the member's amber sits on the feed).
+  // the `capture` member exists (the member's amber sits on the feed); a
+  // faulted feed only while the `sensor` member names it (US-869-c). Each
+  // feed row carries its own member.
   function dataDetailView(data, captureData) {
     var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
     var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
     var feeds = isObj(captureData) && isObj(captureData.feeds) ? captureData.feeds : {};
     var member = verdictMemberReason(data, [CAPTURE_MEMBER_KEY]) !== null;
+    var sensorFeeds = sensorFeedNames(verdictMember(data, [SENSOR_MEMBER_KEY]));
     var rows = [];
     for (var i = 0; i < CAPTURE_FEEDS.length; i++) {
       var name = CAPTURE_FEEDS[i][0];
@@ -1141,15 +1213,23 @@
       var known = typeof feed.state === "string"
         && Object.prototype.hasOwnProperty.call(CAPTURE_FEED_WORD, feed.state);
       var look = "tertiary";
+      var feedMember = null;
       if (feed.state === "ok") look = "ok";
-      else if (feed.state === CAPTURE_STATE_STALLED) look = member ? "amber" : "secondary";
-      else if (feed.state === "idle") look = "secondary";
+      else if (feed.state === CAPTURE_STATE_STALLED) {
+        look = member ? "amber" : "secondary";
+        feedMember = member ? CAPTURE_MEMBER_KEY : null;
+      } else if (feed.state === CAPTURE_STATE_FAULTED) {
+        var named = sensorFeeds.indexOf(name) !== -1;
+        look = named ? "amber" : "secondary";
+        feedMember = named ? SENSOR_MEMBER_KEY : null;
+      } else if (feed.state === "idle") look = "secondary";
       var age = freshAgeText(feed.lastSampleSecondsAgo);
       rows.push({
         feed: name,
         label: CAPTURE_FEEDS[i][1],
         state: known ? CAPTURE_FEED_WORD[feed.state] : SYS_NO_DATA,
         look: look,
+        member: feedMember,
         age: age === null ? SYS_NO_DATA : age,
       });
     }
@@ -6325,7 +6405,11 @@
         for (var p = 0; p < row.parts.length; p++) {
           var part = document.createElement("span");
           part.className = "sys-row-part";
-          setMemberLevel(part, row.parts[p].level, row.member);
+          // US-869-c (Atlas R4): each part names its OWN member and feeds.
+          setMemberLevel(part, row.parts[p].level, row.parts[p].member);
+          if (typeof row.parts[p].feed === "string") {
+            part.setAttribute("data-feed", row.parts[p].feed);
+          }
           part.textContent = (p > 0 ? " · " : "") + row.parts[p].text;
           sentence.appendChild(part);
         }
@@ -6555,7 +6639,7 @@
         var state = document.createElement("span");
         state.className = "sys-row-word data-feed-state";
         state.setAttribute("data-state", feed.look);
-        if (feed.look === "amber") setMemberLevel(state, "amber", detail.member);
+        if (feed.look === "amber") setMemberLevel(state, "amber", feed.member);
         state.textContent = feed.state;
         rowHead.appendChild(label);
         rowHead.appendChild(state);

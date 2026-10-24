@@ -1905,10 +1905,36 @@ def test_system_titleTable_isIrisWords_atMost21Chars() -> None:
         "bt": "BLUETOOTH NOT LINKED",
         "adapter": "ADAPTER NOT ANSWERING",
         "capture": "DATA FEED STALLED",
+        # MOVED PIN (US-869-c): the sensor member's title (Iris C-Iris-1).
+        "sensor": "SENSOR FAULT",
         "wifi": "WIFI NOT READ",
         "pi": "PI OVER LIMIT",
     }
     assert all(len(title) <= 21 for title in aa.SYSTEM_TITLES.values())
+
+
+def test_system_sensorMember_oneWatchEpisode_secondFeedKeepsFirstSeenTs() -> None:
+    """VC (US-869-c): imu faulted -> one WATCH system:sensor:watch titled SENSOR
+    FAULT; a second feed faulting changes the sentence, keeps firstSeenTs."""
+    arbiter = _arbiter()
+    imuOnly = {"key": "sensor", "reason": "IMU sensor not found.", "feeds": ["imu"]}
+    imuUps = {
+        "key": "sensor", "reason": "IMU sensor not found. UPS gauge read failed.",
+        "feeds": ["imu", "ups"],
+    }
+
+    arbiter.observeSystemStatus(_systemStatus([imuOnly]))
+    first = _buildSys(arbiter)["entries"]
+    arbiter.observeSystemStatus(_systemStatus([imuUps], ts=_SYS_T1))
+    second = _buildSys(arbiter)["entries"]
+
+    for entries in (first, second):
+        assert [e["id"] for e in entries] == ["system:sensor:watch"]
+        assert entries[0]["tier"] == "watch"
+        assert entries[0]["title"] == "SENSOR FAULT"
+    assert first[0]["sentence"] == "IMU sensor not found."
+    assert second[0]["sentence"] == "IMU sensor not found. UPS gauge read failed."
+    assert second[0]["firstSeenTs"] == first[0]["firstSeenTs"] == _SYS_T0
 
 
 def test_system_titleTable_coversEveryVerdictMemberKey() -> None:
@@ -1928,7 +1954,8 @@ def test_system_everyMember_isWatch_neverStop_neverTakesOver_neverCodeAlert() ->
     assert {e["tier"] for e in state["entries"]} == {"watch"}
     assert state["takeover"] is None
     assert state["codeAlert"] is None
-    assert state["icon"] == {"state": "watch", "count": 5, "pulse": False}
+    # MOVED PIN (US-869-c): one entry per titled member key, sensor included.
+    assert state["icon"] == {"state": "watch", "count": len(aa.SYSTEM_TITLES), "pulse": False}
     assert [e["sentence"] for e in state["entries"] if e["key"] == "wifi"] == ["reason wifi"]
 
 
