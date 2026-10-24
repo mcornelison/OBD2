@@ -6749,10 +6749,24 @@ US-893-a). Fixture: `tests/ui/fixtures/states/light.json`, regenerated through
 | `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`, the ONE curve since US-893-a): the US-878-b port of the old page curve, WITHOUT the STOP override (that stays page-side). A null `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. The page applies this value (`appliedBrightness`). |
 | `brightnessMode` | `auto` when `lux` is a reading; `default` when it is null and the level is `defaultLevel` (US-893-a, Atlas ruling 3). `fixed` arrives with US-878-c's `overrideLevel`. |
 | `curve` | `{points, luxMin, luxFull, minLevel}` (US-893-a, Atlas Q5/A4): `points` are `[lux, level]` LISTS, sorted ascending: the grid `0.3 * 10 ** (i / 10)`, i = 0..50 (0.3..30000 lux), united with the breakpoints `luxMin`, `luxFull` and the knee, each only when finite and > 0; a grid point within relative 1e-9 of a breakpoint is dropped and the exact breakpoint kept (51 points under the shipped config). Each level is `brightnessLevel(lux)` under the same resolved autoDim. Knee (`brightnessKnee`, mirroring `brightnessCurve`'s branches, Atlas A5): none when `minLevel <= 0`, `minLevel >= 1` or `luxFull <= luxMin`; linear `luxMin + minLevel*(luxFull - luxMin)` when `curve` is `linear` or `luxMin <= 0`; else `luxMin*(luxFull/luxMin)**minLevel`. Fresh lists on every write. |
-| `reasons` | `{lux: code}`, the `lux` entry present only when `lux` is null (US-893-a, Atlas L1): `at_limit` when `channelAtLimit` is true, else `no_reading`. Codes, not sentences: the page maps them to words in one table (US-893-b). |
+| `reasons` | `{lux: code}`, the `lux` entry present only when `lux` is null (US-893-a, Atlas L1): `sensor_absent` when the reader's presence STATE said ABSENT (US-869-a, below), else `at_limit` when `channelAtLimit` is true, else `no_reading`. Codes, not sentences: the page maps them to words in one table (US-893-b). |
 | `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
 
 `lux` and `ts` keep their meaning; the stale fallback (US-483-b) keys off `ts`.
+
+**Absent sensor (US-869-a, Atlas A1).** The bridge also subscribes to the reader's
+retained presence STATE `state.sensor.light` (`sensor_reader.STATE_LIGHT`, published once
+after the one probe and replayed to the subscription), mirroring `imu_state_bridge
+._handlePresence`. On ABSENT (value 0.0, unit `absent`) -- with no light sample needed --
+it writes `states/light` ONCE through `buildLightState(..., unavailableReason=
+LIGHT_REASON_SENSOR_ABSENT)`: `lux` null, `reasons.lux` `sensor_absent`, and a top-level
+`unavailableReason` `sensor_absent` (the `states/imu` code); `ts` is the presence sample's
+own. The same handler sets the bridge's `presenceFault` (None until ABSENT, then
+`sensor_absent`), which capture-health reads in-process (Atlas B1-i). PRESENT changes
+nothing; whenever the sensor is present `unavailableReason` is absent from the payload,
+so every burst write is unchanged. The page maps `sensor_absent` to "sensor not found",
+checked before any `reasons.lux` code (`carousel.js lightLuxReason`), AMBIENT `--`.
+Fixture case `sensor-absent` in `light.json` and `light/sensor-absent.json`.
 
 **Brightness (US-878-b; applied since US-893-a).** The page APPLIES `brightnessLevel`
 (`carousel.js appliedBrightness`, see "Display auto-dim consumer"); it holds no curve.
@@ -9374,7 +9388,7 @@ governing where they differ:
   `fmtLux`, `freshLux` and `fmtAgeSec` are deleted. Fixtures:
   `tests/ui/fixtures/states/light/{night-0.6lux, dusk-22lux, day-1400lux,
   sun-at-limit, config-retuned-boundaries, light-stale, light-null, stop-override,
-  dot-off-curve}.json`, each the real `buildLightState` output for its recorded
+  dot-off-curve, sensor-absent}.json`, each the real `buildLightState` output for its recorded
   inputs plus the injected autoDim, the clock and (stop-override) the STOP dtc.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)

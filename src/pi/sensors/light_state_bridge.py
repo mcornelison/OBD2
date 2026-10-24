@@ -52,6 +52,11 @@
 #               |              | atLimit, all from one resolved autoDim. One lux
 #               |              | predicate (_luxReading, Atlas A3): -1 publishes
 #               |              | null.
+# 2026-10-23    | Rex (US-869-a)| The bridge subscribes to the retained presence
+#               |              | STATE; on ABSENT it writes states/light once with
+#               |              | lux null, reasons.lux and unavailableReason
+#               |              | sensor_absent (the states/imu shape) and exposes
+#               |              | presenceFault for capture-health.
 # ================================================================================
 ################################################################################
 
@@ -80,6 +85,7 @@ from common.time.helper import utcIsoNow
 # The producer-side SSOT for the topics, the ceilings and the gain codes
 # (US-878-a): the bridge copies none of them.
 from pi.sensors.sensor_reader import (
+    STATE_LIGHT,
     TOPIC_LIGHT_LUX,
     TOPIC_LIGHT_RANGE,
     TOPIC_LIGHT_RAW,
@@ -100,6 +106,7 @@ __all__ = [
     "LIGHT_BAND_NIGHT",
     "LIGHT_REASON_AT_LIMIT",
     "LIGHT_REASON_NO_READING",
+    "LIGHT_REASON_SENSOR_ABSENT",
     "LIGHT_STATE_FILENAME",
     "LightStateBridge",
     "brightnessCurve",
@@ -141,6 +148,9 @@ LIGHT_BAND_DAY = "day"
 # the page maps it to words in LIGHT_REASON_TEXT, as it does for the IMU.
 LIGHT_REASON_AT_LIMIT = "at_limit"
 LIGHT_REASON_NO_READING = "no_reading"
+# US-869-a (Atlas A1): the reader's presence STATE said ABSENT -- the chip did
+# not answer its probe. The same code states/imu carries for an absent IMU.
+LIGHT_REASON_SENSOR_ABSENT = "sensor_absent"
 
 # US-893-a (Atlas Q5/A4): the published curve's grid -- 10 log-spaced points per
 # decade from 0.3 lux, i = 0..50, so it ends at 0.3 * 10**5 = 30000 lux.
@@ -414,6 +424,7 @@ def buildLightState(
     rawCounts: Any = None,
     rangeContext: Any = None,
     autoDim: dict[str, Any] | None = None,
+    unavailableReason: str | None = None,
 ) -> dict:
     """Assemble the states/light payload from one reader burst (pure).
 
@@ -433,6 +444,11 @@ def buildLightState(
             or None when the burst lost it.
         autoDim: The ``pi.display.autoDim`` section the brightness level is
             computed under; None uses the validator defaults.
+        unavailableReason: When set (US-869-a), the whole sensor is reported
+            absent with this reason, mirroring buildImuState: ``lux`` is null,
+            ``reasons.lux`` is the reason, and the payload gains a top-level
+            ``unavailableReason``. None (every present-sensor write) leaves the
+            key out, so those payloads are unchanged.
 
     Returns:
         ``{lux, visibleCount, irCount, fullCount, gain, integrationMs,
@@ -453,14 +469,18 @@ def buildLightState(
     integrationMs = _coerceCount(_tupleField(rangeContext, 1))
     ceiling = saturationCeilingForIntegrationMs(integrationMs)
     channelAtLimit = _channelAtLimit(fullCount, irCount, ceiling)
-    publishedLux = None if channelAtLimit is True else _luxReading(lux)
+    publishedLux = (
+        None if channelAtLimit is True or unavailableReason is not None else _luxReading(lux)
+    )
     cfg = resolveAutoDim(autoDim)
     reasons: dict[str, str] = {}
-    if publishedLux is None:
+    if unavailableReason is not None:
+        reasons["lux"] = unavailableReason
+    elif publishedLux is None:
         reasons["lux"] = (
             LIGHT_REASON_AT_LIMIT if channelAtLimit is True else LIGHT_REASON_NO_READING
         )
-    return {
+    state: dict[str, Any] = {
         "lux": publishedLux,
         "visibleCount": visibleCount,
         "irCount": irCount,
@@ -481,6 +501,9 @@ def buildLightState(
         "reasons": reasons,
         "ts": tsUtc or None,
     }
+    if unavailableReason is not None:
+        state["unavailableReason"] = unavailableReason
+    return state
 
 
 class _PendingBurst:
@@ -564,8 +587,16 @@ class LightStateBridge:
         self._firstSampleTs: str | None = None
         self._lastSampleCapture: float | None = None
         self._pending: _PendingBurst | None = None
+        # US-869-a: the presence fault, read in-process by capture-health
+        # (Atlas B1-i). Set only by _handlePresence, beside its write.
+        self._presenceFault: str | None = None
 
     # -- capture-health feed (US-873) -----------------------------------------
+    @property
+    def presenceFault(self) -> str | None:
+        """None until presence ABSENT is seen; ``'sensor_absent'`` after."""
+        return self._presenceFault
+
     @property
     def firstSampleTs(self) -> str | None:
         """The ``tsUtc`` of the first lux sample drained in this process."""
@@ -686,9 +717,13 @@ class LightStateBridge:
         """Fold one light sample into its burst; write states/light when complete.
 
         Returns True when the sample is one of the burst's three topics (lux,
-        raw, range); False for any other topic, which is ignored.
+        raw, range) or the retained presence STATE; False for any other topic,
+        which is ignored.
         """
         topic = getattr(sample, "topic", None)
+        if topic == STATE_LIGHT:
+            self._handlePresence(sample)
+            return True
         if topic not in _LIGHT_TOPICS:
             return False
         if topic == TOPIC_LIGHT_LUX:
@@ -704,6 +739,33 @@ class LightStateBridge:
         if topic == TOPIC_LIGHT_RANGE:
             self._flushPending()
         return True
+
+    def _handlePresence(self, sample: Any) -> None:
+        """Report an absent sensor explicitly (US-869-a, mirrors states/imu).
+
+        The reader publishes its presence STATE once per process, after its
+        one probe; an absent chip then publishes no sample at all, so without
+        this the boot screen could not tell 'not yet' from 'broken'. ABSENT
+        writes states/light ONCE (a repeated ABSENT is the same fact) and sets
+        presenceFault in the same step. PRESENT changes nothing: the next burst
+        writes the payload as it always has. The curve uses the autoDim held
+        now; the paced config re-read stays on the burst path (no clock here).
+        """
+        if bool(getattr(sample, "value", 0.0)):
+            return
+        if self._presenceFault is not None:
+            return
+        self._presenceFault = LIGHT_REASON_SENSOR_ABSENT
+        # US-809-c: carry the absence; buildLightState types it. Substituting
+        # the clock here publishes a fabricated freshness marker.
+        self._writeState(
+            buildLightState(
+                lux=None,
+                tsUtc=getattr(sample, "tsUtc", ""),
+                autoDim=self._autoDim,
+                unavailableReason=LIGHT_REASON_SENSOR_ABSENT,
+            )
+        )
 
     def _flushPending(self) -> None:
         """Write the pending burst to states/light and clear it."""
@@ -755,7 +817,8 @@ def createLightStateBridgeFromConfig(
             ``pi.display.autoDim`` is the bridge's start config.
         bus: The SampleBus to subscribe to (LOSSY on raw.light.lux, .raw and
             .range -- a display only needs the freshest reading, drop-oldest on
-            overflow; a burst that loses a sample is written with it null).
+            overflow; a burst that loses a sample is written with it null), and
+            on the retained presence STATE (US-869-a).
         nowIsoFn: Optional fallback clock for ``ts`` (see LightStateBridge).
         configPath: config.json path for the autoDim re-read (Atlas G5);
             None keeps the start config.
@@ -776,7 +839,9 @@ def createLightStateBridgeFromConfig(
         return None
 
     statesDir = pi.get("splash", {}).get("statesDir", _DEFAULT_STATES_DIR)
-    subscription = bus.subscribe(list(_LIGHT_TOPICS), QoS.LOSSY, _SUB_NAME)
+    # US-869-a: plus the retained presence STATE, replayed on subscribe, so an
+    # absent chip is reported even though it never publishes a burst.
+    subscription = bus.subscribe([*_LIGHT_TOPICS, STATE_LIGHT], QoS.LOSSY, _SUB_NAME)
     _, autoDim = getDotPath(config, _AUTODIM_KEY)
     return LightStateBridge(
         subscription,
