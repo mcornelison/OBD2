@@ -68,6 +68,17 @@ FB_SIZE_FILE="${PI_FB_SIZE_FILE:-/sys/class/graphics/fb0/virtual_size}"
 TARGET_MODE="${ECLIPSE_DISPLAY_MODE:-480x320}"
 BACKUP="${CMDLINE}.eclipse-bak"
 
+# The ONE cmdline.txt token editor every boot-line writer shares (US-885-a):
+# set-boot-screen.sh edits the same line, and neither may clobber the other.
+CMDLINE_TOKENS_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/cmdline-tokens.sh"
+if [ ! -r "$CMDLINE_TOKENS_LIB" ]; then
+    echo "ERROR: shared cmdline helper not found at '${CMDLINE_TOKENS_LIB}'." >&2
+    echo "       Nothing was written." >&2
+    exit 1
+fi
+# shellcheck source=lib/cmdline-tokens.sh
+. "$CMDLINE_TOKENS_LIB"
+
 # ---- 1. validate the target mode BEFORE reading anything else ----
 
 if ! printf '%s' "$TARGET_MODE" | grep -qE '^[0-9]+x[0-9]+$'; then
@@ -77,39 +88,16 @@ if ! printf '%s' "$TARGET_MODE" | grep -qE '^[0-9]+x[0-9]+$'; then
 fi
 
 # ---- 2. the boot cmdline must exist and be a boot cmdline ----
+#
+# The checks themselves (present, readable, exactly ONE non-blank line, carries
+# `root=`) live in the shared token helper (US-885-a), so every boot-line writer
+# refuses the same malformed file for the same reasons.
 
-if [ ! -f "$CMDLINE" ]; then
-    echo "ERROR: boot cmdline.txt not found at '${CMDLINE}'." >&2
-    echo "       On Raspberry Pi OS (bookworm) this lives at /boot/firmware/cmdline.txt." >&2
+if ! cmdline_check "$CMDLINE"; then
     exit 1
 fi
 
-if [ ! -r "$CMDLINE" ]; then
-    echo "ERROR: '${CMDLINE}' is not readable. Run this script with sudo." >&2
-    exit 1
-fi
-
-# cmdline.txt is ONE line by contract -- the bootloader passes the first line
-# and a stray newline silently truncates every argument after it. A file that
-# already has two is malformed, and appending to it would bury that fact under
-# an "applied" message.
-contentLines="$(grep -c '[^[:space:]]' "$CMDLINE")"
-if [ "$contentLines" != "1" ]; then
-    echo "ERROR: '${CMDLINE}' has ${contentLines} non-blank lines; a boot cmdline is exactly 1." >&2
-    echo "       Refusing to edit a malformed boot cmdline. Nothing was written." >&2
-    exit 1
-fi
-
-cmdLine="$(grep -m1 '[^[:space:]]' "$CMDLINE")"
-
-# `root=` is the token whose loss makes the Pi unbootable and headless. Its
-# presence is how we know this file is what we think it is; its survival is
-# verified again after the rewrite.
-if ! printf '%s' "$cmdLine" | grep -qE '(^|[[:space:]])root='; then
-    echo "ERROR: '${CMDLINE}' carries no root= argument -- this is not a boot cmdline." >&2
-    echo "       Refusing to edit it. Nothing was written." >&2
-    exit 1
-fi
+cmdLine="$(cmdline_read_line "$CMDLINE")"
 
 # ---- 3. observe the mode currently being scanned out (informational) ----
 #
@@ -189,7 +177,7 @@ fi
 # ---- 6. decide against what is already pinned ----
 
 wantedToken="video=${connected}:${TARGET_MODE}"
-existingToken="$(printf '%s' "$cmdLine" | grep -oE '(^|[[:space:]])video=[^[:space:]]+' | head -1 | tr -d '[:space:]')"
+existingToken="$(cmdline_named_token "$CMDLINE" video)"
 
 if [ "$existingToken" = "$wantedToken" ]; then
     echo "${wantedToken} is already pinned in ${CMDLINE} -- no change."
@@ -206,68 +194,19 @@ if [ -n "$existingToken" ]; then
 fi
 
 # ---- 7. apply ----
+#
+# The shared helper backs up ONCE (first-write-wins, so the preserved copy is
+# the pristine pre-Eclipse original), verifies the COMPOSED line before it is
+# installed -- every original token, `root=` included, must survive, since this
+# file is the one surface on the Pi with no local recovery path -- installs it
+# via a temp file + mv, re-reads and re-verifies it, and restores the backup on
+# a post-write mismatch.
 
-# Back up ONCE, first-write-wins, so the preserved copy is the pristine
-# pre-Eclipse original rather than whatever a previous run left behind.
-if [ ! -f "$BACKUP" ]; then
-    if ! cp "$CMDLINE" "$BACKUP"; then
-        echo "ERROR: could not write backup ${BACKUP}; refusing to modify the boot cmdline." >&2
-        exit 2
-    fi
-    echo "Backed up ${CMDLINE} -> ${BACKUP} (pristine original)."
-else
-    echo "Backup ${BACKUP} already exists (kept -- it holds the pristine original)."
-fi
-
-newLine="${cmdLine} ${wantedToken}"
-
-# Verify the COMPOSED line before it is installed, so the live boot cmdline is
-# never wrong even for an instant. Every original token must survive: a rewrite
-# that dropped `root=` or `rootwait` would boot to nothing, and this file is the
-# one surface on the Pi with no local recovery path.
-verifyLine() {
-    local candidate="$1" token
-    for token in $cmdLine; do
-        printf '%s\n' "$candidate" | grep -qF -- "$token" || return 1
-    done
-    printf '%s\n' "$candidate" | grep -qF -- "$wantedToken" || return 1
-    return 0
-}
-
-if ! verifyLine "$newLine"; then
-    echo "ERROR: the composed boot cmdline lost an argument; ${CMDLINE} left unchanged." >&2
+if ! cmdline_add_token "$CMDLINE" "$wantedToken" "$BACKUP"; then
     exit 2
 fi
 
-tmp="$(dirname "$CMDLINE")/.cmdline.txt.eclipse-tmp.$$"
-trap 'rm -f "$tmp"' EXIT
-
-if ! printf '%s\n' "$newLine" > "$tmp"; then
-    echo "ERROR: failed to compose the updated cmdline.txt; ${CMDLINE} unchanged." >&2
-    exit 2
-fi
-
-if ! mv "$tmp" "$CMDLINE"; then
-    echo "ERROR: failed to install the updated ${CMDLINE}." >&2
-    echo "       The pristine copy is still at ${BACKUP}." >&2
-    exit 2
-fi
-
-# Re-verify by re-reading the file we just wrote -- not by trusting the variable.
-installedLines="$(grep -c '[^[:space:]]' "$CMDLINE")"
-installedLine="$(grep -m1 '[^[:space:]]' "$CMDLINE")"
-
-if [ "$installedLines" != "1" ] || ! verifyLine "$installedLine"; then
-    echo "ERROR: post-write verification of ${CMDLINE} FAILED. Restoring the backup." >&2
-    if cp "$BACKUP" "$CMDLINE"; then
-        echo "ERROR: restored the pristine ${CMDLINE} from ${BACKUP}. DO NOT REBOOT" >&2
-        echo "ERROR: until this is understood, and verify the file by hand first." >&2
-    else
-        echo "ERROR: THE RESTORE ALSO FAILED. ${CMDLINE} may be unbootable." >&2
-        echo "ERROR: fix it by hand from ${BACKUP} BEFORE rebooting this Pi." >&2
-    fi
-    exit 2
-fi
+installedLine="$(cmdline_read_line "$CMDLINE")"
 
 echo "Pinned the output mode to the panel's native ${TARGET_MODE}:"
 echo "  ${installedLine}"

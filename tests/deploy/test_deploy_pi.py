@@ -947,3 +947,24 @@ def test_us866_architectureDocumentsTheTrim():
     assert "--os-trim-revert" in archText
     assert "/var/lib/eclipse-obd/os-trim.state" in archText
     assert "NEVER" in archText and "systemd-timesyncd" in archText
+
+
+# ----------------------------------------------------------------------------
+# US-885-a: deploy/lib/ ships to the Pi
+# ----------------------------------------------------------------------------
+# set-display-mode.sh sources deploy/lib/cmdline-tokens.sh; without the helper
+# on the Pi it exits 1 and halts the deploy. The rsync whitelist is default-deny
+# (--exclude=*), so a new deploy/ subdir reaches the Pi only if it is named; the
+# tar fallback names it too, so both paths ship the same tree.
+# ----------------------------------------------------------------------------
+
+
+def test_us885a_deployLibShipsOnBothSyncPaths():
+    """The rsync whitelist carries deploy/lib/ and its *.sh; the tar list ships ./deploy whole."""
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/lib/ \\" in lines
+    assert "--include=deploy/lib/*.sh \\" in lines
+    tarLists = [ln for ln in lines if ln.startswith("./deploy/os-trim.manifest ")]
+    assert len(tarLists) == 1, tarLists
+    assert " ./deploy )" in tarLists[0], tarLists
+    assert not [ln for ln in lines if "--exclude" in ln and "deploy/lib" in ln]

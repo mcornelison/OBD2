@@ -229,6 +229,8 @@ sync_tree() {
             --include=deploy/polkit-rules/*.rules \
             --include=deploy/labwc/ \
             --include=deploy/labwc/*** \
+            --include=deploy/lib/ \
+            --include=deploy/lib/*.sh \
             --include=deploy/wayland-sessions/ \
             --include=deploy/wayland-sessions/*** \
             --exclude=deploy/obd-server.service \
@@ -257,6 +259,8 @@ sync_tree() {
         # not at all, labwc would run its default root menu and keybinds.
         # US-649-d: ./deploy/wayland-sessions likewise -- without it lightdm has
         # no eclipse-kiosk session to launch.
+        # US-885-a: ./deploy/lib rides in ./deploy (set-display-mode.sh sources
+        # deploy/lib/cmdline-tokens.sh and exits 1 without it).
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude="__pycache__" \
             --exclude="*.pyc" \
