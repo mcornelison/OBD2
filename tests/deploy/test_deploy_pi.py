@@ -38,6 +38,7 @@ that file for the assertion catalog. The pytest cases below cover both:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -947,3 +948,127 @@ def test_us866_architectureDocumentsTheTrim():
     assert "--os-trim-revert" in archText
     assert "/var/lib/eclipse-obd/os-trim.state" in archText
     assert "NEVER" in archText and "systemd-timesyncd" in archText
+
+
+# ----------------------------------------------------------------------------
+# US-885-a: deploy/lib/ ships to the Pi
+# ----------------------------------------------------------------------------
+# set-display-mode.sh sources deploy/lib/cmdline-tokens.sh; without the helper
+# on the Pi it exits 1 and halts the deploy. The rsync whitelist is default-deny
+# (--exclude=*), so a new deploy/ subdir reaches the Pi only if it is named; the
+# tar fallback names it too, so both paths ship the same tree.
+# ----------------------------------------------------------------------------
+
+
+def test_us885a_deployLibShipsOnBothSyncPaths():
+    """The rsync whitelist carries deploy/lib/ and its *.sh; the tar list ships ./deploy whole."""
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/lib/ \\" in lines
+    assert "--include=deploy/lib/*.sh \\" in lines
+    tarLists = [ln for ln in lines if ln.startswith("./deploy/os-trim.manifest ")]
+    assert len(tarLists) == 1, tarLists
+    assert " ./deploy )" in tarLists[0], tarLists
+    assert not [ln for ln in lines if "--exclude" in ln and "deploy/lib" in ln]
+
+
+# ----------------------------------------------------------------------------
+# US-885-b: the power-on WARNING screen step
+# ----------------------------------------------------------------------------
+# step_set_boot_screen runs deploy/set-boot-screen.sh on every deploy, in BOTH
+# display modes (lightdm quits Plymouth in each, ADR 11.3), right after the
+# other boot-line writer. The theme dir must ship on both sync paths.
+# ----------------------------------------------------------------------------
+
+BOOT_SCREEN_STEP = "step_set_boot_screen"
+
+
+def test_us885b_bootScreenStep_definedAndCalledOnceAtTopLevel():
+    """Defined once, called once as an unindented top-level line (no display-mode branch)."""
+    text = _scriptText()
+    lines = _codeLines(text)
+    assert len([ln for ln in lines if ln.startswith(f"{BOOT_SCREEN_STEP}()")]) == 1
+    assert len([ln for ln in lines if ln == BOOT_SCREEN_STEP]) == 1
+    assert f"\n{BOOT_SCREEN_STEP}\n" in text, "the call must sit at column 0, outside any branch"
+
+
+def test_us885b_bootScreenStep_runsAfterSyncTreeAndDisplayMode():
+    """It needs the synced tree, and follows the other boot-line writer."""
+    lines = _codeLines(_scriptText())
+    callIdx = lines.index(BOOT_SCREEN_STEP)
+    assert lines.index("sync_tree") < callIdx
+    assert lines.index("step_set_display_mode") < callIdx
+
+
+def test_us885b_bootScreenStep_dryRunGuardPrecedesRemote():
+    """The DRY_RUN branch returns before the remote call; the remote runs the script under sudo."""
+    body = _stepBody(_scriptText(), BOOT_SCREEN_STEP)
+    dryIdx = body.index("$DRY_RUN")
+    remoteIdx = body.index("remote ")
+    assert dryIdx < remoteIdx
+    assert "return 0" in body[dryIdx:remoteIdx]
+    assert "sudo bash '${PI_PATH}/deploy/set-boot-screen.sh'" in body[remoteIdx:]
+    assert "--retain-splash" not in body
+
+
+def test_us885b_plymouthThemeShipsOnBothSyncPaths():
+    """The rsync whitelist names deploy/plymouth/ recursively; the tar list ships ./deploy whole."""
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/plymouth/ \\" in lines
+    assert "--include=deploy/plymouth/*** \\" in lines
+    assert not [ln for ln in lines if "--exclude" in ln and "plymouth" in ln]
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_us885b_defaultDryRun_printsTheBootScreenStep():
+    """deploy-pi.sh --dry-run prints the set-boot-screen step."""
+    result = _runDeploy("--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "deploy/set-boot-screen.sh" in result.stdout
+
+
+# ----------------------------------------------------------------------------
+# US-651-a: the kiosk start trigger rides the kiosk-units step
+# ----------------------------------------------------------------------------
+# step_install_ui_kiosk_units runs `eclipse-display-mode trigger` after the kit
+# installers (latch + both .path units every deploy, the mode's .path enabled,
+# no lightdm edit, no reboot), then checks the three units landed. The .path and
+# the x11 autostart .desktop must ship on the rsync whitelist; the tar list
+# ships ./deploy whole.
+# ----------------------------------------------------------------------------
+
+KIOSK_UNITS_STEP = "step_install_ui_kiosk_units"
+
+
+def test_us651a_pathAndDesktopShipOnTheRsyncWhitelist():
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/eclipse-*.path \\" in lines
+    assert "--include=deploy/eclipse-*.desktop \\" in lines
+    # The latch is a .target (Atlas RULED 2026-10-24, option c).
+    assert "--include=deploy/eclipse-*.target \\" in lines
+
+
+def test_us651a_kioskStep_runsTheTriggerVerbAfterTheKits():
+    body = _stepBody(_scriptText(), KIOSK_UNITS_STEP)
+    remote = body[body.index("remote "):]
+    triggerIdx = remote.index("' trigger")
+    assert remote.index("bash '\\$DSK'") < triggerIdx, "the kits run first"
+    assert "KIOSK_USER=${PI_USER} bash '\\$MODE_CMD' trigger" in remote
+    assert 'local modeCmd="deploy/eclipse-display-mode.sh"' in body
+    for unit in ("eclipse-kiosk-start.target", "eclipse-kiosk-socket.path",
+                 "eclipse-x-ready.path"):
+        assert f"/etc/systemd/system/{unit}" in remote[triggerIdx:], unit
+
+
+def test_us651a_kioskStep_neverStartsOrRebootsTheTrigger():
+    """The .path takes effect at the next boot: nothing is started under a live kiosk."""
+    body = "\n".join(_codeLines(_stepBody(_scriptText(), KIOSK_UNITS_STEP)))
+    assert not re.search(r"systemctl\s+(start|restart|reboot)\b", body)
+    assert "enable --now" not in body
+    assert not re.search(r"\btrigger\s+--", body), "trigger takes no flags here"
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_us651a_defaultDryRun_printsTheTriggerLine():
+    result = _runDeploy("--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "deploy/eclipse-display-mode.sh trigger" in result.stdout

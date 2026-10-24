@@ -1,0 +1,12 @@
+# Eclipse boot screen (US-885-b): Iris's WARNING image (specs/assets/boot/
+# warning-480x320.png, PR #130), centred on black, from the firmware hand-off
+# until lightdm quits Plymouth. Drawn once: no refresh callback, no animation,
+# no progress -- the boot screen proper is the S114 kiosk splash.
+
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+warning.image = Image("warning.png");
+warning.sprite = Sprite(warning.image);
+warning.sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - warning.image.GetWidth() / 2);
+warning.sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - warning.image.GetHeight() / 2);

@@ -15,6 +15,9 @@
 #     US-893-a: states/light gains lightBand, curve, reasons and atLimit, and a
 #     null lux publishes brightnessMode 'default'. MOVED PIN (US-893-a): the
 #     key set and the two exact-payload pins gain the four keys.
+#     US-869-a: the bridge subscribes to the retained presence STATE; on ABSENT
+#     it writes states/light once with reason sensor_absent and exposes
+#     presenceFault. The fixture gains a sensor-absent case (5 cases).
 # Author: Rex (US-483-a)
 # Creation Date: 2026-07-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -35,6 +38,7 @@ import pytest
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.light_state_bridge import (
+    LIGHT_REASON_SENSOR_ABSENT,
     LIGHT_STATE_FILENAME,
     LightStateBridge,
     brightnessCurvePoints,
@@ -45,6 +49,9 @@ from pi.sensors.light_state_bridge import (
     lightBand,
 )
 from pi.sensors.sensor_reader import (
+    ABSENT,
+    PRESENT,
+    STATE_LIGHT,
     TOPIC_LIGHT_LUX,
     TOPIC_LIGHT_RANGE,
     TOPIC_LIGHT_RAW,
@@ -470,11 +477,16 @@ _FIXTURE_INPUTS: dict[str, dict] = {
         "lux": 120.5, "tsUtc": "2026-10-20T15:02:12.3Z",
         "rawCounts": None, "rangeContext": (TSL_GAIN_MED, 100),
     },
+    # MOVED PIN (US-869-a): the presence-ABSENT case (no light sample at all).
+    "sensor-absent": {
+        "lux": None, "tsUtc": "2026-10-20T15:02:10.0Z",
+        "unavailableReason": LIGHT_REASON_SENSOR_ABSENT,
+    },
 }
 
 
 def test_fixture_namesEveryRequiredCase():
-    """The fixture is an object of the four named states/light payloads."""
+    """The fixture is an object of the five named states/light payloads."""
     fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
     assert set(fixture) == set(_FIXTURE_INPUTS)
@@ -622,6 +634,96 @@ def test_handleSample_burst_writesStatesLightAtomically(tmp_path: Path):
 # ------------------------------------------------------------- end-to-end (bus)
 
 
+# ------------------------------------------------- presence STATE (US-869-a)
+
+
+def _presence(value: float, *, ts: str = "2026-10-23T08:00:00Z") -> Sample:
+    """The reader's retained presence STATE sample (sensor_reader._publishState)."""
+    return Sample(
+        topic=STATE_LIGHT,
+        source="light",
+        value=value,
+        unit="present" if value else "absent",
+        tsUtc=ts,
+        tsCapture=0.0,
+        driveId=None,
+        dataSource="real",
+        seq=0,
+    )
+
+
+def test_buildLightState_unavailableReason_luxNullReasonAndTopLevelKey():
+    """
+    Given: unavailableReason sensor_absent (and even a stray lux)
+    When: buildLightState assembles the payload
+    Then: lux null, reasons.lux and top-level unavailableReason are sensor_absent,
+        and brightness falls back to the default branch
+    """
+    state = buildLightState(lux=50.0, tsUtc=_T, unavailableReason=LIGHT_REASON_SENSOR_ABSENT)
+
+    assert set(state) == _STATE_KEYS | {"unavailableReason"}
+    assert state["lux"] is None
+    assert state["reasons"] == {"lux": "sensor_absent"}
+    assert state["unavailableReason"] == "sensor_absent"
+    assert state["lightBand"] is None
+    assert state["brightnessMode"] == "default"
+
+
+def test_buildLightState_noUnavailableReason_hasNoUnavailableReasonKey():
+    """Present-path payloads never carry the key (byte-identical to before)."""
+    assert "unavailableReason" not in buildLightState(lux=None, tsUtc=_T)
+    assert "unavailableReason" not in buildLightState(lux=5.0, tsUtc=_T)
+
+
+def test_handleSample_presenceAbsent_writesOnceWithSensorAbsent_noSampleNeeded():
+    """
+    Given: presence STATE ABSENT published, no light sample ever
+    When: the bridge handles it (and a duplicate)
+    Then: states/light is written ONCE: lux null, reasons.lux and
+        unavailableReason sensor_absent, ts the presence sample's; presenceFault set
+    """
+    bridge = _RecordingBridge()
+    assert bridge.presenceFault is None
+
+    assert bridge.handleSample(_presence(ABSENT)) is True
+    bridge.handleSample(_presence(ABSENT))
+
+    assert len(bridge.writes) == 1
+    written = bridge.writes[0]
+    assert written == buildLightState(
+        lux=None, tsUtc="2026-10-23T08:00:00Z",
+        unavailableReason=LIGHT_REASON_SENSOR_ABSENT,
+    )
+    assert written["lux"] is None
+    assert written["reasons"] == {"lux": "sensor_absent"}
+    assert written["unavailableReason"] == "sensor_absent"
+    assert bridge.presenceFault == "sensor_absent"
+
+
+def test_handleSample_presencePresentThenBurst_payloadUnchanged_noFault():
+    """
+    Given: presence PRESENT, then one burst
+    When: the bridge handles them
+    Then: PRESENT writes nothing; the burst payload is exactly today's (no
+        unavailableReason key); presenceFault stays None
+    """
+    bridge = _RecordingBridge()
+
+    assert bridge.handleSample(_presence(PRESENT)) is True
+    assert bridge.writes == []
+    for sample in _burst(7, 120.5, (900, 300, 1200), (TSL_GAIN_MED, 100)):
+        bridge.handleSample(sample)
+
+    assert bridge.writes == [
+        buildLightState(
+            lux=120.5, tsUtc=_T, rawCounts=(900, 300, 1200),
+            rangeContext=(TSL_GAIN_MED, 100),
+        )
+    ]
+    assert "unavailableReason" not in bridge.writes[0]
+    assert bridge.presenceFault is None
+
+
 def _waitFor(target: Path) -> None:
     deadline = time.monotonic() + 3.0
     while not target.exists() and time.monotonic() < deadline:
@@ -662,6 +764,28 @@ def _config(*, busEnabled: bool, lightEnabled: bool) -> dict:
             "splash": {"statesDir": "/run/eclipse-obd/states"},
         }
     }
+
+
+def test_factory_subscribesToTheRetainedPresenceState(tmp_path: Path):
+    """
+    Given: the light reader has published its retained presence STATE ABSENT
+    When: the factory builds the bridge and it drains its subscription
+    Then: the replayed presence sample reaches the bridge: states/light is
+        written with sensor_absent and presenceFault is set
+    """
+    bus = SampleBus()
+    bus.publish(_presence(ABSENT), retain=True)
+    cfg = _config(busEnabled=True, lightEnabled=True)
+    cfg["pi"]["splash"]["statesDir"] = str(tmp_path)
+
+    bridge = createLightStateBridgeFromConfig(cfg, bus)
+    assert isinstance(bridge, LightStateBridge)
+    sample = bridge._sub.poll()
+    assert sample is not None and sample.topic == STATE_LIGHT
+    assert bridge.handleSample(sample) is True
+
+    assert _readState(tmp_path)["unavailableReason"] == "sensor_absent"
+    assert bridge.presenceFault == "sensor_absent"
 
 
 def test_factory_busOff_returnsNone():

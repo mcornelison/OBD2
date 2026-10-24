@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Eclipse
+Description=Eclipse OBD-II WARNING boot screen (US-885-b, installed by deploy/set-boot-screen.sh)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/eclipse
+ScriptFile=/usr/share/plymouth/themes/eclipse/eclipse.script

@@ -37,6 +37,7 @@
 # 2026-09-08    | Rex (US-688) | Initial -- the capture-health decision, its
 #               |              | off-transport gate, and the four states.
 # 2026-10-13    | Rex (US-873) | The feeds block and its fixture contract pin.
+# 2026-10-23    | Rex (US-869-b)| feeds faulted + reason; fixture faulted cases.
 # ================================================================================
 ################################################################################
 
@@ -442,13 +443,17 @@ _FIXTURE = (
     / "ui" / "fixtures" / "states" / "capture-health-feeds.json"
 )
 
-_FEED_KEYS = {"state", "firstSampleTs", "lastSampleSecondsAgo"}
+# MOVED PIN (US-869-b): every feed gains `reason` (null unless faulted).
+_FEED_KEYS = {"state", "reason", "firstSampleTs", "lastSampleSecondsAgo"}
 _TOP_LEVEL_KEYS = {"state", "lastRowSecondsAgo", "stallSeconds", "reason", "ts"}
 
 
-def _feeds(feedSamples, *, powerSource="external", stallSeconds=_STALL_S):
+def _feeds(feedSamples, *, powerSource="external", stallSeconds=_STALL_S, feedFaults=None):
     return ch.buildCaptureFeedsState(
-        feedSamples=feedSamples, powerSource=powerSource, stallSeconds=stallSeconds
+        feedSamples=feedSamples,
+        powerSource=powerSource,
+        stallSeconds=stallSeconds,
+        feedFaults=feedFaults,
     )
 
 
@@ -459,7 +464,8 @@ class TestTheFeedsBlock:
         """
         Given: feed facts for all four feeds plus one the producer does not know
         When: the feeds block is built
-        Then: exactly obd/imu/light/ups, each {state, firstSampleTs, lastSampleSecondsAgo}
+        Then: exactly obd/imu/light/ups, each {state, reason, firstSampleTs,
+              lastSampleSecondsAgo}
         """
         feeds = _feeds({
             "obd": ("2026-10-13T12:01:05Z", 1.0),
@@ -472,7 +478,9 @@ class TestTheFeedsBlock:
         assert set(feeds) == {"obd", "imu", "light", "ups"}
         for entry in feeds.values():
             assert set(entry) == _FEED_KEYS
-            assert entry["state"] in {"ok", "stalled", "idle", "unknown"}
+            # MOVED PIN (US-869-b): `faulted` joins the feed state set.
+            assert entry["state"] in {"ok", "stalled", "idle", "unknown", "faulted"}
+            assert entry["reason"] is None
 
     def test_buildCaptureFeedsState_obdRowsOnly_othersNullNeverZero(self) -> None:
         """
@@ -484,6 +492,7 @@ class TestTheFeedsBlock:
 
         assert feeds["obd"] == {
             "state": ch.STATE_OK,
+            "reason": None,  # MOVED PIN (US-869-b)
             "firstSampleTs": "2026-10-13T12:01:05Z",
             "lastSampleSecondsAgo": 2.0,
         }
@@ -579,11 +588,126 @@ class TestTheFeedsBlock:
         ]
 
 
+class TestAFeedCanBeFaulted:
+    """US-869-b: a feed whose source holds a fault is `faulted` with its reason."""
+
+    def test_faultedFeed_carriesTheSourcesReason_othersUnchanged(self) -> None:
+        """
+        Given: the IMU bridge reports sensor_absent; the UPS is sampling fine
+        When: the feeds block is built
+        Then: imu {faulted, sensor_absent}; ups ok with reason null (story example)
+        """
+        feeds = _feeds(
+            {"ups": ("2026-10-13T12:00:20Z", 1.5)}, feedFaults={"imu": "sensor_absent"}
+        )
+
+        assert feeds["imu"] == {
+            "state": ch.STATE_FAULTED,
+            "reason": "sensor_absent",
+            "firstSampleTs": None,
+            "lastSampleSecondsAgo": None,
+        }
+        assert feeds["ups"]["state"] == ch.STATE_OK
+        assert feeds["ups"]["reason"] is None
+
+    @pytest.mark.parametrize("powerSource", ["external", "battery", "unknown"])
+    def test_faultOutranksThePowerGate(self, powerSource) -> None:
+        """
+        Given: a light fault, under every power reading
+        When: the feeds block is built
+        Then: faulted every time -- an absent sensor is absent with the key off
+        """
+        feeds = _feeds({}, powerSource=powerSource, feedFaults={"light": "sensor_absent"})
+
+        assert feeds["light"]["state"] == ch.STATE_FAULTED
+        assert feeds["light"]["reason"] == "sensor_absent"
+
+    def test_faultCleared_feedReturnsToItsNormalState(self) -> None:
+        """
+        Given: the UPS faulted, then its source clears the fault with a sample
+        When: the feeds block is built before and after
+        Then: faulted, then ok with reason null -- nothing latches here
+        """
+        before = _feeds({}, feedFaults={"ups": "gauge unreadable"})
+        after = _feeds({"ups": ("2026-10-13T12:00:20Z", 1.0)}, feedFaults={"ups": None})
+
+        assert before["ups"]["state"] == ch.STATE_FAULTED
+        assert after["ups"]["state"] == ch.STATE_OK
+        assert after["ups"]["reason"] is None
+
+    @pytest.mark.parametrize("notAFault", [None, "", 0, True])
+    def test_emptyOrNonStringFault_isNoFault(self, notAFault) -> None:
+        """
+        Given: a fault slot holding None, an empty string or a non-string
+        When: the feeds block is built
+        Then: the feed is judged normally (unknown, reason null) -- never faulted
+        """
+        feeds = _feeds({}, feedFaults={"imu": notAFault})
+
+        assert feeds["imu"]["state"] == ch.STATE_UNKNOWN
+        assert feeds["imu"]["reason"] is None
+
+    def test_neverSampledNoFault_isUnknownReasonNull(self) -> None:
+        """
+        Given: no sample and no fault for any feed (validation 5)
+        When: the feeds block is built, with and without an empty fault map
+        Then: every feed unknown with reason null, both ways identical
+        """
+        without = _feeds({})
+        withEmpty = _feeds({}, feedFaults={})
+
+        assert without == withEmpty
+        for entry in without.values():
+            assert entry["state"] == ch.STATE_UNKNOWN
+            assert entry["reason"] is None
+
+    def test_emitter_passesTheFaultsThrough(self, tmp_path) -> None:
+        """
+        Given: the real emitter called with a UPS fault
+        When: it writes states/capture-health
+        Then: feeds.ups is faulted with that reason; the top level is unchanged
+        """
+        import json
+
+        emit = ch.makeCaptureHealthEmitter(str(tmp_path), nowIsoFn=lambda: _NOW)
+        written = emit(
+            lastRowSecondsAgo=1.0,
+            freshnessReason=None,
+            powerSource="external",
+            stallSeconds=_STALL_S,
+            feedSamples={},
+            feedFaults={"ups": "gauge unreadable"},
+        )
+        onDisk = json.loads((tmp_path / ch.CAPTURE_HEALTH_FILENAME).read_text())
+
+        assert onDisk == written
+        assert onDisk["feeds"]["ups"]["state"] == ch.STATE_FAULTED
+        assert onDisk["feeds"]["ups"]["reason"] == "gauge unreadable"
+        assert onDisk["state"] == ch.STATE_OK
+
+    def test_faulted_isAFeedStateOnly_neverTheVerdict(self) -> None:
+        """
+        Given: the top-level decider over its whole input space
+        When: it is asked
+        Then: it never says faulted -- the verdict's vocabulary is unchanged
+        """
+        states = {
+            _build(lastRowSecondsAgo=age, freshnessReason=reason, powerSource=power)["state"]
+            for age in (None, 1.0, _STALL_S + 1)
+            for reason in (None, ch.REASON_NEVER_WRITTEN, ch.REASON_LOGGER_ABSENT)
+            for power in ("external", "battery", "unknown")
+        }
+
+        assert ch.STATE_FAULTED not in states
+
+
 class TestTheFixtureContract:
     """R29 contract pin: the page-side fixture matches what the builder emits."""
 
+    # MOVED PIN (US-869-b): three faulted cases, regenerated from the builder.
     _CASES = (
         "cold-boot-obd-null", "all-ok", "one-feed-stalled", "restart-rearmed", "ups-sentinel",
+        "imu-absent", "light-absent", "ups-unreadable",
     )
 
     def _load(self) -> dict:
@@ -612,7 +736,10 @@ class TestTheFixtureContract:
         samples = {k: tuple(v) for k, v in given["feedSamples"].items()}
 
         built = _feeds(
-            samples, powerSource=given["powerSource"], stallSeconds=given["stallSeconds"]
+            samples,
+            powerSource=given["powerSource"],
+            stallSeconds=given["stallSeconds"],
+            feedFaults=given.get("feedFaults"),
         )
 
         assert built == entry["payload"]["feeds"]

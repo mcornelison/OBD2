@@ -26,6 +26,8 @@
 # 2026-08-11    | Rex          | Initial implementation (Sprint 74 US-552)
 # 2026-08-21    | Rex          | Sprint 75 US-560: scenario 15 pins the MEASURED
 #               |              | OSOYOO HDMI35 EDID (no 480x320 advertised)
+# 2026-10-23    | Rex          | Sprint 113 US-885-a: root= guard follows the
+#               |              | check into deploy/lib/cmdline-tokens.sh
 
 # ================================================================================
 ################################################################################
@@ -57,6 +59,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEST_SCRIPT = REPO_ROOT / "tests" / "deploy" / "test_set_display_mode.sh"
 MODE_SCRIPT = REPO_ROOT / "deploy" / "set-display-mode.sh"
+CMDLINE_LIB = REPO_ROOT / "deploy" / "lib" / "cmdline-tokens.sh"
 DEPLOY_SCRIPT = REPO_ROOT / "deploy" / "deploy-pi.sh"
 HARDWARE_REF = REPO_ROOT / "docs" / "hardware-reference.md"
 
@@ -228,10 +231,29 @@ def test_setDisplayMode_guardsRootArgumentInExecutableCode():
     reason US-524 refused this file outright. The guard exists so a later
     simplification cannot drop the check while leaving the reassuring header
     comment in place.
+
+    US-885-a moved the check into the shared helper deploy/lib/cmdline-tokens.sh
+    (one editor for every boot-line writer), so the guard follows it there AND
+    pins that set-display-mode.sh both sources the helper and runs its check --
+    a helper that is never sourced enforces nothing.
     """
+    libLines = _codeLines(CMDLINE_LIB.read_text(encoding="utf-8"))
+    rootChecks = [ln for ln in libLines if "root=" in ln]
+    assert rootChecks, "cmdline-tokens.sh must check for root= in executable code"
+
     lines = _codeLines(MODE_SCRIPT.read_text(encoding="utf-8"))
-    rootChecks = [ln for ln in lines if "root=" in ln]
-    assert rootChecks, "set-display-mode.sh must check for root= in executable code"
+    assert any("lib/cmdline-tokens.sh" in ln for ln in lines), (
+        "set-display-mode.sh must source deploy/lib/cmdline-tokens.sh"
+    )
+    assert "if ! cmdline_check \"$CMDLINE\"; then" in lines, (
+        "set-display-mode.sh must run the shared cmdline_check before editing"
+    )
+    assert any(ln.startswith("if ! cmdline_add_token ") for ln in lines), (
+        "set-display-mode.sh must write its video= token through cmdline_add_token"
+    )
+    assert not any(re.search(r"\bmv\b", ln) for ln in lines), (
+        "set-display-mode.sh must not install cmdline.txt itself -- the helper does"
+    )
 
 
 def test_setDisplayMode_neverExitsNonZeroOnADeliberateNoOp():

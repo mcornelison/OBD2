@@ -20,6 +20,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-29    | Ralph (Rex)  | Initial implementation (US-394 F-103 shutdown splash)
+# 2026-10-23    | Rex (US-883-a) | step {index, of, name}: the ceremony step from
+#                               the sequencer (power_watch/ceremony.py), null
+#                               for grace and cancelled. VALID_PHASES unchanged.
+# 2026-10-23    | Rex (US-883-b) | sync {waitingAtKeyOff, confirmed}: the shutdown
+#                               sync's progress, null until a drain pass.
 # ================================================================================
 ################################################################################
 
@@ -84,6 +89,8 @@ def buildShutdownState(
     tRemainingS: float,
     reason: str,
     nowIso: str,
+    step: dict | None = None,
+    sync: dict | None = None,
 ) -> dict:
     """Assemble the shutdown-state payload (pure; spec §6 pinned schema).
 
@@ -94,9 +101,17 @@ def buildShutdownState(
         tRemainingS: Seconds remaining in the grace window (0 once elapsed).
         reason: Shutdown reason (v1 always ``ignition_off``; splash ignores it).
         nowIso: ISO-8601 emission timestamp.
+        step: US-883-a -- the ceremony step ``{index, of, name}`` (names from
+            ``CEREMONY_ORDER`` plus ``monthly_test_hold``; ``of`` is the steps
+            this path runs), or None (``grace``, ``cancelled``).
+        sync: US-883-b -- the shutdown sync's progress
+            ``{waitingAtKeyOff, confirmed}`` from the acked marks
+            (``src/pi/sync/shutdown_progress.py``), or None before the first
+            drain pass and on a path with no drain (away from home).
 
     Returns:
-        The shutdown-state dict with exactly the spec §6 keys.
+        The shutdown-state dict with exactly the spec §6 keys plus ``step``
+        and ``sync``.
     """
     return {
         "phase": phase,
@@ -105,6 +120,8 @@ def buildShutdownState(
         "tRemainingS": tRemainingS,
         "reason": reason,
         "ts": nowIso,
+        "step": None if step is None else dict(step),
+        "sync": None if sync is None else dict(sync),
     }
 
 
@@ -115,7 +132,7 @@ def makeShutdownPhaseEmitter(
 
     The returned callable matches the generic emit signature the sequencer
     invokes -- ``emit(phase, *, tGraceStartedAtIso, tGraceTotalS, tRemainingS,
-    reason)`` -- and writes the shutdown-state SSOT atomically.
+    reason, step, sync)`` -- and writes the shutdown-state SSOT atomically.
 
     Best-effort by contract (Atlas A-2, constraint c): a write failure is logged
     but NEVER raised, so the emit hook can never block the shutdown state
@@ -138,6 +155,8 @@ def makeShutdownPhaseEmitter(
         tGraceTotalS: float,
         tRemainingS: float,
         reason: str = DEFAULT_REASON,
+        step: dict | None = None,
+        sync: dict | None = None,
     ) -> None:
         try:
             ensureStatesDir(statesDir)
@@ -148,6 +167,8 @@ def makeShutdownPhaseEmitter(
                 tRemainingS=tRemainingS,
                 reason=reason,
                 nowIso=nowFn(),
+                step=step,
+                sync=sync,
             )
             writeStateAtomic(target, payload)
         except Exception as exc:  # noqa: BLE001 -- best-effort, never block shutdown

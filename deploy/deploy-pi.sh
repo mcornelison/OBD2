@@ -219,6 +219,9 @@ sync_tree() {
             --include=deploy/eclipse-*.service \
             --include=deploy/eclipse-*.timer \
             --include=deploy/eclipse-*.conf \
+            --include=deploy/eclipse-*.path \
+            --include=deploy/eclipse-*.target \
+            --include=deploy/eclipse-*.desktop \
             --include=deploy/orphan-cleanup.* \
             --include=deploy/rfcomm-bind.service \
             --include=deploy/journald-persistent.conf \
@@ -229,6 +232,10 @@ sync_tree() {
             --include=deploy/polkit-rules/*.rules \
             --include=deploy/labwc/ \
             --include=deploy/labwc/*** \
+            --include=deploy/lib/ \
+            --include=deploy/lib/*.sh \
+            --include=deploy/plymouth/ \
+            --include=deploy/plymouth/*** \
             --include=deploy/wayland-sessions/ \
             --include=deploy/wayland-sessions/*** \
             --exclude=deploy/obd-server.service \
@@ -257,6 +264,9 @@ sync_tree() {
         # not at all, labwc would run its default root menu and keybinds.
         # US-649-d: ./deploy/wayland-sessions likewise -- without it lightdm has
         # no eclipse-kiosk session to launch.
+        # US-885-a: ./deploy/lib rides in ./deploy (set-display-mode.sh sources
+        # deploy/lib/cmdline-tokens.sh and exits 1 without it).
+        # US-885-b: ./deploy/plymouth (the eclipse boot theme) rides in ./deploy too.
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude="__pycache__" \
             --exclude="*.pyc" \
@@ -1060,6 +1070,36 @@ step_set_display_mode() {
         return 0
     fi
     remote "sudo bash '${PI_PATH}/deploy/set-display-mode.sh'"
+}
+
+step_set_boot_screen() {
+    # US-885-b / F-139: the power-on WARNING screen. Installs the eclipse
+    # Plymouth theme (deploy/plymouth/eclipse/) and rebuilds the initramfs with
+    # it, sets config.txt disable_splash=1 (no rainbow), and adds loglevel=3 +
+    # vt.global_cursor_default=0 / removes console=tty1 on the boot cmdline
+    # through the shared token helper (so it composes with set-display-mode's
+    # video= pin in either order).
+    #
+    # Runs in BOTH display modes, outside any display-mode branch: lightdm quits
+    # Plymouth in x11 and wayland alike (display-stack ADR 11.3).
+    #
+    # Same posture as step_set_display_mode above: an idempotent standalone
+    # script, re-asserted on EVERY deploy. Idempotence is load-bearing here --
+    # each initramfs rebuild leaves ~37 MB of .bak on /boot/firmware -- so the
+    # script skips the backup and the rebuild when the theme is already the
+    # default, installed byte-identical and in the initramfs. Non-zero means a
+    # refused or failed write, or a failed rebuild (the initramfs is restored
+    # from its backup) -- all of which MUST stop the deploy before a reboot.
+    #
+    # Undo on the Pi with: sudo bash ${PI_PATH}/deploy/set-boot-screen.sh --revert
+    echo "--- Step: Installing the WARNING boot screen + quiet boot line (US-885-b / F-139) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/set-boot-screen.sh"
+        echo "DRY-RUN would verify: plymouthd.conf Theme=eclipse; config.txt disable_splash=1; cmdline.txt loglevel=3 vt.global_cursor_default=0, no console=tty1"
+        echo "DRY-RUN note: takes effect on next reboot; undo with set-boot-screen.sh --revert"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/set-boot-screen.sh'"
 }
 
 step_enable_rtc_charging() {
@@ -2268,10 +2308,19 @@ step_install_ui_kiosk_units() {
     #
     # Idempotent (the installers are idempotent; the V-3 chromium substitution is
     # deterministic).  A-9
-    # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs +
-    # ENABLES the units; the splash renders at the NEXT boot (WantedBy=graphical.target),
-    # so the step does not thrash the live screen mid-deploy.  Runs AFTER the asset +
-    # state-server steps so the served assets + backend are already in place.
+    # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs
+    # the units; the splash renders at the NEXT boot, so the step does not thrash
+    # the live screen mid-deploy.  Runs AFTER the asset + state-server steps so the
+    # served assets + backend are already in place.
+    #
+    # US-651-a: the kiosk starts on a readiness EVENT, never a sleep-poll.  After
+    # the kits, `eclipse-display-mode trigger` (run from the synced tree, so it
+    # needs no wrapper yet) installs the latch eclipse-kiosk-start.target and
+    # BOTH .path units every deploy and enables only the mode's .path (and, in
+    # x11, the autostart entry that writes its marker).  It edits no lightdm and
+    # never reboots, and it starts nothing: the .path takes effect at the next
+    # boot.  KIOSK_USER is the deploy user, so its `id -u` is the uid the kits
+    # rendered into the units.  The three units are then checked on the Pi.
     #
     # US-649-a: /etc/eclipse/display-mode is the ONLY authority for the session
     # forced into the installers (kiosk_mode_resolver; absent => x11).  Detecting
@@ -2281,6 +2330,7 @@ step_install_ui_kiosk_units() {
     echo "--- Step: Installing F-103/F-092 chromium kiosk units (splash + dashboard) ---"
     local splashKit="src/pi/ui/splash/install.sh"
     local dashKit="src/pi/ui/dashboard/install.sh"
+    local modeCmd="deploy/eclipse-display-mode.sh"
     if [ ! -f "$REPO_ROOT/$splashKit" ] && [ ! -f "$REPO_ROOT/$dashKit" ]; then
         echo "WARN: UI kit installers not found under $REPO_ROOT/src/pi/ui -- skipping kiosk-unit install (A-9)." >&2
         return 0
@@ -2300,6 +2350,7 @@ printf '%s' \"\$SESS\"")"
         fi
         echo "DRY-RUN would: (kit installers' V-3 check substitutes the real chromium path into ExecStart -- no symlink shim; US-428)"
         echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=${resolved} _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
+        echo "DRY-RUN would: sudo KIOSK_USER=${PI_USER} bash ${PI_PATH}/${modeCmd} trigger (latch + both .path units; enables the ${resolved} .path only; no reboot)"
         return 0
     fi
     remote "
@@ -2360,7 +2411,22 @@ printf '%s' \"\$SESS\"")"
         else
             echo 'WARN: dashboard-pi/install.sh absent on Pi -- skipped (A-9).' >&2
         fi
-        echo 'Kiosk units in place; the splash renders at the next boot (WantedBy=graphical.target).'
+
+        # (4) US-651-a: the kiosk start trigger for the mode-file session.
+        MODE_CMD='${PI_PATH}/${modeCmd}'
+        if [ -f \"\$MODE_CMD\" ]; then
+            sudo bash -c \"KIOSK_USER=${PI_USER} bash '\$MODE_CMD' trigger\" \
+                && echo 'kiosk start trigger applied.' \
+                || echo 'WARN: eclipse-display-mode trigger failed -- deploy continues (A-9); the kiosk will not start at boot.' >&2
+        else
+            echo 'WARN: ${modeCmd} absent on Pi -- kiosk start trigger skipped (A-9).' >&2
+        fi
+        for UNIT in /etc/systemd/system/eclipse-kiosk-start.target \
+                    /etc/systemd/system/eclipse-kiosk-socket.path \
+                    /etc/systemd/system/eclipse-x-ready.path; do
+            sudo test -f \"\$UNIT\" || echo \"WARN: \$UNIT not installed -- the kiosk start trigger is incomplete.\" >&2
+        done
+        echo 'Kiosk units in place; the splash renders at the next boot (the mode .path starts it).'
     "
 }
 
@@ -2853,6 +2919,13 @@ step_set_gpu_cma
 # reboot. Both touch the display pipeline, so keeping them adjacent keeps the
 # "what did the deploy change about the screen" answer in one place.
 step_set_display_mode
+
+# US-885-b / F-139: the power-on WARNING screen (Plymouth eclipse theme,
+# disable_splash=1, quiet boot tokens). Directly after step_set_display_mode:
+# both edit the boot cmdline through deploy/lib/cmdline-tokens.sh and both take
+# effect at the next boot. Unconditional -- it applies in BOTH display modes
+# (lightdm quits Plymouth in each, ADR 11.3).
+step_set_boot_screen
 
 # US-620 / F-138: enable the Pi 5 RTC backup-battery trickle charger so in-car
 # timestamps are stamped by a real clock instead of the 1970 epoch. Ordered

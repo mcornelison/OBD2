@@ -17,6 +17,7 @@
 #
 # Usage (on the Pi):
 #   sudo eclipse-display-mode x11|wayland [--no-reboot]
+#   sudo eclipse-display-mode trigger
 #   sudo eclipse-display-mode status
 #
 # lightdm is the display manager in BOTH modes (design A, CIO 2026-10-16,
@@ -37,9 +38,19 @@
 #      x11: the recorded priors, then the state file is deleted. An unrecorded
 #      key still reading eclipse-kiosk falls back to rpd-x with ONE WARN;
 #   4. writes the mode file and runs BOTH kit installers, forced to that mode;
-#   5. retires the old eclipse-compositor unit (disable if enabled, delete the
+#   5. applies the kiosk start trigger for the mode (the `trigger` verb below);
+#   6. retires the old eclipse-compositor unit (disable if enabled, delete the
 #      unit file), enables lightdm (never masked or purged), daemon-reload,
 #      then reboots unless --no-reboot.
+# trigger (US-651-a; deploy-pi.sh runs it every deploy) applies the CURRENT
+# mode's kiosk start trigger and nothing else -- no lightdm edit, no kit run,
+# no reboot: installs the latch eclipse-kiosk-start.target and BOTH .path
+# units (rendered with the kiosk uid) every time, enables only the mode's
+# .path (wayland: eclipse-kiosk-socket.path; x11: eclipse-x-ready.path plus the
+# eclipse-x-ready.desktop autostart entry, which wayland removes) and disables
+# the other .path only when `systemctl is-enabled` says it is enabled. Nothing
+# is started: the .path takes effect at the next boot, so a deploy never
+# re-shows the splash over a live dashboard.
 # status prints the file's mode, the enabled display manager, lightdm's
 # autologin session and the installed dashboard variant, and exits 1 on any
 # mismatch.
@@ -51,6 +62,11 @@
 #   KIOSK_SYSTEMD_DIR   where the kiosk units are installed (default /etc/systemd/system)
 #   KIOSK_USER          the kiosk user forced into the kit installers (the
 #                       installed wrapper sets it; unset => the kits' own V-1)
+#   KIOSK_UID           the kiosk uid (desk tests only). ONE uid source: unset,
+#                       it is `id -u $KIOSK_USER`, the kit installers' own
+#                       derivation; set, it is forced into the kits too, so the
+#                       .path units and the kiosk units name one /run/user/<uid>
+#   KIOSK_AUTOSTART_DIR the XDG autostart dir (default /etc/xdg/autostart)
 #   KIOSK_LIGHTDM_CONF  lightdm's config       (default /etc/lightdm/lightdm.conf)
 #   KIOSK_SESSION_FILE  the kiosk session file (default
 #                       /usr/share/wayland-sessions/eclipse-kiosk.desktop)
@@ -63,7 +79,15 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
 TREE="${KIOSK_TREE:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 SYSTEMD_DIR="${KIOSK_SYSTEMD_DIR:-/etc/systemd/system}"
+AUTOSTART_DIR="${KIOSK_AUTOSTART_DIR:-/etc/xdg/autostart}"
 DASH_UNIT="eclipse-dashboard.service"
+# US-651-a: the kiosk start trigger. Each mode's .path starts the latch, which
+# Wants= splash-boot; in x11 the autostart entry writes the .path's marker.
+LATCH_UNIT="eclipse-kiosk-start.target"
+SOCKET_PATH_UNIT="eclipse-kiosk-socket.path"
+X_READY_PATH_UNIT="eclipse-x-ready.path"
+X_READY_DESKTOP="eclipse-x-ready.desktop"
+TRIGGER_FILES=("$LATCH_UNIT" "$SOCKET_PATH_UNIT" "$X_READY_PATH_UNIT" "$X_READY_DESKTOP")
 LIGHTDM="lightdm.service"
 # Retired by design A; still on cars switched to Wayland before US-649-e.
 COMPOSITOR="eclipse-compositor.service"
@@ -81,7 +105,7 @@ X11_SESSION="rpd-x"
 SESSION_KEYS=(autologin-session user-session)
 
 usage() {
-    echo "usage: eclipse-display-mode x11|wayland|status [--no-reboot]" >&2
+    echo "usage: eclipse-display-mode x11|wayland|trigger|status [--no-reboot]" >&2
     exit 2
 }
 
@@ -220,6 +244,92 @@ preflight() {
         echo "ERROR: state dir $STATE_DIR does not exist -- deploy-pi.sh provisions it (US-667); this command will not create it. Nothing changed." >&2
         return 1
     fi
+    trigger_preflight
+}
+
+# The kiosk uid: KIOSK_UID if set (desk override), else `id -u $KIOSK_USER` --
+# the derivation the kit installers use for the units' /run/user/<uid>. Prints
+# nothing unless that is a number.
+kiosk_uid() {
+    local uid=""
+    if [ -n "${KIOSK_UID:-}" ]; then
+        uid="$KIOSK_UID"
+    elif [ -n "${KIOSK_USER:-}" ]; then
+        uid="$(id -u "$KIOSK_USER" 2>/dev/null || true)"
+    fi
+    case "$uid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    printf '%s' "$uid"
+}
+
+# What the trigger needs, checked before anything changes: a numeric kiosk uid
+# (never a /run/user/0 fallback, I-044) and its four source files in the tree.
+trigger_preflight() {
+    local f
+    if [ -z "$(kiosk_uid)" ]; then
+        echo "ERROR: cannot resolve the kiosk uid (KIOSK_USER='${KIOSK_USER:-}', KIOSK_UID='${KIOSK_UID:-}') -- nothing changed." >&2
+        return 1
+    fi
+    for f in "${TRIGGER_FILES[@]}"; do
+        if [ ! -f "$TREE/deploy/$f" ]; then
+            echo "ERROR: $TREE/deploy/$f missing -- nothing changed." >&2
+            return 1
+        fi
+    done
+}
+
+# Install deploy/$1 as $2 with __PI_UID__ rendered as $3, by temp file + rename.
+install_rendered() {
+    local src="$TREE/deploy/$1" dest="$2" uid="$3" tmp
+    tmp="$dest.tmp.$$"
+    if ! sed -e "s/__PI_UID__/$uid/g" "$src" > "$tmp" || ! chmod 0644 "$tmp" \
+            || ! mv -f "$tmp" "$dest"; then
+        rm -f "$tmp"
+        echo "ERROR: could not install $dest" >&2
+        return 1
+    fi
+}
+
+# Apply mode $1's kiosk start trigger (see `trigger` in the header).
+apply_trigger() {
+    local mode="$1" uid on off
+    uid="$(kiosk_uid)"
+    if [ "$mode" = wayland ]; then
+        on="$SOCKET_PATH_UNIT"; off="$X_READY_PATH_UNIT"
+    else
+        on="$X_READY_PATH_UNIT"; off="$SOCKET_PATH_UNIT"
+    fi
+    echo "==> kiosk start trigger for $mode (uid $uid): $on"
+    mkdir -p "$SYSTEMD_DIR"
+    install_rendered "$LATCH_UNIT" "$SYSTEMD_DIR/$LATCH_UNIT" "$uid" || return 1
+    install_rendered "$SOCKET_PATH_UNIT" "$SYSTEMD_DIR/$SOCKET_PATH_UNIT" "$uid" || return 1
+    install_rendered "$X_READY_PATH_UNIT" "$SYSTEMD_DIR/$X_READY_PATH_UNIT" "$uid" || return 1
+    if [ "$mode" = x11 ]; then
+        mkdir -p "$AUTOSTART_DIR"
+        install_rendered "$X_READY_DESKTOP" "$AUTOSTART_DIR/$X_READY_DESKTOP" "$uid" || return 1
+    else
+        rm -f "$AUTOSTART_DIR/$X_READY_DESKTOP"
+    fi
+    systemctl daemon-reload
+    if systemctl is-enabled "$off" >/dev/null 2>&1; then
+        systemctl disable "$off"
+    fi
+    systemctl enable "$on"
+}
+
+cmd_trigger() {
+    local mode
+    mode="$(read_mode)"
+    case "$mode" in
+        x11|wayland) ;;
+        *)
+            echo "ERROR: $MODE_FILE holds '${mode:-<empty>}', not x11|wayland -- nothing changed." >&2
+            return 1
+            ;;
+    esac
+    trigger_preflight || return 1
+    apply_trigger "$mode"
 }
 
 # The prior value of key $1 recorded by the first switch to wayland
@@ -354,15 +464,19 @@ edit_lightdm_conf() {
 # INSIDE the call so nothing depends on sudo preserving it.
 run_kit() {
     local mode="$1" prefix="$2" kit="$TREE/$3"
+    local forced=("${prefix}_FORCE_SESSION=$mode")
     if [ ! -f "$kit" ]; then
         echo "ERROR: kit installer missing: $kit" >&2
         return 1
     fi
     if [ -n "${KIOSK_USER:-}" ]; then
-        env "${prefix}_FORCE_SESSION=$mode" "${prefix}_FORCE_USER=$KIOSK_USER" bash "$kit"
-    else
-        env "${prefix}_FORCE_SESSION=$mode" bash "$kit"
+        forced+=("${prefix}_FORCE_USER=$KIOSK_USER")
     fi
+    # A desk KIOSK_UID reaches the units' rendering too: one uid source.
+    if [ -n "${KIOSK_UID:-}" ]; then
+        forced+=("${prefix}_FORCE_UID=$(kiosk_uid)")
+    fi
+    env "${forced[@]}" bash "$kit"
 }
 
 cmd_switch() {
@@ -390,7 +504,10 @@ cmd_switch() {
     run_kit "$mode" SPLASH src/pi/ui/splash/install.sh
     run_kit "$mode" DASHBOARD src/pi/ui/dashboard/install.sh
 
-    # (5) lightdm in both modes. The old compositor goes first: both claim
+    # (5) The kiosk start trigger for the new mode (US-651-a).
+    apply_trigger "$mode" || return 1
+
+    # (6) lightdm in both modes. The old compositor goes first: both claim
     # display-manager.service.
     echo "==> display manager: $LIGHTDM (retiring $COMPOSITOR)"
     if systemctl is-enabled "$COMPOSITOR" >/dev/null 2>&1; then
@@ -415,7 +532,7 @@ main() {
     for arg in "$@"; do
         case "$arg" in
             --no-reboot) reboot=no ;;
-            x11|wayland|status)
+            x11|wayland|trigger|status)
                 [ -z "$verb" ] || usage
                 verb="$arg"
                 ;;
@@ -427,6 +544,7 @@ main() {
     done
     case "$verb" in
         status)      cmd_status ;;
+        trigger)     cmd_trigger ;;
         x11|wayland) cmd_switch "$verb" "$reboot" ;;
         *)           usage ;;
     esac

@@ -2386,16 +2386,50 @@ quit.
   one inert keybind and one Client-context mousebind exist only because labwc
   loads its stock bindings when either list is empty) and an EMPTY `autostart`.
   Never `/etc/xdg/labwc` or `~/.config/labwc`.
-- **Chromium waits for the socket, not for a unit:** the three `.wayland` units
-  (dashboard, splash-boot, splash-grace) order `After=display-manager.service`,
-  bind to no display unit, and gate on an `ExecStartPre=` that waits for the
-  socket `/run/user/__PI_UID__/wayland-0` (150 polls of 0.2 s, the 30 s budget of
-  the PR #106 X11 gate), then fails loud. Ordering is no guarantee of readiness;
-  the socket test is. They still do not order after `graphical.target` (that
-  queued the kiosk behind multi-user, 18.73 s on boot 7c6aafaa); splash-boot keeps
-  `WantedBy=graphical.target` only as its pull-in. The `.x11` units are unchanged.
+- **The kiosk starts on a readiness event, never a sleep-poll (US-651-a, Sprint
+  113; CIO 2026-10-23 no timed waits; Atlas RULED 2026-10-24).** No unit on the
+  kiosk start path sleeps, loops or carries a time budget; the old 150 x 0.2 s
+  (30 s) gates are gone in both modes.
+  - **The trigger.** A `PathExists=` .path starts the LATCH
+    `deploy/eclipse-kiosk-start.target` (`Wants=splash-boot.service`, no
+    `[Service]`, no `[Install]`, default dependencies on). Wayland:
+    `deploy/eclipse-kiosk-socket.path` watches `/run/user/<uid>/wayland-0`. X11:
+    `deploy/eclipse-x-ready.path` watches `/run/user/<uid>/eclipse-x-ready`, a
+    marker written by `deploy/eclipse-x-ready.desktop` (`/etc/xdg/autostart/`,
+    x11 only), which runs inside the rpd-x autologin session and so only after
+    the xhost grant -- the 10-16 "Authorization required" race cannot recur.
+    Both .path units are `WantedBy=graphical.target`; exactly one is enabled.
+  - **Why a latch.** systemd.path(5) re-checks a `PathExists=` path when the unit
+    it triggered goes inactive and starts it again. wayland-0 and the marker
+    persist all session, so a .path naming splash-boot would re-show the splash
+    over the dashboard after every hand-off. The latch is a target: it has no
+    process, so it cannot hang or fail, and once reached it stays active until
+    shutdown (implicit `Conflicts=shutdown.target`), so the splash starts once
+    per boot, as `WantedBy=graphical.target` did before. It is a target, not a
+    oneshot `.service`, so tests/lint's oneshot start-timeout rule has nothing
+    to bound and the no-timer rule holds (Atlas RULED 2026-10-24, option c).
+    `Wants=` is weak: splash-boot's `OnSuccess=` / `OnFailure=` still hand off to
+    `eclipse-dashboard.service` unchanged. No unit names `Unit=splash-boot.service`.
+  - **One-shot checks.** splash-boot has no `[Install]` in either mode. The
+    `.wayland` units (dashboard, splash-boot, splash-grace) run ONE
+    `ExecStartPre=/usr/bin/test -S /run/user/__PI_UID__/wayland-0`; the `.x11`
+    splash-boot runs ONE `ExecStartPre=/usr/bin/xset q`. A failed check fails the
+    unit at once (splash-boot's `OnFailure=` brings up the dashboard). The
+    `.wayland` units still order `After=display-manager.service` and never after
+    `graphical.target` (that queued the kiosk behind multi-user, 18.73 s on boot
+    7c6aafaa).
+  - **Install + switch.** `eclipse-display-mode trigger` renders the latch and
+    BOTH .path units (and, in x11, the autostart entry) with the kiosk uid,
+    enables only the mode's .path, disables the other only when `systemctl
+    is-enabled` says it is enabled, edits no lightdm, starts nothing and never
+    reboots; `step_install_ui_kiosk_units` runs it every deploy after the kits
+    and checks the three units landed. An `x11|wayland` switch runs the same swap.
+    **One uid source:** `id -u $KIOSK_USER`, the kit installers' own derivation;
+    the desk-only `KIOSK_UID` override is forced into the kits too. The splash
+    kit runs `systemctl disable splash-boot.service` every install, removing the
+    `graphical.target.wants` link older installs left on the car.
 - **splash-boot `OnFailure=eclipse-dashboard.service`**, as on X11 (PR #106): a
-  splash that fails (the socket gate timed out, or chromium died) still brings up
+  splash that fails (the one-shot readiness check failed, or chromium died) still brings up
   the dashboard. The units stay systemd units, so the kiosk watchdog, panel
   liveness, load shed and polkit (all keyed on `KIOSK_UNIT`) are unchanged.
 - **The power key** (CIO 2026-10-16: a clean shutdown):
@@ -2425,6 +2459,46 @@ quit.
 - **ADR ARCH-016 §11.2** (amended by Atlas 2026-10-19; "no lightdm" withdrawn) is
   the decision of record; §11.3 the shape, §11.5 the revert. The ADR itself is
   not edited by Ralph.
+
+#### The power-on WARNING screen: `set-boot-screen.sh` (US-885-b, Sprint 113)
+
+At power-on the panel shows Iris's WARNING image (`specs/assets/boot/warning-480x320.png`,
+PR #130) from the firmware hand-off until lightdm quits Plymouth -- no firmware
+rainbow, no kernel text. **Owner: `deploy/set-boot-screen.sh`**, run by deploy-pi.sh
+`step_set_boot_screen` on every deploy in **both** display modes (lightdm quits
+Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
+
+- **The theme** `deploy/plymouth/eclipse/` (`eclipse.plymouth`, a script-module
+  `eclipse.script` that draws `warning.png` centred on black once, no animation),
+  installed to `/usr/share/plymouth/themes/eclipse/` and made the default with
+  `plymouth-set-default-theme -R eclipse`. With `auto_initramfs=1` the `-R`
+  rebuilds the initramfs and the z50-raspi-firmware hook copies it to
+  `/boot/firmware`; plymouthd.conf carries the choice across kernel updates.
+- **config.txt `disable_splash=1`**, appended section-aware (an `[all]` is opened
+  if the file ends in e.g. `[cm4]`) under a marker comment, unless an effective
+  `disable_splash=1` is already there.
+- **cmdline.txt tokens** `loglevel=3` and `vt.global_cursor_default=0` added,
+  `console=tty1` removed -- through `deploy/lib/cmdline-tokens.sh` (US-885-a), so
+  it and `set-display-mode.sh`'s `video=` pin give their union in either order.
+- **The initramfs** (the one boot-critical file it writes): before EITHER rebuild
+  both `initramfs_2712` and `initramfs8` are copied to a dated
+  `.bak-boot-screen-<stamp>` and cmp-verified (a failed copy or cmp aborts with
+  nothing changed); only the newest such pair is kept, older ones pruned after
+  the new pair verifies; no other `.bak` is touched. A failed `-R` copies both
+  back, cmp-verifies them and exits 3. The theme in place before the first
+  install (plymouthd.conf `Theme=`, `pix` on this Pi) is recorded at
+  `/boot/firmware/eclipse-boot-screen.prior-theme`.
+- **Idempotent:** the backup and `-R` are skipped when plymouthd.conf says
+  `Theme=eclipse`, the installed theme files are byte-identical to the repo's, and
+  `lsinitramfs initramfs_2712` lists `themes/eclipse` (~37 MB of `.bak` per rebuild
+  against 404 MB free on `/boot/firmware`).
+- **Revert:** `sudo bash deploy/set-boot-screen.sh --revert` (independent of display
+  mode) backs up the initramfs pair, runs `plymouth-set-default-theme -R <the
+  recorded prior theme>` (`pix` if there is no record), removes the installed
+  theme and the record, removes its config.txt block and the tokens it added, and
+  puts `console=tty1` back in its original place -- both files byte-identical to
+  before when nothing else edited them. It never restores the initramfs from a
+  `.bak` (a kernel update may have happened in between; `-R` rebuilds it).
 
 #### Panel capture: `eclipse-capture-panel` (US-650)
 
@@ -2914,7 +2988,7 @@ a preceding `flushing` (honest instrument — no flush happened).
 failure (or a hook that raises) is logged but **NEVER blocks shutdown progress** —
 the emitter closure catches, and the sequencer's `_emitPhase` wraps the call site
 belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
-`tGraceTotalS`, `tRemainingS`, `reason`, `ts`) is written atomically to
+`tGraceTotalS`, `tRemainingS`, `reason`, `ts`, and since US-883-a `step`, below) is written atomically to
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
 
@@ -2937,6 +3011,60 @@ fires on the first `shutdown-state` write and the kiosk renders the countdown.
   `load_shed` imports it as `src.pi.ops.unit_manifest` (powerwatch's prefix); the manifest
   is stdlib-only, so powerwatch cannot pull in the display chain. Default value unchanged:
   `('eclipse-dashboard',)`.
+
+**The ceremony step (US-883-a, Sprint 113, Atlas D1/D2).** `shutdown-state` also
+carries `step: {index, of, name}`. The names come from ONE constant,
+`CEREMONY_ORDER = ('shed', 'drain', 'drain close', 'custody', 'poweroff')` in
+`src/pi/power/power_watch/ceremony.py` (promoted from
+`test_shutdown_ceremony_guard.py`, which now imports it), plus `monthly_test_hold`
+(the hold task's own name) on a path where the hold is due. `ceremonySteps()` is the
+plan per path and `of` is the steps **this** path runs: normal 5, 6 with the hold
+(after the drain); the VCELL fast path 3 (no drain, no drain close). The plan is fixed
+when smoothing confirms, the hold read once through the OPTIONAL `holdDueFn` (main()
+wires the hold task's own two gates: home state at the loss in `AT_HOME_STATE_NAMES`,
+and `isMonthlyTestDue`). When a drain-floor read ends the drain, the plan is rerouted
+to the fast path: the steps entered stay, and `of` = steps entered + steps remaining
+(shed 1/5, drain 2/5, custody 3/4, poweroff 4/4). `index` only moves forward and never
+exceeds `of`; a step not ahead on the plan publishes nothing (the fast path's drain
+close). `grace` and `cancelled` carry `step: null`, and a cancel ends the plan. **One
+writer:** every step goes through the sequencer's `_emitPhase` into
+`makeShutdownPhaseEmitter` / `buildShutdownState`; the steps the sequencer cannot see
+(the hold inside the pipeline, the drain close and custody inside `prePowerOffFn`)
+announce themselves through `ShutdownSequencer.enterStep` (`__main__.announceStep`,
+`StepAnnouncedTask`). A step write re-writes the current phase, so `flushing` and
+`powering_off` may be written more than once; `VALID_PHASES` is unchanged and
+`tests/ui/test_shutdown_phase_list_guard.py` pins `shutdown-state-poll.js`'s phase list
+to it. No step adds a wait: the sequence, its order and its timing are unchanged.
+
+**The sync progress (US-883-b, Sprint 113, Atlas O3/E1, Rule 13 gaps 2-3).**
+`shutdown-state` also carries `sync: {waitingAtKeyOff, confirmed}` for the S114 sync bar,
+built by `ShutdownSyncProgress` in `src/pi/sync/shutdown_progress.py`. **Counted tables**
+(`countedTables()`, no new list): every delta-sync table (`SYNC_UPDATE_TABLES_PK` included
+-- `drive_summary` and `dtc_log` carry inserts) minus `readSyncHealth`'s `notCounted`
+(`SNAPSHOT_TABLES | snapshotSyncTables()`) minus `SHUTDOWN_DRAIN_EXCLUDED_TABLES`, so an
+EDR-only backlog waits 0. **Snapshot point:** `SyncWithServerTask.run` start
+(`keyOffSnapshotFn`), inside the pipeline, so after smoothing and a blip never
+snapshots. Per counted table it records the marks at that moment, `keyOffId = MAX(pk)`
+and, where the table has the column, `keyOffModified = MAX(_sync_modified_at)`
+(`sync_log.getKeyOffBounds`). The **snapshot set** is the rows `_deltaPredicate` selects
+under those marks, bounded by `pk <= keyOffId AND (_sync_modified_at IS NULL OR <=
+keyOffModified)`; `waitingAtKeyOff` is its COUNT summed over the tables -- never an id
+span, ids gap. After each drain pass, `remaining` = the snapshot rows the SAME predicate
+still selects under the acked marks now (`getHighWaterMark` / `getModifiedHighWaterMark`,
+which advance only on the post-commit stored ack), and `confirmed = waitingAtKeyOff -
+remaining`, floored at 0. Both reads are `sync_log.countKeyOffDeltaRows` over
+`_deltaPredicate`: no second definition of outstanding, never a sum of per-push stored
+counts, so a re-sent batch never moves `confirmed`; rows written after the snapshot never
+enter either number. **Emit:** `_buildRunSync`'s `passDoneFn` runs after every pass that
+pushed (a failed pass too -- other tables may have been acked), never per poll, and hands
+the pair to `ShutdownSequencer.publishSync`, which re-writes the current phase through
+`_emitPhase` (the one writer; the step rides along unchanged). `sync` is null until the
+first pass, so it stays null **away from home** (no drain); it is cleared at each loss's
+entry and on `cancelled`, and a pass still running after a cancel publishes nothing. An
+unreadable database publishes nothing rather than 0. **Accepted bias (Atlas, named):** a
+snapshot row UPDATEd again during the drain is re-stamped past `keyOffModified`, leaves the
+bounded set and reads as confirmed early; no OBD read runs during a key-off drain, so the
+dtc_log `last_seen` bump that would cause it does not occur. No wait, timer or budget.
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
@@ -5951,9 +6079,9 @@ step detects the **ACTIVE graphical `seat0` session** type (x11|wayland) on the 
 passes it via `{SPLASH,DASHBOARD}_FORCE_SESSION`; if it genuinely can't be determined
 it **WARN + skips** (never guesses — a wrong X11-vs-Wayland guess is the D-3
 black-screen bug). **A-9 posture throughout:** an absent kit/installer WARNs and the
-deploy continues; the step never BLOCKs. The units are installed + **enabled** (splash)
-so the splash renders at the **next boot** (`WantedBy=graphical.target`) — the step does
-not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
+deploy continues; the step never BLOCKs. The units are installed and the mode's start
+.path is enabled by `eclipse-display-mode trigger` (US-651-a), so the splash renders at
+the **next boot** — the step does not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
 (V-3 substitution + fail-loud + step assertions) and the `deploy-pi.sh` `--dry-run`
 smoke test.
 
@@ -5999,6 +6127,29 @@ parameter lists; two fence tests pin them.
   `tests/ui/fixtures/states/capture-health-feeds.json`, which holds five named cases
   (`cold-boot-obd-null`, `all-ok`, `one-feed-stalled`, `restart-rearmed`, `ups-sentinel`).
   `tests/pi/obdii/test_capture_health.py` asserts that the builder's output matches every case.
+
+**Feed faults (US-869-b, Atlas B1).** Each feed value is now `{state, reason,
+firstSampleTs, lastSampleSecondsAgo}`, and `state` gains `faulted` (`STATE_FAULTED`,
+feeds only; the top-level verdict never says it). A feed is `faulted` when its source
+holds a CURRENT fault, and `reason` is then the source's own word, passed through
+untranslated; otherwise `reason` is `null` and the `ok | stalled | idle | unknown` rules
+above are unchanged. The fault outranks the power gate: an absent sensor is absent with
+the key on or off, so the S114 boot screen never waits on it. The emitter reads three
+in-process sources through `_gatherCaptureFeedFaults` (passed to
+`buildCaptureFeedsState(feedFaults=...)`); capture-health subscribes to nothing:
+
+| Feed | Fault source | Reason | Cleared by |
+|------|--------------|--------|-----------|
+| `imu` | `ImuStateBridge.presenceFault`, set in `_handlePresence` beside the absent `states/imu` write | `sensor_absent` | a PRESENT presence state (re-plug) |
+| `light` | `LightStateBridge.presenceFault` (US-869-a), set beside the absent `states/light` write | `sensor_absent` | -- (presence is published once per reader start) |
+| `ups` | `_upsFault`, set at the read site in `_emitBatteryHealthState`: the monitor-absent branch and the read-raised branch. The battery-health emitter being dark attempts no read and sets nothing (waiting, not faulted) | `source_availability.REASON_UPS_UNREADABLE` (`gauge unreadable`) | the next valid VCELL read (`_recordUpsSample` returns True). The `0xFFFF` sentinel neither sets nor clears it |
+| `obd` | none | -- | -- |
+
+Nothing here latches; only the S114 splash step does. Because capture-health is emitted
+before battery-health on the tick (no reorder), a UPS fault reaches `feeds.ups` on the
+tick after the failed read. Today's DATA detail renders a `faulted` feed as `--` and never
+prints the reason. The contract fixture gains `imu-absent`, `light-absent` and
+`ups-unreadable`, regenerated from the builder.
 
 #### `states/obd-live` -- every live PID with value, unit, own event time and band (US-874)
 
@@ -6749,10 +6900,24 @@ US-893-a). Fixture: `tests/ui/fixtures/states/light.json`, regenerated through
 | `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`, the ONE curve since US-893-a): the US-878-b port of the old page curve, WITHOUT the STOP override (that stays page-side). A null `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. The page applies this value (`appliedBrightness`). |
 | `brightnessMode` | `auto` when `lux` is a reading; `default` when it is null and the level is `defaultLevel` (US-893-a, Atlas ruling 3). `fixed` arrives with US-878-c's `overrideLevel`. |
 | `curve` | `{points, luxMin, luxFull, minLevel}` (US-893-a, Atlas Q5/A4): `points` are `[lux, level]` LISTS, sorted ascending: the grid `0.3 * 10 ** (i / 10)`, i = 0..50 (0.3..30000 lux), united with the breakpoints `luxMin`, `luxFull` and the knee, each only when finite and > 0; a grid point within relative 1e-9 of a breakpoint is dropped and the exact breakpoint kept (51 points under the shipped config). Each level is `brightnessLevel(lux)` under the same resolved autoDim. Knee (`brightnessKnee`, mirroring `brightnessCurve`'s branches, Atlas A5): none when `minLevel <= 0`, `minLevel >= 1` or `luxFull <= luxMin`; linear `luxMin + minLevel*(luxFull - luxMin)` when `curve` is `linear` or `luxMin <= 0`; else `luxMin*(luxFull/luxMin)**minLevel`. Fresh lists on every write. |
-| `reasons` | `{lux: code}`, the `lux` entry present only when `lux` is null (US-893-a, Atlas L1): `at_limit` when `channelAtLimit` is true, else `no_reading`. Codes, not sentences: the page maps them to words in one table (US-893-b). |
+| `reasons` | `{lux: code}`, the `lux` entry present only when `lux` is null (US-893-a, Atlas L1): `sensor_absent` when the reader's presence STATE said ABSENT (US-869-a, below), else `at_limit` when `channelAtLimit` is true, else `no_reading`. Codes, not sentences: the page maps them to words in one table (US-893-b). |
 | `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
 
 `lux` and `ts` keep their meaning; the stale fallback (US-483-b) keys off `ts`.
+
+**Absent sensor (US-869-a, Atlas A1).** The bridge also subscribes to the reader's
+retained presence STATE `state.sensor.light` (`sensor_reader.STATE_LIGHT`, published once
+after the one probe and replayed to the subscription), mirroring `imu_state_bridge
+._handlePresence`. On ABSENT (value 0.0, unit `absent`) -- with no light sample needed --
+it writes `states/light` ONCE through `buildLightState(..., unavailableReason=
+LIGHT_REASON_SENSOR_ABSENT)`: `lux` null, `reasons.lux` `sensor_absent`, and a top-level
+`unavailableReason` `sensor_absent` (the `states/imu` code); `ts` is the presence sample's
+own. The same handler sets the bridge's `presenceFault` (None until ABSENT, then
+`sensor_absent`), which capture-health reads in-process (Atlas B1-i). PRESENT changes
+nothing; whenever the sensor is present `unavailableReason` is absent from the payload,
+so every burst write is unchanged. The page maps `sensor_absent` to "sensor not found",
+checked before any `reasons.lux` code (`carousel.js lightLuxReason`), AMBIENT `--`.
+Fixture case `sensor-absent` in `light.json` and `light/sensor-absent.json`.
 
 **Brightness (US-878-b; applied since US-893-a).** The page APPLIES `brightnessLevel`
 (`carousel.js appliedBrightness`, see "Display auto-dim consumer"); it holds no curve.
@@ -9374,7 +9539,7 @@ governing where they differ:
   `fmtLux`, `freshLux` and `fmtAgeSec` are deleted. Fixtures:
   `tests/ui/fixtures/states/light/{night-0.6lux, dusk-22lux, day-1400lux,
   sun-at-limit, config-retuned-boundaries, light-stale, light-null, stop-override,
-  dot-off-curve}.json`, each the real `buildLightState` output for its recorded
+  dot-off-curve, sensor-absent}.json`, each the real `buildLightState` output for its recorded
   inputs plus the injected autoDim, the clock and (stop-override) the STOP dtc.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)

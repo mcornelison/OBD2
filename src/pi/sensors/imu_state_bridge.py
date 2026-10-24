@@ -141,6 +141,8 @@
 # 2026-10-18    | Rex (US-892-a) | resetPeaks(startTs): drive start clears the
 #               |              | peaks and sets sinceTs (GPeakTracker.reset),
 #               |              | under a peaks-only lock (cross-thread caller).
+# 2026-10-23    | Rex (US-869-b) | presenceFault: the current presence fault,
+#               |              | set in _handlePresence, for capture-health.
 # ================================================================================
 ################################################################################
 
@@ -1539,6 +1541,9 @@ class ImuStateBridge:
         # the instance, so a restart re-arms them; None until a sample lands.
         self._firstSampleTs: str | None = None
         self._lastSampleCapture: float | None = None
+        # US-869-b: the presence fault, read in-process by capture-health
+        # (Atlas B1-i). Set only by _handlePresence, beside its write.
+        self._presenceFault: str | None = None
         # US-882-a: built HERE and nowhere else, so the peaks reset exactly when
         # the bridge does -- once per eclipse-obd process, never on a kiosk restart.
         self._peaks = GPeakTracker(peaksSmoothingSec)
@@ -1551,6 +1556,11 @@ class ImuStateBridge:
         self._gradeHistory = GradeHistory(gradeHistoryIntervalSec, gradeHistoryWindowSec)
 
     # -- capture-health feed (US-873) -----------------------------------------
+    @property
+    def presenceFault(self) -> str | None:
+        """``'sensor_absent'`` while presence reads ABSENT; None otherwise."""
+        return self._presenceFault
+
     @property
     def firstSampleTs(self) -> str | None:
         """The ``tsUtc`` of the first raw IMU sample drained in this process."""
@@ -1659,9 +1669,14 @@ class ImuStateBridge:
         rate-limited behind a display-cadence budget, and leaving the last live
         g reading on the card after an unplug would be a frozen instrument
         presenting itself as a live one (US-478 AC-3).
+
+        US-869-b: ``presenceFault`` is the CURRENT presence -- set here beside
+        the absent write, cleared here by a PRESENT state (a re-plug).
         """
         if bool(getattr(sample, "value", 0.0)):
+            self._presenceFault = None
             return
+        self._presenceFault = REASON_SENSOR_ABSENT
         self._gravity = None
         self._lastAccelCapture = None
         self._mag = None

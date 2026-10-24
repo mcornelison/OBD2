@@ -17,10 +17,10 @@
       "reason": "never_written",
       "ts": "2026-10-13T12:00:22Z",
       "feeds": {
-        "obd": {"state": "unknown", "firstSampleTs": null, "lastSampleSecondsAgo": null},
-        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
-        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
-        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+        "obd": {"state": "unknown", "reason": null, "firstSampleTs": null, "lastSampleSecondsAgo": null},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
       }
     }
   },
@@ -43,10 +43,10 @@
       "reason": null,
       "ts": "2026-10-13T12:10:00Z",
       "feeds": {
-        "obd": {"state": "ok", "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
-        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
-        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
-        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
       }
     }
   },
@@ -69,10 +69,10 @@
       "reason": null,
       "ts": "2026-10-13T12:10:00Z",
       "feeds": {
-        "obd": {"state": "ok", "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
-        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
-        "light": {"state": "stalled", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 95.0},
-        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "stalled", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 95.0},
+        "ups": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
       }
     }
   },
@@ -94,10 +94,10 @@
       "reason": null,
       "ts": "2026-10-13T12:20:04Z",
       "feeds": {
-        "obd": {"state": "unknown", "firstSampleTs": null, "lastSampleSecondsAgo": null},
-        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:20:03Z", "lastSampleSecondsAgo": 0.1},
-        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:20:03Z", "lastSampleSecondsAgo": 0.6},
-        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:20:02Z", "lastSampleSecondsAgo": 1.5}
+        "obd": {"state": "unknown", "reason": null, "firstSampleTs": null, "lastSampleSecondsAgo": null},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:20:03Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:20:03Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:20:02Z", "lastSampleSecondsAgo": 1.5}
       }
     }
   },
@@ -119,10 +119,94 @@
       "reason": null,
       "ts": "2026-10-13T12:10:00Z",
       "feeds": {
-        "obd": {"state": "ok", "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
-        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
-        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
-        "ups": {"state": "unknown", "firstSampleTs": null, "lastSampleSecondsAgo": null}
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "unknown", "reason": null, "firstSampleTs": null, "lastSampleSecondsAgo": null}
+      }
+    }
+  },
+  "imu-absent": {
+    "note": "Boot with the IMU unplugged and the UPS fine: the IMU bridge saw presence ABSENT, so feeds.imu is faulted with the bridge's reason; the other feeds are unchanged.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "light": ["2026-10-13T12:00:21Z", 0.6],
+        "ups": ["2026-10-13T12:00:20Z", 1.5]
+      },
+      "feedFaults": {
+        "imu": "sensor_absent"
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "faulted", "reason": "sensor_absent", "firstSampleTs": null, "lastSampleSecondsAgo": null},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+      }
+    }
+  },
+  "light-absent": {
+    "note": "The TSL2591 is not on the bus: the light bridge saw presence ABSENT, so feeds.light is faulted with sensor_absent.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "ups": ["2026-10-13T12:00:20Z", 1.5]
+      },
+      "feedFaults": {
+        "light": "sensor_absent"
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "faulted", "reason": "sensor_absent", "firstSampleTs": null, "lastSampleSecondsAgo": null},
+        "ups": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+      }
+    }
+  },
+  "ups-unreadable": {
+    "note": "The MAX17048 read raised (I2C error): the UPS read site recorded the gauge's unavailable reason, so feeds.ups is faulted until the next valid VCELL read.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "light": ["2026-10-13T12:00:21Z", 0.6]
+      },
+      "feedFaults": {
+        "ups": "gauge unreadable"
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "faulted", "reason": "gauge unreadable", "firstSampleTs": null, "lastSampleSecondsAgo": null}
       }
     }
   }

@@ -134,6 +134,8 @@
 # 2026-10-23    | Rex (US-894-c)| sync.rows / sync.pending retired (Atlas P7):
 #               |              | no syncRows / syncPending, no _lastSyncRows.
 #               |              | _recordSyncOutcome stays (US-518 re-anchor).
+# 2026-10-23    | Rex (US-869-b)| capture-health feed faults: the bridges'
+#               |              | presenceFault + _upsFault from the UPS read.
 # ================================================================================
 ################################################################################
 
@@ -372,6 +374,10 @@ class CardStateEmitterMixin:
     # (ObdDataLogger.firstRowTs), not here.
     _upsFirstSampleTs: str | None = None
     _upsLastSampleMonotonic: float | None = None
+    # US-869-b: the UPS feed's CURRENT fault (the gauge's unavailable reason),
+    # set at the read site in _emitBatteryHealthState, cleared by the next
+    # valid VCELL read. None = no read failed (or none attempted): waiting.
+    _upsFault: str | None = None
     # Injectable monotonic clock for the feed ages; same reason as _gearClock.
     _feedClock: Any = None
     # US-860-a: the first_sample_* boot milestones this process has landed, so
@@ -612,6 +618,7 @@ class CardStateEmitterMixin:
             powerSource=powerSource,
             stallSeconds=self._captureStallSeconds,
             feedSamples=feedSamples,
+            feedFaults=self._gatherCaptureFeedFaults(),
         )
         self._recordFirstSampleMilestones(feedSamples)
         return payload
@@ -707,6 +714,30 @@ class CardStateEmitterMixin:
             FEED_UPS: (self._upsFirstSampleTs, upsAge),
         }
 
+    def _gatherCaptureFeedFaults(self) -> dict[str, str | None]:
+        """Each feed's CURRENT fault reason, or None (US-869-b, Atlas B1).
+
+        Read in-process from the owners, exactly as the samples are: the IMU
+        and light bridges' ``presenceFault`` (set where each writes its absent
+        state) and ``_upsFault`` (set at the UPS read site). No subscription
+        and no second detection of absence. OBD has no fault source.
+        """
+        from pi.obdii.capture_health import FEED_IMU, FEED_LIGHT, FEED_UPS
+
+        return {
+            FEED_IMU: self._bridgeFault(getattr(self, "_imuStateBridge", None)),
+            FEED_LIGHT: self._bridgeFault(getattr(self, "_lightStateBridge", None)),
+            FEED_UPS: self._upsFault,
+        }
+
+    @staticmethod
+    def _bridgeFault(bridge: Any) -> str | None:
+        """A bus bridge's presence fault, or None (no bridge is no fault)."""
+        if bridge is None:
+            return None
+        fault = getattr(bridge, "presenceFault", None)
+        return fault if isinstance(fault, str) and fault else None
+
     @staticmethod
     def _bridgeFeedSample(bridge: Any, nowS: float) -> tuple[str | None, float | None]:
         """A bus bridge's first sample ts and newest sample age, or absence."""
@@ -751,13 +782,17 @@ class CardStateEmitterMixin:
         firstTs = firstRowTs if isinstance(firstRowTs, str) and firstRowTs else None
         return (firstTs, self._inProcessRowAge())
 
-    def _recordUpsSample(self, vcellV: float) -> None:
+    def _recordUpsSample(self, vcellV: float) -> bool:
         """Note one VCELL read for ``feeds.ups`` -- unless it is the sentinel.
 
         Called IMMEDIATELY after the synchronous ``getBatteryVoltage()`` read,
         so ``utcIsoNow()`` here IS the sample time (Atlas G6). The MAX17048's
         unbacked-register word ``0xFFFF`` is no reading, whether it arrives raw
         or already scaled to volts, and sets nothing.
+
+        Returns:
+            True when the read was a valid sample and was recorded; False for
+            the sentinel (the read site clears ``_upsFault`` only on True).
         """
         from common.time.helper import utcIsoNow
         from pi.hardware.ups_monitor import (
@@ -769,11 +804,12 @@ class CardStateEmitterMixin:
         if vcellV == SOC_UNBACKED_SENTINEL or abs(vcellV - sentinelVolts) < (
             MAX17048_VCELL_LSB_V / 2
         ):
-            return
+            return False
         sampleTs = utcIsoNow()
         if self._upsFirstSampleTs is None:
             self._upsFirstSampleTs = sampleTs
         self._upsLastSampleMonotonic = self._feedNowS()
+        return True
 
     # ------------------------------------------------------------ obd-live
     #
@@ -2692,21 +2728,30 @@ class CardStateEmitterMixin:
         if emitter is None:
             return
 
+        from pi.splash.source_availability import REASON_UPS_UNREADABLE
+
         hw = self._hardwareManager
         ups = getattr(hw, "upsMonitor", None) if hw is not None else None
         if ups is None:
+            # US-869-b: no gauge to read is the UPS feed's fault, recorded at
+            # the read site -- the same typed-NA this card publishes.
+            self._upsFault = REASON_UPS_UNREADABLE
             emitter(**self._batteryHealthKwargs(upsAvailable=False))
             return
         try:
             vcellV = float(ups.getBatteryVoltage())
             # US-873: straight after the synchronous read -- that instant IS
             # the UPS feed's sample time. A raise above never reaches here.
-            self._recordUpsSample(vcellV)
+            # US-869-b: a valid VCELL clears the fault; the 0xFFFF sentinel is
+            # no reading (waiting), so it neither sets nor clears one.
+            if self._recordUpsSample(vcellV):
+                self._upsFault = None
             soc = int(ups.getBatteryPercentage())
             crate = ups.getChargeRatePercentPerHour()
         except Exception:  # noqa: BLE001 -- gauge unreadable -> typed NA
             # The verdict's source is the drain LOG, not the gauge, so a dead
             # MAX17048 must not blank a health history that is still real.
+            self._upsFault = REASON_UPS_UNREADABLE
             emitter(**self._batteryHealthKwargs(upsAvailable=False))
             return
 

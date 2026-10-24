@@ -7,6 +7,8 @@
 #     the grace splash is shed (CIO 2026-09-20). It is proved able to FAIL on a
 #     shutdown that reaches poweroff without CLEAN_COMPLETE, and on each other
 #     step going missing, so it cannot pass as decoration.
+#     US-883-a: CEREMONY_ORDER is now the src constant (power_watch/ceremony.py),
+#     imported here, and the same run publishes it as shutdown-state step.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-09-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -30,6 +32,11 @@ from src.pi.diagnostics import boot_progress
 from src.pi.network.home_detector import HomeNetworkState
 from src.pi.obdii.database import ObdDatabase
 from src.pi.power.power_watch import __main__ as m
+from src.pi.power.power_watch.ceremony import (
+    CEREMONY_ORDER,
+    STEP_CUSTODY,
+    STEP_DRAIN_CLOSE,
+)
 from src.pi.power.power_watch.controller import ShutdownSequencer
 from src.pi.power.power_watch.load_shed import DEFAULT_SHED_UNITS, LoadShedder
 from src.pi.power.power_watch.pipeline import runPipeline
@@ -44,10 +51,6 @@ from src.pi.sync.backlog import BACKLOG_DELIVERED, countOutstandingRows
 _SETTLED_UPTIME_S = 9999.0
 _SHUTDOWN_BOOT = "boot-shutting-down"
 _NEXT_BOOT = "boot-next"
-
-#: The ceremony, in the order it must happen. Backlog depth changes how long
-#: the drain takes and nothing else on this list.
-CEREMONY_ORDER = ("shed", "drain", "drain close", "custody", "poweroff")
 
 
 class _FakeUps:
@@ -81,6 +84,8 @@ class Observed:
     custody: dict[str, Any] | None = None
     trailStages: list[str] = field(default_factory=list)
     priorBootClean: int | None = None
+    #: US-883-a: every shutdown-state step written, in order.
+    steps: list[dict | None] = field(default_factory=list)
 
 
 def ceremonyGaps(obs: Observed) -> list[str]:
@@ -227,10 +232,18 @@ def runShutdown(
     custodyFn = makeSyncCustodyHook(
         recordPath=str(custodyPath), backlogReader=readSyncBacklog, ownDrainCloseSlot=slot,
     )
+    # US-883-a: the drain close and custody announce their step as main() wires
+    # them; the sequencer is bound below.
+    seqBox: dict[str, ShutdownSequencer] = {}
+
+    def enterStep(step: str) -> None:
+        seqBox["seq"].enterStep(step)
+
     prePowerOffFn = (
         m.composePrePowerOffHooks(
-            _recorded("drain close", events, drainCloseFn),
-            _recorded("custody", events, custodyFn),
+            m.announceStep(STEP_DRAIN_CLOSE, _recorded("drain close", events, drainCloseFn),
+                           enterStep),
+            m.announceStep(STEP_CUSTODY, _recorded("custody", events, custodyFn), enterStep),
         )
         if wirePrePowerOff
         else None
@@ -243,7 +256,13 @@ def runShutdown(
         if finalizerRuns:
             boot_progress.main(["--finalize", "--file", trailPath, "--boot-id", _SHUTDOWN_BOOT])
 
-    ShutdownSequencer(
+    writeState = makeShutdownPhaseEmitter(str(tmp_path / "states"))
+
+    def phaseEmit(phase: str, **fields: Any) -> None:
+        obs.steps.append(fields.get("step"))
+        writeState(phase, **fields)
+
+    seqBox["seq"] = ShutdownSequencer(
         isOnBattery=lambda: True,
         vcell=lambda: 3.9,
         runPipelineFn=lambda: runPipeline(
@@ -258,11 +277,12 @@ def runShutdown(
         smoothingSec=0.0,
         smoothingPollSec=0.01,
         sleepFn=lambda _s: None,
-        phaseEmitFn=makeShutdownPhaseEmitter(str(tmp_path / "states")),
+        phaseEmitFn=phaseEmit,
         prePowerOffFn=prePowerOffFn,
         powerLossObservedFn=shedder.shed if wireShed else None,
         powerRestoredFn=shedder.restore,
-    ).handleOnBattery()
+    )
+    seqBox["seq"].handleOnBattery()
 
     obs.drainPasses = client.passes
     if custodyPath.exists():
@@ -304,6 +324,23 @@ def test_emptyBacklog_reachesCleanComplete_throughTheFullCeremony(tmp_path):
     assertCeremony(obs)
     assert obs.custody["outstandingRows"] == 0
     assert obs.trailStages[-1] == boot_progress.Stage.CLEAN_COMPLETE.value
+
+
+def test_theCeremonyIsPublished_asStepOneToFiveOfFive(tmp_path):
+    """
+    Given: the same end-to-end shutdown, wired the way main() wires it
+    When:  shutdown-state is written along the way
+    Then:  its step walks CEREMONY_ORDER, index 1..5 of 5 (US-883-a), and the
+           file on disk ends on poweroff
+    """
+    obs = runShutdown(tmp_path)
+
+    published = [s for i, s in enumerate(obs.steps) if s is not None and s != obs.steps[i - 1]]
+    assert [s["name"] for s in published] == list(CEREMONY_ORDER)
+    assert [s["index"] for s in published] == [1, 2, 3, 4, 5]
+    assert {s["of"] for s in published} == {5}
+    onDisk = json.loads((tmp_path / "states" / "shutdown-state").read_text(encoding="utf-8"))
+    assert onDisk["step"] == {"index": 5, "of": 5, "name": "poweroff"}
 
 
 def test_emptyBacklog_isAShorterDrain_notASkippedOne(tmp_path):

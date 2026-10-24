@@ -3865,8 +3865,10 @@
   // -------------------------------------------------------------------------
 
   // The provider's reasons.lux codes -> glass text (Atlas L1). One table, the
-  // IMU_REASON_TEXT pattern; IRIS owns the words.
+  // IMU_REASON_TEXT pattern; IRIS owns the words. sensor_absent (US-869-a) is
+  // the reader's presence fact and is checked first, before any lux code.
   var LIGHT_REASON_TEXT = {
+    sensor_absent: "sensor not found",
     at_limit: "sensor at limit",
     no_reading: "no reading",
   };
@@ -3923,8 +3925,10 @@
 
   // The published lux reason, through the one table. lux null with no code (a
   // producer older than US-893-a) is the no_reading class (Atlas A3); an
-  // unknown code paints as itself rather than as a guess.
+  // unknown code paints as itself rather than as a guess. An absent sensor
+  // (top-level unavailableReason, US-869-a) is checked first.
   function lightLuxReason(data) {
+    if (data.unavailableReason === "sensor_absent") return LIGHT_REASON_TEXT.sensor_absent;
     var reasons = isObj(data.reasons) ? data.reasons : {};
     var code = reasons.lux;
     if (typeof code !== "string" || !code) return LIGHT_REASON_TEXT.no_reading;

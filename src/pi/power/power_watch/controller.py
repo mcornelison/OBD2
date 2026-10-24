@@ -86,6 +86,16 @@
 #                              heldFor(), the one dwell helper for both power
 #                              directions; _smoothedPowerLost calls it with
 #                              restartOnBreak=False. Loss behaviour unchanged.
+# 2026-10-23    | Rex (US-883-a) | The phase emit carries step {index, of, name}
+#                              from the ONE ceremony list (ceremony.py). The plan
+#                              is fixed when smoothing confirms (fast path or
+#                              normal, OPTIONAL holdDueFn for the monthly hold);
+#                              a drain-floor end reroutes it. enterStep lets the
+#                              wired hooks publish their own step through the
+#                              same _emitPhase. Sequence, order, timing unchanged.
+# 2026-10-23    | Rex (US-883-b) | publishSync: the shutdown sync's progress rides
+#                              every phase write as `sync` (null until a drain
+#                              pass, cleared on cancel), through _emitPhase.
 # ================================================================================
 ################################################################################
 #
@@ -110,6 +120,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from src.pi.power.power_watch.ceremony import (
+    STEP_DRAIN,
+    STEP_POWEROFF,
+    STEP_SHED,
+    CeremonyProgress,
+    ceremonySteps,
+)
 from src.pi.power.power_watch.pld_witness import recordTransitionWitnessed
 from src.pi.power.types import (
     DRAIN_TERMINATION_DRAIN_FLOOR,
@@ -247,6 +264,7 @@ class ShutdownSequencer:
         drainFloor: float | None = None,
         drainSampleFn: Callable[..., None] | None = None,
         drainFloorDwellReads: int = 1,
+        holdDueFn: Callable[[], bool] | None = None,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -330,6 +348,10 @@ class ShutdownSequencer:
             it; every other row costs no extra read. Guarded like
             ``phaseEmitFn``: a recorder that raises never delays the drain.
             ``None`` (the default) runs the exact legacy path.
+        holdDueFn: US-883-a -- OPTIONAL zero-arg predicate, read ONCE when
+            smoothing confirms a normal path: True puts the monthly hold in the
+            ceremony plan (``of`` 6, not 5). Guarded: a raise reads False.
+            ``None`` plans no hold. Only the published step uses it.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
@@ -355,6 +377,15 @@ class ShutdownSequencer:
         # Grace-window bookkeeping (set when the grace phase is emitted).
         self._graceStartedAtIso: str | None = None
         self._graceStartMono: float | None = None
+        # US-883-a: the ceremony step the shutdown-state publishes. The lock
+        # makes "enter a step, then write it" one act across the main and
+        # pipeline threads, so the file never shows an older step last.
+        self._holdDueFn = holdDueFn
+        self._ceremony = CeremonyProgress()
+        self._stepLock = threading.RLock()
+        self._lastPhase: str | None = None
+        # US-883-b: the shutdown sync's progress, published with every phase write.
+        self._sync: dict | None = None
 
     def _smoothedPowerLost(self) -> bool:
         """Return True only if ``isOnBattery()`` stays True continuously for
@@ -412,6 +443,9 @@ class ShutdownSequencer:
         # and the journal could not see those seconds. Before smoothing so a
         # death during smoothing is still measured.
         self.lastDrainEndReason = None  # a fresh loss owns the reason
+        with self._stepLock:
+            self._ceremony.reset()  # US-883-a: no step until the path is known
+            self._sync = None  # US-883-b: no sync progress until a drain pass
         self._notifyPowerLossObserved()
 
         # F-103 [A-2]: emit `grace` at T=0 (BEFORE smoothing resolves) so the
@@ -475,18 +509,24 @@ class ShutdownSequencer:
             # US-790: a one-row drain -- its only read ended it.
             self._recordDrainSample(v, DRAIN_TERMINATION_VCELL_FLOOR)
             # Floor backstop skips the pipeline -> no `flushing` phase happened;
-            # emit `powering_off` directly (honest instrument).
-            self._emitPhase(PHASE_POWERING_OFF)
+            # emit `powering_off` directly (honest instrument). US-883-a: the
+            # path is known now -- the fast path's 3 steps, the shed already done.
+            self._planCeremony(fastPath=True)
+            self._enterStep(STEP_SHED, phase=PHASE_POWERING_OFF)
             # US-526: THE run-to-cutoff drain ends right here. This is the path
             # a depth-gate-qualifying drain takes, so the close must fire on it.
             self._runPrePowerOff()
+            self._enterStep(STEP_POWEROFF)
             self._powerOff()
             return
         # US-790: the drain's first row is the read that let it start.
         self._recordDrainSample(v)
         # F-103 [A-2]: smoothing confirmed + above floor -> the bounded pipeline
-        # is about to run. `flushing` per the spec enum.
-        self._emitPhase(PHASE_FLUSHING)
+        # is about to run. `flushing` per the spec enum. US-883-a: the normal
+        # path's plan; the shed (done at the loss) is step 1, the drain step 2.
+        self._planCeremony(fastPath=False)
+        self._enterStep(STEP_SHED, phase=PHASE_FLUSHING)
+        self._enterStep(STEP_DRAIN, phase=PHASE_FLUSHING)
         done = threading.Event()
 
         def _pipe() -> None:
@@ -519,7 +559,14 @@ class ShutdownSequencer:
         )
         logger.warning("shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff")
         self._emitPhase(PHASE_POWERING_OFF)
+        if drainEnd.reason == DRAIN_TERMINATION_DRAIN_FLOOR:
+            # US-883-a: the VCELL forced the fast path after the drain started --
+            # the steps entered stay, the rest follow the fast path (Atlas Rule 13
+            # gap 1: of = entered + remaining). The new `of` is published with the
+            # next step entered, so one step never shows two different totals.
+            self._ceremony.reroute(ceremonySteps(fastPath=True, holdDue=False))
         self._runPrePowerOff()
+        self._enterStep(STEP_POWEROFF)
         self._powerOff()
 
     # ----- US-776-a pipeline poll (the drain's bound is the battery) ----------
@@ -720,6 +767,56 @@ class ShutdownSequencer:
         elapsed = self._monotonic() - self._graceStartMono
         return max(0.0, self._smoothingSec - elapsed)
 
+    # ----- US-883-a ceremony step (published through _emitPhase) ---------------
+
+    def _planCeremony(self, *, fastPath: bool) -> None:
+        """Fix this path's ceremony plan, now that smoothing has confirmed it."""
+        holdDue = False
+        if not fastPath and self._phaseEmitFn is not None and self._holdDueFn is not None:
+            try:
+                holdDue = bool(self._holdDueFn())
+            except Exception as exc:  # noqa: BLE001 -- a step count is never worth a stall
+                logger.warning(
+                    "shutdown-sequencer: hold-due read failed (%s) -- planned without the hold",
+                    exc,
+                )
+        self._ceremony.begin(ceremonySteps(fastPath=fastPath, holdDue=holdDue))
+
+    def enterStep(self, name: str) -> None:
+        """Publish ceremony step ``name`` from a wired hook (best-effort, never raises).
+
+        For the steps the sequencer cannot see itself: the hold inside the
+        pipeline, the drain close and custody inside ``prePowerOffFn``. A step
+        not ahead on this path's plan publishes nothing (the fast path has no
+        drain close). Written with the current phase, through ``_emitPhase``.
+        """
+        self._enterStep(name)
+
+    def publishSync(self, sync: dict | None) -> None:
+        """Publish the shutdown sync's progress (US-883-b; best-effort, never raises).
+
+        Called after each drain pass with ``{waitingAtKeyOff, confirmed}``.
+        Re-writes the current phase through ``_emitPhase`` -- the one writer --
+        so the step rides along unchanged. Ignored unless the shutdown is in
+        ``flushing`` or ``powering_off``: a pass still running after a cancel
+        publishes nothing.
+        """
+        with self._stepLock:
+            if self._lastPhase not in (PHASE_FLUSHING, PHASE_POWERING_OFF):
+                return
+            self._sync = None if sync is None else dict(sync)
+            self._emitPhase(self._lastPhase)
+
+    def _enterStep(self, name: str, *, phase: str | None = None) -> None:
+        """Enter a step, then write it -- with ``phase`` when given, which is
+        written whether or not the step was entered."""
+        with self._stepLock:
+            entered = self._ceremony.enter(name)
+            if phase is not None:
+                self._emitPhase(phase)
+            elif entered and self._lastPhase is not None:
+                self._emitPhase(self._lastPhase)
+
     def _emitPhase(self, phase: str) -> None:
         """Emit one shutdown-state phase event (best-effort, never raises).
 
@@ -727,7 +824,27 @@ class ShutdownSequencer:
         that raises NEVER blocks the shutdown progression (Atlas A-2 constraint
         c). The payload carries the grace-window timing the splash trusts; the
         sequencer remains ignorant of the splash schema (it passes raw fields).
+
+        US-883-a: and the ceremony ``step`` -- None for ``grace`` and
+        ``cancelled``, which carry no step (a cancel also ends the plan, so a
+        pipeline thread still running publishes nothing after it).
+
+        US-883-b: and ``sync`` -- the last progress ``publishSync`` handed in,
+        None until a drain pass has run; a cancel clears it.
         """
+        with self._stepLock:
+            if phase in (PHASE_GRACE, PHASE_CANCELLED):
+                if phase == PHASE_CANCELLED:
+                    self._ceremony.reset()
+                    self._sync = None
+                step = None
+            else:
+                step = self._ceremony.step()
+            self._lastPhase = phase
+            self._writePhase(phase, step, self._sync)
+
+    def _writePhase(self, phase: str, step: dict | None, sync: dict | None = None) -> None:
+        """Hand one phase event to ``phaseEmitFn`` (the guarded call)."""
         if self._phaseEmitFn is None:
             return
         try:
@@ -737,6 +854,8 @@ class ShutdownSequencer:
                 tGraceTotalS=self._smoothingSec,
                 tRemainingS=self._graceRemainingS(),
                 reason=self._shutdownReason,
+                step=step,
+                sync=sync,
             )
         except Exception as exc:  # noqa: BLE001 -- emit is best-effort, belt+braces
             logger.error(

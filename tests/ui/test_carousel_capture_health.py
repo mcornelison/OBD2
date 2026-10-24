@@ -32,6 +32,8 @@
 #               |              | on the DATA row (A4: stalled iff a member).
 # 2026-10-23    | Rex (US-894-d)| MOVED PIN: the WIFI row follows the DATA row.
 # 2026-10-23    | Rex (US-894-e)| MOVED PIN: the UPS row follows the WIFI row.
+# 2026-10-23    | Rex (US-869-b)| A faulted feed's raw reason never reaches the
+#               |              | DATA detail.
 # ================================================================================
 ################################################################################
 
@@ -287,3 +289,18 @@ class TestTheFeedsBlockIsAdditiveToTheRow:
         preChange = {k: v for k, v in withFeeds.items() if k != "feeds"}
 
         assert _row(_sys(), withFeeds) == _row(_sys(), preChange)
+
+    @pytest.mark.parametrize("case", ["imu-absent", "light-absent", "ups-unreadable"])
+    def test_faultedFeed_noRawReasonReachesTheDataDetail(self, case: str) -> None:
+        """US-869-b: the producer's feed `reason` (sensor_absent, gauge
+        unreadable) is for the S114 boot screen; today's DATA detail must
+        not print it, nor any snake_case token, for a faulted feed."""
+        payload = _feedCases()[case]["payload"]
+        detail = _view("dataDetailView", _sys(), payload)
+        reasons = {f["reason"] for f in payload["feeds"].values() if f["reason"]}
+
+        rendered = json.dumps(detail["feeds"])
+        assert reasons, "fixture case carries no faulted feed"
+        for reason in reasons:
+            assert reason not in rendered
+        assert "_" not in json.dumps([f["state"] for f in detail["feeds"]])

@@ -15,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-29    | Ralph (Rex)  | Initial implementation (US-394 F-103 shutdown splash)
+# 2026-10-23    | Rex (US-883-a) | The payload gains step (null for grace).
+# 2026-10-23    | Rex (US-883-b) | The payload gains sync (null until a drain pass).
 # ================================================================================
 ################################################################################
 
@@ -58,6 +60,84 @@ def test_buildShutdownState_pinnedSchema_hasExactKeys():
         "tRemainingS": 5.0,
         "reason": "ignition_off",
         "ts": _NOW,
+        "step": None,
+        "sync": None,
+    }
+
+
+def test_buildShutdownState_carriesTheSyncProgress():
+    """
+    Given: sync progress {waitingAtKeyOff, confirmed} from the acked marks (US-883-b)
+    When:  the payload is built
+    Then:  it carries a copy of that sync beside the step
+    """
+    sync = {"waitingAtKeyOff": 400, "confirmed": 250}
+    state = buildShutdownState(
+        PHASE_FLUSHING,
+        tGraceStartedAtIso=_GRACE_START,
+        tGraceTotalS=7.0,
+        tRemainingS=0.0,
+        reason=DEFAULT_REASON,
+        nowIso=_NOW,
+        step={"index": 2, "of": 5, "name": "drain"},
+        sync=sync,
+    )
+    assert state["sync"] == {"waitingAtKeyOff": 400, "confirmed": 250}
+    assert state["sync"] is not sync
+
+
+def test_emitter_writesTheSync(tmp_path):
+    """The emit callable writes the sync it is handed; without one, sync is null."""
+    emit = makeShutdownPhaseEmitter(str(tmp_path), nowIsoFn=lambda: _NOW)
+    target = tmp_path / SHUTDOWN_STATE_FILENAME
+
+    emit(PHASE_FLUSHING, tGraceStartedAtIso=_GRACE_START, tGraceTotalS=7.0,
+         tRemainingS=0.0, reason=DEFAULT_REASON)
+    assert json.loads(target.read_text(encoding="utf-8"))["sync"] is None
+
+    emit(PHASE_FLUSHING, tGraceStartedAtIso=_GRACE_START, tGraceTotalS=7.0,
+         tRemainingS=0.0, reason=DEFAULT_REASON,
+         sync={"waitingAtKeyOff": 5, "confirmed": 3})
+    assert json.loads(target.read_text(encoding="utf-8"))["sync"] == {
+        "waitingAtKeyOff": 5, "confirmed": 3,
+    }
+
+
+def test_buildShutdownState_carriesTheCeremonyStep():
+    """
+    Given: a step {index, of, name} from the sequencer (US-883-a)
+    When:  the payload is built
+    Then:  it carries that step as given, beside the unchanged spec §6 keys
+    """
+    step = {"index": 2, "of": 5, "name": "drain"}
+    state = buildShutdownState(
+        PHASE_FLUSHING,
+        tGraceStartedAtIso=_GRACE_START,
+        tGraceTotalS=7.0,
+        tRemainingS=0.0,
+        reason=DEFAULT_REASON,
+        nowIso=_NOW,
+        step=step,
+    )
+    assert state["phase"] == "flushing"
+    assert state["step"] == {"index": 2, "of": 5, "name": "drain"}
+    assert state["step"] is not step
+
+
+def test_emitter_writesTheStep(tmp_path):
+    """The emit callable writes the step it is handed; grace writes step null."""
+    emit = makeShutdownPhaseEmitter(str(tmp_path), nowIsoFn=lambda: _NOW)
+    target = tmp_path / SHUTDOWN_STATE_FILENAME
+
+    emit(PHASE_GRACE, tGraceStartedAtIso=_GRACE_START, tGraceTotalS=7.0,
+         tRemainingS=7.0, reason=DEFAULT_REASON)
+    assert json.loads(target.read_text(encoding="utf-8"))["step"] is None
+
+    emit(PHASE_FLUSHING, tGraceStartedAtIso=_GRACE_START, tGraceTotalS=7.0,
+         tRemainingS=0.0, reason=DEFAULT_REASON,
+         step={"index": 1, "of": 3, "name": "shed"})
+    assert json.loads(target.read_text(encoding="utf-8"))["step"] == {
+        "index": 1, "of": 3, "name": "shed",
     }
 
 

@@ -204,6 +204,15 @@
 #                           alone; ACTIVE_HOME continues on the detector read.
 #                           stateForSync's wait is bounded by the whole
 #                           observation and reads UNKNOWN on timeout.
+# 2026-10-23    | Rex (US-883-a) | The shutdown-state ceremony step: holdDueFn
+#                           (the hold task's own two gates) plans the hold, and
+#                           announceStep / StepAnnouncedTask let the drain close,
+#                           custody and the hold publish their step through the
+#                           sequencer's one emit seam (enterStep).
+# 2026-10-23    | Rex (US-883-b) | The shutdown-state sync progress: ShutdownSyncProgress
+#                           snapshots at the sync run's start (keyOffSnapshotFn) and
+#                           publishes after each drain pass (_buildRunSync passDoneFn)
+#                           through ShutdownSequencer.publishSync.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -248,6 +257,7 @@ from src.common.time.helper import utcIsoNow  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import (  # noqa: E402
+    AT_HOME_STATE_NAMES,
     HomeNetworkDetector,
     HomeNetworkState,
     SweepResult,
@@ -262,6 +272,11 @@ from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
 from src.pi.power.power_source_pubsub import (  # noqa: E402
     POWER_SOURCE_FILENAME,
     publishPowerSource,
+)
+from src.pi.power.power_watch.ceremony import (  # noqa: E402
+    STEP_CUSTODY,
+    STEP_DRAIN_CLOSE,
+    STEP_MONTHLY_TEST_HOLD,
 )
 from src.pi.power.power_watch.contract import OutcomeKind  # noqa: E402
 from src.pi.power.power_watch.controller import (  # noqa: E402
@@ -305,6 +320,7 @@ from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
 )
 from src.pi.sync.backlog import SyncBacklog, countOutstandingRows  # noqa: E402
 from src.pi.sync.client import SyncClient  # noqa: E402
+from src.pi.sync.shutdown_progress import ShutdownSyncProgress  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -599,6 +615,7 @@ def _buildRunSync(
     *,
     backlogReader=None,
     excludeTables=(),
+    passDoneFn=None,
 ):
     """Adapt SyncClient.forcePush() to the SyncWithServerTask runSync contract.
 
@@ -644,6 +661,10 @@ def _buildRunSync(
             NOTE the backlogReader must exclude the same set, or the loop below
             sees a backlog it is not pushing and keeps spending passes on rows
             that will never move.
+        passDoneFn: US-883-b -- optional zero-arg hook run after EVERY pass
+            that pushed (a failed one too: other tables may have been acked),
+            never per poll. Production passes ``ShutdownSyncProgress.publish``.
+            Guarded: a raise never ends the drain.
     """
 
     def runSync() -> None:
@@ -654,6 +675,11 @@ def _buildRunSync(
             if summary.disabled:
                 logger.info("powerwatch sync: companion service disabled -- no-op")
                 return
+            if passDoneFn is not None:
+                try:
+                    passDoneFn()
+                except Exception as exc:  # noqa: BLE001 -- progress never ends the drain
+                    logger.error("powerwatch sync: pass hook failed (%s) -- ignored", exc)
             if summary.tablesFailed > 0:
                 raise RuntimeError(f"{summary.tablesFailed} table(s) failed to sync after retries")
             if backlogReader is None:
@@ -1272,8 +1298,58 @@ class HomeStateAtLoss:
             return None
 
 
+def announceStep(step: str, hook, enterStep: Callable[[str], None]):
+    """Publish ceremony ``step`` as ``hook`` starts (US-883-a).
+
+    The drain close and custody run inside the sequencer's one
+    ``prePowerOffFn`` slot, so the sequencer cannot see where one ends and the
+    next begins; each announces itself through ``ShutdownSequencer.enterStep``
+    (the one emit seam, never raises). A step off this path's plan publishes
+    nothing.
+
+    Args:
+        step: A ceremony step name (``ceremony.STEP_*``).
+        hook: The zero-arg hook, or None for an unwired one.
+        enterStep: ``ShutdownSequencer.enterStep``.
+
+    Returns:
+        A zero-arg callable that enters the step then runs the hook, or None
+        when ``hook`` is None (so ``composePrePowerOffHooks`` still drops it).
+    """
+    if hook is None:
+        return None
+
+    def _run() -> None:
+        enterStep(step)
+        hook()
+
+    _run.__name__ = getattr(hook, "__name__", step)
+    return _run
+
+
+class StepAnnouncedTask:
+    """A ShutdownTask that publishes its ceremony step as it starts (US-883-a).
+
+    The pipeline runs on its own thread, so the sequencer cannot see a task
+    begin. Same ``name`` as the wrapped task, so ``sequencerBoundedTasks``
+    still matches it; ``run`` is the wrapped task's, after the announce.
+    """
+
+    def __init__(self, task, step: str, enterStep: Callable[[str], None]) -> None:
+        self._task = task
+        self._step = step
+        self._enterStep = enterStep
+        self.name = task.name
+
+    def run(self) -> OutcomeKind:
+        """Announce the step, then run the task."""
+        self._enterStep(self._step)
+        return self._task.run()
+
+
 def buildV1Tasks(
-    syncTask: SyncWithServerTask, holdTask: MonthlyTestHoldTask | None = None
+    syncTask: SyncWithServerTask,
+    holdTask: MonthlyTestHoldTask | StepAnnouncedTask | None = None,
 ) -> list:
     """The ordered V1 ShutdownTask list (the plugin-seam registry, SS-T6).
 
@@ -1733,6 +1809,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
 
+    # US-883-b: the S114 sync bar. Snapshotted at the sync run's start, published
+    # after each drain pass through the sequencer's one shutdown-state writer
+    # (shutdownSequencer is bound below and read at call time).
+    syncProgress = ShutdownSyncProgress(
+        dbPath,
+        busyTimeoutSec=perTaskTimeoutSec,
+        publishFn=lambda sync: shutdownSequencer.publishSync(sync),
+    )
+
     syncTask = SyncWithServerTask(
         # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
         # no HTTP call); at home, or UNKNOWN with no positive AWAY, it drains.
@@ -1744,7 +1829,9 @@ def main(argv: list[str] | None = None) -> int:
             syncClient,
             backlogReader=readDrainBacklog,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+            passDoneFn=syncProgress.publish,
         ),
+        keyOffSnapshotFn=syncProgress.snapshot,
         # US-776-d / US-741 / US-833: the final outcome and the provisional
         # records share the one serialised sink built above.
         writeRecord=syncRecordSink,
@@ -1770,22 +1857,36 @@ def main(argv: list[str] | None = None) -> int:
     # drain floor and a power return still govern it.
     monthlyIntervalDays = int(config["pi"]["batteryHealth"]["monthlyIntervalDays"])
     cellEpochForTest = resolveCellEpoch(config)
-    holdTask = MonthlyTestHoldTask(
-        # Ruling 19: gated on the home state AT THE LOSS (one owner of "at
-        # home": home_detector.AT_HOME_STATE_NAMES), never a sync-outcome proxy.
-        homeStateName=homeStateAtLoss.stateName,
-        isDue=lambda: isMonthlyTestDue(
+
+    def holdIsDue() -> bool:
+        return isMonthlyTestDue(
             dbPath,
             cellEpoch=cellEpochForTest,
             nowIso=utcIsoNow(),
             intervalDays=monthlyIntervalDays,
+        )
+
+    # US-883-a: the hold, the drain close and custody each publish their
+    # ceremony step as they start (the sequencer's enterStep; shutdownSequencer
+    # is bound below and read at call time, like lastDrainEndReason further on).
+    def enterStep(step: str) -> None:
+        shutdownSequencer.enterStep(step)
+
+    holdTask = StepAnnouncedTask(
+        MonthlyTestHoldTask(
+            # Ruling 19: gated on the home state AT THE LOSS (one owner of "at
+            # home": home_detector.AT_HOME_STATE_NAMES), never a sync-outcome proxy.
+            homeStateName=homeStateAtLoss.stateName,
+            isDue=holdIsDue,
+            # The hold snapshots lossIso + the loss generation ONCE at run start and
+            # passes that lossIso to every mark (a stale hold never re-reads it).
+            markOpenDrain=lambda lossIso: markOpenDrainMonthlyTest(dbPath, lossIso=lossIso),
+            lossIso=homeStateAtLoss.lossIso,
+            lossGeneration=homeStateAtLoss.lossGeneration,
+            secondsSinceCut=homeStateAtLoss.secondsSinceLoss,
         ),
-        # The hold snapshots lossIso + the loss generation ONCE at run start and
-        # passes that lossIso to every mark (a stale hold never re-reads it).
-        markOpenDrain=lambda lossIso: markOpenDrainMonthlyTest(dbPath, lossIso=lossIso),
-        lossIso=homeStateAtLoss.lossIso,
-        lossGeneration=homeStateAtLoss.lossGeneration,
-        secondsSinceCut=homeStateAtLoss.secondsSinceLoss,
+        STEP_MONTHLY_TEST_HOLD,
+        enterStep,
     )
 
     # F-103 [A-2]: wire the shutdown-splash phase-emit hook. The sequencer emits
@@ -1812,10 +1913,14 @@ def main(argv: list[str] | None = None) -> int:
     # reports beside the verdict. Hook isolation is kept: an empty slot means
     # custody counts every row.
     ownDrainCloseSlot = OwnDrainCloseSlot()
-    drainCloseFn = buildDrainCloseHook(
-        config=config,
-        upsResolver=lambda: monitor,
-        ownDrainCloseSlot=ownDrainCloseSlot,
+    drainCloseFn = announceStep(
+        STEP_DRAIN_CLOSE,
+        buildDrainCloseHook(
+            config=config,
+            upsResolver=lambda: monitor,
+            ownDrainCloseSlot=ownDrainCloseSlot,
+        ),
+        enterStep,
     )
 
     # US-621 [same placement argument as US-526 Option C]: the custody record
@@ -1829,12 +1934,16 @@ def main(argv: list[str] | None = None) -> int:
     # drain would be silent in its own failure mode. (US-776-a: the sync task
     # is no longer abandoned, but the floor poll can still power off with a
     # pass in flight, and the record must be written then too.)
-    custodyFn = makeSyncCustodyHook(
-        recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
-        backlogReader=readSyncBacklog,
-        edrBacklogReader=readEdrBacklog,
-        ownDrainCloseSlot=ownDrainCloseSlot,
-        ownTrajectoryRows=ownTrajectoryRows,
+    custodyFn = announceStep(
+        STEP_CUSTODY,
+        makeSyncCustodyHook(
+            recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
+            backlogReader=readSyncBacklog,
+            edrBacklogReader=readEdrBacklog,
+            ownDrainCloseSlot=ownDrainCloseSlot,
+            ownTrajectoryRows=ownTrajectoryRows,
+        ),
+        enterStep,
     )
     # US-741: last, and isolated like the others -- a loss whose detector has
     # not answered (the floor fast path) still powers off with UNKNOWN written.
@@ -1904,6 +2013,12 @@ def main(argv: list[str] | None = None) -> int:
         smoothingSec=smoothingSec,
         smoothingPollSec=smoothingPollSec,
         phaseEmitFn=phaseEmitFn,
+        # US-883-a: the hold is a ceremony step only when it will run -- the hold
+        # task's own two gates (at home at the loss, and due), read once when
+        # smoothing confirms. StepAnnouncedTask publishes it when it starts.
+        holdDueFn=lambda: (
+            homeStateAtLoss.stateName() in AT_HOME_STATE_NAMES and holdIsDue()
+        ),
         prePowerOffFn=prePowerOffFn,
         # ⚠️ The loss-observed slot takes ONE callable and already held US-748's
         # heartbeat. Composed with the same per-hook isolation the pre-poweroff

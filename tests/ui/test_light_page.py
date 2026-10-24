@@ -37,6 +37,9 @@
 # 2026-10-23    | Rex (US-878-c) | The width budget covers the 'fixed' status.
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
 #               |              | (9 -> 8).
+# 2026-10-23    | Rex (US-869-a) | MOVED PIN (US-869-a): the fixture set gains
+#               |                | sensor-absent (9 -> 10 cases); the page reads
+#               |                | sensor_absent as 'sensor not found', first.
 # ================================================================================
 ################################################################################
 
@@ -78,6 +81,7 @@ FIXTURE_NAMES = [
     "night-0.6lux", "dusk-22lux", "day-1400lux", "sun-at-limit",
     "config-retuned-boundaries", "light-stale", "light-null", "stop-override",
     "dot-off-curve",
+    "sensor-absent",  # MOVED PIN (US-869-a): the presence-ABSENT case
 ]
 ON_CURVE = ["night-0.6lux", "dusk-22lux", "day-1400lux", "config-retuned-boundaries"]
 
@@ -192,6 +196,9 @@ def test_theFixturesCarryTheCasesTheyAreNamedFor():
     assert (off["light"]["lux"], off["light"]["brightnessLevel"]) == (22.0, 0.75)
     assert _ms(off["now"]) == _ms(off["light"]["ts"]) + (off["autoDim"]["luxStaleSec"] + 1) * 1000
     assert off["autoDim"]["defaultLevel"] == 1.0
+    absent = _fixture("sensor-absent")["light"]
+    assert (absent["lux"], absent["reasons"], absent["unavailableReason"]) == (
+        None, {"lux": "sensor_absent"}, "sensor_absent")
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +354,33 @@ def test_reasons_noPayload_isDashNoGlyph_noLightData_andTheFallbackStatus():
 @pytest.mark.parametrize(("reasons", "text"), [
     ({"lux": "no_reading"}, "no reading"), ({"lux": "at_limit"}, "sensor at limit"),
     ({}, "no reading"), ({"lux": "lens_fogged"}, "lens_fogged"),
+    ({"lux": "sensor_absent"}, "sensor not found"),
 ])
 def test_reasons_oneTable_aMissingCodeIsNoReading_anUnknownOnePaintsAsItself(
     reasons: dict[str, str], text: str
 ):
     light = dict(_fixture("light-null")["light"], reasons=reasons)
     assert _view("light-null", light)["reason"] == text
+
+
+@_NODE_ONLY
+def test_validation_sensorAbsent_isIrisWord_dashNoGlyph_neverTheRawCode():
+    """US-869-a: the sensor-absent fixture reads 'sensor not found', AMBIENT '--'."""
+    v = _view("sensor-absent")
+    assert v["reason"] == "sensor not found"
+    assert v["word"] == {"text": "--", "glyph": None}
+    assert v["ambient"] == {"value": "--", "unit": "", "none": True}
+    assert "sensor_absent" not in json.dumps(
+        {k: v[k] for k in ("reason", "word", "ambient", "status")})
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("luxCode", ["at_limit", "no_reading", None])
+def test_reasons_sensorAbsent_isCheckedFirst(luxCode: Any):
+    """A top-level unavailableReason sensor_absent out-ranks any reasons.lux code."""
+    reasons = {} if luxCode is None else {"lux": luxCode}
+    light = dict(_fixture("sensor-absent")["light"], reasons=reasons)
+    assert _view("sensor-absent", light)["reason"] == "sensor not found"
 
 
 @_NODE_ONLY
@@ -681,6 +709,16 @@ def test_dom_validation_lightNull_dashReasonNoGlyph_defaultStatus():
     assert _text(card, "light-status") == "BRIGHTNESS 100 % (default, no reading)"
     assert not _find(card, lambda n: "light-curve-dot" in _classes(n))
     assert _find(card, lambda n: "light-curve-line" in _classes(n))
+
+
+@_NODE_ONLY
+def test_dom_validation_sensorAbsent_sensorNotFound_dashNoGlyph():
+    """US-869-a: the shipped page paints Iris's word, never the raw code."""
+    card = _card(_run("sensor-absent"))
+    assert _text(card, "light-word-row") == "--"
+    assert "hidden" in _one(card, "light-glyph")["attrs"]
+    assert _text(card, "light-left") == "-- AMBIENT -- sensor not found"
+    assert "sensor_absent" not in " ".join(_leafTexts(card))
 
 
 @_NODE_ONLY
