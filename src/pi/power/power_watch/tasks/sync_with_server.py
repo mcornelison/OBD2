@@ -53,6 +53,8 @@
 # 2026-10-11    | Rex     | US-776-k2: once home is seen, an AWAY poll inside the
 #               |         | JOINING wait keeps waiting; only association (or
 #               |         | UNKNOWN, which drains) or joinWaitSec ends it.
+# 2026-10-23    | Rex (US-883-b) | keyOffSnapshotFn: called once at run start,
+#               |         | the sync bar's key-off snapshot.
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -197,6 +199,7 @@ class SyncWithServerTask:
         nowIsoFn: Callable[[], str] | None = None,
         lossGeneration: Callable[[], int] | None = None,
         writeProvisional: Callable[[SyncOutcomeRecord], None] | None = None,
+        keyOffSnapshotFn: Callable[[], None] | None = None,
     ):
         """Args:
         homeState: Zero-arg home-network read, called once per ``run()``,
@@ -237,6 +240,11 @@ class SyncWithServerTask:
             same file as ``writeRecord`` (the final outcome overwrites it). It
             never sets ``lastOutcome`` and a failing write never stops the run.
             When None, no provisional record is written.
+        keyOffSnapshotFn: US-883-b -- optional zero-arg hook called ONCE at
+            the start of ``run()`` (the pipeline runs after smoothing, so a
+            blip never snapshots). Production passes
+            ``ShutdownSyncProgress.snapshot``: the rows owed at key-off that
+            the sync bar counts down. A raise is logged and the run goes on.
         """
         self._homeState = homeState
         self._runSync = runSync
@@ -254,11 +262,14 @@ class SyncWithServerTask:
         self._nowIso = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._lossGeneration = lossGeneration
         self._writeProvisional = writeProvisional
+        self._keyOffSnapshotFn = keyOffSnapshotFn
 
     def run(self) -> OutcomeKind:
         """Run the CIO sync state machine and record its outcome. Never raises."""
         # M3: a reader mid-run never sees the PREVIOUS run's outcome.
         self.lastOutcome = None
+        # US-883-b: what is owed at key-off, before any pass can move a mark.
+        self._takeKeyOffSnapshot()
         # I1: the loss this run belongs to, read once and kept LOCAL -- a later
         # run on another thread must not be able to rewrite it.
         generation = self._readLossGeneration()
@@ -499,6 +510,15 @@ class SyncWithServerTask:
         except Exception as exc:  # noqa: BLE001 -- never raise; no probe reads as server-down
             logger.warning("powerwatch sync_with_server: probe read failed (%s)", exc)
             return None
+
+    def _takeKeyOffSnapshot(self) -> None:
+        """Run the key-off snapshot hook, if wired. Never raises."""
+        if self._keyOffSnapshotFn is None:
+            return
+        try:
+            self._keyOffSnapshotFn()
+        except Exception as exc:  # noqa: BLE001 -- never raise; progress is not the drain
+            logger.warning("powerwatch sync_with_server: key-off snapshot failed (%s)", exc)
 
     def _readLossGeneration(self) -> int | None:
         """The current loss generation, or None (no source, or it raised). Never raises."""

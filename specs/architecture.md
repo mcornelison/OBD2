@@ -2962,6 +2962,36 @@ announce themselves through `ShutdownSequencer.enterStep` (`__main__.announceSte
 `tests/ui/test_shutdown_phase_list_guard.py` pins `shutdown-state-poll.js`'s phase list
 to it. No step adds a wait: the sequence, its order and its timing are unchanged.
 
+**The sync progress (US-883-b, Sprint 113, Atlas O3/E1, Rule 13 gaps 2-3).**
+`shutdown-state` also carries `sync: {waitingAtKeyOff, confirmed}` for the S114 sync bar,
+built by `ShutdownSyncProgress` in `src/pi/sync/shutdown_progress.py`. **Counted tables**
+(`countedTables()`, no new list): every delta-sync table (`SYNC_UPDATE_TABLES_PK` included
+-- `drive_summary` and `dtc_log` carry inserts) minus `readSyncHealth`'s `notCounted`
+(`SNAPSHOT_TABLES | snapshotSyncTables()`) minus `SHUTDOWN_DRAIN_EXCLUDED_TABLES`, so an
+EDR-only backlog waits 0. **Snapshot point:** `SyncWithServerTask.run` start
+(`keyOffSnapshotFn`), inside the pipeline, so after smoothing and a blip never
+snapshots. Per counted table it records the marks at that moment, `keyOffId = MAX(pk)`
+and, where the table has the column, `keyOffModified = MAX(_sync_modified_at)`
+(`sync_log.getKeyOffBounds`). The **snapshot set** is the rows `_deltaPredicate` selects
+under those marks, bounded by `pk <= keyOffId AND (_sync_modified_at IS NULL OR <=
+keyOffModified)`; `waitingAtKeyOff` is its COUNT summed over the tables -- never an id
+span, ids gap. After each drain pass, `remaining` = the snapshot rows the SAME predicate
+still selects under the acked marks now (`getHighWaterMark` / `getModifiedHighWaterMark`,
+which advance only on the post-commit stored ack), and `confirmed = waitingAtKeyOff -
+remaining`, floored at 0. Both reads are `sync_log.countKeyOffDeltaRows` over
+`_deltaPredicate`: no second definition of outstanding, never a sum of per-push stored
+counts, so a re-sent batch never moves `confirmed`; rows written after the snapshot never
+enter either number. **Emit:** `_buildRunSync`'s `passDoneFn` runs after every pass that
+pushed (a failed pass too -- other tables may have been acked), never per poll, and hands
+the pair to `ShutdownSequencer.publishSync`, which re-writes the current phase through
+`_emitPhase` (the one writer; the step rides along unchanged). `sync` is null until the
+first pass, so it stays null **away from home** (no drain); it is cleared at each loss's
+entry and on `cancelled`, and a pass still running after a cancel publishes nothing. An
+unreadable database publishes nothing rather than 0. **Accepted bias (Atlas, named):** a
+snapshot row UPDATEd again during the drain is re-stamped past `keyOffModified`, leaves the
+bounded set and reads as confirmed early; no OBD read runs during a key-off drain, so the
+dtc_log `last_seen` bump that would cause it does not occur. No wait, timer or budget.
+
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
 A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately

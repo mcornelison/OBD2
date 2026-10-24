@@ -93,6 +93,9 @@
 #                              a drain-floor end reroutes it. enterStep lets the
 #                              wired hooks publish their own step through the
 #                              same _emitPhase. Sequence, order, timing unchanged.
+# 2026-10-23    | Rex (US-883-b) | publishSync: the shutdown sync's progress rides
+#                              every phase write as `sync` (null until a drain
+#                              pass, cleared on cancel), through _emitPhase.
 # ================================================================================
 ################################################################################
 #
@@ -381,6 +384,8 @@ class ShutdownSequencer:
         self._ceremony = CeremonyProgress()
         self._stepLock = threading.RLock()
         self._lastPhase: str | None = None
+        # US-883-b: the shutdown sync's progress, published with every phase write.
+        self._sync: dict | None = None
 
     def _smoothedPowerLost(self) -> bool:
         """Return True only if ``isOnBattery()`` stays True continuously for
@@ -438,7 +443,9 @@ class ShutdownSequencer:
         # and the journal could not see those seconds. Before smoothing so a
         # death during smoothing is still measured.
         self.lastDrainEndReason = None  # a fresh loss owns the reason
-        self._ceremony.reset()  # US-883-a: no step until the path is known
+        with self._stepLock:
+            self._ceremony.reset()  # US-883-a: no step until the path is known
+            self._sync = None  # US-883-b: no sync progress until a drain pass
         self._notifyPowerLossObserved()
 
         # F-103 [A-2]: emit `grace` at T=0 (BEFORE smoothing resolves) so the
@@ -785,6 +792,21 @@ class ShutdownSequencer:
         """
         self._enterStep(name)
 
+    def publishSync(self, sync: dict | None) -> None:
+        """Publish the shutdown sync's progress (US-883-b; best-effort, never raises).
+
+        Called after each drain pass with ``{waitingAtKeyOff, confirmed}``.
+        Re-writes the current phase through ``_emitPhase`` -- the one writer --
+        so the step rides along unchanged. Ignored unless the shutdown is in
+        ``flushing`` or ``powering_off``: a pass still running after a cancel
+        publishes nothing.
+        """
+        with self._stepLock:
+            if self._lastPhase not in (PHASE_FLUSHING, PHASE_POWERING_OFF):
+                return
+            self._sync = None if sync is None else dict(sync)
+            self._emitPhase(self._lastPhase)
+
     def _enterStep(self, name: str, *, phase: str | None = None) -> None:
         """Enter a step, then write it -- with ``phase`` when given, which is
         written whether or not the step was entered."""
@@ -806,18 +828,22 @@ class ShutdownSequencer:
         US-883-a: and the ceremony ``step`` -- None for ``grace`` and
         ``cancelled``, which carry no step (a cancel also ends the plan, so a
         pipeline thread still running publishes nothing after it).
+
+        US-883-b: and ``sync`` -- the last progress ``publishSync`` handed in,
+        None until a drain pass has run; a cancel clears it.
         """
         with self._stepLock:
             if phase in (PHASE_GRACE, PHASE_CANCELLED):
                 if phase == PHASE_CANCELLED:
                     self._ceremony.reset()
+                    self._sync = None
                 step = None
             else:
                 step = self._ceremony.step()
             self._lastPhase = phase
-            self._writePhase(phase, step)
+            self._writePhase(phase, step, self._sync)
 
-    def _writePhase(self, phase: str, step: dict | None) -> None:
+    def _writePhase(self, phase: str, step: dict | None, sync: dict | None = None) -> None:
         """Hand one phase event to ``phaseEmitFn`` (the guarded call)."""
         if self._phaseEmitFn is None:
             return
@@ -829,6 +855,7 @@ class ShutdownSequencer:
                 tRemainingS=self._graceRemainingS(),
                 reason=self._shutdownReason,
                 step=step,
+                sync=sync,
             )
         except Exception as exc:  # noqa: BLE001 -- emit is best-effort, belt+braces
             logger.error(

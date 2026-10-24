@@ -209,6 +209,10 @@
 #                           announceStep / StepAnnouncedTask let the drain close,
 #                           custody and the hold publish their step through the
 #                           sequencer's one emit seam (enterStep).
+# 2026-10-23    | Rex (US-883-b) | The shutdown-state sync progress: ShutdownSyncProgress
+#                           snapshots at the sync run's start (keyOffSnapshotFn) and
+#                           publishes after each drain pass (_buildRunSync passDoneFn)
+#                           through ShutdownSequencer.publishSync.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -316,6 +320,7 @@ from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
 )
 from src.pi.sync.backlog import SyncBacklog, countOutstandingRows  # noqa: E402
 from src.pi.sync.client import SyncClient  # noqa: E402
+from src.pi.sync.shutdown_progress import ShutdownSyncProgress  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -610,6 +615,7 @@ def _buildRunSync(
     *,
     backlogReader=None,
     excludeTables=(),
+    passDoneFn=None,
 ):
     """Adapt SyncClient.forcePush() to the SyncWithServerTask runSync contract.
 
@@ -655,6 +661,10 @@ def _buildRunSync(
             NOTE the backlogReader must exclude the same set, or the loop below
             sees a backlog it is not pushing and keeps spending passes on rows
             that will never move.
+        passDoneFn: US-883-b -- optional zero-arg hook run after EVERY pass
+            that pushed (a failed one too: other tables may have been acked),
+            never per poll. Production passes ``ShutdownSyncProgress.publish``.
+            Guarded: a raise never ends the drain.
     """
 
     def runSync() -> None:
@@ -665,6 +675,11 @@ def _buildRunSync(
             if summary.disabled:
                 logger.info("powerwatch sync: companion service disabled -- no-op")
                 return
+            if passDoneFn is not None:
+                try:
+                    passDoneFn()
+                except Exception as exc:  # noqa: BLE001 -- progress never ends the drain
+                    logger.error("powerwatch sync: pass hook failed (%s) -- ignored", exc)
             if summary.tablesFailed > 0:
                 raise RuntimeError(f"{summary.tablesFailed} table(s) failed to sync after retries")
             if backlogReader is None:
@@ -1794,6 +1809,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
 
+    # US-883-b: the S114 sync bar. Snapshotted at the sync run's start, published
+    # after each drain pass through the sequencer's one shutdown-state writer
+    # (shutdownSequencer is bound below and read at call time).
+    syncProgress = ShutdownSyncProgress(
+        dbPath,
+        busyTimeoutSec=perTaskTimeoutSec,
+        publishFn=lambda sync: shutdownSequencer.publishSync(sync),
+    )
+
     syncTask = SyncWithServerTask(
         # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
         # no HTTP call); at home, or UNKNOWN with no positive AWAY, it drains.
@@ -1805,7 +1829,9 @@ def main(argv: list[str] | None = None) -> int:
             syncClient,
             backlogReader=readDrainBacklog,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+            passDoneFn=syncProgress.publish,
         ),
+        keyOffSnapshotFn=syncProgress.snapshot,
         # US-776-d / US-741 / US-833: the final outcome and the provisional
         # records share the one serialised sink built above.
         writeRecord=syncRecordSink,

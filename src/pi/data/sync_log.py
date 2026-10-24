@@ -100,6 +100,10 @@
 #                               updateSnapshotCursor) -- "data last STORED by
 #                               the server" -- + ensureLastOkSchema migration +
 #                               getLastOkAt (the read; never migrates).
+# 2026-10-23    | Rex (US-883-b) | getKeyOffBounds + countKeyOffDeltaRows: the
+#                               shutdown sync's key-off snapshot set, counted
+#                               through _deltaPredicate (no second definition
+#                               of outstanding).
 # ================================================================================
 ################################################################################
 
@@ -164,12 +168,14 @@ __all__ = [
     'LAST_OK_AT_COLUMN',
     'clearQuarantine',
     'countDeltaRows',
+    'countKeyOffDeltaRows',
     'ensureLastOkSchema',
     'ensureQuarantineSchema',
     'ensureSnapshotSyncSchema',
     'ensureSyncModifiedAtSchema',
     'getDeltaRows',
     'getHighWaterMark',
+    'getKeyOffBounds',
     'getLastOkAt',
     'getModifiedHighWaterMark',
     'getQuarantineState',
@@ -630,6 +636,108 @@ def countDeltaRows(
         f"SELECT COUNT(*) FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
         f"WHERE {whereSql}",
         whereParams,
+    ).fetchone()
+    return int(row[0])
+
+
+def getKeyOffBounds(
+    conn: sqlite3.Connection,
+    tableName: str,
+) -> tuple[int | None, str | None]:
+    """Return ``(MAX(pk), MAX(_sync_modified_at))`` for ``tableName`` (US-883-b).
+
+    The upper bounds of the shutdown sync's key-off snapshot: a row above
+    either one was written (or re-stamped) after the snapshot and never joins
+    it.
+
+    Args:
+        conn: Open sqlite3 connection.
+        tableName: Must be a member of :data:`DELTA_SYNC_TABLES`.
+
+    Returns:
+        ``(keyOffId, keyOffModified)``. ``keyOffId`` is None for an empty
+        table; ``keyOffModified`` is None when the table has no
+        ``_sync_modified_at`` column or no row carries a value in it.
+
+    Raises:
+        ValueError: If ``tableName`` is not a delta table.
+    """
+    _validateDeltaTable(tableName)
+    pkColumn = PK_COLUMN[tableName]
+    maxId = conn.execute(
+        f"SELECT MAX({pkColumn}) FROM {tableName}"  # noqa: S608 -- whitelisted identifiers
+    ).fetchone()[0]
+    maxModified = None
+    if _hasModifiedAtColumn(conn, tableName):
+        maxModified = conn.execute(
+            f"SELECT MAX({SYNC_MODIFIED_AT_COLUMN}) FROM {tableName}"  # noqa: S608
+        ).fetchone()[0]
+    return (None if maxId is None else int(maxId), maxModified)
+
+
+def countKeyOffDeltaRows(
+    conn: sqlite3.Connection,
+    tableName: str,
+    *,
+    keyOffLastId: int,
+    keyOffLastModifiedAt: str | None,
+    keyOffId: int,
+    keyOffModified: str | None,
+    lastId: int | None = None,
+    lastModifiedAt: str | None = None,
+) -> int:
+    """Count the key-off snapshot set, or the part of it still owed (US-883-b).
+
+    The snapshot set is the rows :func:`_deltaPredicate` selected with the marks
+    AT key-off, bounded by ``pk <= keyOffId`` and, where the table has the
+    column, ``_sync_modified_at IS NULL OR <= keyOffModified``. It is a COUNT,
+    never an id span: ids gap (an ignored insert still advances AUTOINCREMENT).
+
+    With ``lastId`` given, only the snapshot rows that STILL match the same
+    predicate under the marks now are counted -- the snapshot rows the server
+    has not acked yet. One predicate for both reads, so the published
+    progress can never disagree with what a push would send.
+
+    Args:
+        conn: Open sqlite3 connection.
+        tableName: Must be a member of :data:`DELTA_SYNC_TABLES`.
+        keyOffLastId: The table's id mark at the snapshot.
+        keyOffLastModifiedAt: Its modified_at mark at the snapshot, or None.
+        keyOffId: ``MAX(pk)`` at the snapshot (:func:`getKeyOffBounds`).
+        keyOffModified: ``MAX(_sync_modified_at)`` at the snapshot, or None
+            (then only never-modified rows are in the set).
+        lastId: The id mark now; None counts the whole snapshot set.
+        lastModifiedAt: The modified_at mark now, or None.
+
+    Returns:
+        The number of rows.
+
+    Raises:
+        ValueError: If ``tableName`` is not a delta table.
+    """
+    _validateDeltaTable(tableName)
+    pkColumn = PK_COLUMN[tableName]
+    snapWhere, snapParams = _deltaPredicate(
+        conn, tableName, keyOffLastId, keyOffLastModifiedAt
+    )
+    clauses = [f"({snapWhere})", f"{pkColumn} <= ?"]
+    params: list[Any] = [*snapParams, int(keyOffId)]
+    if _hasModifiedAtColumn(conn, tableName):
+        if keyOffModified is None:
+            clauses.append(f"{SYNC_MODIFIED_AT_COLUMN} IS NULL")
+        else:
+            clauses.append(
+                f"({SYNC_MODIFIED_AT_COLUMN} IS NULL OR {SYNC_MODIFIED_AT_COLUMN} <= ?)"
+            )
+            params.append(keyOffModified)
+    if lastId is not None:
+        nowWhere, nowParams = _deltaPredicate(conn, tableName, lastId, lastModifiedAt)
+        clauses.append(f"({nowWhere})")
+        params.extend(nowParams)
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+        f"WHERE {' AND '.join(clauses)}",
+        params,
     ).fetchone()
     return int(row[0])
 
