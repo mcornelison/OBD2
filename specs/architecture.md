@@ -2914,7 +2914,7 @@ a preceding `flushing` (honest instrument — no flush happened).
 failure (or a hook that raises) is logged but **NEVER blocks shutdown progress** —
 the emitter closure catches, and the sequencer's `_emitPhase` wraps the call site
 belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
-`tGraceTotalS`, `tRemainingS`, `reason`, `ts`) is written atomically to
+`tGraceTotalS`, `tRemainingS`, `reason`, `ts`, and since US-883-a `step`, below) is written atomically to
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
 
@@ -2937,6 +2937,30 @@ fires on the first `shutdown-state` write and the kiosk renders the countdown.
   `load_shed` imports it as `src.pi.ops.unit_manifest` (powerwatch's prefix); the manifest
   is stdlib-only, so powerwatch cannot pull in the display chain. Default value unchanged:
   `('eclipse-dashboard',)`.
+
+**The ceremony step (US-883-a, Sprint 113, Atlas D1/D2).** `shutdown-state` also
+carries `step: {index, of, name}`. The names come from ONE constant,
+`CEREMONY_ORDER = ('shed', 'drain', 'drain close', 'custody', 'poweroff')` in
+`src/pi/power/power_watch/ceremony.py` (promoted from
+`test_shutdown_ceremony_guard.py`, which now imports it), plus `monthly_test_hold`
+(the hold task's own name) on a path where the hold is due. `ceremonySteps()` is the
+plan per path and `of` is the steps **this** path runs: normal 5, 6 with the hold
+(after the drain); the VCELL fast path 3 (no drain, no drain close). The plan is fixed
+when smoothing confirms, the hold read once through the OPTIONAL `holdDueFn` (main()
+wires the hold task's own two gates: home state at the loss in `AT_HOME_STATE_NAMES`,
+and `isMonthlyTestDue`). When a drain-floor read ends the drain, the plan is rerouted
+to the fast path: the steps entered stay, and `of` = steps entered + steps remaining
+(shed 1/5, drain 2/5, custody 3/4, poweroff 4/4). `index` only moves forward and never
+exceeds `of`; a step not ahead on the plan publishes nothing (the fast path's drain
+close). `grace` and `cancelled` carry `step: null`, and a cancel ends the plan. **One
+writer:** every step goes through the sequencer's `_emitPhase` into
+`makeShutdownPhaseEmitter` / `buildShutdownState`; the steps the sequencer cannot see
+(the hold inside the pipeline, the drain close and custody inside `prePowerOffFn`)
+announce themselves through `ShutdownSequencer.enterStep` (`__main__.announceStep`,
+`StepAnnouncedTask`). A step write re-writes the current phase, so `flushing` and
+`powering_off` may be written more than once; `VALID_PHASES` is unchanged and
+`tests/ui/test_shutdown_phase_list_guard.py` pins `shutdown-state-poll.js`'s phase list
+to it. No step adds a wait: the sequence, its order and its timing are unchanged.
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
