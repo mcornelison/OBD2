@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.12",
-  "theme": "V0.30 System page and Settings",
-  "description": "Pi-only (server unchanged since V0.30.6). Sprint 110 (#131): System page rebuilt (verdict line, OBD chain, DATA, WIFI and UPS rows), Settings page, US-878-c. Iris UIDEV-014 (#130): boot/shutdown design refresh, specs only."
+  "version": "V0.30.13",
+  "theme": "V0.30 labwc switch groundwork + boot screen",
+  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 113 (#132): Plymouth Eclipse boot theme + quiet boot line (US-885), kiosk starts on a readiness event via a latch target, no sleep-polls (US-651-a), shutdown-state step + sync progress (US-883-a/b), sensor-absent and capture-health reasons (US-869-a/b). Pi stays x11."
 }
