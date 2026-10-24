@@ -1,0 +1,11 @@
+# US-651-a (Sprint 113): X11-mode readiness event. Installed to
+# /etc/xdg/autostart/ in x11 mode ONLY by eclipse-display-mode, with __PI_UID__
+# rendered from `id -u $KIOSK_USER`. It runs inside the rpd-x autologin
+# session, so only after X auth is usable, and writes the ONE marker that
+# eclipse-x-ready.path watches. /run/user/<uid> is a per-session tmpfs, so the
+# marker never outlives the session.
+[Desktop Entry]
+Type=Application
+Name=Eclipse kiosk X ready
+NoDisplay=true
+Exec=/usr/bin/touch /run/user/__PI_UID__/eclipse-x-ready

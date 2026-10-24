@@ -24,6 +24,8 @@
 #               |              | and dry-run session-path tests added. The
 #               |              | compositor unit-content and socket-wait tests
 #               |              | retired with deploy/eclipse-compositor.service.
+# 2026-10-24    | Rex (US-651-a) | MOVED PIN (US-651-a): splash-boot.wayland is
+#               |              | WantedBy no target; the kiosk start latch pulls it.
 # ================================================================================
 ################################################################################
 
@@ -223,9 +225,12 @@ def test_waylandUnit_noLongerOrdersAfterGraphicalTarget(unit: Path):
     assert "graphical.target" not in _words(text, "Unit", "After")
 
 
-def test_splashBootWayland_keepsGraphicalTargetOnlyAsItsPullIn():
+def test_splashBootWayland_isPulledInByNoTarget():
+    """MOVED PIN (US-651-a): WantedBy=graphical.target is gone too -- the latch
+    eclipse-kiosk-start.target, started by eclipse-kiosk-socket.path, pulls
+    splash-boot in once per boot."""
     text = WAYLAND_UNITS[1].read_text(encoding="utf-8")
-    assert _values(text, "Install", "WantedBy") == ["graphical.target"]
+    assert _values(text, "Install", "WantedBy") == []
     for key in ("After", "Wants", "Requires", "BindsTo"):
         assert "graphical.target" not in _words(text, "Unit", key), f"{key}= still names graphical.target"
 

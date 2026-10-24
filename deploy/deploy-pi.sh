@@ -219,6 +219,9 @@ sync_tree() {
             --include=deploy/eclipse-*.service \
             --include=deploy/eclipse-*.timer \
             --include=deploy/eclipse-*.conf \
+            --include=deploy/eclipse-*.path \
+            --include=deploy/eclipse-*.target \
+            --include=deploy/eclipse-*.desktop \
             --include=deploy/orphan-cleanup.* \
             --include=deploy/rfcomm-bind.service \
             --include=deploy/journald-persistent.conf \
@@ -2305,10 +2308,19 @@ step_install_ui_kiosk_units() {
     #
     # Idempotent (the installers are idempotent; the V-3 chromium substitution is
     # deterministic).  A-9
-    # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs +
-    # ENABLES the units; the splash renders at the NEXT boot (WantedBy=graphical.target),
-    # so the step does not thrash the live screen mid-deploy.  Runs AFTER the asset +
-    # state-server steps so the served assets + backend are already in place.
+    # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs
+    # the units; the splash renders at the NEXT boot, so the step does not thrash
+    # the live screen mid-deploy.  Runs AFTER the asset + state-server steps so the
+    # served assets + backend are already in place.
+    #
+    # US-651-a: the kiosk starts on a readiness EVENT, never a sleep-poll.  After
+    # the kits, `eclipse-display-mode trigger` (run from the synced tree, so it
+    # needs no wrapper yet) installs the latch eclipse-kiosk-start.target and
+    # BOTH .path units every deploy and enables only the mode's .path (and, in
+    # x11, the autostart entry that writes its marker).  It edits no lightdm and
+    # never reboots, and it starts nothing: the .path takes effect at the next
+    # boot.  KIOSK_USER is the deploy user, so its `id -u` is the uid the kits
+    # rendered into the units.  The three units are then checked on the Pi.
     #
     # US-649-a: /etc/eclipse/display-mode is the ONLY authority for the session
     # forced into the installers (kiosk_mode_resolver; absent => x11).  Detecting
@@ -2318,6 +2330,7 @@ step_install_ui_kiosk_units() {
     echo "--- Step: Installing F-103/F-092 chromium kiosk units (splash + dashboard) ---"
     local splashKit="src/pi/ui/splash/install.sh"
     local dashKit="src/pi/ui/dashboard/install.sh"
+    local modeCmd="deploy/eclipse-display-mode.sh"
     if [ ! -f "$REPO_ROOT/$splashKit" ] && [ ! -f "$REPO_ROOT/$dashKit" ]; then
         echo "WARN: UI kit installers not found under $REPO_ROOT/src/pi/ui -- skipping kiosk-unit install (A-9)." >&2
         return 0
@@ -2337,6 +2350,7 @@ printf '%s' \"\$SESS\"")"
         fi
         echo "DRY-RUN would: (kit installers' V-3 check substitutes the real chromium path into ExecStart -- no symlink shim; US-428)"
         echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=${resolved} _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
+        echo "DRY-RUN would: sudo KIOSK_USER=${PI_USER} bash ${PI_PATH}/${modeCmd} trigger (latch + both .path units; enables the ${resolved} .path only; no reboot)"
         return 0
     fi
     remote "
@@ -2397,7 +2411,22 @@ printf '%s' \"\$SESS\"")"
         else
             echo 'WARN: dashboard-pi/install.sh absent on Pi -- skipped (A-9).' >&2
         fi
-        echo 'Kiosk units in place; the splash renders at the next boot (WantedBy=graphical.target).'
+
+        # (4) US-651-a: the kiosk start trigger for the mode-file session.
+        MODE_CMD='${PI_PATH}/${modeCmd}'
+        if [ -f \"\$MODE_CMD\" ]; then
+            sudo bash -c \"KIOSK_USER=${PI_USER} bash '\$MODE_CMD' trigger\" \
+                && echo 'kiosk start trigger applied.' \
+                || echo 'WARN: eclipse-display-mode trigger failed -- deploy continues (A-9); the kiosk will not start at boot.' >&2
+        else
+            echo 'WARN: ${modeCmd} absent on Pi -- kiosk start trigger skipped (A-9).' >&2
+        fi
+        for UNIT in /etc/systemd/system/eclipse-kiosk-start.target \
+                    /etc/systemd/system/eclipse-kiosk-socket.path \
+                    /etc/systemd/system/eclipse-x-ready.path; do
+            sudo test -f \"\$UNIT\" || echo \"WARN: \$UNIT not installed -- the kiosk start trigger is incomplete.\" >&2
+        done
+        echo 'Kiosk units in place; the splash renders at the next boot (the mode .path starts it).'
     "
 }
 

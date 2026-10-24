@@ -2386,16 +2386,50 @@ quit.
   one inert keybind and one Client-context mousebind exist only because labwc
   loads its stock bindings when either list is empty) and an EMPTY `autostart`.
   Never `/etc/xdg/labwc` or `~/.config/labwc`.
-- **Chromium waits for the socket, not for a unit:** the three `.wayland` units
-  (dashboard, splash-boot, splash-grace) order `After=display-manager.service`,
-  bind to no display unit, and gate on an `ExecStartPre=` that waits for the
-  socket `/run/user/__PI_UID__/wayland-0` (150 polls of 0.2 s, the 30 s budget of
-  the PR #106 X11 gate), then fails loud. Ordering is no guarantee of readiness;
-  the socket test is. They still do not order after `graphical.target` (that
-  queued the kiosk behind multi-user, 18.73 s on boot 7c6aafaa); splash-boot keeps
-  `WantedBy=graphical.target` only as its pull-in. The `.x11` units are unchanged.
+- **The kiosk starts on a readiness event, never a sleep-poll (US-651-a, Sprint
+  113; CIO 2026-10-23 no timed waits; Atlas RULED 2026-10-24).** No unit on the
+  kiosk start path sleeps, loops or carries a time budget; the old 150 x 0.2 s
+  (30 s) gates are gone in both modes.
+  - **The trigger.** A `PathExists=` .path starts the LATCH
+    `deploy/eclipse-kiosk-start.target` (`Wants=splash-boot.service`, no
+    `[Service]`, no `[Install]`, default dependencies on). Wayland:
+    `deploy/eclipse-kiosk-socket.path` watches `/run/user/<uid>/wayland-0`. X11:
+    `deploy/eclipse-x-ready.path` watches `/run/user/<uid>/eclipse-x-ready`, a
+    marker written by `deploy/eclipse-x-ready.desktop` (`/etc/xdg/autostart/`,
+    x11 only), which runs inside the rpd-x autologin session and so only after
+    the xhost grant -- the 10-16 "Authorization required" race cannot recur.
+    Both .path units are `WantedBy=graphical.target`; exactly one is enabled.
+  - **Why a latch.** systemd.path(5) re-checks a `PathExists=` path when the unit
+    it triggered goes inactive and starts it again. wayland-0 and the marker
+    persist all session, so a .path naming splash-boot would re-show the splash
+    over the dashboard after every hand-off. The latch is a target: it has no
+    process, so it cannot hang or fail, and once reached it stays active until
+    shutdown (implicit `Conflicts=shutdown.target`), so the splash starts once
+    per boot, as `WantedBy=graphical.target` did before. It is a target, not a
+    oneshot `.service`, so tests/lint's oneshot start-timeout rule has nothing
+    to bound and the no-timer rule holds (Atlas RULED 2026-10-24, option c).
+    `Wants=` is weak: splash-boot's `OnSuccess=` / `OnFailure=` still hand off to
+    `eclipse-dashboard.service` unchanged. No unit names `Unit=splash-boot.service`.
+  - **One-shot checks.** splash-boot has no `[Install]` in either mode. The
+    `.wayland` units (dashboard, splash-boot, splash-grace) run ONE
+    `ExecStartPre=/usr/bin/test -S /run/user/__PI_UID__/wayland-0`; the `.x11`
+    splash-boot runs ONE `ExecStartPre=/usr/bin/xset q`. A failed check fails the
+    unit at once (splash-boot's `OnFailure=` brings up the dashboard). The
+    `.wayland` units still order `After=display-manager.service` and never after
+    `graphical.target` (that queued the kiosk behind multi-user, 18.73 s on boot
+    7c6aafaa).
+  - **Install + switch.** `eclipse-display-mode trigger` renders the latch and
+    BOTH .path units (and, in x11, the autostart entry) with the kiosk uid,
+    enables only the mode's .path, disables the other only when `systemctl
+    is-enabled` says it is enabled, edits no lightdm, starts nothing and never
+    reboots; `step_install_ui_kiosk_units` runs it every deploy after the kits
+    and checks the three units landed. An `x11|wayland` switch runs the same swap.
+    **One uid source:** `id -u $KIOSK_USER`, the kit installers' own derivation;
+    the desk-only `KIOSK_UID` override is forced into the kits too. The splash
+    kit runs `systemctl disable splash-boot.service` every install, removing the
+    `graphical.target.wants` link older installs left on the car.
 - **splash-boot `OnFailure=eclipse-dashboard.service`**, as on X11 (PR #106): a
-  splash that fails (the socket gate timed out, or chromium died) still brings up
+  splash that fails (the one-shot readiness check failed, or chromium died) still brings up
   the dashboard. The units stay systemd units, so the kiosk watchdog, panel
   liveness, load shed and polkit (all keyed on `KIOSK_UNIT`) are unchanged.
 - **The power key** (CIO 2026-10-16: a clean shutdown):
@@ -6045,9 +6079,9 @@ step detects the **ACTIVE graphical `seat0` session** type (x11|wayland) on the 
 passes it via `{SPLASH,DASHBOARD}_FORCE_SESSION`; if it genuinely can't be determined
 it **WARN + skips** (never guesses — a wrong X11-vs-Wayland guess is the D-3
 black-screen bug). **A-9 posture throughout:** an absent kit/installer WARNs and the
-deploy continues; the step never BLOCKs. The units are installed + **enabled** (splash)
-so the splash renders at the **next boot** (`WantedBy=graphical.target`) — the step does
-not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
+deploy continues; the step never BLOCKs. The units are installed and the mode's start
+.path is enabled by `eclipse-display-mode trigger` (US-651-a), so the splash renders at
+the **next boot** — the step does not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
 (V-3 substitution + fail-loud + step assertions) and the `deploy-pi.sh` `--dry-run`
 smoke test.
 

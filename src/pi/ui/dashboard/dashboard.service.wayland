@@ -98,7 +98,7 @@ Description=Eclipse OBD carousel dashboard kiosk (Wayland)
 # US-649-c (design A, CIO 2026-10-16): labwc (chromium on the Pi has no DRM
 # platform of its own) runs inside lightdm's own autologin kiosk session, so the
 # display server is display-manager.service; ordered After= it. Readiness of the
-# session's wayland-0 socket is the ExecStartPre gate below. No binding to any
+# session's wayland-0 socket is the ExecStartPre check below. No binding to any
 # display unit: lightdm owns the session. The old ordering after
 # graphical.target stays gone (US-649-b): it queued the kiosk behind multi-user
 # (18.73 s on boot 7c6aafaa) for nothing a Wayland client needs.
@@ -110,11 +110,10 @@ Type=simple
 User=__PI_USER__
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
-# US-649-c: wait for the kiosk session's wayland-0 socket, for at most 30 s
-# (150 x 0.2 s, Atlas design part 3 -- the PR #106 X11 gate's budget); then
-# fail loud. __PI_UID__ is rendered by install.sh's global substitution. $$ is
-# systemd's escape for a shell $.
-ExecStartPre=/bin/sh -c 'i=0; until [ -S /run/user/__PI_UID__/wayland-0 ]; do i=$$((i+1)); if [ "$$i" -ge 150 ]; then echo "dashboard: wayland-0 not up within 30 s" >&2; exit 1; fi; sleep 0.2; done'
+# US-651-a: ONE check that the kiosk session's wayland-0 socket is there, no
+# poll (CIO 2026-10-23, no timed waits); without it the unit fails at once.
+# __PI_UID__ is rendered by install.sh's global substitution.
+ExecStartPre=/usr/bin/test -S /run/user/__PI_UID__/wayland-0
 # US-866 (Atlas 2026-10-16): `--enable-logging=stderr --log-level=0`, as the X11
 # unit has carried since ARCH-014 (ec4c21f0) so UI exceptions reach the
 # journal. This variant was written without it, so in Wayland mode the journal
