@@ -2426,6 +2426,46 @@ quit.
   the decision of record; §11.3 the shape, §11.5 the revert. The ADR itself is
   not edited by Ralph.
 
+#### The power-on WARNING screen: `set-boot-screen.sh` (US-885-b, Sprint 113)
+
+At power-on the panel shows Iris's WARNING image (`specs/assets/boot/warning-480x320.png`,
+PR #130) from the firmware hand-off until lightdm quits Plymouth -- no firmware
+rainbow, no kernel text. **Owner: `deploy/set-boot-screen.sh`**, run by deploy-pi.sh
+`step_set_boot_screen` on every deploy in **both** display modes (lightdm quits
+Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
+
+- **The theme** `deploy/plymouth/eclipse/` (`eclipse.plymouth`, a script-module
+  `eclipse.script` that draws `warning.png` centred on black once, no animation),
+  installed to `/usr/share/plymouth/themes/eclipse/` and made the default with
+  `plymouth-set-default-theme -R eclipse`. With `auto_initramfs=1` the `-R`
+  rebuilds the initramfs and the z50-raspi-firmware hook copies it to
+  `/boot/firmware`; plymouthd.conf carries the choice across kernel updates.
+- **config.txt `disable_splash=1`**, appended section-aware (an `[all]` is opened
+  if the file ends in e.g. `[cm4]`) under a marker comment, unless an effective
+  `disable_splash=1` is already there.
+- **cmdline.txt tokens** `loglevel=3` and `vt.global_cursor_default=0` added,
+  `console=tty1` removed -- through `deploy/lib/cmdline-tokens.sh` (US-885-a), so
+  it and `set-display-mode.sh`'s `video=` pin give their union in either order.
+- **The initramfs** (the one boot-critical file it writes): before EITHER rebuild
+  both `initramfs_2712` and `initramfs8` are copied to a dated
+  `.bak-boot-screen-<stamp>` and cmp-verified (a failed copy or cmp aborts with
+  nothing changed); only the newest such pair is kept, older ones pruned after
+  the new pair verifies; no other `.bak` is touched. A failed `-R` copies both
+  back, cmp-verifies them and exits 3. The theme in place before the first
+  install (plymouthd.conf `Theme=`, `pix` on this Pi) is recorded at
+  `/boot/firmware/eclipse-boot-screen.prior-theme`.
+- **Idempotent:** the backup and `-R` are skipped when plymouthd.conf says
+  `Theme=eclipse`, the installed theme files are byte-identical to the repo's, and
+  `lsinitramfs initramfs_2712` lists `themes/eclipse` (~37 MB of `.bak` per rebuild
+  against 404 MB free on `/boot/firmware`).
+- **Revert:** `sudo bash deploy/set-boot-screen.sh --revert` (independent of display
+  mode) backs up the initramfs pair, runs `plymouth-set-default-theme -R <the
+  recorded prior theme>` (`pix` if there is no record), removes the installed
+  theme and the record, removes its config.txt block and the tokens it added, and
+  puts `console=tty1` back in its original place -- both files byte-identical to
+  before when nothing else edited them. It never restores the initramfs from a
+  `.bak` (a kernel update may have happened in between; `-R` rebuilds it).
+
 #### Panel capture: `eclipse-capture-panel` (US-650)
 
 `eclipse-capture-panel` (`deploy/eclipse-capture-panel.sh`, installed by

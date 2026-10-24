@@ -231,6 +231,8 @@ sync_tree() {
             --include=deploy/labwc/*** \
             --include=deploy/lib/ \
             --include=deploy/lib/*.sh \
+            --include=deploy/plymouth/ \
+            --include=deploy/plymouth/*** \
             --include=deploy/wayland-sessions/ \
             --include=deploy/wayland-sessions/*** \
             --exclude=deploy/obd-server.service \
@@ -261,6 +263,7 @@ sync_tree() {
         # no eclipse-kiosk session to launch.
         # US-885-a: ./deploy/lib rides in ./deploy (set-display-mode.sh sources
         # deploy/lib/cmdline-tokens.sh and exits 1 without it).
+        # US-885-b: ./deploy/plymouth (the eclipse boot theme) rides in ./deploy too.
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude="__pycache__" \
             --exclude="*.pyc" \
@@ -1064,6 +1067,36 @@ step_set_display_mode() {
         return 0
     fi
     remote "sudo bash '${PI_PATH}/deploy/set-display-mode.sh'"
+}
+
+step_set_boot_screen() {
+    # US-885-b / F-139: the power-on WARNING screen. Installs the eclipse
+    # Plymouth theme (deploy/plymouth/eclipse/) and rebuilds the initramfs with
+    # it, sets config.txt disable_splash=1 (no rainbow), and adds loglevel=3 +
+    # vt.global_cursor_default=0 / removes console=tty1 on the boot cmdline
+    # through the shared token helper (so it composes with set-display-mode's
+    # video= pin in either order).
+    #
+    # Runs in BOTH display modes, outside any display-mode branch: lightdm quits
+    # Plymouth in x11 and wayland alike (display-stack ADR 11.3).
+    #
+    # Same posture as step_set_display_mode above: an idempotent standalone
+    # script, re-asserted on EVERY deploy. Idempotence is load-bearing here --
+    # each initramfs rebuild leaves ~37 MB of .bak on /boot/firmware -- so the
+    # script skips the backup and the rebuild when the theme is already the
+    # default, installed byte-identical and in the initramfs. Non-zero means a
+    # refused or failed write, or a failed rebuild (the initramfs is restored
+    # from its backup) -- all of which MUST stop the deploy before a reboot.
+    #
+    # Undo on the Pi with: sudo bash ${PI_PATH}/deploy/set-boot-screen.sh --revert
+    echo "--- Step: Installing the WARNING boot screen + quiet boot line (US-885-b / F-139) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/set-boot-screen.sh"
+        echo "DRY-RUN would verify: plymouthd.conf Theme=eclipse; config.txt disable_splash=1; cmdline.txt loglevel=3 vt.global_cursor_default=0, no console=tty1"
+        echo "DRY-RUN note: takes effect on next reboot; undo with set-boot-screen.sh --revert"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/set-boot-screen.sh'"
 }
 
 step_enable_rtc_charging() {
@@ -2857,6 +2890,13 @@ step_set_gpu_cma
 # reboot. Both touch the display pipeline, so keeping them adjacent keeps the
 # "what did the deploy change about the screen" answer in one place.
 step_set_display_mode
+
+# US-885-b / F-139: the power-on WARNING screen (Plymouth eclipse theme,
+# disable_splash=1, quiet boot tokens). Directly after step_set_display_mode:
+# both edit the boot cmdline through deploy/lib/cmdline-tokens.sh and both take
+# effect at the next boot. Unconditional -- it applies in BOTH display modes
+# (lightdm quits Plymouth in each, ADR 11.3).
+step_set_boot_screen
 
 # US-620 / F-138: enable the Pi 5 RTC backup-battery trickle charger so in-car
 # timestamps are stamped by a real clock instead of the 1970 epoch. Ordered

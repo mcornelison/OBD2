@@ -968,3 +968,58 @@ def test_us885a_deployLibShipsOnBothSyncPaths():
     assert len(tarLists) == 1, tarLists
     assert " ./deploy )" in tarLists[0], tarLists
     assert not [ln for ln in lines if "--exclude" in ln and "deploy/lib" in ln]
+
+
+# ----------------------------------------------------------------------------
+# US-885-b: the power-on WARNING screen step
+# ----------------------------------------------------------------------------
+# step_set_boot_screen runs deploy/set-boot-screen.sh on every deploy, in BOTH
+# display modes (lightdm quits Plymouth in each, ADR 11.3), right after the
+# other boot-line writer. The theme dir must ship on both sync paths.
+# ----------------------------------------------------------------------------
+
+BOOT_SCREEN_STEP = "step_set_boot_screen"
+
+
+def test_us885b_bootScreenStep_definedAndCalledOnceAtTopLevel():
+    """Defined once, called once as an unindented top-level line (no display-mode branch)."""
+    text = _scriptText()
+    lines = _codeLines(text)
+    assert len([ln for ln in lines if ln.startswith(f"{BOOT_SCREEN_STEP}()")]) == 1
+    assert len([ln for ln in lines if ln == BOOT_SCREEN_STEP]) == 1
+    assert f"\n{BOOT_SCREEN_STEP}\n" in text, "the call must sit at column 0, outside any branch"
+
+
+def test_us885b_bootScreenStep_runsAfterSyncTreeAndDisplayMode():
+    """It needs the synced tree, and follows the other boot-line writer."""
+    lines = _codeLines(_scriptText())
+    callIdx = lines.index(BOOT_SCREEN_STEP)
+    assert lines.index("sync_tree") < callIdx
+    assert lines.index("step_set_display_mode") < callIdx
+
+
+def test_us885b_bootScreenStep_dryRunGuardPrecedesRemote():
+    """The DRY_RUN branch returns before the remote call; the remote runs the script under sudo."""
+    body = _stepBody(_scriptText(), BOOT_SCREEN_STEP)
+    dryIdx = body.index("$DRY_RUN")
+    remoteIdx = body.index("remote ")
+    assert dryIdx < remoteIdx
+    assert "return 0" in body[dryIdx:remoteIdx]
+    assert "sudo bash '${PI_PATH}/deploy/set-boot-screen.sh'" in body[remoteIdx:]
+    assert "--retain-splash" not in body
+
+
+def test_us885b_plymouthThemeShipsOnBothSyncPaths():
+    """The rsync whitelist names deploy/plymouth/ recursively; the tar list ships ./deploy whole."""
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/plymouth/ \\" in lines
+    assert "--include=deploy/plymouth/*** \\" in lines
+    assert not [ln for ln in lines if "--exclude" in ln and "plymouth" in ln]
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_us885b_defaultDryRun_printsTheBootScreenStep():
+    """deploy-pi.sh --dry-run prints the set-boot-screen step."""
+    result = _runDeploy("--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "deploy/set-boot-screen.sh" in result.stdout
