@@ -38,6 +38,7 @@ that file for the assertion catalog. The pytest cases below cover both:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -1023,3 +1024,51 @@ def test_us885b_defaultDryRun_printsTheBootScreenStep():
     result = _runDeploy("--dry-run")
     assert result.returncode == 0, result.stderr
     assert "deploy/set-boot-screen.sh" in result.stdout
+
+
+# ----------------------------------------------------------------------------
+# US-651-a: the kiosk start trigger rides the kiosk-units step
+# ----------------------------------------------------------------------------
+# step_install_ui_kiosk_units runs `eclipse-display-mode trigger` after the kit
+# installers (latch + both .path units every deploy, the mode's .path enabled,
+# no lightdm edit, no reboot), then checks the three units landed. The .path and
+# the x11 autostart .desktop must ship on the rsync whitelist; the tar list
+# ships ./deploy whole.
+# ----------------------------------------------------------------------------
+
+KIOSK_UNITS_STEP = "step_install_ui_kiosk_units"
+
+
+def test_us651a_pathAndDesktopShipOnTheRsyncWhitelist():
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/eclipse-*.path \\" in lines
+    assert "--include=deploy/eclipse-*.desktop \\" in lines
+    # The latch is already covered by the eclipse-*.service include.
+    assert "--include=deploy/eclipse-*.service \\" in lines
+
+
+def test_us651a_kioskStep_runsTheTriggerVerbAfterTheKits():
+    body = _stepBody(_scriptText(), KIOSK_UNITS_STEP)
+    remote = body[body.index("remote "):]
+    triggerIdx = remote.index("' trigger")
+    assert remote.index("bash '\\$DSK'") < triggerIdx, "the kits run first"
+    assert "KIOSK_USER=${PI_USER} bash '\\$MODE_CMD' trigger" in remote
+    assert 'local modeCmd="deploy/eclipse-display-mode.sh"' in body
+    for unit in ("eclipse-kiosk-start.service", "eclipse-kiosk-socket.path",
+                 "eclipse-x-ready.path"):
+        assert f"/etc/systemd/system/{unit}" in remote[triggerIdx:], unit
+
+
+def test_us651a_kioskStep_neverStartsOrRebootsTheTrigger():
+    """The .path takes effect at the next boot: nothing is started under a live kiosk."""
+    body = "\n".join(_codeLines(_stepBody(_scriptText(), KIOSK_UNITS_STEP)))
+    assert not re.search(r"systemctl\s+(start|restart|reboot)\b", body)
+    assert "enable --now" not in body
+    assert not re.search(r"\btrigger\s+--", body), "trigger takes no flags here"
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_us651a_defaultDryRun_printsTheTriggerLine():
+    result = _runDeploy("--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "deploy/eclipse-display-mode.sh trigger" in result.stdout

@@ -1,0 +1,26 @@
+# ==============================================================================
+# File:    eclipse-x-ready.path
+# Purpose: X11-mode kiosk start trigger (US-651-a, Atlas RULED X11-ready-event).
+#          Starts the latch eclipse-kiosk-start.service when the autologin
+#          session's autostart entry (eclipse-x-ready.desktop) writes the
+#          marker /run/user/<uid>/eclipse-x-ready. The autostart runs inside
+#          the session, after the xhost grant, so X already accepts the kiosk
+#          user when the splash starts (the 10-16 'Authorization required'
+#          race cannot recur).
+# Author:  Rex (Ralph Agent)
+# Created: 2026-10-24 -- Sprint 113 US-651-a
+#
+# Enabled ONLY in x11 mode; eclipse-display-mode enables exactly one of this
+# and eclipse-kiosk-socket.path. __PI_UID__ is rendered by eclipse-display-mode
+# from `id -u $KIOSK_USER`, as for the autostart entry that writes the marker.
+# ==============================================================================
+
+[Unit]
+Description=Start the kiosk when the X session marks itself ready
+
+[Path]
+PathExists=/run/user/__PI_UID__/eclipse-x-ready
+Unit=eclipse-kiosk-start.service
+
+[Install]
+WantedBy=graphical.target

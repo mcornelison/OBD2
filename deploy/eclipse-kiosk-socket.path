@@ -1,0 +1,24 @@
+# ==============================================================================
+# File:    eclipse-kiosk-socket.path
+# Purpose: WAYLAND-mode kiosk start trigger (US-651-a). Starts the latch
+#          eclipse-kiosk-start.service the moment the kiosk session's labwc
+#          creates its wayland-0 socket -- an event, not a poll (CIO 2026-10-23,
+#          no timed waits).
+# Author:  Rex (Ralph Agent)
+# Created: 2026-10-24 -- Sprint 113 US-651-a
+#
+# Enabled ONLY in wayland mode; eclipse-display-mode enables exactly one of this
+# and eclipse-x-ready.path. __PI_UID__ is rendered by eclipse-display-mode from
+# `id -u $KIOSK_USER` -- the same derivation the kit installers use for the
+# units' XDG_RUNTIME_DIR, so the .path watches the dir the units run in.
+# ==============================================================================
+
+[Unit]
+Description=Start the kiosk when the Wayland session socket appears
+
+[Path]
+PathExists=/run/user/__PI_UID__/wayland-0
+Unit=eclipse-kiosk-start.service
+
+[Install]
+WantedBy=graphical.target

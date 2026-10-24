@@ -40,12 +40,21 @@
 #   KIOSK_MODE_FILE         override the /etc/eclipse/display-mode path
 #   SPLASH_FORCE_CHROMIUM   force the chromium path (empty => simulate "none")
 #   SPLASH_USER_HOME_GLOB   override the /home/* probe glob
+#   SPLASH_ROOT             install under this fixture root instead of / (desk
+#                           tests only; no root needed there)
+#
+# Start trigger (US-651-a): splash-boot is NOT enabled. It has no [Install];
+# eclipse-kiosk-start.service (the latch, started by the mode's .path unit --
+# eclipse-display-mode trigger) pulls it in once per boot. Every install runs
+# `systemctl disable splash-boot.service` so the graphical.target.wants link an
+# older install left on the car is removed (a no-op, exit 0, on a fresh rig).
 # ============================================================
 set -euo pipefail
 shopt -s nullglob
 
-SYSTEMD_DIR="/etc/systemd/system"
-INSTALL_DIR="/opt/splash"
+SPLASH_ROOT="${SPLASH_ROOT:-}"
+SYSTEMD_DIR="$SPLASH_ROOT/etc/systemd/system"
+INSTALL_DIR="$SPLASH_ROOT/opt/splash"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
 
@@ -235,8 +244,8 @@ echo "    Path unit:             splash-grace.path"
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "==> DRY RUN -- no changes made. Would copy assets to $INSTALL_DIR,"
   echo "    substitute User=$PI_USER + uid=$PI_UID + chromium=$CHROMIUM_BIN into"
-  echo "    the unit templates, install the units, daemon-reload, and enable:"
-  echo "    splash-boot.service splash-grace.path"
+  echo "    the unit templates, install the units, daemon-reload, enable"
+  echo "    splash-grace.path and disable splash-boot.service (the latch starts it)"
   echo "    Resolved ExecStart (boot unit):"
   render_unit "$BOOT_VARIANT" | grep -m1 '^ExecStart=' | sed 's/^/      /' || true
   # I-044: print the RESOLVED runtime dir, not just the uid we detected -- the
@@ -248,7 +257,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 # --- real install (root only) -------------------------------------------------
-if [[ $EUID -ne 0 ]]; then
+if [[ -z "$SPLASH_ROOT" && $EUID -ne 0 ]]; then
   echo "ERROR: must be run as root. Try: sudo ./install.sh" >&2
   exit 1
 fi
@@ -275,6 +284,7 @@ echo "==> Sweeping retired units (D-2 splash-shutdown, D-3 original boot)"
 rm -f "$SYSTEMD_DIR/splash-shutdown.service"
 
 echo "==> Installing systemd units ($SESSION_TYPE variants)"
+mkdir -p "$SYSTEMD_DIR"
 install_unit "$BOOT_VARIANT"  "$SYSTEMD_DIR/splash-boot.service"
 install_unit "$GRACE_VARIANT" "$SYSTEMD_DIR/splash-grace.service"
 install -m 0644 "$SCRIPT_DIR/splash-grace.path" "$SYSTEMD_DIR/splash-grace.path"
@@ -283,9 +293,11 @@ echo "==> Reloading systemd"
 systemctl daemon-reload
 
 echo "==> Enabling units (idempotent)"
-systemctl enable splash-boot.service
+# US-651-a: the latch starts splash-boot; this removes an older install's
+# graphical.target.wants link (Atlas fold 1).
+systemctl disable splash-boot.service
 systemctl enable splash-grace.path
 
 echo
-echo "Done. Reboot to see the boot splash:  sudo reboot"
+echo "Done. eclipse-display-mode trigger enables the start .path; reboot to see the splash."
 echo "To uninstall:                          sudo ./uninstall.sh"

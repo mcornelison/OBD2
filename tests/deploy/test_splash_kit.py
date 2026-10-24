@@ -34,6 +34,10 @@
 #               |              | .wayland units carry no BindsTo, one 30 s wayland-0
 #               |              | socket gate (executed under a fake sleep), and
 #               |              | OnFailure on splash-boot only.
+# 2026-10-24    | Rex (US-651-a) | MOVED PIN (US-651-a): the 30 s gates are gone
+#               |              | (CIO 2026-10-23, no timed waits). .wayland units:
+#               |              | one `test -S` check; .x11 splash-boot: one
+#               |              | `xset q`. The socket check runs with no fake sleep.
 # ================================================================================
 ################################################################################
 
@@ -207,21 +211,19 @@ def _directiveValues(unit: str, key: str) -> list[str]:
     return values
 
 
-def test_x11BootVariant_waitsForXAccess_us866():
-    """US-866: the x11 splash waits until X accepts the user, then fails loud.
+def test_x11BootVariant_checksXAccessOnce_us651a():
+    """US-866 / US-651-a: the x11 splash checks ONCE that X accepts the user.
 
-    MEASURED boot 3f8c767d: chromium connected 0.13 s before the autologin
-    session's xhost grant, exited 1, and OnSuccess never started the dashboard.
-    The gate runs as the unit's user with no XAUTHORITY, as chromium connects.
+    MEASURED boot 3f8c767d (US-866): chromium connected 0.13 s before the
+    autologin session's xhost grant, exited 1, and OnSuccess never started the
+    dashboard. MOVED PIN (US-651-a): the 150 x 0.2 s poll is gone -- the start
+    now waits on the eclipse-x-ready marker the session's autostart writes after
+    the grant -- so one `xset q` remains, as the unit's user with no
+    XAUTHORITY, exactly as chromium connects. A failure exits non-zero at once
+    and OnFailure brings up the dashboard.
     """
     unit = _read("splash-boot.service.x11")
-    pre = _directiveValues(unit, "ExecStartPre")
-    assert pre, "splash-boot.service.x11 has no ExecStartPre readiness gate"
-    gate = " ".join(pre)
-    assert "xset q" in gate
-    assert "-ge 150" in gate and "sleep 0.2" in gate  # bounded: 30 s
-    assert "exit 1" in gate  # fails loud, never starts chromium blind
-    assert "$$((i+1))" in gate  # systemd needs $$ for a shell variable
+    assert _directiveLines(unit, "ExecStartPre") == ["/usr/bin/xset q"]
 
 
 def test_x11BootVariant_failedSplashStillStartsDashboard_us866():
@@ -234,9 +236,10 @@ def test_x11BootVariant_failedSplashStillStartsDashboard_us866():
 # ---------------------------------------------------------------------------
 # US-649-c -- design A (CIO 2026-10-16): lightdm's own autologin session hosts
 #             labwc, so the three .wayland kiosk units no longer bind to
-#             eclipse-compositor.service. They order After= the display manager
-#             and gate on the wayland-0 socket for at most 30 s (the PR #106 X11
-#             pattern: 150 x 0.2 s).
+#             eclipse-compositor.service. They order After= the display manager.
+# US-651-a -- MOVED PIN: the 30 s wayland-0 poll is replaced by ONE `test -S`
+#             check (CIO 2026-10-23, no timed waits); eclipse-kiosk-socket.path
+#             starts the kiosk when the socket appears.
 # ---------------------------------------------------------------------------
 
 # Unit name (the template file name minus '.service.wayland') -> template path.
@@ -256,13 +259,8 @@ WAYLAND_KEPT_AFTER = {
 UID_TOKEN_RUNTIME_DIR = "/run/user/__PI_UID__"
 
 
-def _waylandGate(name: str) -> str:
-    """The exact ExecStartPre socket gate the story fixes for ``name``."""
-    return (
-        "/bin/sh -c 'i=0; until [ -S /run/user/__PI_UID__/wayland-0 ]; do i=$$((i+1)); "
-        'if [ "$$i" -ge 150 ]; then echo "' + name + ': wayland-0 not up within 30 s" >&2; '
-        "exit 1; fi; sleep 0.2; done'"
-    )
+# MOVED PIN (US-651-a): one check, the same for all three units.
+WAYLAND_SOCKET_CHECK = "/usr/bin/test -S /run/user/__PI_UID__/wayland-0"
 
 
 def _directiveLines(unit: str, key: str) -> list[str]:
@@ -294,9 +292,9 @@ def test_waylandUnit_ordersAfterTheDisplayManager_us649c(name: str):
 
 @pytest.mark.parametrize("name", sorted(WAYLAND_UNITS))
 def test_waylandUnit_hasExactlyTheOneSocketGate_us649c(name: str):
-    """Exactly one ExecStartPre, the 30 s wayland-0 gate, uid left as the token."""
+    """Exactly one ExecStartPre, the one-shot wayland-0 check, uid left as the token."""
     pre = _directiveLines(WAYLAND_UNITS[name].read_text(encoding="utf-8"), "ExecStartPre")
-    assert pre == [_waylandGate(name)]
+    assert pre == [WAYLAND_SOCKET_CHECK]
     assert "/run/user/1000" not in pre[0]  # rendered by install.sh, never literal
 
 
@@ -311,67 +309,54 @@ def test_waylandUnit_onFailureOnSplashBootOnly_us649c(name: str):
         assert _directiveValues(text, "OnFailure") == []
 
 
-def _runWaylandGate(tmp_path: Path, runtimeDir: Path) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    """Run splash-boot's gate against ``runtimeDir``, ``sleep`` recorded, not slept.
+def _runWaylandCheck(runtimeDir: Path) -> subprocess.CompletedProcess[str]:
+    """Run splash-boot's one-shot socket check against ``runtimeDir``.
 
-    Same technique as tests/deploy/test_compositor_unit.py's socket wait: the
-    template's __PI_UID__ runtime dir is swapped for a temp dir and ``sleep`` is
-    faked (a shell function here, so 150 polls cost no process spawns).
+    The template's __PI_UID__ runtime dir is swapped for a temp dir; the check
+    is run by name (``test``), as the shell resolves it on any box.
     """
     pre = _directiveLines(WAYLAND_UNITS["splash-boot"].read_text(encoding="utf-8"), "ExecStartPre")
-    argv = shlex.split(pre[0].replace("$$", "$"))  # systemd's $$ escape -> $
-    assert argv[:2] == ["/bin/sh", "-c"]
-    script = argv[2]
-    assert UID_TOKEN_RUNTIME_DIR in script
-    script = script.replace(UID_TOKEN_RUNTIME_DIR, runtimeDir.as_posix())
-    log = tmp_path / "sleep.log"
-    fakeSleep = f"sleep() {{ echo \"$1\" >> '{log.as_posix()}'; }}; "
-    result = subprocess.run(
-        ["sh", "-c", fakeSleep + script],
+    argv = shlex.split(pre[0])
+    assert argv[0] == "/usr/bin/test"
+    assert UID_TOKEN_RUNTIME_DIR in argv[-1]
+    argv = ["test", *argv[1:-1], argv[-1].replace(UID_TOKEN_RUNTIME_DIR, runtimeDir.as_posix())]
+    return subprocess.run(
+        ["sh", "-c", shlex.join(argv)],
         capture_output=True,
         text=True,
         encoding="utf-8",
         timeout=60,
         env=dict(os.environ),
     )
-    sleeps = log.read_text(encoding="utf-8").split() if log.exists() else []
-    return result, sleeps
 
 
 @pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
-def test_waylandGate_runsAgainstTheSocket_us649c(tmp_path: Path):
+def test_waylandCheck_runsAgainstTheSocket_us651a(tmp_path: Path):
     """
     Given: a runtime dir without, then with, a wayland-0 socket
-    When:  the splash-boot gate runs (sleep faked)
-    Then:  absent -> exit 1 after 150 checks and 149 sleeps (29.8 s), the
-           message on stderr; present -> exit 0 with no sleep.
+    When:  the splash-boot check runs
+    Then:  absent -> non-zero at once (no retry); present -> exit 0.
 
-    The string increments before it tests, byte-parallel with the X11 gate, so
-    the 150th check exits instead of sleeping (PM ruling 2026-10-19: the string
-    wins over the "150 x 0.2 s" arithmetic). The absent half runs everywhere. The present half needs a real AF_UNIX
-    socket (``-S``, not ``-e``), which a Windows CPython cannot make, so there
-    it is skipped AFTER the absent half has asserted.
+    MOVED PIN (US-651-a): replaces the 150-poll run under a fake sleep. The
+    absent half runs everywhere. The present half needs a real AF_UNIX socket
+    (``-S``, not ``-e``), which a Windows CPython cannot make, so there it is
+    skipped AFTER the absent half has asserted.
     """
-    for sub in ("present", "present-log", "absent", "absent-log"):
+    for sub in ("present", "absent"):
         (tmp_path / sub).mkdir()
 
-    result, sleeps = _runWaylandGate(tmp_path / "absent-log", tmp_path / "absent")
+    result = _runWaylandCheck(tmp_path / "absent")
     assert result.returncode == 1
-    assert "splash-boot: wayland-0 not up within 30 s" in result.stderr
-    assert len(sleeps) == 149
-    assert all(s == "0.2" for s in sleeps)
-    assert abs(sum(float(s) for s in sleeps) - 29.8) < 1e-6
 
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("absent case passed; the socket-present case needs AF_UNIX sockets")
     sock = socket.socket(socket.AF_UNIX)  # type: ignore[attr-defined]
     try:
         sock.bind(str(tmp_path / "present" / "wayland-0"))
-        result, sleeps = _runWaylandGate(tmp_path / "present-log", tmp_path / "present")
+        result = _runWaylandCheck(tmp_path / "present")
     finally:
         sock.close()
     assert result.returncode == 0, result.stderr
-    assert sleeps == []
 
 
 # ---------------------------------------------------------------------------

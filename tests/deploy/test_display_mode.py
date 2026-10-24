@@ -77,15 +77,36 @@ exit 0
 # the real installer would put eclipse-dashboard.service.
 FAKE_SPLASH_KIT = """#!/usr/bin/env bash
 echo "splash session=${SPLASH_FORCE_SESSION-unset} user=${SPLASH_FORCE_USER-unset}" >> "$FAKE_STATE/kits.log"
+echo "splash uid=${SPLASH_FORCE_UID-unset}" >> "$FAKE_STATE/kits.log"
 """
 FAKE_DASH_KIT = """#!/usr/bin/env bash
 echo "dashboard session=${DASHBOARD_FORCE_SESSION-unset} user=${DASHBOARD_FORCE_USER-unset}" >> "$FAKE_STATE/kits.log"
+echo "dashboard uid=${DASHBOARD_FORCE_UID-unset}" >> "$FAKE_STATE/kits.log"
 if [ "$DASHBOARD_FORCE_SESSION" = wayland ]; then
   echo 'Environment=WAYLAND_DISPLAY=wayland-0' > "$KIOSK_SYSTEMD_DIR/eclipse-dashboard.service"
 else
   echo 'Environment=DISPLAY=:0' > "$KIOSK_SYSTEMD_DIR/eclipse-dashboard.service"
 fi
 """
+
+# US-651-a: `id -u mcornelison` answers 1000 on the fake Pi (the kit installers'
+# uid derivation); any other user is unknown, as `id` reports it.
+FAKE_ID = """#!/usr/bin/env bash
+if [ "$1" = -u ] && [ "$2" = mcornelison ]; then echo 1000; exit 0; fi
+echo "id: '$2': no such user" >&2
+exit 1
+"""
+
+# The kiosk start trigger files eclipse-display-mode renders from the tree.
+TRIGGER_FILES = (
+    "eclipse-kiosk-start.service",
+    "eclipse-kiosk-socket.path",
+    "eclipse-x-ready.path",
+    "eclipse-x-ready.desktop",
+)
+SOCKET_PATH = "eclipse-kiosk-socket.path"
+X_READY_PATH = "eclipse-x-ready.path"
+X_READY_DESKTOP = "eclipse-x-ready.desktop"
 
 
 # Today's car (US-649-e acceptance): [Seat:*] autologin-user=mcornelison,
@@ -129,6 +150,10 @@ def rig(tmp_path: Path) -> dict:
               lightdmDir, obdStateDir):
         d.mkdir(parents=True)
     (binDir / "systemctl").write_text(FAKE_SYSTEMCTL, encoding="utf-8", newline="\n")
+    (binDir / "id").write_text(FAKE_ID, encoding="utf-8", newline="\n")
+    (tree / "deploy").mkdir()
+    for name in TRIGGER_FILES:
+        shutil.copyfile(REPO_ROOT / "deploy" / name, tree / "deploy" / name)
     (tree / "src/pi/ui/splash/install.sh").write_text(FAKE_SPLASH_KIT, encoding="utf-8", newline="\n")
     (tree / "src/pi/ui/dashboard/install.sh").write_text(FAKE_DASH_KIT, encoding="utf-8", newline="\n")
     # Production today: X11 kiosk, lightdm is the display manager.
@@ -154,11 +179,15 @@ def rig(tmp_path: Path) -> dict:
         "labwc": labwc,
         "obdState": obdStateDir,
         "stateFile": obdStateDir / STATE_NAME,
+        "autostart": tmp_path / "etc" / "xdg" / "autostart",
     }
 
 
-def _runMode(rig: dict, *args: str) -> subprocess.CompletedProcess:
+def _runMode(rig: dict, *args: str, extraEnv: dict[str, str] | None = None
+             ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    env.pop("KIOSK_UID", None)
+    env["KIOSK_AUTOSTART_DIR"] = _posix(rig["autostart"])
     env["PATH"] = _posix(rig["bin"]) + os.pathsep + env.get("PATH", "")
     env["FAKE_STATE"] = _posix(rig["state"])
     env["KIOSK_MODE_FILE"] = _posix(rig["modeFile"])
@@ -169,6 +198,7 @@ def _runMode(rig: dict, *args: str) -> subprocess.CompletedProcess:
     env["KIOSK_SESSION_FILE"] = _posix(rig["sessionFile"])
     env["KIOSK_LABWC_BIN"] = _posix(rig["labwc"])
     env["KIOSK_STATE_DIR"] = _posix(rig["obdState"])
+    env.update(extraEnv or {})
     return subprocess.run(
         ["bash", _posix(MODE_CMD), *args],
         capture_output=True,
@@ -310,6 +340,152 @@ def test_switch_compositorAbsent_disablesNothing(rig):
     log = _systemctlLog(rig)
     assert not any(ln.startswith("disable") for ln in log), log
     assert "enable lightdm.service" in log
+
+
+# ---- the kiosk start trigger (US-651-a) ---------------------------------------
+
+
+def _enabledPaths(rig: dict) -> list[str]:
+    return [u for u in (SOCKET_PATH, X_READY_PATH) if _enabled(rig, u)]
+
+
+def test_switchX11WaylandX11_exactlyOnePathEnabled_autostartOnlyInX11(rig):
+    """
+    Given: today's car
+    When: x11, then wayland, then x11 (all --no-reboot)
+    Then: after each switch exactly one .path is enabled -- the mode's -- and the
+        autostart entry exists only in x11; the latch and both .path units are
+        installed every time.
+    """
+    expected = {"x11": X_READY_PATH, "wayland": SOCKET_PATH}
+    for mode in ("x11", "wayland", "x11"):
+        result = _runMode(rig, mode, "--no-reboot")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _enabledPaths(rig) == [expected[mode]], mode
+        assert (rig["autostart"] / X_READY_DESKTOP).exists() == (mode == "x11"), mode
+        for unit in ("eclipse-kiosk-start.service", SOCKET_PATH, X_READY_PATH):
+            assert (rig["systemd"] / unit).is_file(), f"{mode}: {unit}"
+
+
+def test_switch_disablesTheOtherPathOnlyWhenEnabled(rig):
+    """wayland -> x11 disables the socket .path; a first x11 switch disables nothing."""
+    first = _runMode(rig, "x11", "--no-reboot")
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert not [ln for ln in _systemctlLog(rig) if ln.startswith("disable")]
+
+    _runMode(rig, "wayland", "--no-reboot")
+    _runMode(rig, "x11", "--no-reboot")
+
+    assert _systemctlLog(rig).count(f"disable {SOCKET_PATH}") == 1
+    assert _systemctlLog(rig).count(f"disable {X_READY_PATH}") == 1
+
+
+def test_trigger_appliesTheModesSwap_noLightdmEditNoKitsNoReboot(rig):
+    """
+    Given: the mode file says wayland, lightdm.conf still holds rpd-x
+    When: eclipse-display-mode trigger
+    Then: the socket .path is enabled, the x-ready one is not, no autostart
+        entry; lightdm.conf, the mode file and the kits are untouched; no reboot.
+    """
+    rig["modeFile"].parent.mkdir(parents=True)
+    rig["modeFile"].write_text("wayland\n", encoding="utf-8")
+    (rig["state"] / f"enabled.{X_READY_PATH}").touch()
+    (rig["autostart"]).mkdir(parents=True)
+    (rig["autostart"] / X_READY_DESKTOP).write_text("stale\n", encoding="utf-8")
+    confBefore = rig["conf"].read_bytes()
+
+    result = _runMode(rig, "trigger")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _enabledPaths(rig) == [SOCKET_PATH]
+    assert not (rig["autostart"] / X_READY_DESKTOP).exists()
+    assert rig["conf"].read_bytes() == confBefore
+    assert rig["modeFile"].read_text(encoding="utf-8") == "wayland\n"
+    assert not (rig["state"] / "kits.log").exists()
+    log = _systemctlLog(rig)
+    assert "reboot" not in log
+    assert not [ln for ln in log if ln.startswith("start")], "nothing is started live"
+    assert not [ln for ln in log if "lightdm" in ln]
+
+
+def test_trigger_absentModeFile_isX11(rig):
+    result = _runMode(rig, "trigger")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _enabledPaths(rig) == [X_READY_PATH]
+    assert (rig["autostart"] / X_READY_DESKTOP).exists()
+
+
+def test_trigger_rendersTheUidFromIdOfTheKioskUser(rig):
+    """The .path names /run/user/<id -u KIOSK_USER>/wayland-0 and starts the latch."""
+    _runMode(rig, "trigger")
+
+    socketPath = (rig["systemd"] / SOCKET_PATH).read_text(encoding="utf-8")
+    assert "PathExists=/run/user/1000/wayland-0\n" in socketPath
+    assert "Unit=eclipse-kiosk-start.service\n" in socketPath
+    assert "__PI_UID__" not in socketPath
+    xReady = (rig["systemd"] / X_READY_PATH).read_text(encoding="utf-8")
+    assert "PathExists=/run/user/1000/eclipse-x-ready\n" in xReady
+
+
+def test_trigger_autostartEntry_writesOnlyTheMarker(rig):
+    _runMode(rig, "trigger")
+
+    desktop = (rig["autostart"] / X_READY_DESKTOP).read_text(encoding="utf-8")
+    execs = [ln for ln in desktop.splitlines() if ln.startswith("Exec")]
+    assert execs == ["Exec=/usr/bin/touch /run/user/1000/eclipse-x-ready"]
+
+
+def test_kioskUidOverride_isHonouredByTheSwapAndTheKits(rig):
+    """
+    Given: KIOSK_UID=4242 (desk override)
+    When: a wayland switch
+    Then: the .path watches /run/user/4242 AND both kits were forced to uid 4242,
+        so the .path and the kiosk units name the same runtime dir.
+    """
+    result = _runMode(rig, "wayland", "--no-reboot", extraEnv={"KIOSK_UID": "4242"})
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    socketPath = (rig["systemd"] / SOCKET_PATH).read_text(encoding="utf-8")
+    assert "PathExists=/run/user/4242/wayland-0\n" in socketPath
+    kits = (rig["state"] / "kits.log").read_text(encoding="utf-8")
+    assert "splash uid=4242" in kits
+    assert "dashboard uid=4242" in kits
+
+
+def test_switch_withoutKioskUid_leavesTheKitsTheirOwnIdDerivation(rig):
+    """Unset KIOSK_UID: the kits get no forced uid -- they run the same `id -u`."""
+    _runMode(rig, "wayland", "--no-reboot")
+
+    kits = (rig["state"] / "kits.log").read_text(encoding="utf-8")
+    assert "splash uid=unset" in kits
+    assert "dashboard uid=unset" in kits
+
+
+@pytest.mark.parametrize("verb", [("trigger",), ("wayland", "--no-reboot"), ("x11", "--no-reboot")])
+def test_unresolvableUid_exitsNonZero_nothingChanged(rig, verb):
+    """An unknown kiosk user is never rendered as /run/user/0 (I-044)."""
+    before = _snapshot(rig)
+
+    result = _runMode(rig, *verb, extraEnv={"KIOSK_USER": "nobody-here"})
+
+    assert result.returncode != 0
+    assert "nothing changed" in (result.stdout + result.stderr).lower()
+    assert _snapshot(rig) == before
+    assert _modeChanges(rig) == []
+
+
+def test_trigger_garbageModeFile_exitsNonZero_nothingChanged(rig):
+    rig["modeFile"].parent.mkdir(parents=True)
+    rig["modeFile"].write_text("1920x1080\n", encoding="utf-8")
+    before = _snapshot(rig)
+
+    result = _runMode(rig, "trigger")
+
+    assert result.returncode != 0
+    assert _snapshot(rig) == before
+    assert _modeChanges(rig) == []
 
 
 @pytest.mark.parametrize("args", [("bogus",), ("bogus", "--no-reboot"), ("x11", "--bogus"), ()])

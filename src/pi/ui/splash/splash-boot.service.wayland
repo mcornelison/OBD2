@@ -59,7 +59,9 @@ Description=Animated boot splash (status-aware, Wayland)
 # back in. The old
 # ordering after graphical.target stays gone (US-649-b: it queued the splash
 # behind multi-user, 18.73 s on boot 7c6aafaa).
-# graphical.target stays ONLY as the pull-in, via WantedBy= below.
+# US-651-a: NO target pulls this unit in any more. eclipse-kiosk-start.service
+# (the latch) Wants= it, and eclipse-kiosk-socket.path starts the latch when
+# wayland-0 appears -- once per boot. There is no [Install] section.
 After=display-manager.service eclipse-states-http.service eclipse-boot-state.service
 Wants=eclipse-states-http.service eclipse-boot-state.service
 # A-1 hand-off (US-399): at HEALTHY_YIELD the splash JS calls window.close(),
@@ -67,7 +69,7 @@ Wants=eclipse-states-http.service eclipse-boot-state.service
 # DEGRADED boot keeps the splash up (no window.close) -> no dashboard hand-off.
 OnSuccess=eclipse-dashboard.service
 # US-649-c, parity with splash-boot.service.x11 (US-866 / PR #106): a splash
-# that FAILS (the wayland-0 gate timed out, or chromium died) must not leave the
+# that FAILS (the wayland-0 check failed, or chromium died) must not leave the
 # car with no dashboard. A degraded splash that stays up is not a failure.
 OnFailure=eclipse-dashboard.service
 
@@ -79,11 +81,11 @@ Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
 # US-866 (Atlas 2026-10-16): stderr logging so the splash's
 # "[kiosk] first-frame page=splash" line -- when the panel first lights --
 # and any boot-time chromium error reach the journal (same as the grace units).
-# US-649-c: wait for the kiosk session's wayland-0 socket, for at most 30 s
-# (150 x 0.2 s, Atlas design part 3 -- the PR #106 X11 gate's budget); then
-# fail loud (OnFailure still brings up the dashboard). __PI_UID__ is rendered
-# by install.sh's global substitution. $$ is systemd's escape for a shell $.
-ExecStartPre=/bin/sh -c 'i=0; until [ -S /run/user/__PI_UID__/wayland-0 ]; do i=$$((i+1)); if [ "$$i" -ge 150 ]; then echo "splash-boot: wayland-0 not up within 30 s" >&2; exit 1; fi; sleep 0.2; done'
+# US-651-a: ONE check that the kiosk session's wayland-0 socket is there, no
+# poll (CIO 2026-10-23, no timed waits). The .path already fired on the socket;
+# a manual start without it fails at once and OnFailure brings up the
+# dashboard. __PI_UID__ is rendered by install.sh's global substitution.
+ExecStartPre=/usr/bin/test -S /run/user/__PI_UID__/wayland-0
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
@@ -96,6 +98,3 @@ ExecStart=__CHROMIUM_BIN__ \
   http://127.0.0.1:9899/
 # Splash exits via its own JS calling window.close() once the state machine
 # reaches HEALTHY_YIELD or DEGRADED. No hardcoded sleep/pkill (D-3).
-
-[Install]
-WantedBy=graphical.target

@@ -1,0 +1,35 @@
+# ==============================================================================
+# File:    eclipse-kiosk-start.service
+# Purpose: Kiosk start LATCH (US-651-a, Atlas RULED 2026-10-24 option a). The
+#          mode's .path unit (eclipse-kiosk-socket.path in wayland,
+#          eclipse-x-ready.path in x11) starts this unit when the display is
+#          ready; it pulls splash-boot.service in by dependency and stays
+#          active for the rest of the boot.
+# Author:  Rex (Ralph Agent)
+# Created: 2026-10-24 -- Sprint 113 US-651-a
+#
+# Why a latch and not Unit=splash-boot.service on the .path: systemd.path(5)
+# re-checks a PathExists= path when the unit it triggered goes inactive, and
+# starts it again. wayland-0 and the eclipse-x-ready marker persist all
+# session, so a .path naming splash-boot would re-show the splash over the
+# dashboard after every hand-off. This oneshot with RemainAfterExit=yes never
+# goes inactive, so the .path never re-fires: once per boot, as
+# WantedBy=graphical.target was before.
+#
+# Wants= is WEAK: splash-boot exiting or failing does not touch the latch, and
+# splash-boot's own OnSuccess= / OnFailure= still hand off to
+# eclipse-dashboard.service exactly as before.
+#
+# No [Install] section: the .path units are the only thing that starts it.
+# Installed every deploy by `eclipse-display-mode trigger` (deploy-pi.sh
+# step_install_ui_kiosk_units).
+# ==============================================================================
+
+[Unit]
+Description=Kiosk start latch: starts splash-boot once per boot
+Wants=splash-boot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true

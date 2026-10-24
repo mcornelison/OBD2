@@ -52,6 +52,10 @@ Description=Animated boot splash (status-aware, X11)
 # two boots -- and none of that is something the splash needs. Readiness of the
 # X server is the ExecStartPre gate below, not an ordering guess. Same move as
 # the Wayland design (ADR ARCH-016 section 11.3: drop After=graphical.target).
+# US-651-a: NO target pulls this unit in. eclipse-kiosk-start.service (the
+# latch) Wants= it, and eclipse-x-ready.path starts the latch when the
+# autostart entry eclipse-x-ready.desktop writes /run/user/<uid>/eclipse-x-ready
+# inside the autologin session -- after X auth is usable. No [Install] section.
 After=display-manager.service eclipse-states-http.service eclipse-boot-state.service
 Wants=graphical.target eclipse-states-http.service eclipse-boot-state.service
 # A-1 hand-off (US-399): at HEALTHY_YIELD the splash JS calls window.close(),
@@ -73,11 +77,12 @@ Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
 # runs /etc/X11/Xsession.d/35x11-common_xhost-local (xhost +si:localuser) at
 # 11.61 s. chromium connected at 11.48 s, got "Authorization required", exited
 # 1, and the dashboard never started. Before the trim a 12.8 s Bluetooth check
-# hid the race. Wait -- as this user, with no XAUTHORITY, exactly as chromium
-# connects -- until X accepts us, for at most 30 s; then fail loud (OnFailure
-# still brings up the dashboard). xset ships in x11-xserver-utils, the same
-# package that provides the xhost grant this waits for. $$ is systemd's escape.
-ExecStartPre=/bin/sh -c 'i=0; until xset q >/dev/null 2>&1; do i=$$((i+1)); if [ "$$i" -ge 150 ]; then echo "splash-boot: X display $$DISPLAY did not accept this user within 30 s" >&2; exit 1; fi; sleep 0.2; done'
+# hid the race. US-651-a: the start now waits on an EVENT, not a poll -- the
+# x-ready marker is written by the session's own autostart, after the xhost
+# grant -- so this is ONE check, as this user with no XAUTHORITY, exactly as
+# chromium connects; a failure brings up the dashboard via OnFailure. xset
+# ships in x11-xserver-utils, the package that provides the xhost grant.
+ExecStartPre=/usr/bin/xset q
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --noerrdialogs --disable-infobars --hide-scrollbars \
@@ -91,6 +96,3 @@ ExecStart=__CHROMIUM_BIN__ \
 # page=splash" line (when the panel first lights) and any chromium error in the
 # journal, as the grace units already do.
 # Splash exits via JS window.close() at HEALTHY_YIELD / DEGRADED (D-3).
-
-[Install]
-WantedBy=graphical.target

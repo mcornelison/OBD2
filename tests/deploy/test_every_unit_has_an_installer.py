@@ -13,10 +13,13 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-10-21    | Rex (US-908-b) | Initial implementation (Atlas REVIEW G1 shapes).
+# 2026-10-24    | Rex (US-651-a) | Atlas GAP G1: *.path units are accounted for too;
+#               |                | inventory 20 -> 23 (the kiosk start latch + the
+#               |                | two .path units, installed by the kiosk step).
 # ================================================================================
 ################################################################################
 
-"""No ``deploy/*.service`` / ``deploy/*.timer`` is left without an installer.
+"""No ``deploy/*.service`` / ``*.timer`` / ``*.path`` is left without an installer.
 
 A unit counts as installed on every deploy when ONE of these holds (Atlas
 REVIEW 2026-10-20 G1):
@@ -32,8 +35,11 @@ REVIEW 2026-10-20 G1):
       block (if/fi depth is tracked line by line).
 (ii)  listed in ``NOT_EVERY_DEPLOY`` -- exactly one entry.
 
-Expected inventory on the real tree (2026-10-21): 20 files = 19 pass + 1
-allow-listed.  The 19: 17 literal (14 deploy-pi.sh steps, incl.
+Expected inventory on the real tree (2026-10-24, US-651-a): 23 files = 22 pass
++ 1 allow-listed.  The 22: 20 literal (17 deploy-pi.sh, incl. the US-651-a
+kiosk start latch and its two .path units, which step_install_ui_kiosk_units
+installs through ``eclipse-display-mode trigger`` and then checks by path;
+the 14 earlier deploy-pi.sh steps, incl.
 drain-forensics.service, whose .service is still synced every deploy -- only
 its timer was retired, US-646 -- plus the 3 deploy-server.sh files via (i-b)),
 eclipse-obd.service via SERVICE_NAME, and rfcomm-bind.service via US-908-b's
@@ -70,6 +76,8 @@ EXPECTED_PI_LITERAL = {
     "drain-forensics.service",
     "eclipse-bond-selfheal.service",
     "eclipse-boot-state.service",
+    "eclipse-kiosk-socket.path",
+    "eclipse-kiosk-start.service",
     "eclipse-kiosk-watchdog.service",
     "eclipse-kiosk-watchdog.timer",
     "eclipse-panel-liveness.service",
@@ -77,6 +85,7 @@ EXPECTED_PI_LITERAL = {
     "eclipse-powerwatch.service",
     "eclipse-rfkill-unblock.service",
     "eclipse-states-http.service",
+    "eclipse-x-ready.path",
     "orphan-cleanup.service",
     "orphan-cleanup.timer",
     "rfcomm-bind.service",
@@ -89,7 +98,7 @@ EXPECTED_SERVER_TOP_LEVEL = {
 }
 
 _UNIT_DIR = "/etc/systemd/system/"
-_UNIT_PATH_RE = re.compile(re.escape(_UNIT_DIR) + r"([A-Za-z0-9_.@-]+\.(?:service|timer))\b")
+_UNIT_PATH_RE = re.compile(re.escape(_UNIT_DIR) + r"([A-Za-z0-9_.@-]+\.(?:service|timer|path))\b")
 _FUNC_DEF_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\) \{", re.MULTILINE)
 _ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 _IF_OPEN_RE = re.compile(r"(?:^|[;&|]\s*)if\b")
@@ -104,7 +113,9 @@ def _codeLines(text: str) -> list[str]:
 def unitFiles(deployDir: Path) -> list[str]:
     """The unit files a deploy has to account for."""
     return sorted(
-        path.name for pattern in ("*.service", "*.timer") for path in deployDir.glob(pattern)
+        path.name
+        for pattern in ("*.service", "*.timer", "*.path")
+        for path in deployDir.glob(pattern)
     )
 
 
@@ -214,17 +225,18 @@ def test_unit_hasAnEveryDeployInstaller(unit: str, piText: str, serverText: str)
     )
 
 
-def test_inventory_matchesTheDocumentedTwenty(piText: str, serverText: str) -> None:
+def test_inventory_matchesTheDocumentedTwentyThree(piText: str, serverText: str) -> None:
     """
     Given: the real deploy/ tree
     When: each unit is classified
-    Then: 20 files = 15 deploy-pi.sh literal (14 + rfcomm-bind) + 1 expanded
-          + 3 deploy-server.sh top-level + 1 allow-listed
+    Then: 23 files = 18 deploy-pi.sh literal (14 + rfcomm-bind + the US-651-a
+          latch and two .path units) + 1 expanded + 3 deploy-server.sh
+          top-level + 1 allow-listed
     """
     units = unitFiles(DEPLOY_DIR)
     how = {unit: installerFor(unit, piText, serverText) for unit in units}
 
-    assert len(units) == 20
+    assert len(units) == 23
     assert {u for u, h in how.items() if h and h.startswith("pi-literal:")} == EXPECTED_PI_LITERAL
     assert {u for u, h in how.items() if h and h.startswith("pi-expanded:")} == (
         EXPECTED_PI_EXPANDED
@@ -242,6 +254,22 @@ def test_eclipseObd_isFoundOnlyThroughServiceName(piText: str) -> None:
     """The SERVICE_NAME expansion is load-bearing: without it eclipse-obd has no installer."""
     assert columnZeroAssignments(piText)["SERVICE_NAME"] == "eclipse-obd"
     assert piInstallers(piText)["eclipse-obd.service"].startswith("expanded:")
+
+
+def test_kioskStartTrigger_isInstalledByTheKioskStep(piText: str) -> None:
+    """US-651-a: the latch and both .path units ride the every-deploy kiosk step."""
+    pi = piInstallers(piText)
+    for unit in ("eclipse-kiosk-start.service", "eclipse-kiosk-socket.path", "eclipse-x-ready.path"):
+        assert pi[unit] == "literal:step_install_ui_kiosk_units", unit
+
+
+def test_control_aPlantedPathUnitWithNoInstallerFails(
+    tmp_path: Path, piText: str, serverText: str
+) -> None:
+    """*.path is globbed: an unaccounted .path is reported (the G1 gap)."""
+    (tmp_path / "zz-test.path").write_text("[Path]\nPathExists=/x\n", encoding="utf-8")
+
+    assert uncoveredUnits(tmp_path, piText, serverText) == ["zz-test.path"]
 
 
 def test_allowList_holdsExactlyOneEntry() -> None:
