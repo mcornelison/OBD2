@@ -7,59 +7,19 @@
  *          healthy/degraded booleans, it never decides system condition.
  * Author:  Ralph Agent (Rex)
  * Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+ * Updated: 2026-10-24 -- US-869-d: no clocks (CIO no-timer rule). Degraded
+ *          comes only from the emitter's two events; a null boot-state is
+ *          WAITING. The hand-off closes on the fade's transitionend, or at once
+ *          when motionGate says that event will not fire (Atlas G2). The only
+ *          setTimeout left is the POLL_MS tick.
  * ==========================================================================*/
 (function () {
   "use strict";
 
   var POLL_MS = 250;        // 4 Hz tmpfs read (Atlas A-5)
-  var MIN_PLAY_MS = 2500;   // earliest yield-on-healthy point (spec §5)
-  var HARD_CAP_MS = 12000;  // degrade if no healthy verdict by here
-  var T_START = (window.performance && performance.now) ? performance.now() : Date.now();
 
   var token = window.SPLASH_TOKEN || "";
   var settled = false;      // true once HEALTHY_YIELD or DEGRADED is reached
-
-  // US-525 (I-042): the floor above is a MINIMUM VISIBLE duration, so it must be
-  // anchored to the brand actually being PAINTED -- not to this script parsing.
-  // The mark is an <object type="image/svg+xml">, i.e. a separate async document:
-  // on a cold chromium the poll loop is already ticking while the stage is still
-  // blank, so anchoring at parse let the splash satisfy its own 2.5 s floor
-  // having shown the brand for a fraction of it, then fade. Measured on the Pi
-  // (boot dc7a3848, 2026-08-02): the unit lived 9.8 s but chromium burned the
-  // first ~5.4 s on startup before the page existed at all.
-  //
-  // null => not painted yet (or never will be). Deliberately NOT initialised to
-  // 0: a brand that never loads must fall back to the parse anchor, never hold
-  // the hand-off open (see brandFloorMs).
-  var brandReadyMs = null;
-
-  function markBrandReady() {
-    if (brandReadyMs === null) brandReadyMs = elapsed();
-  }
-
-  /**
-   * Earliest elapsed() at which HEALTHY_YIELD may fire.
-   *
-   * Bounded by HARD_CAP_MS on purpose: a very slow brand must not be able to
-   * push the hand-off arbitrarily late, and must not tip a HEALTHY boot into the
-   * amber DEGRADED branch (which persists until reboot) -- that would be a
-   * dishonest instrument reading caused purely by a slow asset.
-   */
-  function brandFloorMs() {
-    if (brandReadyMs === null) return MIN_PLAY_MS;   // honest fallback
-    var floor = brandReadyMs + MIN_PLAY_MS;
-    return floor < HARD_CAP_MS ? floor : HARD_CAP_MS;
-  }
-
-  // Retry-once on a transient IPC failure before treating boot-state as missing
-  // (covers a single dropped poll / server not-yet-listening race).
-  var consecutiveFailures = 0;
-  var MAX_TRANSIENT_FAILURES = 1;
-
-  function elapsed() {
-    var now = (window.performance && performance.now) ? performance.now() : Date.now();
-    return now - T_START;
-  }
 
   async function fetchBootState() {
     try {
@@ -93,48 +53,63 @@
     document.body.classList.add("degraded");        // amber ring + chip + freeze
     document.getElementById("warn-glyph").textContent = " ⚠"; // wordmark glyph
     var msg = document.getElementById("degraded-msg");
-    msg.textContent = reason || "boot-progress instrument not reporting";
+    msg.textContent = reason || "";
     msg.hidden = false;
     // DEGRADED persists until system reboot -- no window.close().
+  }
+
+  var closed = false;
+
+  function closeWindow() {
+    if (closed) return;
+    closed = true;
+    try { window.close(); } catch (e) {}
+  }
+
+  function fadeWillEnd(stage) {
+    var gate = window.motionGate;
+    return !!(gate && typeof gate.willFire === "function" && gate.willFire(stage, "transition"));
   }
 
   function enterHealthyYield() {
     if (settled) return;
     settled = true;
     // Fade out + hand off to the post-boot UI. Chromium kiosk closes itself
-    // (D-3: JS-driven exit, no external pkill).
-    document.getElementById("splash-stage").style.transition = "opacity 0.5s";
-    document.getElementById("splash-stage").style.opacity = "0";
-    setTimeout(function () { try { window.close(); } catch (e) {} }, 600);
+    // (D-3: JS-driven exit, no external pkill) on the fade's OWN end event.
+    var stage = document.getElementById("splash-stage");
+    stage.style.transition = "opacity 0.5s";
+    if (!fadeWillEnd(stage)) {
+      // No transitionend will fire (styles missing, reduced motion, no
+      // motion-gate): advance on the healthy verdict itself (Atlas G2).
+      stage.style.opacity = "0";
+      closeWindow();
+      return;
+    }
+    stage.addEventListener("transitionend", function (ev) {
+      if (ev && ev.target && ev.target !== stage) return;   // a child's transition
+      closeWindow();
+    });
+    stage.style.opacity = "0";
   }
 
   async function tick() {
     if (settled) return;
     var state = await fetchBootState();
 
+    // A null boot-state (404, refused, thrown) is WAITING: the emitter has not
+    // written yet. Keep polling and paint nothing new -- only the emitter's two
+    // events (a core unit failed, assets missing) ever degrade the splash.
     if (state === null) {
-      consecutiveFailures += 1;
-      // Only treat the boot-state as truly missing once the retry-once window
-      // AND the hard cap have both elapsed (transient drops must not trip amber).
-      if (consecutiveFailures > MAX_TRANSIENT_FAILURES && elapsed() > HARD_CAP_MS) {
-        enterDegraded("boot-progress instrument not reporting");
-        return;
-      }
       schedule();
       return;
     }
-    consecutiveFailures = 0;
 
     if (state.degraded === true) {
       enterDegraded(state.degradedReason);
       return;
     }
-    if (state.healthy === true && elapsed() >= brandFloorMs()) {
+    if (state.healthy === true) {
       enterHealthyYield();
-      return;
-    }
-    if (elapsed() > HARD_CAP_MS) {
-      enterDegraded(state.degradedReason || "boot did not reach healthy state");
       return;
     }
     schedule();
@@ -143,17 +118,6 @@
   function schedule() {
     setTimeout(tick, POLL_MS);
   }
-
-  // Anchor the visible floor to the brand's own load event (US-525). If the
-  // event already fired before this listener attached, brandReadyMs stays null
-  // and brandFloorMs() degrades to the historical parse anchor -- the previous
-  // behaviour, never a stall.
-  (function watchBrand() {
-    var mark = document.getElementById("mark");
-    if (!mark) return;                  // no brand element -> parse anchor
-    mark.addEventListener("load", markBrandReady);
-    mark.addEventListener("error", markBrandReady);  // broken SVG: don't wait
-  })();
 
   // US-866: the splash's first frame, one console line (same format as the
   // dashboard's reportFirstFrame in carousel.js). It reaches the journal only

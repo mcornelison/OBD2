@@ -5877,7 +5877,7 @@ cooperating processes communicate via a tmpfs directory.
 
 **Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
 logic: CORE-readiness gate, dashboard-asset gate, informational 3-tier
-eclipse-obd health with retry-once, hard-cap degrade), `states_http_server.py`
+eclipse-obd health with retry-once, degraded on two events only), `states_http_server.py`
 (the localhost server), `token.py` (the one-source auth token).
 
 **Readiness contract = "Pi core / UI is up", NOT "a vehicle is connected"
@@ -5928,16 +5928,30 @@ the real server over the real shipped kits, so the units and the router cannot
 drift apart independently — the two-correct-halves class. The same file asserts
 the bare routes **stay 401**: opening them re-opens TD-067 and is an Atlas BLOCK.
 
-**Boot-splash minimum-VISIBLE floor (US-525).** `MIN_PLAY_MS` (2500 ms, spec §5)
-is now anchored to the brand `<object>`'s `load` event, not to script parse. The
-mark is a separate async SVG document, so on a cold chromium the poll loop ticks
-while the stage is still blank — the old anchor let the splash satisfy its own
-2.5 s floor having shown the brand for a fraction of it, then fade (I-042 cause
-b). Measured on the Pi (boot `dc7a3848`, 2026-08-02): `splash-boot` lived
-**9.806 s** but chromium's startup consumed the first ~5.4 s. The floor is
-**bounded by `HARD_CAP_MS`** and falls back to the parse anchor when the brand
-never loads — a cosmetic asset fault must never withhold the dashboard hand-off
-(that is the US-494 pin-until-reboot failure, re-entered through its own fix).
+**Boot-state: degraded on its two EVENTS, no clock (US-869-d, Sprint 114 / V0.30;
+CIO no-timer rule, Atlas A-tim 1-3, C1, G2).** `degraded` has exactly two event
+sources, both in `computeBootState`: a CORE unit reporting `failed`
+(`<svc>: failed to start`, which outranks) and the dashboard assets missing
+(`dashboard assets not installed`). Nothing in the emitter or the page reads
+elapsed time: the emitter's 12 s `hardCapSeconds` (and its `--hard-cap-seconds`
+flag and `elapsedFn`), the page's `HARD_CAP_MS` and `MIN_PLAY_MS`, the US-525
+brand floor, and the retry-once failure counter are gone, together with the
+words they produced (`<svc>: not ready (<state>)`, `boot did not reach healthy
+state`, `boot-progress instrument not reporting`) and the readerless
+`pi.splash.bootState` config block. **Null means waiting:** a `boot-state` that
+answers 404, is refused or throws is not a verdict -- the page keeps polling at
+`POLL_MS` and paints nothing new, as it does for a unit held `activating`, for
+as long as either lasts. On `healthy` the stage fades over 0.5 s and
+`window.close()` runs on that fade's own `transitionend`, or at once when
+`motionGate.willFire(stage, "transition")` is false (`src/pi/ui/splash/motion-gate.js`,
+the ONE helper, loaded before the poller): Chromium fires no end event for a 0
+computed duration, `animation-name: none` or reduced motion, so a page must
+never wait for one. The only `setTimeout` left in `boot-state-poll.js` is the
+`POLL_MS` tick, a sampling cadence that never decides when a step proceeds
+(Atlas C-Atlas-8). *Guarded by* `tests/ui/test_splash_boot_no_clock.py` (10 min
+of driven clock activating or 404 never degrades; the zero-duration hand-off
+closes exactly once) and `tests/pi/splash/test_boot_state_emitter.py` (600 s
+activating, never degraded).
 
 **Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
 defect).** The sole production writer of `shutdown-state` is the powerwatch

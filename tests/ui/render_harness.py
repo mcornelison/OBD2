@@ -798,6 +798,13 @@ def runDashboard(
     return _runProbe("dom_probe.js", payload)
 
 
+# What getComputedStyle reports for the boot stage once boot-state-poll.js sets
+# its inline `transition: opacity 0.5s` (US-869-d): the fade WILL end.
+_SPLASH_STAGE_FADE: dict[str, dict[str, str]] = {
+    "splash-stage": {"transitionDuration": "0.5s"}
+}
+
+
 def runSplash(
     bootStates: list[Any],
     pollJsPath: str | None = None,
@@ -805,6 +812,9 @@ def runSplash(
     rounds: int = 80,
     emitIntervalMs: int = 500,
     brandLoadMs: int | None = 0,
+    computedStyles: dict[str, dict[str, str]] | None = None,
+    dispatchTransitionEnd: bool = True,
+    reducedMotion: bool = False,
 ) -> dict[str, Any]:
     """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
 
@@ -814,21 +824,32 @@ def runSplash(
     entry, exactly as it would on the Pi. The final entry repeats. Returns the
     settled outcome plus the resulting DOM tree.
 
-    ``brandLoadMs`` (US-525) is the virtual ms at which the brand ``<object>``
-    fires its `load`. The mark is an async SVG document, so on a cold chromium
-    the poll script is already ticking while the brand is still blank; ``None``
-    models an SVG that never loads at all.
+    ``brandLoadMs`` is kept for its callers until US-785 and is no longer read:
+    the US-525 brand floor it modelled went with the page's clocks (US-869-d).
+
+    The shipped ``motion-gate.js`` is loaded before the poller, as index.html
+    loads it. ``computedStyles`` is what ``getComputedStyle`` reports per
+    element id; the default is the stage's inline 0.5 s fade.
+    ``dispatchTransitionEnd`` False models a browser that fires no
+    ``transitionend`` because nothing animates; ``reducedMotion`` answers
+    ``prefers-reduced-motion: reduce``.
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
     return _runProbe(
         "splash_probe.js",
         {
             "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "boot-state-poll.js"),
+            "motionGatePath": os.path.join(SPLASH_DIR, "motion-gate.js"),
             "tree": bodyChildren(tree),
             "bootStates": bootStates,
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
             "brandLoadMs": brandLoadMs,
+            "computedStyles": (
+                _SPLASH_STAGE_FADE if computedStyles is None else computedStyles
+            ),
+            "dispatchTransitionEnd": dispatchTransitionEnd,
+            "reducedMotion": reducedMotion,
         },
     )
 
@@ -858,6 +879,7 @@ def runShutdownSplash(
         "shutdown_probe.js",
         {
             "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "shutdown-state-poll.js"),
+            "motionGatePath": os.path.join(SPLASH_DIR, "motion-gate.js"),
             "tree": bodyChildren(tree),
             "shutdownStates": shutdownStates,
             "rounds": rounds,

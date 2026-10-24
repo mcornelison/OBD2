@@ -20,8 +20,15 @@
  *          for real in milliseconds of wall clock. `performance.now` is the seam
  *          the shipped JS already reads.
  *
+ *          US-869-d: motion-gate.js (the ONE event-will-fire helper, Atlas G2)
+ *          is loaded BEFORE the poller when `motionGatePath` is given, and
+ *          getComputedStyle is stubbed from `computedStyles` ({elementId:
+ *          {transitionDuration, animationName, animationDuration}}; an unlisted
+ *          element computes 0s / none).
+ *
  *          Invoked as:  node shutdown_probe.js <inputJsonPath>
- *          Input:  {pollJsPath, tree, shutdownStates, rounds, emitIntervalMs}
+ *          Input:  {pollJsPath, motionGatePath, tree, shutdownStates, rounds,
+ *                   emitIntervalMs, computedStyles, reducedMotion}
  *          Output: {closed, closedAtMs, terminalCause, terminalRecord,
  *                   consoleLines, painted, polls, elapsedMs, tree}
  * Author:  Ralph Agent (Rex)
@@ -57,6 +64,7 @@ async function main() {
   // `cancelled` phase, and telling those two apart is the whole point of I-043.
   const states = input.shutdownStates || [];
   const emitIntervalMs = input.emitIntervalMs || 500;
+  const computedStyles = input.computedStyles || {};
 
   // Capture rather than suppress: these lines ARE the journal evidence.
   const consoleLines = [];
@@ -84,6 +92,18 @@ async function main() {
       if (closedAtMs === null) closedAtMs = virtualMs;
     },
     addEventListener: function () {},
+    getComputedStyle: function (el) {
+      const id = el && el.getAttribute ? el.getAttribute("id") : null;
+      const entry = (id && computedStyles[id]) || {};
+      return {
+        transitionDuration: entry.transitionDuration || "0s",
+        animationName: entry.animationName || "none",
+        animationDuration: entry.animationDuration || "0s",
+      };
+    },
+    matchMedia: function (query) {
+      return { matches: !!input.reducedMotion && /prefers-reduced-motion/.test(query) };
+    },
   };
 
   global.window = win;
@@ -124,6 +144,7 @@ async function main() {
     return clock.clearTimeout(id);
   };
 
+  if (input.motionGatePath) require(path.resolve(input.motionGatePath));
   require(path.resolve(input.pollJsPath));
 
   for (let i = 0; i < (input.rounds || 80); i++) {

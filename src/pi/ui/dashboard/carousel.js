@@ -629,10 +629,9 @@
   // are written every DEFAULT_CARD_STATE_EMIT_INTERVAL = 2.0 s
   // (src/pi/obdii/orchestrator/types.py), so three consecutive missed
   // publications is no longer "still starting" -- it is a feed that is not
-  // answering. It also expires INSIDE the boot surface's own 12 s hard cap
-  // (config.json pi.splash.bootState.hardCapSeconds), so this panel reaches a
-  // definite verdict before the screen that precedes it gives up on the same
-  // services.
+  // answering. The boot splash that precedes this panel has no clock of its
+  // own (US-869-d): it hands off on the emitter's healthy verdict, so there is
+  // no boot-screen timeout for this bound to sit inside or race.
   var LOADING_GRACE_MS = 6000;
 
   function loadingGraceMs() {

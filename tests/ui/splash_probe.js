@@ -12,14 +12,24 @@
  *          shows up is END TO END: real emitter payload -> real poll JS ->
  *          did window.close() get called.
  *
- *          TIME IS VIRTUAL and advances POLL_MS per round, so the shipped
- *          MIN_PLAY_MS (2.5s) and HARD_CAP_MS (12s) thresholds are exercised
- *          for real in milliseconds of wall clock. `performance.now` is the
- *          seam the shipped JS already reads.
+ *          TIME IS VIRTUAL and advances POLL_MS per round, so minutes of
+ *          driven clock cost milliseconds of wall clock. The page itself has
+ *          no clock (US-869-d); time only indexes which boot-state was last
+ *          written.
+ *
+ *          US-869-d: motion-gate.js is loaded BEFORE the poller, as index.html
+ *          loads it, and getComputedStyle is stubbed from `computedStyles`
+ *          ({elementId: {transitionDuration, animationName,
+ *          animationDuration}}; an unlisted element computes 0s / none). Once
+ *          the poller sets #splash-stage's opacity to 0 the probe dispatches
+ *          `transitionend` on it -- unless `dispatchTransitionEnd` is false,
+ *          modelling a browser that fires nothing because nothing animates.
  *
  *          Invoked as:  node splash_probe.js <inputJsonPath>
- *          Input:  {pollJsPath, tree, bootStates, rounds}
- *          Output: {handoff, degraded, degradedMsg, polls, elapsedMs, tree}
+ *          Input:  {pollJsPath, motionGatePath, tree, bootStates, rounds,
+ *                   computedStyles, dispatchTransitionEnd, reducedMotion}
+ *          Output: {handoff, closeCalls, timeoutsQueued, degraded,
+ *                   degradedMsg, polls, elapsedMs, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
  * ==========================================================================*/
@@ -44,25 +54,21 @@ async function main() {
   let virtualMs = 0;
   let handoff = false;
   let handoffAtMs = null;
+  let closeCalls = 0;
+  let timeoutsQueued = 0;
   let polls = 0;
-
-  // US-525: the brand mark is an <object type="image/svg+xml"> -- it loads
-  // ASYNCHRONOUSLY, after the poll script has already parsed. `brandLoadMs` is
-  // the virtual ms at which that `load` fires, so a test can model a cold
-  // chromium where the script is running but the brand is not yet painted.
-  // null => never loads (a missing/broken splash.svg).
-  const brandLoadMs =
-    input.brandLoadMs === undefined ? 0 : input.brandLoadMs;
-  let brandDispatched = false;
 
   // The state file is indexed by TIME, not by poll count: the emitter writes on
   // its own cadence (eclipse-boot-state.service --poll-ms, 500 by default) while
   // the splash reads at 250 ms, so a poll sees whatever was last WRITTEN. Two
   // independent cadences is the real system, and getting it wrong would decide
-  // which hard cap -- the emitter's or the splash's -- fires first. The final
-  // entry repeats (a steady state); a `null` entry models an unreadable file.
+  // which emission a poll sees. The final entry repeats (a steady state); a
+  // `null` entry models an unreadable file.
   const states = input.bootStates || [];
   const emitIntervalMs = input.emitIntervalMs || 500;
+  const computedStyles = input.computedStyles || {};
+  const dispatchTransitionEnd = input.dispatchTransitionEnd !== false;
+  let transitionEndDispatched = false;
 
   const win = {
     SPLASH_TOKEN: "test-token",
@@ -73,9 +79,22 @@ async function main() {
     },
     close: function () {
       handoff = true;
+      closeCalls += 1;
       if (handoffAtMs === null) handoffAtMs = virtualMs;
     },
     addEventListener: function () {},
+    getComputedStyle: function (el) {
+      const id = el && el.getAttribute ? el.getAttribute("id") : null;
+      const entry = (id && computedStyles[id]) || {};
+      return {
+        transitionDuration: entry.transitionDuration || "0s",
+        animationName: entry.animationName || "none",
+        animationDuration: entry.animationDuration || "0s",
+      };
+    },
+    matchMedia: function (query) {
+      return { matches: !!input.reducedMotion && /prefers-reduced-motion/.test(query) };
+    },
   };
 
   global.window = win;
@@ -110,35 +129,44 @@ async function main() {
     return Promise.resolve({ ok: false, status: 404 });
   };
   global.setTimeout = function (fn) {
+    timeoutsQueued += 1;
     return clock.setTimeout(fn);
   };
   global.clearTimeout = function (id) {
     return clock.clearTimeout(id);
   };
 
+  if (input.motionGatePath) require(path.resolve(input.motionGatePath));
   require(path.resolve(input.pollJsPath));
 
+  // The browser's half of the fade: once the stage's opacity is 0, a real
+  // transition ends with a `transitionend` on the stage itself.
+  function maybeEndTransition() {
+    if (!dispatchTransitionEnd || transitionEndDispatched) return;
+    const stage = doc.getElementById("splash-stage");
+    if (!stage || stage.style.opacity !== "0") return;
+    transitionEndDispatched = true;
+    stage.dispatch("transitionend", { target: stage, propertyName: "opacity" });
+  }
+
   for (let i = 0; i < (input.rounds || 80); i++) {
-    // Fire the brand's `load` once virtual time reaches it -- BEFORE draining,
-    // so a listener registered by the poll script sees it on the right round.
-    if (!brandDispatched && brandLoadMs !== null && virtualMs >= brandLoadMs) {
-      brandDispatched = true;
-      const mark = doc.getElementById("mark");
-      if (mark) mark.dispatch("load", { type: "load" });
-    }
     await dom.drainMicrotasks();
+    maybeEndTransition();
     clock.flushRound();
     virtualMs += POLL_MS;
     if (handoff) break;
   }
   await dom.drainMicrotasks();
+  maybeEndTransition();
 
   const msg = doc.getElementById("degraded-msg");
   process.stdout.write(
     JSON.stringify({
       handoff: handoff,
       handoffAtMs: handoffAtMs,
-      brandLoadMs: brandLoadMs,
+      closeCalls: closeCalls,
+      timeoutsQueued: timeoutsQueued,
+      transitionEndDispatched: transitionEndDispatched,
       degraded: doc.body.classList.contains("degraded"),
       degradedMsg: msg ? msg.textContent : "",
       polls: polls,

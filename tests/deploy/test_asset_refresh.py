@@ -24,6 +24,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-495 /opt force-refresh guard.
+# 2026-10-24    | Ralph (Rex)  | US-869-d: motion-gate.js is in the vouched
+#               |              | splash manifest, so the refresh never prunes it.
 # ================================================================================
 ################################################################################
 
@@ -282,6 +284,16 @@ def test_deployPiSh_splashStep_forceRefreshesTheShutdownSurface(splashRefreshArg
     for asset in SHUTDOWN_SURFACE:
         assert asset in manifest, f"{asset} is not force-refreshed by the deploy"
         assert asset not in keep, f"{asset} is keep-listed -- it will never be verified"
+
+
+def test_deployPiSh_splashStep_vouchesForMotionGate_us869d(splashRefreshArgs):
+    """
+    Given: index.html loads motion-gate.js before the boot poller (US-869-d)
+    Then: the deploy refresh OWNS it -- installed, never pruned, byte-verified
+    """
+    manifest, keep = splashRefreshArgs
+    assert "motion-gate.js" in manifest
+    assert "motion-gate.js" not in keep
 
 
 def test_deployPiSh_splashStep_accountsForEveryAssetTheKitShips(splashRefreshArgs):

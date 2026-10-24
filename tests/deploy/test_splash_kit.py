@@ -38,6 +38,8 @@
 #               |              | (CIO 2026-10-23, no timed waits). .wayland units:
 #               |              | one `test -S` check; .x11 splash-boot: one
 #               |              | `xset q`. The socket check runs with no fake sleep.
+# 2026-10-24    | Rex (US-869-d) | New: motion-gate.js (Atlas G2) ships in the kit,
+#               |              | is not gitignored, and both installers carry it.
 # ================================================================================
 ################################################################################
 
@@ -46,6 +48,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -108,6 +111,26 @@ def test_shutdownStatePollJs_present_and_handlesPhases():
     for phase in ("grace", "cancelled", "flushing", "powering_off"):
         assert phase in js, f"shutdown-state-poll.js missing phase {phase!r}"
     assert "/shutdown-state" in js
+
+
+def test_motionGateJs_presentAndShippedByBothInstallers_us869d():
+    """motion-gate.js (the ONE event-will-fire helper) reaches /opt/splash.
+
+    index.html loads it before the poller; an asset the installers do not carry
+    leaves a 404 that turns every hand-off into the no-event branch.
+    """
+    assert (KIT_DIR / "motion-gate.js").is_file()
+    assert "motionGate = { willFire" in _read("motion-gate.js")
+    assert "motion-gate.js" in INSTALL_SH.read_text(encoding="utf-8")
+    deploySh = (REPO_ROOT / "deploy" / "deploy-pi.sh").read_text(encoding="utf-8")
+    assert re.search(r'local assets="[^"]*motion-gate\.js', deploySh)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", str(KIT_DIR / "motion-gate.js")],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert ignored.returncode == 1, "motion-gate.js is gitignored -- it would never ship"
 
 
 # ---------------------------------------------------------------------------

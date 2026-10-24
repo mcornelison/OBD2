@@ -51,6 +51,10 @@
 #               |              | stacks nothing and the takeover ending.
 # 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): #dtc-ribbon is deleted
 #               |              | (Iris U3), so the sweeps cover the overlays only.
+# 2026-10-24    | Rex (US-869-d)| MOVED PIN (US-869-d): TestSplashHandoff builds
+#               |              | the NEW emitter without hardCapSeconds (the
+#               |              | parameter is gone). TestSplashGuardIsRed is
+#               |              | unchanged: its cap is the pre-US-494 emitter's.
 # ================================================================================
 ################################################################################
 
@@ -463,9 +467,10 @@ def _emitSequence(module, buildFn, count: int) -> list[dict]:
     """``count`` successive emissions, the clock advancing one EMIT interval each.
 
     Feeding the splash a real SEQUENCE rather than one frozen payload is what
-    lets the emitter's OWN hard-cap branch fire, so the degraded reason under
-    test is the one the CIO actually read off the panel -- not the splash's
-    generic fallback.
+    lets the pre-US-494 emitter's OWN hard-cap branch fire (TestSplashGuardIsRed),
+    so the degraded reason under test is the one the CIO actually read off the
+    panel. The current emitter has no clock (US-869-d); the clock is driven
+    regardless, so a reintroduced one would be measured against it.
 
     Two subtleties, both learned the hard way writing this:
       * The emitter latches ``startMono`` in its CONSTRUCTOR, so the fake clock
@@ -525,7 +530,6 @@ class TestSplashHandoff:
             bse,
             lambda: bse.buildEmitter(
                 statesDir=str(tmp_path / "states"),
-                hardCapSeconds=12.0,
                 uiAssetPath=str(asset),
             ),
             4,
@@ -567,7 +571,6 @@ class TestSplashHandoff:
             bse,
             lambda: bse.buildEmitter(
                 statesDir=str(tmp_path / "states"),
-                hardCapSeconds=12.0,
                 uiAssetPath=str(asset),
             ),
             4,
@@ -600,7 +603,6 @@ class TestSplashHandoff:
             bse,
             lambda: bse.buildEmitter(
                 statesDir=str(tmp_path / "states"),
-                hardCapSeconds=12.0,
                 uiAssetPath=str(tmp_path / "never-installed" / "dashboard.html"),
             ),
             4,

@@ -2067,7 +2067,7 @@ step_install_splash_assets() {
     echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
     local assetSrc="$REPO_ROOT/src/pi/ui/splash"
     local installDir="/opt/splash"
-    local assets="index.html styles.css boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
+    local assets="index.html styles.css motion-gate.js boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
     local keepAssets="version.txt"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2

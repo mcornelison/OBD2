@@ -30,6 +30,9 @@
     // simply fail closed to DEGRADED -- the preview still renders the animation.
     window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
   </script>
+  <!-- motion-gate.js BEFORE the poller: the hand-off asks it whether the fade's
+       transitionend will fire at all (Atlas G2, US-869-d). -->
+  <script src="motion-gate.js"></script>
   <script src="boot-state-poll.js"></script>
 </body>
 </html>
