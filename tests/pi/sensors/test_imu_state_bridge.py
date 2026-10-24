@@ -759,6 +759,47 @@ def test_bridge_absentPresenceState_writesAnExplicitUnavailableState(tmp_path: P
     assert state["reasons"]["gLat"] == REASON_SENSOR_ABSENT
 
 
+def test_bridge_presenceFault_isNoneUntilAbsent_thenSensorAbsent(tmp_path: Path):
+    """
+    Given: a fresh bridge, then the retained presence ABSENT (US-869-b)
+    When: presenceFault is read before and after
+    Then: None, then 'sensor_absent' -- set by the handler that writes states/imu
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    before = bridge.presenceFault
+    bridge.handleSample(_presence(False))
+
+    assert before is None
+    assert bridge.presenceFault == REASON_SENSOR_ABSENT
+    assert _readState(tmp_path)["reasons"]["gLat"] == REASON_SENSOR_ABSENT
+
+
+def test_bridge_presenceFault_isCurrent_presentClearsIt(tmp_path: Path):
+    """
+    Given: presence ABSENT, then PRESENT (a re-plug)
+    When: presenceFault is read
+    Then: None again -- the fault is the current presence, never a latch
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    bridge.handleSample(_presence(False))
+    bridge.handleSample(_presence(True, capture=1.0))
+
+    assert bridge.presenceFault is None
+
+
+def test_bridge_presencePresent_setsNoFault(tmp_path: Path):
+    """
+    Given: presence PRESENT, then live samples
+    When: presenceFault is read
+    Then: None -- a present sensor is never faulted
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    bridge.handleSample(_presence(True))
+    bridge.handleSample(_accel(_level()))
+
+    assert bridge.presenceFault is None
+
+
 def test_bridge_unpluggedMidSession_flipsBackToUnavailable(tmp_path: Path):
     """
     Given: a bridge that has been publishing live readings

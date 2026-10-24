@@ -24,6 +24,8 @@
 #               |              | process and last sample age for obd/imu/light/ups,
 #               |              | built by the new pure buildCaptureFeedsState.
 # 2026-10-22    | Rex (US-877-b)| emit returns the payload it wrote (Atlas P6).
+# 2026-10-23    | Rex (US-869-b)| feeds: state `faulted` + `reason` from the
+#               |              | in-process feed faults (Atlas B1).
 # ================================================================================
 ################################################################################
 
@@ -83,6 +85,7 @@ __all__ = [
     "REASON_NEVER_WRITTEN",
     "REASON_STALLED",
     "REASON_UNREADABLE",
+    "STATE_FAULTED",
     "STATE_IDLE",
     "STATE_OK",
     "STATE_STALLED",
@@ -112,6 +115,11 @@ STATE_IDLE = "idle"
 #: We cannot tell. Blocks a green all-clear WITHOUT raising an alarm -- the
 #: dashboard's existing word for a known-unknown.
 STATE_UNKNOWN = "unknown"
+#: US-869-b, FEEDS ONLY: the feed's source says it is broken (sensor absent,
+#: gauge unreadable), so "not yet" is not the answer. CURRENT state -- the
+#: source clears its fault on the next good read and the feed returns to its
+#: normal state; nothing here latches.
+STATE_FAULTED = "faulted"
 
 #: The logger exists and has written no row since the process started. This is a
 #: MEASUREMENT, and it is the literal state the Pi logged for two days.
@@ -292,6 +300,7 @@ def buildCaptureFeedsState(
     feedSamples: Mapping[str, tuple[str | None, float | None]],
     powerSource: str,
     stallSeconds: float,
+    feedFaults: Mapping[str, str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build the ``feeds`` block of ``states/capture-health`` (pure, US-873).
 
@@ -303,6 +312,11 @@ def buildCaptureFeedsState(
     an ECU that is still waking, and the top-level verdict already owns the
     OBD ``never_written`` alarm.
 
+    US-869-b: a feed whose source holds a fault is ``faulted`` with that
+    reason, AHEAD of the power gate -- an absent sensor is absent with the key
+    on or off, and the boot screen must not wait on it. The reason is the
+    source's own word, passed through untranslated (one fact, one source).
+
     Args:
         feedSamples: Feed name -> ``(firstSampleTs, lastSampleSecondsAgo)`` for
             THIS process. A missing feed is a feed that has produced nothing.
@@ -310,25 +324,35 @@ def buildCaptureFeedsState(
         powerSource: ``external`` / ``battery`` / ``unknown`` -- the same value
             the top-level verdict was judged against.
         stallSeconds: The stall window (the same window as the top level).
+        feedFaults: Feed name -> the source's CURRENT fault reason, or None.
+            A missing feed, ``None`` or a non-string/empty value is no fault.
 
     Returns:
-        ``{feed: {"state", "firstSampleTs", "lastSampleSecondsAgo"}}`` with
-        exactly the keys of :data:`FEED_NAMES`. A feed that has produced
-        nothing publishes both values ``None`` -- never ``0``.
+        ``{feed: {"state", "reason", "firstSampleTs", "lastSampleSecondsAgo"}}``
+        with exactly the keys of :data:`FEED_NAMES`. ``reason`` is None unless
+        the feed is faulted. A feed that has produced nothing publishes both
+        sample values ``None`` -- never ``0``.
     """
+    faults = feedFaults or {}
     feeds: dict[str, dict[str, Any]] = {}
     for name in FEED_NAMES:
         firstTs, lastAge = feedSamples.get(name, (None, None))
         firstSampleTs = firstTs if isinstance(firstTs, str) and firstTs else None
         ageS = _coerceAge(lastAge)
-        state, _reason = _decide(
-            lastRowSecondsAgo=ageS,
-            freshnessReason=None,
-            powerSource=powerSource,
-            stallSeconds=stallSeconds,
-        )
+        fault = faults.get(name)
+        reason: str | None = None
+        if isinstance(fault, str) and fault:
+            state, reason = STATE_FAULTED, fault
+        else:
+            state, _reason = _decide(
+                lastRowSecondsAgo=ageS,
+                freshnessReason=None,
+                powerSource=powerSource,
+                stallSeconds=stallSeconds,
+            )
         feeds[name] = {
             "state": state,
+            "reason": reason,
             "firstSampleTs": firstSampleTs,
             "lastSampleSecondsAgo": ageS,
         }
@@ -348,7 +372,8 @@ def makeCaptureHealthEmitter(
 
     Returns:
         The emit callable. Its optional ``feedSamples`` adds the US-873
-        ``feeds`` block (see :func:`buildCaptureFeedsState`). Best-effort by
+        ``feeds`` block (see :func:`buildCaptureFeedsState`), and its optional
+        ``feedFaults`` marks feeds faulted (US-869-b). Best-effort by
         contract: a write failure is logged
         but NEVER raised, so the dashboard hook can never block the
         orchestrator's poll loop. It returns the payload it wrote, or None
@@ -366,6 +391,7 @@ def makeCaptureHealthEmitter(
         powerSource: str,
         stallSeconds: float,
         feedSamples: Mapping[str, tuple[str | None, float | None]] | None = None,
+        feedFaults: Mapping[str, str | None] | None = None,
     ) -> dict[str, Any] | None:
         try:
             payload = buildCaptureHealthState(
@@ -382,6 +408,7 @@ def makeCaptureHealthEmitter(
                     feedSamples=feedSamples,
                     powerSource=powerSource,
                     stallSeconds=stallSeconds,
+                    feedFaults=feedFaults,
                 )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

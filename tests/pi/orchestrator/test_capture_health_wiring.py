@@ -29,6 +29,7 @@
 # 2026-09-08    | Rex (US-688) | Initial -- the emit-tick join, driven through
 #               |              | a real provider and a real data logger.
 # 2026-10-13    | Rex (US-873) | The feeds join: OBD first row, UPS read, bridges.
+# 2026-10-23    | Rex (US-869-b)| The feed faults: bridge presenceFault, _upsFault.
 # ================================================================================
 ################################################################################
 
@@ -53,6 +54,7 @@ _UNSET = object()
 from pi.obdii.capture_health import (
     REASON_LOGGER_ABSENT,
     REASON_NEVER_WRITTEN,
+    STATE_FAULTED,
     STATE_IDLE,
     STATE_OK,
     STATE_STALLED,
@@ -506,6 +508,7 @@ class TestTheFeedsAreGathered:
         assert before["obd"]["firstSampleTs"] is None
         assert first["obd"] == {
             "state": STATE_OK,
+            "reason": None,  # MOVED PIN (US-869-b)
             "firstSampleTs": "2026-10-13T12:01:05Z",
             "lastSampleSecondsAgo": 0.5,
         }
@@ -568,6 +571,7 @@ class TestTheFeedsAreGathered:
         for name in ("imu", "light", "ups"):
             assert feeds[name] == {
                 "state": STATE_UNKNOWN,
+                "reason": None,  # MOVED PIN (US-869-b)
                 "firstSampleTs": None,
                 "lastSampleSecondsAgo": None,
             }
@@ -697,6 +701,7 @@ class TestTheBridgeFeeds:
 
         assert light == {
             "state": STATE_OK,
+            "reason": None,  # MOVED PIN (US-869-b)
             "firstSampleTs": "2026-10-13T12:00:21Z",
             "lastSampleSecondsAgo": 5.0,
         }
@@ -728,3 +733,172 @@ class TestTheBridgeFeeds:
         assert imu["firstSampleTs"] == "2026-10-13T12:00:21Z"
         assert imu["lastSampleSecondsAgo"] == 0.25
         assert imu["state"] == STATE_OK
+
+
+# ------------------------------------------------- US-869-b: the feed faults
+
+
+class TestTheFeedFaults:
+    """US-869-b: faulted + reason, read in-process from the owners of each fact."""
+
+    def _sample(self, topic, tsUtc, tsCapture, value=None, seq=1):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(topic=topic, tsUtc=tsUtc, tsCapture=tsCapture,
+                               value=value, unit="", seq=seq)
+
+    def _emitUps(self, orch, ups):
+        from types import SimpleNamespace
+
+        orch._hardwareManager = SimpleNamespace(upsMonitor=ups)
+        orch._emitBatteryHealthState()
+
+    def test_imuPresenceAbsent_faultedInTheSameTick(self, tmp_path) -> None:
+        """
+        Given: the real IMU bridge drains presence ABSENT (validation 1)
+        When: the very next capture-health tick runs
+        Then: feeds.imu {faulted, sensor_absent}
+        """
+        from pi.sensors.imu_state_bridge import STATE_IMU_PRESENCE, ImuStateBridge
+
+        bridge = ImuStateBridge(None, str(tmp_path / "states"))
+        bridge.handleSample(self._sample(STATE_IMU_PRESENCE, "2026-10-13T12:00:19Z", 9.0, 0.0))
+        orch = _feedOrch(tmp_path)
+        orch._imuStateBridge = bridge
+
+        imu = _tickFeeds(orch, tmp_path)["imu"]
+
+        assert imu["state"] == STATE_FAULTED
+        assert imu["reason"] == "sensor_absent"
+
+    def test_lightPresenceAbsent_faulted(self, tmp_path) -> None:
+        """
+        Given: the real light bridge drains presence ABSENT (validation 2)
+        When: the tick runs
+        Then: feeds.light {faulted, sensor_absent}
+        """
+        from pi.sensors.light_state_bridge import LightStateBridge
+        from pi.sensors.sensor_reader import STATE_LIGHT
+
+        bridge = LightStateBridge(None, str(tmp_path / "states"))
+        bridge.handleSample(self._sample(STATE_LIGHT, "2026-10-13T12:00:19Z", 9.0, 0.0))
+        orch = _feedOrch(tmp_path)
+        orch._lightStateBridge = bridge
+
+        light = _tickFeeds(orch, tmp_path)["light"]
+
+        assert light["state"] == STATE_FAULTED
+        assert light["reason"] == "sensor_absent"
+
+    def test_upsReadRaises_faulted_thenOkOnTheNextValidRead(self, tmp_path) -> None:
+        """
+        Given: a UPS read that raises, then a valid VCELL read (validation 3)
+        When: capture-health is emitted after each
+        Then: faulted with the UPS reason, then ok with reason null
+        """
+        from pi.splash.source_availability import REASON_UPS_UNREADABLE
+
+        orch = _feedOrch(tmp_path)
+        orch._feedClock = lambda: 100.0
+
+        self._emitUps(orch, _FakeUps(OSError("i2c nack")))
+        orch._emitCaptureHealthState()
+        faulted = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+        self._emitUps(orch, _FakeUps(12.6))
+        orch._emitCaptureHealthState()
+        healed = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+
+        assert faulted["ups"]["state"] == STATE_FAULTED
+        assert faulted["ups"]["reason"] == REASON_UPS_UNREADABLE
+        assert healed["ups"]["state"] == STATE_OK
+        assert healed["ups"]["reason"] is None
+
+    def test_upsSentinel_neverFaulted(self, tmp_path) -> None:
+        """
+        Given: the gauge answers SOC/VCELL with the 0xFFFF sentinel, raw and
+               scaled, then a valid VCELL (validation 4)
+        When: capture-health is emitted after each
+        Then: never faulted -- the sentinel is waiting, not broken
+        """
+        orch = _feedOrch(tmp_path)
+        states = []
+        for vcell in (0xFFFF, 0xFFFF * 78.125e-6, 4.1):
+            self._emitUps(orch, _FakeUps(vcell))
+            orch._emitCaptureHealthState()
+            feeds = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+            states.append((feeds["ups"]["state"], feeds["ups"]["reason"]))
+
+        assert all(state != STATE_FAULTED for state, _ in states)
+        assert all(reason is None for _, reason in states)
+
+    def test_upsMonitorAbsent_faulted(self, tmp_path) -> None:
+        """
+        Given: a hardware manager with no UPS monitor (the read site's
+               monitor-absent branch)
+        When: battery-health then capture-health run
+        Then: feeds.ups is faulted with the UPS reason
+        """
+        from pi.splash.source_availability import REASON_UPS_UNREADABLE
+
+        orch = _feedOrch(tmp_path)
+        self._emitUps(orch, None)
+        orch._emitCaptureHealthState()
+        feeds = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+
+        assert feeds["ups"] == {
+            "state": STATE_FAULTED,
+            "reason": REASON_UPS_UNREADABLE,
+            "firstSampleTs": None,
+            "lastSampleSecondsAgo": None,
+        }
+
+    def test_noBatteryEmitter_noReadAttempted_notFaulted(self, tmp_path) -> None:
+        """
+        Given: the battery-health emitter is dark, so no read is attempted
+        When: battery-health then capture-health run
+        Then: feeds.ups is NOT faulted -- waiting, reason null
+        """
+        orch = _feedOrch(tmp_path)
+        orch._batteryHealthEmitter = None
+        self._emitUps(orch, None)
+        orch._emitCaptureHealthState()
+        feeds = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+
+        assert feeds["ups"]["state"] == STATE_UNKNOWN
+        assert feeds["ups"]["reason"] is None
+
+    def test_neverSampledNoFault_unknownReasonNull(self, tmp_path) -> None:
+        """
+        Given: bridges wired but nothing drained, no UPS read attempted (validation 5)
+        When: the tick runs
+        Then: imu/light/ups unknown with reason null (unchanged)
+        """
+        from pi.sensors.imu_state_bridge import ImuStateBridge
+        from pi.sensors.light_state_bridge import LightStateBridge
+
+        orch = _feedOrch(tmp_path)
+        orch._imuStateBridge = ImuStateBridge(None, str(tmp_path / "states"))
+        orch._lightStateBridge = LightStateBridge(None, str(tmp_path / "states"))
+
+        feeds = _tickFeeds(orch, tmp_path)
+
+        for name in ("imu", "light", "ups"):
+            assert feeds[name]["state"] == STATE_UNKNOWN
+            assert feeds[name]["reason"] is None
+
+    def test_captureHealthNeverSubscribesToPresence(self) -> None:
+        """
+        Given: the emitter mixin's source
+        When: it is scanned
+        Then: it names no presence topic -- the faults are read from the bridges
+              in-process, never by a second subscriber (Atlas B1-i)
+        """
+        import inspect
+
+        import pi.obdii.orchestrator.card_state_emitter as cse
+
+        source = inspect.getsource(cse)
+
+        assert "STATE_IMU_PRESENCE" not in source
+        assert "STATE_LIGHT" not in source
+        assert "state.sensor." not in source

@@ -6000,6 +6000,29 @@ parameter lists; two fence tests pin them.
   (`cold-boot-obd-null`, `all-ok`, `one-feed-stalled`, `restart-rearmed`, `ups-sentinel`).
   `tests/pi/obdii/test_capture_health.py` asserts that the builder's output matches every case.
 
+**Feed faults (US-869-b, Atlas B1).** Each feed value is now `{state, reason,
+firstSampleTs, lastSampleSecondsAgo}`, and `state` gains `faulted` (`STATE_FAULTED`,
+feeds only; the top-level verdict never says it). A feed is `faulted` when its source
+holds a CURRENT fault, and `reason` is then the source's own word, passed through
+untranslated; otherwise `reason` is `null` and the `ok | stalled | idle | unknown` rules
+above are unchanged. The fault outranks the power gate: an absent sensor is absent with
+the key on or off, so the S114 boot screen never waits on it. The emitter reads three
+in-process sources through `_gatherCaptureFeedFaults` (passed to
+`buildCaptureFeedsState(feedFaults=...)`); capture-health subscribes to nothing:
+
+| Feed | Fault source | Reason | Cleared by |
+|------|--------------|--------|-----------|
+| `imu` | `ImuStateBridge.presenceFault`, set in `_handlePresence` beside the absent `states/imu` write | `sensor_absent` | a PRESENT presence state (re-plug) |
+| `light` | `LightStateBridge.presenceFault` (US-869-a), set beside the absent `states/light` write | `sensor_absent` | -- (presence is published once per reader start) |
+| `ups` | `_upsFault`, set at the read site in `_emitBatteryHealthState`: the monitor-absent branch and the read-raised branch. The battery-health emitter being dark attempts no read and sets nothing (waiting, not faulted) | `source_availability.REASON_UPS_UNREADABLE` (`gauge unreadable`) | the next valid VCELL read (`_recordUpsSample` returns True). The `0xFFFF` sentinel neither sets nor clears it |
+| `obd` | none | -- | -- |
+
+Nothing here latches; only the S114 splash step does. Because capture-health is emitted
+before battery-health on the tick (no reorder), a UPS fault reaches `feeds.ups` on the
+tick after the failed read. Today's DATA detail renders a `faulted` feed as `--` and never
+prints the reason. The contract fixture gains `imu-absent`, `light-absent` and
+`ups-unreadable`, regenerated from the builder.
+
 #### `states/obd-live` -- every live PID with value, unit, own event time and band (US-874)
 
 **Producer:** `src/pi/obdii/obd_live_emitter.py`, run inside the eclipse-obd process.

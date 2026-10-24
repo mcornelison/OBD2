@@ -152,21 +152,25 @@
       "feeds": {
         "obd": {
           "state": "unknown",
+          "reason": null,
           "firstSampleTs": null,
           "lastSampleSecondsAgo": null
         },
         "imu": {
           "state": "ok",
+          "reason": null,
           "firstSampleTs": "2026-10-22T22:41:05Z",
           "lastSampleSecondsAgo": 0.1
         },
         "light": {
           "state": "ok",
+          "reason": null,
           "firstSampleTs": "2026-10-22T22:41:05Z",
           "lastSampleSecondsAgo": 0.9
         },
         "ups": {
           "state": "ok",
+          "reason": null,
           "firstSampleTs": "2026-10-22T22:41:05Z",
           "lastSampleSecondsAgo": 4.0
         }
