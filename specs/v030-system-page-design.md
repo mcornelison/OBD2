@@ -90,6 +90,7 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
 | `bt` | `link.bt` down or retrying (not `connecting`) | OBD row: BT step + sentence |
 | `adapter` | adapter not answering while `link.bt` up | OBD row: ADAPTER step + sentence |
 | `capture` | a feed stalled while `link.ecu` up | DATA row: value `stalled` + sentence |
+| `sensor` *(S113, US-869-c; Atlas may rename the key)* | `capture-health.feeds.<imu\|light\|ups>.state` = `faulted` (Atlas B2): **one member per faulted feed**, in `FEED_NAMES` order, each carrying **`feed`** (`imu` / `light` / `ups`). Clears when the feed recovers | DATA row: sentence, **one span per member**; the feed's line in the DATA detail. Each amber element carries `data-member="sensor"` **and** `data-feed`, so A5's one-element-to-one-member check holds with two `sensor` members |
 | `wifi` | the WiFi read **failed** (`reason: read_failed`) | WIFI row: `? not read` |
 | `pi` | `pi.overLimit` non-empty | the Pi line under the verdict |
 
@@ -153,6 +154,7 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
       - `never_written` (the logger has written no row since its process started, e.g. a cold boot) ⇒ `no rows`;
       - `stalled` (rows were written once; none inside the stall window) ⇒ `stopped`.
       - Both are no wider than `recording`, so ` · synced <when>` keeps the budget measured in UIDEV-010.
+    - **A `sensor` member never changes the value** (UIDEV-014, S113): a faulted feed is not a stalled feed, so the row keeps `recording` / `idle` / … and only its sentence turns amber. `stalled` stays the `capture` member's alone (A4).
   - then ` · synced <when>` from `sync.lastOkTs` ("last data stored", S109 Rule 10), in local time (I3 date rule):
     - same local day ⇒ `fmtTimeOfDay` (`6:42 PM`);
     - the local day before ⇒ `yesterday`, **with no time on the row** (corrected 2026-10-22, UIDEV-010). `recording · synced yesterday 12:59 PM` is 37 characters = 445 px in the 334 px value column, so the ellipsis cut the time to a wrong-looking `5:0…`. That is the failure the `+` rule below exists to prevent. `recording · synced yesterday` is 28 characters and fits. The full `fmtStamp` is in the DATA detail;
@@ -160,14 +162,24 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
     - a time with no date is only ever today's. A days-old sync must never read like this afternoon.
   - `lastOkTs` null ⇒ ` · no sync on record`. Never `1970` or a raw ISO string.
 - **Sentence, in this order, ` · ` joined, ellipsized:**
-  1. `stalled` with the member ⇒ the `capture` member's `reason` verbatim (`OBD feed stalled.`). Otherwise:
-     - `all 4 feeds writing` (R3: OBD, light, IMU, UPS) while recording;
+  1. `stalled` with the member ⇒ the `capture` member's `reason` verbatim (`OBD feed stalled.`). Then **every `sensor` member's `reason` verbatim**, each in its own amber span, space-joined in `FEED_NAMES` order. The rest of this step still applies after them, **except `all 4 feeds writing`, which is never printed with a `sensor` member** (it would be false). Otherwise:
+     - `all 4 feeds writing` (R3: OBD, light, IMU, UPS) while recording and no `sensor` member;
      - `not driving` while idle (I3 confirmed);
      - `capture not read yet` when the value is `--`;
      - **`no rows` / `stopped` (no member; W3):** a cause is named only from the fact that carries it (Atlas A4):
        - `link.ecu` is `down`, `retrying` or `connecting` ⇒ `ECU not answering`;
        - otherwise (ECU up, or the layer not read) no cause is printed. `no rows` ⇒ `no row logged this session`; `stopped` ⇒ `last row <age>` from the top-level `lastRowSecondsAgo` through `agoText` (a history age, `4 min ago`), and nothing when it's null.
        - Never `ECU not answering` with the ECU up: on a cold boot that would be false.
+     - **The `sensor` reasons** (the provider writes them; the page prints them byte for byte, AC 13). Each is 23 characters or fewer, and uses the same words as the boot checklist (`v030-boot-shutdown-design.md` §1.3) and the Light page's `sensor_absent`:
+
+       | Feed | `reason` code | Member `reason` |
+       |---|---|---|
+       | IMU | `sensor_absent` | `IMU sensor not found.` |
+       | IMU | a read failure | `IMU read failed.` |
+       | LIGHT | `sensor_absent` | `Light sensor not found.` |
+       | LIGHT | a read failure | `Light read failed.` |
+       | UPS | a read failure (its only fault: an I2C error; `0xFFFF` is not a fault, Atlas B1) | `UPS gauge read failed.` |
+       | any | any other code | `IMU sensor fault.` / `Light sensor fault.` / `UPS gauge fault.` |
   2. **Away:** `wifi.home === false` ⇒ `away from home` (neutral; F-155 at-home sync). If `wifi.home` is null, no home word at all: never guess away.
   3. **Rows:** `sync.rowsWaiting` ⇒ `n rows waiting` (`fmtThousands`, so `12,345`). `sync.edrRowsWaiting` > 0 ⇒ `n event rows`. Zero event rows prints nothing.
      - **Singular (I3):** `1 row waiting`, `1 event row`. With the `+` it stays plural: `1+ rows waiting`.
@@ -226,7 +238,7 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 | Detail | Contents |
 |---|---|
 | **OBD** | per layer, **this session only** (ARCH-062): state; since when (= the layer's `ts`, the transition time); last success (= `lastOkTs`, through `fmtStamp`; `--` when the layer hasn't been up this session, never a time from an earlier boot); the row's sentence in full. **No adapter MAC** (Atlas A3, 2026-10-22): no publish field exists (it lives only inside `bt_resilience`), and a display must not grow its own reader, so the line isn't drawn. `available` = `state != null` (S109 I4, 2026-10-22). **Retry count waits on a field:** S109 doesn't publish one, so the line isn't drawn (the same rule as I5's IP). |
-| **DATA** | per feed (OBD, light, IMU, UPS): `writing` / `stalled` / `idle` / `--` (unknown) + last row age (`--` when undated) (I3); sync: last data stored (`lastOkTs` through `fmtStamp`, local, full date), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
+| **DATA** | per feed (OBD, light, IMU, UPS): `writing` / `stalled` / `idle` / `--` (unknown), **or the `sensor` member's `reason` in amber when the feed is `faulted`** (S113) + last row age (`--` when undated) (I3); sync: last data stored (`lastOkTs` through `fmtStamp`, local, full date), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
 | **WIFI** | SSID, strength (word + `rssiDbm` dBm; `no signal level` and no dBm when associated with `rssiDbm` null), home network `yes` / `no` / `unknown`. `state: down` ⇒ `not connected to any network`. The typed `source.wifi.reason` in words: `not_read` ⇒ `not read yet`, `nmcli_absent` ⇒ `no WiFi tool on this host`, `read_failed` ⇒ the member's reason. **No IP:** there's no field, and the row isn't drawn (I5) |
 | **UPS** (replaces the Battery Health card; S6) | below |
 | **Pi** (from the verdict line) | below |
@@ -363,9 +375,9 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
 
 | Need | Source | Status | Owner |
 |---|---|---|---|
-| Verdict | `system-status.verdict {issueCount, members[{key, reason}]}` | **S109 US-877-b** (bt, adapter, capture, wifi, pi) | Atlas / Ralph |
+| Verdict | `system-status.verdict {issueCount, members[{key, reason}]}` | **S109 US-877-b** (bt, adapter, capture, wifi, pi); **`sensor` in S113 US-869-c** | Atlas / Ralph |
 | Link per layer | `system-status.link.{bt, adapter, ecu}` state + `available` + `ts` | **S109 US-876-*** | Atlas / Ralph |
-| Capture per feed | `capture-health.feeds` | exists (US-688) | — |
+| Capture per feed | `capture-health.feeds` | exists (US-688); **`state: faulted` + `reason` in S113** (Atlas B1) | Atlas / Ralph |
 | Sync | `system-status.sync {lastOkTs, rowsWaiting, edrRowsWaiting, notCounted}` | **S109 US-916** | Atlas / Ralph |
 | WiFi | `system-status.wifi {state, ssid, rssiDbm, home, ts}` + `source.wifi {available, reason}` | **S109 US-732** | Atlas / Ralph |
 | UPS cell | `states/battery-health` (`vcellV`, `soc`, health verdict + reasons + margin, `ts`) | exists | — |
@@ -422,6 +434,11 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
    - UPS feed stalled, top-level `ok` ⇒ `stalled` amber, `UPS feed stalled.`, 1 member;
    - all feeds `ok` ⇒ `recording`, 0 members;
    - `stalled` appears on the row only when a `capture` member exists.
+14b. **`sensor` member (S113):**
+   - IMU `faulted` / `sensor_absent`, all else recording ⇒ `1 ISSUE`; value `recording` (never `stalled`); sentence `IMU sensor not found.` in amber; no `all 4 feeds writing`;
+   - UPS read failed + LIGHT `sensor_absent` ⇒ `2 ISSUES`; two amber spans, `Light sensor not found. UPS gauge read failed.`, each with its own `data-member`;
+   - UPS SOC `0xFFFF` ⇒ no member;
+   - the feed recovers ⇒ the member clears and the sentence returns to `all 4 feeds writing`.
 14. **Top bar:** the left cluster with the chain fits its 168.6 px side track, by `test_topbar_three_column_grid`'s measured model.
 
 ## 7. Fixtures (S10)
@@ -454,6 +471,8 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `capture-stalled-ecu-silent` | A4: top-level `stalled`, ECU `down` ⇒ `stopped` in `--text-secondary`, `ECU not answering`, uncounted |
 | `capture-never-written-ecu-up` | A4 VC 1 / W3: cold boot ⇒ `no rows`, `no row logged this session`, 0 members |
 | `capture-ups-feed-stalled` | A4 VC 2: top-level `ok`, UPS feed stalled ⇒ `stalled` amber, `UPS feed stalled.`, 1 member |
+| `sensor-imu-absent` | AC 14b: `sensor` member, `IMU sensor not found.`, value `recording` |
+| `sensor-two-faults` | AC 14b: LIGHT `sensor_absent` + UPS read failed ⇒ `2 ISSUES`, two spans |
 | `sync-days-old` | I3: `synced Oct 12`, never a bare time |
 | `sync-stale-glyph` | I4: `sync.stale`, no member ⇒ sync glyph neutral |
 | `wifi-down` | A6: `available: true`, not associated ⇒ `state: down`, reason null, `down`, slashed glyph (replaces `wifi-not-associated`) |
