@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.11",
-  "theme": "V0.30 system providers",
-  "description": "Pi-only (server unchanged since V0.30.6). Sprint 109 (#124): system-status link chain BT/adapter/ECU, WiFi, last data stored + rows waiting, Pi health with sourced limits, verdict feeding the alerts SYSTEM source. Sprint 111 (#122): clear gate counts pending, battery rounding, deploy installs a changed rfcomm-bind unit (no restart)."
+  "version": "V0.30.12",
+  "theme": "V0.30 System page and Settings",
+  "description": "Pi-only (server unchanged since V0.30.6). Sprint 110 (#131): System page rebuilt (verdict line, OBD chain, DATA, WIFI and UPS rows), Settings page, US-878-c. Iris UIDEV-014 (#130): boot/shutdown design refresh, specs only."
 }
