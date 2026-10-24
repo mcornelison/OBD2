@@ -1,0 +1,151 @@
+{
+  "description": "CPU temp, throttling (under-voltage now and since boot, 0x50005) and the disk under its 20 GiB limit -> one pi member, 'Over limit: CPU temp, throttling, disk.', the three crossed values amber, uptime not.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": {
+        "cpuTempC": 81.4,
+        "cpuTempTs": "2026-10-22T23:09:55Z",
+        "cpuTempLimitC": 80.0,
+        "throttled": true,
+        "throttledHex": "0x50005",
+        "throttledSinceBoot": true,
+        "throttledTs": "2026-10-22T23:09:55Z",
+        "diskFreeBytes": 21442624225,
+        "diskThresholdBytes": 21474836480,
+        "diskVerdict": "breached",
+        "diskTs": "2026-10-22T23:01:12Z",
+        "uptimeS": 10920,
+        "uptimeTs": "2026-10-22T23:09:55Z",
+        "overLimit": [
+          "cpuTemp",
+          "throttled",
+          "disk"
+        ]
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": 81.4,
+        "cpuTempTs": "2026-10-22T23:09:55Z",
+        "cpuTempLimitC": 80.0,
+        "throttled": true,
+        "throttledHex": "0x50005",
+        "throttledSinceBoot": true,
+        "throttledTs": "2026-10-22T23:09:55Z",
+        "diskFreeBytes": 21442624225,
+        "diskThresholdBytes": 21474836480,
+        "diskVerdict": "breached",
+        "diskTs": "2026-10-22T23:01:12Z",
+        "uptimeS": 10920,
+        "uptimeTs": "2026-10-22T23:09:55Z",
+        "overLimit": [
+          "cpuTemp",
+          "throttled",
+          "disk"
+        ]
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "pi",
+            "reason": "Over limit: CPU temp, throttling, disk."
+          }
+        ]
+      }
+    }
+  }
+}

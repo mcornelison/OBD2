@@ -43,6 +43,8 @@
 #                               its declared width (WiFi SVG, warnings icon) and fails
 #                               on one it cannot charge; "no fourth glyph" restated as
 #                               "no fifth glyph" with Iris's S108 numbers.
+# 2026-10-23    | Ralph (Rex)  | US-894-a -- MOVED PIN: glyph-bt is the link-chain
+#                               SVG charged at its declared 3ch; 159.4 of 168.6 px.
 # ================================================================================
 ################################################################################
 
@@ -660,12 +662,15 @@ def test_theShippedGlyphListIsReadFromTheMarkup_notRestated():
     """
     glyphs = _shippedLeftGlyphs()
     texts = [glyph.text for glyph in glyphs]
-    assert "BT" in texts
+    # MOVED PIN (US-894-a): the `BT` text glyph is the link-chain SVG now; it is
+    # read by id and SVG class, like the WiFi below.
+    assert "BT" not in texts, "the retired BT text glyph is back"
     assert len(glyphs) >= 2, f"the left cluster reads implausibly short: {glyphs}"
     assert "⚡" not in texts, "US-696 removed the power glyph; it is back"
     # US-898-a: the SVG WiFi and the warnings icon are read too, by id -- the
     # old text-only reader would have dropped the SVG without a word.
     byId = {glyph.id: glyph for glyph in glyphs}
+    assert byId["glyph-bt"].svgClass == "chain-mark" and byId["glyph-bt"].text == ""
     assert byId["glyph-wifi"].svgClass == "wifi-mark" and byId["glyph-wifi"].text == ""
     assert "glyph-warnings" in byId
 
@@ -777,16 +782,19 @@ def test_noFifthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
 
     This fails if the headroom GROWS past one character (a glyph narrowed or
     removed). Re-state the claim then, with the new number; do not delete it.
+
+    MOVED PIN (US-894-a): the link chain replaces `BT` at its declared 3ch
+    (spec s4.2.1): 159.4 of 168.6 px, headroom 9.2 px. The claim stands.
     """
     model = _BarModel(readCss(_CSS_PATH))
     left, share = _leftClusterFit()
     narrowestGlyph = model.leftGap + _textWidthPx("x", model.glyphSize, model.glyphSpacing)
     headroom = share - left
-    assert left == pytest.approx(145.8, abs=0.05), f"left cluster {left:.2f}px"
+    assert left == pytest.approx(159.4, abs=0.05), f"left cluster {left:.2f}px"
     assert share == pytest.approx(168.6, abs=0.05), f"share {share:.2f}px"
-    assert headroom == pytest.approx(22.8, abs=0.05), f"headroom {headroom:.2f}px"
+    assert headroom == pytest.approx(9.2, abs=0.05), f"headroom {headroom:.2f}px"
     assert narrowestGlyph == pytest.approx(26.69, abs=0.01)
-    assert len(_shippedLeftGlyphs()) == 4, "the cluster is BT, sync, WiFi and the icon"
+    assert len(_shippedLeftGlyphs()) == 4, "the cluster is the chain, sync, WiFi and the icon"
     assert headroom < narrowestGlyph, (
         f"{headroom:.1f}px of headroom now holds a one-character glyph "
         f"({narrowestGlyph:.1f}px with its gap) -- the bar has room for another "
@@ -883,12 +891,14 @@ def test_anSvgGlyphWithNoDeclaredWidthFails_subjectControl():
 
 @pytest.mark.parametrize(
     "glyphId,expectedPx",
-    [("glyph-bt", 33.38), ("glyph-sync", 16.69), ("glyph-wifi", 15.65), ("glyph-warnings", 50.07)],
+    # MOVED PIN (US-894-a): glyph-bt was the `BT` text at 33.38; it is the chain
+    # SVG at its declared 3ch (spec s4.2.1: 46.96 px).
+    [("glyph-bt", 46.96), ("glyph-sync", 16.69), ("glyph-wifi", 15.65), ("glyph-warnings", 50.07)],
 )
 def test_eachGlyphIsChargedIrisS108Width(glyphId: str, expectedPx: float):
     """Iris's per-glyph charges: text at n x (1ch + --glyph-ls), the SVG WiFi at
-    its declared 1ch (no letter-spacing on an atomic inline), the icon at its
-    declared fixed slot."""
+    its declared 1ch and the link chain at its declared 3ch (no letter-spacing on
+    an atomic inline), the icon at its declared fixed slot."""
     model = _BarModel(readCss(_CSS_PATH))
     glyph = {g.id: g for g in _shippedLeftGlyphs()}[glyphId]
     assert model.glyphWidth(glyph) == pytest.approx(expectedPx, abs=0.02)

@@ -23,6 +23,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-07    | Ralph (Rex)  | Initial -- US-532 effective-settings injection.
+# 2026-10-23    | Rex (US-878-c)| Every entry is {found, value} (Atlas B13).
+# 2026-10-23    | Rex (US-895-b)| MOVED PIN: base config gains autoDim; a saved
+#               |              | luxFull reaches DISPLAY_AUTODIM on the reload.
+# 2026-10-23    | Rex (US-895-c)| MOVED PIN: base config gains overrideLevel /
+#               |              | minLevel; the B13 null case runs unpatched.
 # ================================================================================
 ################################################################################
 
@@ -36,6 +41,7 @@ import pytest
 
 from common.config import overlay
 from pi.splash.states_http_server import StatesHttpServer, loadEffectiveSettings
+from tests.pi.splash.test_states_http_settings_write import _postSetting
 
 _TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz123456"
 
@@ -44,6 +50,7 @@ _INDEX = (
     'window.SPLASH_TOKEN = "__SPLASH_TOKEN__";\n'
     'window.DISPLAY_CAROUSEL = "__DISPLAY_CAROUSEL__";\n'
     'window.DISPLAY_SETTINGS = "__DISPLAY_SETTINGS__";\n'
+    'window.DISPLAY_AUTODIM = "__DISPLAY_AUTODIM__";\n'
     "</script>"
 )
 
@@ -57,9 +64,18 @@ _INDEX = (
 # calibration entry rather than deleting the line, and Python silently keeps the
 # last one. Same residue in test_states_http_settings_write.py and
 # tests/common/test_config_overlay.py.
+# MOVED PIN (US-895-b): the autoDim lux ends are overridable, so the base
+# carries them (the shipped 3 / 300).
+# MOVED PIN (US-895-c): and overrideLevel at the shipped null (auto), beside
+# the shipped minLevel 0.75.
 _BASE_CONFIG = {
     "pi": {
-        "display": {"carousel": {"autoRotateS": 8}},
+        "display": {
+            "carousel": {"autoRotateS": 8},
+            "autoDim": {
+                "luxMin": 3.0, "luxFull": 300.0, "minLevel": 0.75, "overrideLevel": None,
+            },
+        },
         "calibration": {"mode": False},
         "alerts": {"audioAlerts": True},
         "analysis": {"triggerAfterDrive": True},
@@ -131,9 +147,12 @@ def test_loadEffectiveSettings_readsEveryOverridableKey(tmp_path):
 
 def test_loadEffectiveSettings_returnsShippedDefaultsWhenNoOverlay(tmp_path):
     settings = loadEffectiveSettings(_writeConfig(tmp_path))
-    assert settings["pi.display.carousel.autoRotateS"] == 8
-    assert settings["pi.calibration.mode"] is False
-    assert settings["pi.analysis.triggerAfterDrive"] is True
+    assert settings["pi.display.carousel.autoRotateS"] == {"found": True, "value": 8}
+    assert settings["pi.calibration.mode"] == {"found": True, "value": False}
+    assert settings["pi.analysis.triggerAfterDrive"] == {"found": True, "value": True}
+    assert settings["pi.display.autoDim.luxMin"] == {"found": True, "value": 3.0}
+    assert settings["pi.display.autoDim.luxFull"] == {"found": True, "value": 300.0}
+    assert settings["pi.display.autoDim.overrideLevel"] == {"found": True, "value": None}
 
 
 def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
@@ -151,9 +170,9 @@ def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
         },
     )
     settings = loadEffectiveSettings(configPath)
-    assert settings["pi.display.carousel.autoRotateS"] == 0
-    assert settings["pi.calibration.mode"] is True
-    assert settings["pi.analysis.triggerAfterDrive"] is False
+    assert settings["pi.display.carousel.autoRotateS"]["value"] == 0
+    assert settings["pi.calibration.mode"]["value"] is True
+    assert settings["pi.analysis.triggerAfterDrive"]["value"] is False
 
 
 def test_loadEffectiveSettings_noConfigPath_isNone(tmp_path):
@@ -169,7 +188,7 @@ def test_loadEffectiveSettings_malformedConfig_everyKeyUnknown(tmp_path):
     configPath.write_text("{not json", encoding="utf-8")
     settings = loadEffectiveSettings(str(configPath))
     assert set(settings) == set(overlay.OVERRIDABLE_KEYS)
-    assert all(value is None for value in settings.values())
+    assert all(entry == {"found": False, "value": None} for entry in settings.values())
 
 
 def test_loadEffectiveSettings_unresolvableKey_isNoneNotADefault(tmp_path):
@@ -177,7 +196,7 @@ def test_loadEffectiveSettings_unresolvableKey_isNoneNotADefault(tmp_path):
     is unknown -- the same case US-531 used to prove its response is a re-read."""
     configPath = _writeConfig(tmp_path, {"pi": {"power": "not-a-dict"}})
     settings = loadEffectiveSettings(configPath)
-    assert settings["pi.calibration.mode"] is None
+    assert settings["pi.calibration.mode"] == {"found": False, "value": None}
 
 
 def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path):
@@ -185,7 +204,26 @@ def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path)
     shows the shipped default -- not the junk the overlay carried."""
     configPath = _writeConfig(tmp_path)
     _writeOverlay(configPath, {"pi.calibration.mode": "yes-please"})
-    assert loadEffectiveSettings(configPath)["pi.calibration.mode"] is False
+    assert loadEffectiveSettings(configPath)["pi.calibration.mode"]["value"] is False
+
+
+def test_loadEffectiveSettings_resolvedNull_isFoundNotUnknown(tmp_path):
+    """US-878-c B13: a key that RESOLVES to null (overrideLevel = auto) is
+    {found: true, value: null}; only an unresolvable key is found: false. A
+    bare null could not tell the band AUTO from Unknown. MOVED PIN (US-895-c):
+    the key is in the REAL allow-list now, so no patch; `missing` is a config
+    whose autoDim lacks the key."""
+    key = "pi.display.autoDim.overrideLevel"
+    config = json.loads(json.dumps(_BASE_CONFIG))
+    config["pi"]["display"]["autoDim"] = {"overrideLevel": None}
+    lacking = json.loads(json.dumps(_BASE_CONFIG))
+    del lacking["pi"]["display"]["autoDim"]["overrideLevel"]
+
+    resolved = loadEffectiveSettings(_writeConfig(tmp_path, config))
+    missing = loadEffectiveSettings(_writeConfig(tmp_path, lacking))
+
+    assert resolved[key] == {"found": True, "value": None}
+    assert missing[key] == {"found": False, "value": None}
 
 
 # US-668 deleted test_loadEffectiveSettings_invalidPowerMode_coercesToUnknown.
@@ -205,7 +243,7 @@ def test_index_injectsSettingsObject(tmp_path):
         body = _getIndex(server)
         assert '"__DISPLAY_SETTINGS__"' not in body  # placeholder gone
         assert "window.DISPLAY_SETTINGS = {" in body  # a JS object, not a string
-        assert _injectedSettings(body)["pi.calibration.mode"] is False
+        assert _injectedSettings(body)["pi.calibration.mode"] == {"found": True, "value": False}
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -241,10 +279,10 @@ def test_index_settingsAreResolvedPerRequest_notCachedAtConstruction(tmp_path):
     configPath = _writeConfig(tmp_path)
     server, thread = _serve(tmp_path, configPath)
     try:
-        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"] is False
+        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"]["value"] is False
         # Simulate the US-531 write landing AFTER the server was constructed.
         _writeOverlay(configPath, {"pi.calibration.mode": True})
-        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"] is True
+        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"]["value"] is True
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -270,6 +308,55 @@ def test_index_settingsKeysAreThePostBodyKeys(tmp_path):
         injected = _injectedSettings(_getIndex(server))
         for key in injected:
             assert key in overlay.OVERRIDABLE_KEYS
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# US-895-b (Atlas B15): DISPLAY_AUTODIM is resolved per request too.
+# ---------------------------------------------------------------------------
+
+
+def _injectedAutoDim(body):
+    marker = "window.DISPLAY_AUTODIM = "
+    start = body.index(marker) + len(marker)
+    return json.loads(body[start : body.index(";", start)])
+
+
+def test_index_savedLuxFull_reachesDisplayAutoDimOnTheReload_noRestart(tmp_path):
+    """
+    Given: a running server (config luxFull 300)
+    When: POST /settings luxFull 500, then the page is fetched again
+    Then: DISPLAY_AUTODIM.luxFull == 500 (and DISPLAY_SETTINGS agrees) on the
+        SAME server -- no unit restart
+    """
+    configPath = _writeConfig(tmp_path)
+    server, thread = _serve(tmp_path, configPath)
+    try:
+        assert _injectedAutoDim(_getIndex(server))["luxFull"] == 300.0
+        assert _postSetting(server, "pi.display.autoDim.luxFull", 500).status == 200
+        body = _getIndex(server)
+        assert _injectedAutoDim(body)["luxFull"] == 500
+        assert _injectedSettings(body)["pi.display.autoDim.luxFull"] == {
+            "found": True, "value": 500,
+        }
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_index_crossedLuxPairInTheOverlay_bothDropped_fromDisplayAutoDim(tmp_path):
+    """A hand-edited crossing pair never reaches the page: the seam drops both."""
+    configPath = _writeConfig(tmp_path)
+    _writeOverlay(
+        configPath,
+        {"pi.display.autoDim.luxMin": 500.0, "pi.display.autoDim.luxFull": 100.0},
+    )
+    server, thread = _serve(tmp_path, configPath)
+    try:
+        autoDim = _injectedAutoDim(_getIndex(server))
+        assert (autoDim["luxMin"], autoDim["luxFull"]) == (3.0, 300.0)
     finally:
         server.shutdown()
         thread.join(timeout=5)

@@ -25,6 +25,10 @@
 #               |              | active is the NOT CHECKED header + empty state.
 # 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-899-a2): takeoverView/ribbonView
 #               |              | cases retired with the deleted functions.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): glyphs.bt is the link
+#               |              | chain {bt, adapter, ecu}.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the UPS source and the power
+#               |              | witness read the UPS row.
 # ================================================================================
 ################################################################################
 
@@ -46,10 +50,11 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _view(fn: str, arg: dict | None) -> dict | None:
-    """Evaluate one carousel.js export against a fixture via the node probe."""
+def _view(fn: str, arg: dict | None, *more: object) -> dict | None:
+    """Evaluate one carousel.js export against a fixture via the node probe
+    (extra positional arguments are passed through, JSON-encoded)."""
     proc = subprocess.run(
-        [_NODE, _PROBE, fn, json.dumps(arg)],
+        [_NODE, _PROBE, fn, json.dumps(arg), *(json.dumps(m) for m in more)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -72,9 +77,12 @@ def _unavailable(name: str, reason: str) -> dict:
 
 
 def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
-    """OBD source unavailable -> the obdLink tile renders NA (<reason>) at the
-    `unavailable` level (never a fabricated/stale LINKED), the glyph goes neutral,
-    and sync/power/drive stay honest independently."""
+    """OBD source unavailable -> nothing on the page claims a link: the OBD row
+    reads its unread chain (dashed, not read yet), the chain glyph is hollow,
+    and sync/power/drive stay honest independently.
+
+    MOVED PIN (US-894-b): the OBD LINK tile's typed NA is retired with the tile;
+    the OBD row reads `link` verbatim and ignores source.obd (spec s4.2)."""
     view = _view(
         "systemStatusView",
         {
@@ -87,22 +95,31 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
             "ts": "2026-07-02T00:00:00Z",
         },
     )
-    assert view["tiles"]["obdLink"]["value"] == "NA"
-    assert view["tiles"]["obdLink"]["detail"] == "OBD: off"
-    assert view["tiles"]["obdLink"]["level"] == "unavailable"
-    assert view["glyphs"]["bt"] == "neutral"
+    # MOVED PIN (US-894-f): the tiles went with the drill (US-759).
+    assert "tiles" not in view
+    assert view["rows"][0]["steps"] == ["dashed", "dashed", "dashed"]
+    assert view["rows"][0]["sentence"] == "Bluetooth not read yet"
+    # MOVED PIN (US-894-a): glyphs.bt is the link chain, read from `link` and
+    # never forced by source.obd; no link published -> three hollow dots.
+    assert view["glyphs"]["bt"] == {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
     # US-668: the power tile renders the SENSED source now, not the removed
     # operator-declared mode. The point of the assertion is unchanged -- one
     # source going unavailable must not disturb another.
-    assert view["tiles"]["power"]["value"] == "EXTERNAL"  # other sources unaffected
+    # MOVED PIN (US-894-e): the POWER tile is retired; the sensed source is the
+    # UPS row's sentence.
+    assert view["rows"][3]["key"] == "ups"
+    assert view["rows"][3]["sentence"] == "on external power"  # other sources unaffected
 
 
 def test_systemStatusView_obdAvailable_rendersRealLink():
-    """OBD source available -> the real link state renders (no NA)."""
+    """OBD source available -> the real link state renders (no NA).
+    MOVED PIN (US-894-b): on the OBD row, from `link`."""
     view = _view(
         "systemStatusView",
         {
             "obdLink": {"state": "linked", "retries": 0},
+            # MOVED PIN (US-894-a): the chain reads the layers, not obdLink.
+            "link": {"bt": {"state": "up"}, "adapter": {"state": "up"}, "ecu": {"state": "up"}},
             "sync": {"lastOkTs": None, "rows": 0, "pending": 0, "stale": False},
             "power": {"mode": "car", "source": "external"},
             "drive": {"state": "idle", "driveId": None},
@@ -110,35 +127,44 @@ def test_systemStatusView_obdAvailable_rendersRealLink():
             "ts": "2026-07-02T00:00:00Z",
         },
     )
-    assert view["tiles"]["obdLink"]["value"] == "LINKED"
-    assert view["glyphs"]["bt"] == "ok"
+    assert view["rows"][0]["steps"] == ["ok", "ok", "ok"]
+    assert view["rows"][0]["sentence"] == "ECU answering"
+    assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# Battery Health -- the UPS source (single source -> whole-card NA).
+# Battery Health -- the UPS source (single source -> typed NA).
+# MOVED PIN (US-894-e): the Battery card is retired; the UPS source now
+# governs the System page's UPS row (upsRowView) and its UPS detail.
 # ---------------------------------------------------------------------------
 
+_SYS_EXTERNAL = {"power": {"source": "external", "reasons": {}}, "ts": "2026-07-02T00:00:00Z"}
+_NOW_MS = 1782950400000  # 2026-07-02T00:00:00Z
 
-def test_batteryHealthView_upsUnavailable_wholeCardTypedNa():
-    """UPS source unavailable -> the whole card is a typed NA with the reason;
-    never a blank or a stale last-real cell reading."""
-    view = _view(
-        "batteryHealthView",
+
+def test_upsRow_upsUnavailable_isTheTypedNa():
+    """UPS source unavailable -> the UPS row's cell is a typed NA with the
+    reason; never a blank or a stale last-real cell reading."""
+    row = _view(
+        "upsRowView",
+        _SYS_EXTERNAL,
         {
             "vcellV": None,
             "soc": None,
             "source": _unavailable("ups", "gauge unreadable"),
             "ts": "2026-07-02T00:00:00Z",
         },
+        _NOW_MS,
     )
-    assert view["unavailable"] is True
-    assert view["reason"] == "gauge unreadable"
+    assert row["word"] == "--"
+    assert row["value"] == "-- · gauge unreadable"
 
 
-def test_batteryHealthView_upsAvailable_rendersTiles():
-    """UPS source available -> the normal tiled view (not unavailable)."""
-    view = _view(
-        "batteryHealthView",
+def test_upsRow_upsAvailable_rendersTheCell():
+    """UPS source available -> the real cell reading (not unavailable)."""
+    row = _view(
+        "upsRowView",
+        _SYS_EXTERNAL,
         {
             "vcellV": 4.02,
             "soc": 76,
@@ -150,9 +176,9 @@ def test_batteryHealthView_upsAvailable_rendersTiles():
             "source": _available("ups"),
             "ts": "2026-07-02T00:00:00Z",
         },
+        _NOW_MS,
     )
-    assert view["unavailable"] is False
-    assert view["vcell"]["value"] == "4.02 V"
+    assert row["value"] == "4.02 V"
 
 
 # ---------------------------------------------------------------------------

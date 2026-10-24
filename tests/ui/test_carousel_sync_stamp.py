@@ -31,6 +31,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Rex (US-559) | Initial -- local 12-hour stamp, counts to detail.
+# 2026-10-23    | Rex (US-894-c)| MOVED PIN: the SYNC tile and its counts are
+#               |              | retired; the stamp pins read the DATA row and
+#               |              | detail; the drill carries no sync counts.
+# 2026-10-23    | Rex (US-894-e)| MOVED PIN: LAST STOP moved to the UPS detail
+#               |              | and the POWER tile is gone, so the drill has
+#               |              | nothing behind it and is not tappable.
+# 2026-10-23    | Rex (US-894-f)| MOVED PIN: the drill is deleted (US-759); the
+#               |              | gate and diagnostics-renderer tests retire, the
+#               |              | rest read the view's piDetail.
 # ================================================================================
 ################################################################################
 
@@ -339,225 +348,135 @@ def test_fmtStamp_negativeSelfTest_theFaceRegexRejectsARawIso():
 
 
 # ---------------------------------------------------------------------------
-# AC1 / AC2 / AC5 -- what the TILE now carries.
+# AC1 / AC2 / AC5 -- MOVED PIN (US-894-c): the SYNC tile is retired. The full
+# stamp now lives in the DATA detail (`last data stored`); the row carries the
+# short `synced <when>` (spec s4.3, Iris I3). The rules are unchanged: a real
+# face, `never` -> an honest absence, never a fabricated date.
 # ---------------------------------------------------------------------------
 
 
-def test_syncTile_detailIsTheStampAlone():
+def _status(**sync):
+    """A system-status payload with the sync block overridden."""
+    state = _sysState(sync=_sync(**sync))
+    state["ts"] = "2026-08-17T20:00:00Z"
+    return state
+
+
+def test_dataDetail_lastStoredIsTheFullStampAlone():
     """
     Given: a healthy sync
-    When: the tile renders
-    Then: the detail line is the formatted stamp and NOTHING else. The CIO's
-          2026-08-20 placement call: the stamp is read at a glance and gets its
-          own line; the counts are diagnostics you go looking for.
+    When: the DATA detail is built
+    Then: `last data stored` is the formatted stamp and nothing else -- no
+          `last` prefix, no counts folded in.
     """
-    tile = _probe("syncTile", _sync())
+    detail = _probe("dataDetailView", _status(), None)
 
-    assert STAMP_FACE.match(tile["detail"]), tile["detail"]
-    assert "rows" not in tile["detail"]
-    assert "pending" not in tile["detail"]
+    assert STAMP_FACE.match(detail["lastStored"]), detail["lastStored"]
+    assert detail["lastStored"] == _probe("fmtStamp", "2026-08-17T19:30:28Z")
 
 
-def test_syncTile_stampIsNotPrefixed():
+@pytest.mark.parametrize("shape", ["null", "missing"])
+def test_dataRowAndDetail_noTimestamp_readNoSyncOnRecord(shape):
     """
-    Given: the tile is labelled SYNC and valued OK
-    When: the stamp renders beneath it
-    Then: no `last ` prefix -- the label already says what the date is, and the
-          prefix cost characters on a 3.5" panel that P-3 just re-budgeted.
+    Given: a Pi that has never stored data (null), or an older payload that
+           omits the key
+    When: the row and the detail are built
+    Then: `no sync on record` on both -- never a date, never 1970.
     """
-    assert not _probe("syncTile", _sync())["detail"].startswith("last")
+    payload = _status()
+    if shape == "null":
+        payload["sync"]["lastOkTs"] = None
+    else:
+        payload["sync"].pop("lastOkTs")
+
+    row = _probe("dataRowView", payload, None)
+    detail = _probe("dataDetailView", payload, None)
+    assert row["value"].endswith(MIDDLE_DOT + " no sync on record"), row["value"]
+    assert detail["lastStored"] == "no sync on record"
 
 
-def test_syncTile_nullTimestamp_stillReadsNever():
+def test_dataRow_unparseableTimestamp_isNeverARawStringOnTheRow():
     """
-    Given: a Pi that has never synced
-    When: the tile renders
-    Then: `never`, unchanged (AC-5). The formatter must not touch this branch:
-          `never` is the honest absence and a date here would be the worst
-          fabrication on this tile.
+    Given: a corrupt stamp
+    When: the row renders
+    Then: `synced --` on the row (spec s4.3: never a raw ISO string), and the
+          detail echoes it VERBATIM through fmtStamp -- the honesty survives
+          the trip, and the one-line row never shows an unexplained string.
     """
-    tile = _probe("syncTile", _sync(lastOkTs=None))
+    payload = _status(lastOkTs="corrupt-value")
 
-    assert tile["detail"] == "never"
-
-
-def test_syncTile_missingTimestampKey_alsoReadsNever():
-    """
-    Given: a payload from an older Pi that omits the key entirely
-    When: the tile renders
-    Then: `never`. `undefined == null` is true in JS, so one branch covers
-          both -- pinned because a Pi/dashboard deploy skew is a state this
-          project has actually been in.
-    """
-    payload = _sync()
-    payload.pop("lastOkTs")
-
-    assert _probe("syncTile", payload)["detail"] == "never"
+    assert _probe("dataRowView", payload, None)["value"].endswith("synced --")
+    assert _probe("dataDetailView", payload, None)["lastStored"] == "corrupt-value"
 
 
-def test_syncTile_unparseableTimestamp_showsTheRawStringOnTheTile():
-    """
-    Given: a corrupt stamp reaching the tile
-    When: it renders
-    Then: the raw string appears on the tile itself. The honesty has to survive
-          the trip through `syncTile`, not just live inside `fmtStamp`.
-    """
-    tile = _probe("syncTile", _sync(lastOkTs="corrupt-value"))
+def test_dataRow_staleSyncStillCarriesItsStamp():
+    """A stale-while-driving sync keeps its stamp on the row (how stale?)."""
+    row = _probe("dataRowView", _status(stale=True), None)
 
-    assert tile["detail"] == "corrupt-value"
-    assert tile["level"] == "ok"
+    assert "synced " in row["value"]
+    assert "stale" not in row["value"].lower()
 
 
-def test_syncTile_staleTileAlsoCarriesTheStamp():
-    """
-    Given: a stale-while-driving sync
-    When: the tile renders
-    Then: STALE/amber is untouched AND the detail is the stamp. On the stale
-          branch the stamp is the MOST useful fact on the tile -- it is the
-          answer to "how stale?" -- so it must not be the branch that kept the
-          counts.
-    """
-    tile = _probe("syncTile", _sync(stale=True))
+def test_dataRow_theTimeOnTheRowIsTheSharedTwelveHourFace():
+    """The row's same-day time goes through fmtTimeOfDay -- the one 12-hour
+    rule (counted below) -- so it never drifts to a 24-hour face."""
+    row = _probe("dataRowView", _status(), None)
 
-    assert tile["value"] == "STALE"
-    assert tile["level"] == "amber"
-    assert STAMP_FACE.match(tile["detail"]), tile["detail"]
-
-
-def test_syncTile_stillCarriesTheCountsAsItsOwnField():
-    """
-    Given: the counts have moved off the detail line
-    When: the tile is built
-    Then: `syncTile` still OWNS the counts string. They are derived ONCE, here,
-          and the drill-down PRESENTS them -- the overlay must not re-derive a
-          fact the tile already computed, or the two can disagree.
-    """
-    tile = _probe("syncTile", _sync(rows=412, pending=3))
-
-    assert tile["counts"] == "412 rows " + MIDDLE_DOT + " 3 pending"
-
-
-def test_syncTile_unavailable_hasNoCountsToShow():
-    """
-    Given: no sync payload at all
-    When: the tile renders
-    Then: the counts field is empty, not a row of em-dashes. Nothing was
-          measured and nothing was even offered; inventing a diagnostics line
-          out of a missing source is the fabrication one layer up.
-    """
-    tile = _probe("syncTile", None)
-
-    assert tile["level"] == "unavailable"
-    assert tile["counts"] == ""
+    assert re.search(r"synced (1[0-2]|[1-9]):[0-5][0-9] (AM|PM)$", row["value"]), row
 
 
 # ---------------------------------------------------------------------------
-# AC2 -- the counts MOVED. A move to an unreachable surface is a deletion.
+# AC2 -- MOVED PIN (US-894-c): the sync COUNTS diagnostic is gone with the
+# tile and sync.rows / sync.pending (Atlas P7). The backlog is the DATA row's
+# `rows waiting` (US-564's null rule pinned in test_carousel_sync_pending_na.py).
 # ---------------------------------------------------------------------------
 
 
-def test_systemDrill_carriesTheSyncCountsAsADiagnostic():
+def test_systemDrill_carriesNoSyncCountsAnyMore():
     """
     Given: the whole-system payload
-    When: the drill-down view is built
-    Then: the sync counts travel with it, labelled, taken VERBATIM from the
-          tile the grid renders -- so the overlay and the card behind it are
-          incapable of disagreeing.
+    When: the page view is built
+    Then: no `sync` tile and no `pending` anywhere in it.
+
+          MOVED PIN (US-894-e): the prior-shutdown verdict that was the only
+          reference fact here moved to the UPS detail (Iris I7).
+          MOVED PIN (US-894-f): the drill and its tiles are DELETED (US-759
+          closed by the design), so the counts have nowhere left to hide.
     """
     view = _probe("systemStatusView", _sysState())
-    diags = view["drill"]["diagnostics"]
 
-    sync = [d for d in diags if d["key"] == "sync"]
-    assert len(sync) == 1
-    assert sync[0]["label"] == "SYNC"
-    assert sync[0]["text"] == view["tiles"]["sync"]["counts"]
-    # US-744 added the prior-shutdown verdict as a second reference fact here,
-    # listed on every real card, so this section is no longer sync-only.
-    assert [d["key"] for d in diags] == ["sync", "priorShutdown"]
+    assert "drill" not in view
+    assert "tiles" not in view
+    assert view["upsDetail"]["lastStop"]["label"] == "LAST STOP"
+    assert "pending" not in json.dumps(view)
 
 
 def test_systemDrill_healthySystem_isStillReachable():
     """
     Given: every source healthy -- the COMMON case
-    When: the summary line is built
-    Then: it is tappable, because the counts now live behind it.
+    When: the page view is built
+    Then: the verdict still has something behind it.
 
-          THIS PIN MOVED, IT WAS NOT DELETED. US-509 asserted the opposite
-          (`allGood -> tappable is False`) and its stated reason was "an
-          affordance that opens an EMPTY list is misleading". That invariant is
-          unchanged and still enforced below; what changed is the CONTENT -- the
-          CIO moved the counts here on 2026-08-20, so the list is no longer
-          empty on a healthy card. Had `tappable` stayed gated on faults, a
-          non-zero PENDING backlog on an otherwise-OK sync would have become
-          unreachable, and "moved to the drill-down" would have meant deleted.
+          THIS PIN MOVED, IT WAS NOT DELETED. US-509 gated the line on an
+          issue list; US-894-e left that list empty on a healthy card.
+          MOVED PIN (US-894-f): the issue list is gone (US-759) and the
+          verdict opens the Pi detail (spec s4.1), which is always built --
+          so the line is a real tap target (parked) on a healthy card too.
+          The parked-only gate is pinned in test_system_page_pi_detail.py.
     """
     view = _probe("systemStatusView", _sysState())
 
-    assert view["drill"]["tappable"] is True
-    assert view["drill"]["rows"] == []
+    assert view["piDetail"]["head"] == "PI"
+    assert [r["label"] for r in view["piDetail"]["rows"]] == [
+        "CPU", "THROTTLING", "DISK", "UPTIME",
+    ]
+    assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi", "ups"]
 
 
-def test_systemDrill_nothingBehindTheLine_isNotATapTarget():
-    """
-    Given: the sync source absent entirely, so it contributes NO counts
-    When: the summary line is built
-    Then: still tappable, because an ABSENT source is itself listed as a row.
-          Asserted so the widened gate is shown to be driven by content rather
-          than pinned open: `tappable` still reads two independent inputs.
-
-          US-744: the sync COUNTS are still absent here -- what this test was
-          pinning -- and the prior-shutdown verdict is now listed beside them
-          on every real card. The negative self-test below (empty tiles -> an
-          empty drill) is what proves the gate is not hard-coded true.
-    """
-    view = _probe("systemStatusView", _sysState(sync=None))
-
-    assert [d["key"] for d in view["drill"]["diagnostics"]] == ["priorShutdown"]
-    assert view["drill"]["rows"] != []
-    assert view["drill"]["tappable"] is True
-
-
-def test_systemDrill_negativeSelfTest_gateIsNotHardCodedTrue():
-    """
-    Given: a payload with neither issue rows nor diagnostics
-    When: the drill is built directly from empty tiles
-    Then: NOT tappable. Without this, `tappable: true` would satisfy every
-          assertion above while destroying the US-509 guarantee outright.
-    """
-    drill = _probe("systemDrill", {}, {})
-
-    assert drill["rows"] == []
-    assert drill["diagnostics"] == []
-    assert drill["tappable"] is False
-
-
-def test_systemDrill_degradedSync_keepsBothTheRowAndTheDiagnostic():
-    """
-    Given: a stale sync
-    When: the drill is built
-    Then: the row carries the STAMP as its reason (how stale) and the counts
-          still appear as the diagnostic. They answer different questions and
-          neither may absorb the other.
-    """
-    view = _probe("systemStatusView", _sysState(sync=_sync(stale=True, pending=9)))
-    row = [r for r in view["drill"]["rows"] if r["key"] == "sync"][0]
-
-    assert STAMP_FACE.match(row["reason"]), row["reason"]
-    assert "9 pending" in view["drill"]["diagnostics"][0]["text"]
-
-
-def test_systemDrill_nullCounts_stillSayTheyAreUnmeasured():
-    """
-    Given: an unmeasured pending count (US-564)
-    When: the diagnostic renders
-    Then: an em-dash, carried through to the new home. US-564 removed a
-          FABRICATED zero; moving the line must not quietly drop the typed
-          absence it replaced it with.
-    """
-    view = _probe("systemStatusView", _sysState(sync=_sync(pending=None)))
-
-    assert EM_DASH + " pending" in view["drill"]["diagnostics"][0]["text"]
-    assert "0 pending" not in view["drill"]["diagnostics"][0]["text"]
+# MOVED PIN (US-894-f): test_systemDrill_nothingBehindTheLine_isNotATapTarget
+# and test_systemDrill_negativeSelfTest_gateIsNotHardCodedTrue are RETIRED with
+# the gate they pinned: systemDrill and its `tappable` are deleted (US-759
+# closed by the design). The verdict's tap is now gated on parked alone.
 
 
 # ---------------------------------------------------------------------------
@@ -587,16 +506,7 @@ def test_emitterStillPublishesRawIso_theDisplayOwnsThePresentation():
     assert "strftime" not in body.split('"lastOkTs"')[1][:400]
 
 
-def test_carouselJs_rendererPaintsTheDiagnosticsItComputes():
-    """
-    Given: the drill-down renderer
-    When: its source is read
-    Then: it paints the diagnostics. A field the view computes and nobody
-          renders is not a readout (US-508) -- and here it would mean the
-          counts were moved into a structure that never reaches the glass.
-    """
-    js = _codeOnly(_read(_JS))
-    start = js.index("function renderSysDetail(")
-    body = js[start : start + 2600]
-
-    assert "diagnostics" in body
+# MOVED PIN (US-894-f): test_carouselJs_rendererPaintsTheDiagnosticsItComputes
+# is RETIRED: the diagnostics section and its renderer (renderSysDiagnostics)
+# are deleted with the drill (US-759). The Pi detail's painted fields are
+# pinned in tests/ui/test_system_page_pi_detail.py.

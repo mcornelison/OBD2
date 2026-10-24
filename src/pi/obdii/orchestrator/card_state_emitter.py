@@ -131,6 +131,9 @@
 #               |              | _gearNowS it was derived at; _fuelResetAllowed is
 #               |              | fuel_reset_gate.resetAllowed over the deriver's
 #               |              | own readings, published in states/fuel-economy.
+# 2026-10-23    | Rex (US-894-c)| sync.rows / sync.pending retired (Atlas P7):
+#               |              | no syncRows / syncPending, no _lastSyncRows.
+#               |              | _recordSyncOutcome stays (US-518 re-anchor).
 # ================================================================================
 ################################################################################
 
@@ -329,7 +332,6 @@ class CardStateEmitterMixin:
     _cardStateEmitInterval: float
     _cardSyncStaleThresholdS: float
     _lastCardStateEmitTime: datetime | None
-    _lastSyncRows: int
     # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
     # here for mypy only. Read through getattr so an absent attribute is fine.
     _altitudeAnchor: Any | None
@@ -1327,15 +1329,16 @@ class CardStateEmitterMixin:
             arbiter.observeDtc(payload)
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:
-        """Cache the last push's row count and re-anchor the altitude.
+        """Re-anchor the altitude after a push reached the server.
 
         Called from the sync trigger paths only AFTER a push completed past the
         route gate. It no longer stamps a time (US-916): "last data stored" is
         ``sync_log.last_ok_at``, which only a push the server stored writes and
         which survives a restart -- a stamp here also advanced on a push in
-        which every table failed.
+        which every table failed. US-894-c: it no longer caches the row count
+        either -- ``sync.rows`` is retired (Atlas P7); ``rowsPushed`` stays in
+        the signature for the call sites.
         """
-        self._lastSyncRows = int(rowsPushed)
         # US-518 (WP-3, F-125): a reached server means the Pi is on the home
         # network, i.e. the car is home -- the verified "at home" event that
         # re-anchors the derived altitude. Hooked HERE rather than at the two
@@ -1897,24 +1900,18 @@ class CardStateEmitterMixin:
         if emitter is None:
             return
 
-        obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
+        # US-894-b: obdLink is retired from the payload, so only the source's
+        # availability is read here; _gatherObdLinkState itself is unchanged
+        # (the gear producer's link health reads it, Atlas A2 2026-10-22).
+        _linkState, _retries, obdAvailable, obdReason = self._gatherObdLinkState()
         powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
         distanceKm, distanceSinceTs, distanceEndTs, distancePartial = (
             self._gatherTripWindow()
         )
+        # US-894-c (Atlas P7): no syncRows / syncPending -- sync.rows and
+        # sync.pending are retired; the backlog is syncRowsWaiting (US-916).
         payload = emitter(
-            obdLinkState=obdLinkState,
-            obdRetries=obdRetries,
-            syncRows=self._lastSyncRows,
-            # US-564: NOT MEASURED HERE -> None, never 0. A pending-row count is
-            # not tracked at this layer, and `0` is the single most reassuring
-            # value this field can take -- "everything is backed up" -- so
-            # emitting it was a confident claim about data safety that nobody
-            # had checked. The load-bearing un-backed-up signal remains the
-            # stale-while-driving amber flag the emitter derives from
-            # syncLastOkTs. (TD: acquire a real pending count.)
-            syncPending=None,
             powerSource=powerSource,
             # US-628: the typed reason travels WITH the unresolved source, so
             # the state file distinguishes "no acquisition path" from "the line
@@ -1938,8 +1935,7 @@ class CardStateEmitterMixin:
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
             runMode=self._gatherRunMode(),
-            # US-876-c: the link chain. NOT gated on obdAvailable -- the
-            # never-connected branch above blanks obdLink, never this.
+            # US-876-c: the link chain. NOT gated on obdAvailable.
             link=self._gatherLinkChain(),
             # US-732: the wifi block from the off-tick sampler + thresholds.
             **self._gatherWifiState(),

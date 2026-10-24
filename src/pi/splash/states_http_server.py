@@ -47,6 +47,12 @@
 #               |              | never a reset; above 64 KB, 413 + close. One
 #               |              | reader, _readBoundedBody. Handler socket timeout
 #               |              | 2.0 s, so a stalled client cannot hang the server.
+# 2026-10-23    | Rex (US-878-c)| POST /settings refuses a write that breaks a
+#               |              | cross-key rule (overlay.crossKeyRefusal); both
+#               |              | 400s are {ok, key, value (re-read), error}.
+#               |              | DISPLAY_SETTINGS entries are {found, value}.
+# 2026-10-23    | Rex (US-895-b)| DISPLAY_AUTODIM resolved PER REQUEST through
+#               |              | the overlay seam (construction cache retired).
 # ================================================================================
 ################################################################################
 
@@ -311,7 +317,10 @@ def makeStatesHandler(
     ``displayConfig`` (US-483-b) is the ``pi.display.autoDim`` sub-config injected
     into the served kiosk HTML so the carousel's auto-dim curve is tunable via
     config (not code). ``None`` -> the placeholder becomes ``null`` and the
-    carousel falls back to its built-in grounded defaults.
+    carousel falls back to its built-in grounded defaults. US-895-b: when
+    ``configPath`` is supplied this section is RE-READ per request (through the
+    overlay seam, so a saved lux end lands on the next reload) and this argument
+    is only the config-less fallback -- the ``carouselConfig`` posture below.
 
     ``carouselConfig`` (US-506) is the ``pi.display.carousel`` sub-config -- the
     auto-rotate period, pause self-expiry and swipe velocity/travel thresholds --
@@ -340,15 +349,12 @@ def makeStatesHandler(
     ``None`` -> POST /alerts-ack returns an honest 503.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
-    # Serialize once: the JSON object literal substituted for the quoted
-    # placeholder (json.dumps(None) -> "null", the honest no-config fallback).
-    #
-    # ONLY auto-dim is cached here. The carousel section deliberately is NOT
-    # (US-533 B1) -- see _DISPLAY_CAROUSEL_PLACEHOLDER; ``carouselConfig`` is
-    # kept as the fallback for servers constructed WITHOUT a configPath, where
-    # there is no file to re-read and the caller-supplied section is the only
-    # truth available.
-    displayConfigJson = json.dumps(displayConfig)
+    # Nothing display-side is cached here any more. US-895-b (Atlas B15) retired
+    # the last construction-time blob, auto-dim: its lux ends are now operator
+    # settings, so it is re-read per request like the carousel section (US-533
+    # B1). ``displayConfig`` / ``carouselConfig`` are kept as the fallback for
+    # servers constructed WITHOUT a configPath, where there is no file to re-read
+    # and the caller-supplied section is the only truth available.
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Applied to the connection by StreamRequestHandler.setup; the stdlib
@@ -715,11 +721,14 @@ def makeStatesHandler(
                 return
             isValid, stored = overlay.validateOverlayValue(key, value)
             if not isValid:
-                self._send(
-                    400,
-                    b'{"ok":false,"error":"invalid value for this setting"}',
-                    "application/json",
-                )
+                self._refuseSetting(configPath, key, "invalid value for this setting")
+                return
+            # US-878-c: the cross-key seam judges the write on the EFFECTIVE
+            # config (the stored overlay + config.json + DEFAULTS), so a value
+            # the read seam would drop at boot is never stored in the first place.
+            brokenRule = overlay.crossKeyRefusal(configPath, key, stored)
+            if brokenRule is not None:
+                self._refuseSetting(configPath, key, brokenRule.error)
                 return
 
             wrote = overlay.writeOverlayValue(
@@ -742,6 +751,19 @@ def makeStatesHandler(
                 self._send(500, body, "application/json")
                 return
             self._send(200, body, "application/json")
+
+        def _refuseSetting(self, readPath: str, key: str, error: str) -> None:
+            # US-878-c B7: ONE 400 shape for a bad value and a broken cross-key
+            # rule alike. It carries the RE-READ effective value, so the band
+            # snaps back to what is really stored rather than to its request.
+            found, effective = overlay.readEffectiveValue(readPath, key)
+            body = {
+                "ok": False,
+                "key": key,
+                "value": effective if found else None,
+                "error": error,
+            }
+            self._send(400, json.dumps(body).encode("utf-8"), "application/json")
 
         def _injectHtml(self, html: str) -> str:
             # Same-origin injection at serve time: the token SSOT (US-393), the
@@ -771,6 +793,15 @@ def makeStatesHandler(
             )
             # US-882-c: the stale windows, per request for the same reason.
             staleJson = json.dumps(loadDisplayStaleConfig(configPath))
+            # US-895-b (Atlas B15): and auto-dim, whose luxMin / luxFull the
+            # band now writes -- a construction-time blob would hand the page
+            # the pre-save ends on every reload (the US-532 defect). Same
+            # no-configPath fallback as the carousel section.
+            displayConfigJson = json.dumps(
+                displayConfig
+                if configPath is None
+                else loadDisplayAutoDimConfig(configPath)
+            )
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
@@ -1040,11 +1071,13 @@ def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:
     be surfaced under a name that has drifted from the one the write route
     accepts (the injected keys ARE the POST body keys).
 
-    Honest-instrument: a key that cannot be resolved -- absent, or blocked by a
-    non-dict parent branch -- maps to ``None`` (rendered "unknown"), never to a
-    fabricated default. An unreadable config.json yields every key ``None``
-    rather than raising, so a bad config degrades one band instead of taking the
-    whole kiosk page down.
+    Honest-instrument: each entry is ``{"found", "value"}`` (US-878-c, Atlas
+    B13), so a key that RESOLVES to null (overrideLevel = auto) is told apart
+    from one that cannot be resolved -- absent, or blocked by a non-dict parent
+    branch -- which is ``{"found": false, "value": null}`` (rendered "unknown"),
+    never a fabricated default. An unreadable config.json yields every key
+    not-found rather than raising, so a bad config degrades one band instead of
+    taking the whole kiosk page down.
 
     Args:
         configPath: Path to config.json (relative paths resolve against the
@@ -1052,15 +1085,15 @@ def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:
             server has no config wired.
 
     Returns:
-        A flat dot-path -> effective-value map, or ``None`` when no config path
-        is configured (the band then renders every row as unknown).
+        A flat dot-path -> ``{"found", "value"}`` map, or ``None`` when no config
+        path is configured (the band then renders every row as unknown).
     """
     if configPath is None:
         return None
     settings: dict[str, Any] = {}
     for key in overlay.OVERRIDABLE_KEYS:
         found, value = overlay.readEffectiveValue(configPath, key)
-        settings[key] = value if found else None
+        settings[key] = {"found": found, "value": value if found else None}
     return settings
 
 

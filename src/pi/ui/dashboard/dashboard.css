@@ -175,6 +175,8 @@
                                   vehicle" chip. The token predates US-510; the
                                   dashboard simply was not pointing at it. */
   --tap-min:        40px;      /* minimum touch target (S-2) */
+  --row-min:        44px;      /* US-894-b: a System page row, a touch target
+                                  when parked (system spec s3, Iris I10) */
 }
 
 /* --- US-495 (F-111): the [hidden] guard -------------------------------------
@@ -268,6 +270,30 @@ html, body {
   fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round;
 }
 #glyph-wifi .wifi-mark circle { fill: currentColor; stroke: none; }
+/* US-894-d (spec s4.4): no reading (`dim`: not_read, nmcli_absent, associated
+   with no level) is dim arcs with NO slash; `down` is the slashed glyph. Both
+   are uncounted, so neither is amber (s4.0) -- the #topbar `down` amber above
+   is for other glyphs. Amber is the `wifi` member alone ([data-state="amber"]). */
+#topbar #glyph-wifi[data-state="dim"],
+#topbar #glyph-wifi[data-state="down"] { color: var(--text-tertiary); }
+#glyph-wifi .wifi-slash { display: none; }
+#glyph-wifi[data-state="down"] .wifi-slash { display: inline; }
+/* US-894-a (spec s4.2.1): the three-layer link chain BT -> ADAPTER -> ECU in the
+   BT slot. A 3ch x 1em SVG (letter-spacing does not reach it, so 3ch is exact);
+   each dot paints its own data-state through currentColor. Amber is a verdict
+   MEMBER's layer only (s4.0); `hollow` is a layer not read -- a ring, never the
+   solid `down` look (ARCH-062). The joining lines stay --text-secondary. */
+#glyph-bt .chain-mark {
+  width: 3ch; height: 1em; vertical-align: -0.1em;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
+}
+#glyph-bt .chain-dot { fill: currentColor; stroke: currentColor; color: var(--text-secondary); }
+#glyph-bt .chain-dot[data-state="ok"]        { color: var(--green-ok); }
+#glyph-bt .chain-dot[data-state="neutral"]   { color: var(--text-secondary); }
+#glyph-bt .chain-dot[data-state="secondary"] { color: var(--text-secondary); }
+#glyph-bt .chain-dot[data-state="tertiary"]  { color: var(--text-tertiary); }
+#glyph-bt .chain-dot[data-state="amber"]     { color: var(--amber-warn); }
+#glyph-bt .chain-dot[data-state="hollow"]    { fill: none; color: var(--text-tertiary); }
 /* US-898-a (F-127; specs/v030-warnings-page-design.md s4.2): the warnings icon.
    A FIXED three-character slot -- `▲99` is the widest content, 3 x (1ch +
    --glyph-ls) -- so the cluster never reflows as the count changes; min-width
@@ -602,78 +628,96 @@ html, body {
   color: var(--text-secondary); font-weight: 500; letter-spacing: 0.06em;
 }
 
-/* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
-/* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a
-   2x2 tile grid, and a per-tile status dot. No new data, no new contract.
-   The dot introduces NO new severity vocabulary -- it MIRRORS the
-   `.tile[data-level] .tile-value` mapping above token-for-token, including
-   `down`, which US-488 (TD-067) just swept to WATCH amber ("degraded is not
-   danger"). A red dot here would re-open that debt a sprint after it closed,
-   and would contradict the value sitting beside it. */
-.sys-summary {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 2px 0 6px 0; margin-bottom: 6px;
-  border-bottom: 1px solid var(--surface);
+/* --- US-894-b System page: verdict line + rows (system spec s3 layout A) ---- */
+/* The verdict is the driver-glance element; each row is a label, a value and a
+   one-line sentence. Rows never use `.tile`. Spec AC 11: no literal colour and
+   no px in these rules -- tokens, em and ch only. Amber is a verdict MEMBER's
+   (s4.0): the page paints `amber` only where the view says a member speaks. */
+.sys-verdict {
+  display: flex; align-items: baseline; gap: 0.5em;
+  padding-bottom: 0.25em; border-bottom: 0.0625em solid var(--surface);
 }
-/* Neutral base: an unrecognised level inherits no severity it has not earned. */
-.sys-summary-text {
+.sys-verdict-text {
   font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
-.sys-summary-detail {
-  margin-left: auto; font-size: var(--fs-label); color: var(--text-tertiary);
+.sys-verdict[data-level="ok"] .sys-verdict-text { color: var(--green-ok); }
+/* US-894-f (AC 7): the count's level is `issues`, not `amber` -- the count
+   is the member set itself, so it names no one member. Same amber hue. */
+.sys-verdict[data-level="issues"] .sys-verdict-text { color: var(--amber-warn); }
+.sys-verdict[data-level="unavailable"] .sys-verdict-text { color: var(--text-tertiary); }
+.sys-tappable { cursor: pointer; }
+/* US-894-f (s4.1): the Pi line -- one mono --fs-meta line in amber under the
+   verdict, the `pi` member's reason verbatim; its ` ›` (parked only) takes
+   the line's colour. One line: the ellipsis is the visible sign. */
+.sys-pi-line {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.sys-summary[data-level="ok"] .sys-summary-text { color: var(--green-ok); }
-.sys-summary[data-level="amber"] .sys-summary-text { color: var(--amber-warn); }
-/* TD-067: a degraded source is WATCH, never the pull-over red. */
-.sys-summary[data-level="down"] .sys-summary-text { color: var(--amber-warn); }
-.sys-summary[data-level="unavailable"] .sys-summary-text {
-  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+.sys-pi-line[data-level="amber"] { color: var(--amber-warn); }
+.sys-chevron { font-size: var(--fs-label); color: var(--text-tertiary); }
+/* US-895-a (s3, s4.7.2): SETTINGS › at the verdict line's right, in every
+   state; a neutral navigation link, never a state colour. */
+.sys-settings {
+  margin-left: auto; display: inline-flex; align-items: center;
+  min-height: var(--tap-min); cursor: pointer;
+  font-size: var(--fs-meta); letter-spacing: 0.06em; color: var(--text-secondary);
 }
-/* The 2x2 grid (F-092's original intent). ONLY the System Status card regrids;
-   the battery card and the LTFT card keep the base `.tile`
-   stack above. `:last-child` is spelled out because the base rule zeroes the
-   bottom border there -- without it the final grid cell renders open-sided. */
-.sys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.sys-grid .tile, .sys-grid .tile:last-child {
-  border: 1px solid var(--surface); border-radius: 4px; padding: 6px 8px;
+.sys-row {
+  display: flex; align-items: center; gap: 0.5em;
+  min-height: var(--row-min); box-sizing: border-box;
+  border-bottom: 0.0625em solid var(--surface);
 }
-.tile-head { display: flex; align-items: center; gap: 6px; }
-.tile-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  flex: 0 0 auto; background: var(--text-tertiary);
+.sys-row-label {
+  flex: 0 0 4.5em;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); color: var(--text-secondary);
 }
-.tile[data-level="ok"] .tile-dot { background: var(--green-ok); }
-.tile[data-level="amber"] .tile-dot { background: var(--amber-warn); }
-.tile[data-level="down"] .tile-dot { background: var(--amber-warn); }
-.tile[data-level="neutral"] .tile-dot { background: var(--text-secondary); }
-.tile[data-level="unavailable"] .tile-dot { background: var(--text-tertiary); }
-/* US-700: the dot follows the value -- a loading tile with a dead-gray dot
-   beside a live-gray value would contradict itself inside one tile. */
-.tile[data-level="loading"] .tile-dot { background: var(--text-secondary); }
-
-/* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
-/* The drain ladder block is appended ONLY when battery-health.draining===true;
-   it never renders otherwise (no false failsafe). The amber/red staging mirrors
-   the honest-instrument palette. */
-.ladder {
-  margin-top: 8px; padding: 8px 10px;
-  display: flex; flex-direction: column; gap: 2px;
-  border: 1px solid var(--amber-warn); border-radius: 4px;
-  background: rgba(255, 196, 0, 0.06);
+.sys-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.sys-row-value {
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ladder-banner {
-  font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
-  color: var(--amber-warn);
+/* One line; the ellipsis is the visible sign, the full text is in the detail. */
+.sys-row-sentence {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* US-488: TRIGGER is the ladder's TERMINAL stage -- the failsafe is about to
-   halt the Pi -- so it earns the state-alarm red. The earlier stages stay amber
-   above, or the escalation would not read as an escalation. This is a SYSTEM
-   critical state, not the engine one: the banner copy stays "DRAINING · TRIGGER"
-   (carousel.js), never the STOP takeover's directive. */
-.ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
-.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
-.ladder-runtime { font-size: var(--fs-label); color: var(--text-secondary); }
+.sys-row[data-level="amber"] .sys-row-sentence { color: var(--amber-warn); }
+/* US-894-c DATA row (s4.3): the capture word in its own look, then a neutral
+   ` · synced <when>`; the sentence is one span per part, so only a member's
+   reason is amber and the counts beside it stay neutral (s4.0). */
+.sys-row-word { color: var(--text-tertiary); }
+.sys-row-word[data-state="ok"]        { color: var(--green-ok); }
+.sys-row-word[data-state="secondary"] { color: var(--text-secondary); }
+.sys-row-word[data-state="tertiary"]  { color: var(--text-tertiary); }
+.sys-row-word[data-state="amber"]     { color: var(--amber-warn); }
+/* US-894-e (s4.5): the UPS row's VCELL value is --text-primary. */
+.sys-row-word[data-state="primary"]   { color: var(--text-primary); }
+.sys-row-tail { color: var(--text-secondary); }
+.sys-row-part[data-level="secondary"] { color: var(--text-secondary); }
+.sys-row-part[data-level="amber"]     { color: var(--amber-warn); }
+/* The OBD chain (s4.2): outlined steps, the look on each step's data-state. A
+   step the provider did not read is DASHED (AC 4), never the solid `down`. */
+.obd-join { color: var(--text-tertiary); }
+.obd-step {
+  display: inline-block; padding: 0 0.25em;
+  border: 0.0625em solid currentColor; border-radius: 0.2em;
+  color: var(--text-tertiary);
+}
+.obd-step[data-state="ok"]        { color: var(--green-ok); }
+.obd-step[data-state="neutral"]   { color: var(--text-secondary); }
+.obd-step[data-state="secondary"] { color: var(--text-secondary); }
+.obd-step[data-state="tertiary"]  { color: var(--text-tertiary); }
+.obd-step[data-state="amber"]     { color: var(--amber-warn); }
+.obd-step[data-state="dashed"]    { color: var(--text-tertiary); border-style: dashed; }
+/* The OBD detail (s4.6) inside #sys-detail. */
+.obd-layer-state { margin-left: auto; font-size: var(--fs-label); color: var(--text-primary); }
+.obd-layer-fact { font-size: var(--fs-label); color: var(--text-secondary); }
+.obd-detail-sentence { font-size: var(--fs-label); color: var(--text-secondary); }
+.obd-detail-sentence[data-level="amber"] { color: var(--amber-warn); }
 
 /* --- US-420 fuel-trim trend (F-096; the "Fuel Trim" section since US-507) --- */
 /* An insufficient trend renders a muted, plainly non-green headline (honest-
@@ -925,6 +969,9 @@ html, body {
   background: var(--bg);
   display: flex; flex-direction: column; gap: 6px;
   padding: 6px 12px 10px; box-sizing: border-box; overflow-y: auto;
+  /* US-895-a (spec s4.7): a list taller than the panel scrolls with a VISIBLE
+     scrollbar, never a silent clip -- a classic (not overlay) bar in tokens. */
+  scrollbar-width: thin; scrollbar-color: var(--text-secondary) var(--surface);
 }
 /* US-556 (F-132): was a FIXED `height: 36px` around a 40px (--tap-min)
    #menu-close, so the one control that dismisses this overlay overflowed its own
@@ -943,15 +990,17 @@ html, body {
   display: flex; align-items: center; min-height: var(--tap-min);
   border-bottom: 1px solid var(--surface);
 }
+/* US-895-a (spec s4.7): the head reads '‹ BACK' (left) and 'SETTINGS' in the
+   page-name slot (right), as the top bar it covers. */
 .menu-title {
+  margin-left: auto;
   font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--text-primary);
 }
 #menu-close {
-  margin-left: auto;
   min-width: var(--tap-min); min-height: var(--tap-min);
-  background: transparent; border: 0; color: var(--text-secondary);
-  font-size: var(--fs-primary); cursor: pointer;
+  background: transparent; border: 0; color: var(--accent);
+  font-size: var(--fs-label); cursor: pointer;
 }
 .menu-section { display: flex; flex-direction: column; gap: 4px; }
 .menu-section-title {
@@ -1012,6 +1061,57 @@ html, body {
 .set-btn[aria-pressed="true"] {
   color: var(--text-primary); font-weight: 700;
   border: 1px solid var(--green-ok);
+}
+/* US-895-a (spec s4.7): DISPLAY / SYSTEM section heads in --accent. */
+.set-section {
+  margin: 6px 0 0; font-size: var(--fs-meta); letter-spacing: 0.08em;
+  color: var(--accent);
+}
+/* The steps kind (auto-rotate): `− value +`, each target >= --tap-min. */
+.set-step {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  font-size: var(--fs-label); cursor: pointer;
+  background: var(--bg); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
+}
+.set-value {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  font-family: var(--font-mono); font-size: var(--fs-label); color: var(--text-primary);
+}
+/* US-895-a (spec s4.7.2): LOCKED until parked. Readable, inert: tertiary ink,
+   no fill, the active segment keeps a tertiary outline so the stored value
+   still reads; no pointer (the steppers are not drawn at all). */
+.settings-lock {
+  margin: 2px 0 0; font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}
+#settings-list[data-locked="true"] .set-btn {
+  background: transparent; color: var(--text-tertiary); cursor: default;
+  border-color: transparent;
+}
+#settings-list[data-locked="true"] .set-btn[aria-pressed="true"] {
+  border-color: var(--text-tertiary); font-weight: 400;
+}
+#settings-list[data-locked="true"] .set-value { color: var(--text-tertiary); }
+/* US-895-b (spec s4.7): the kind "ladder" row, AUTO-DIM ENDS -- two lux ends
+   stacked in one row, each its name then `− value +`. The step that would
+   cross the partner is drawn disabled: outlined, tertiary, no pointer. */
+.set-end { display: flex; align-items: center; gap: 4px; }
+.set-end-name {
+  min-width: 11ch; font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}
+.set-end-controls { display: flex; gap: 4px; }
+.set-ends { flex-direction: column; align-items: flex-end; }
+.set-step:disabled {
+  background: transparent; color: var(--text-tertiary); cursor: default;
+}
+/* US-895-c (spec s4.7): BRIGHTNESS's FIXED segment with the effective minLevel
+   unreadable is drawn disabled the same way -- a floor it cannot know is a
+   level it cannot offer. */
+.set-btn:disabled {
+  background: transparent; color: var(--text-tertiary); cursor: default;
 }
 .settings-foot {
   margin: 2px 0 0; font-size: var(--fs-meta); color: var(--text-tertiary);
@@ -1251,7 +1351,7 @@ html, body {
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
 #sys-detail[hidden] { display: none; }
-/* US-887-c: the version chip's new home, under the issue rows. */
+/* US-887-c: the version chip's home; US-894-f: shown only in the Pi detail. */
 #sys-detail #version-chip { padding-top: var(--detail-gap); }
 #sys-detail-back {
   min-width: var(--tap-min); min-height: var(--tap-min);
@@ -1265,37 +1365,6 @@ html, body {
   font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
-/* The chip carries the severity. It takes NO colour of its own -- the row's
-   [data-level] drives it, so the chip can never disagree with the row it sits
-   in, and the ramp is declared exactly once below. */
-.sys-issue-chip {
-  margin-left: auto; font-size: var(--fs-label); font-weight: 700;
-  letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px;
-  border: 1px solid currentColor;
-}
-.sys-issue-reason { font-size: var(--fs-label); color: var(--text-secondary); }
-.sys-issue-freshness { font-size: var(--fs-label); color: var(--text-tertiary); }
-.sys-issue-none {
-  font-size: var(--fs-secondary); color: var(--text-tertiary); font-style: italic;
-  padding: var(--detail-pad);
-}
-/* TD-067 holds here too: a degraded source is WATCH amber, never the pull-over
-   red -- the same ramp the summary line and the tile dots already use. An
-   unavailable source is a known-UNKNOWN: muted, never an alarm it has not
-   earned, and never green. */
-.sys-issue-row[data-level="amber"] .sys-issue-chip { color: var(--amber-warn); }
-.sys-issue-row[data-level="down"]  .sys-issue-chip { color: var(--amber-warn); }
-.sys-issue-row[data-level="unavailable"] .sys-issue-chip {
-  color: var(--text-tertiary);
-}
-/* US-559: the SYNC counts, moved off the tile so the stamp could have its own
-   line. Reference facts, NOT faults -- so they are deliberately QUIETER than an
-   issue row: no severity chip, no border, tertiary text. Reading like a fault
-   is how a diagnostics line trains the operator to ignore the real ones. */
-.sys-diag-row {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: var(--detail-pad);
-}
 .sys-diag-label {
   font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-tertiary);
@@ -1303,10 +1372,20 @@ html, body {
 .sys-diag-text {
   margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
 }
-/* US-509: the summary line only LOOKS like a control when it is one. */
-.sys-summary-tappable { cursor: pointer; }
-.sys-summary-chevron { font-size: var(--fs-secondary); color: var(--text-tertiary); }
-.sys-summary-tappable .sys-summary-detail { margin-left: auto; }
+/* US-894-d WIFI detail: the reason is amber only as the `wifi` member's. */
+.wifi-reason[data-level="amber"] .sys-diag-text { color: var(--amber-warn); }
+/* US-894-e (s4.6.1): the UPS detail. Every line is neutral (no UPS member);
+   the health verdict is green for GOOD and never amber or red (Spool). */
+.ups-label, .ups-health-note, .ups-health-check {
+  font-size: var(--fs-label); color: var(--text-secondary);
+}
+.ups-health .sys-diag-text[data-level="ok"] { color: var(--green-ok); }
+.ups-soc .sys-diag-text { color: var(--text-secondary); }
+/* US-894-f (s4.6.2): the Pi detail. A value is amber only as the `pi`
+   member's crossed limit; the note (limit / hex) and the read time are
+   neutral. */
+.pi-value { margin-left: auto; font-size: var(--fs-label); color: var(--text-primary); }
+.pi-row[data-level="amber"] .pi-value { color: var(--amber-warn); }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)

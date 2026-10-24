@@ -2,14 +2,14 @@
 # File Name: test_sync_pending_unmeasured.py
 # Purpose/Description: US-564 instance A -- `syncPending` was a count nobody
 #   measured, hard-coded to 0 at card_state_emitter.py:307 and then independently
-#   re-defaulted to 0 by carousel.js::syncTile. This file pins the EMITTER half.
-#   The DISPLAY half is pinned in tests/ui/test_carousel_sync_pending_na.py, and
-#   the two are inseparable by design: either coercion alone ships green and the
-#   panel still reads "0 pending".
+#   re-defaulted to 0 by carousel.js::syncTile. This file pinned the EMITTER half
+#   (unmeasured -> None, never 0).
 #
-#   Why this one mattered more than its size suggests: of every value this field
-#   can take, 0 is the single most reassuring -- "every captured row is on the
-#   server". It was a confident all-clear on data safety that no code had checked.
+#   MOVED PIN (US-894-c, Atlas P7): `sync.pending` and `sync.rows` are RETIRED
+#   with the SYNC tile. The honest end state of an unmeasured count is no key at
+#   all -- the backlog is US-916's `rowsWaiting`, null when not read. What this
+#   file now pins is that the retired count cannot come back by either door:
+#   the payload, or a builder / emit / call-site parameter.
 # Author: Rex (US-564)
 # Creation Date: 2026-08-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -19,27 +19,29 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Rex (US-564) | Initial -- emitter emits None, carries through.
+# 2026-10-23    | Rex (US-894-c)| MOVED PIN: sync.pending / sync.rows retired;
+#               |              | pins their absence instead of their null.
 # ================================================================================
 ################################################################################
 
-"""Tests for the US-564 syncPending emitter half (unmeasured -> None, not 0)."""
+"""Tests that the retired sync.pending / sync.rows count stays retired (US-894-c)."""
 
 from __future__ import annotations
 
 import inspect
 
-from pi.splash.system_status_emitter import buildSystemStatusState
+import pytest
+
+from pi.splash.system_status_emitter import (
+    buildSystemStatusState,
+    makeSystemStatusEmitter,
+)
 
 
 def _state(**overrides):
     """Build a system-status payload with the boring fields filled in."""
     kwargs = {
-        "obdLinkState": "linked",
-        "obdRetries": 0,
-        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": "2026-08-21T11:00:00Z",
-        "syncRows": 120,
-        "syncPending": None,
         "syncStale": False,
         "powerSource": "external",
         "driveState": "idle",
@@ -50,76 +52,59 @@ def _state(**overrides):
     return buildSystemStatusState(**kwargs)
 
 
-class TestEmitterCarriesNullThrough:
-    """A null must survive the payload build -- not be helpfully filled in."""
+class TestTheRetiredCountIsNotPublished:
+    """MOVED PIN (US-894-c): no `pending` / `rows` key -- not null, absent."""
 
-    def test_buildSystemStatusState_nonePending_staysNull(self):
+    def test_buildSystemStatusState_publishesNoPendingAndNoRows(self):
         """
-        Given: no caller measures a pending-row count
-        When: the payload is built with syncPending=None
-        Then: `sync.pending` is null in the emitted state. A helpful `or 0`
-              anywhere on this path recreates the whole defect one layer down.
+        Given: a payload built with every sync input the builder takes
+        When: its sync block is read
+        Then: neither `pending` nor `rows` is a key. The backlog travels as
+              rowsWaiting, null when not read -- the unmeasured all-clear US-564
+              fought has no field left to live in.
         """
-        assert _state(syncPending=None)["sync"]["pending"] is None
+        sync = _state()["sync"]
 
-    def test_buildSystemStatusState_realCountIsStillCarried(self):
+        assert "pending" not in sync
+        assert "rows" not in sync
+        assert sync["rowsWaiting"] is None
+
+    @pytest.mark.parametrize("retired", ["syncPending", "syncRows"])
+    def test_buildSystemStatusState_refusesTheRetiredInput(self, retired):
         """
-        Given: a caller that DOES measure a pending count
+        Given: a caller still passing a retired input
         When: the payload is built
-        Then: the number lands unchanged -- the fix must not make the field
-              permanently unreportable, only honestly-absent when unmeasured
+        Then: it raises -- a stale caller fails loudly rather than having its
+              count silently dropped or, worse, published again.
         """
-        assert _state(syncPending=7)["sync"]["pending"] == 7
+        with pytest.raises(TypeError):
+            _state(**{retired: 0})
 
-    def test_buildSystemStatusState_measuredZeroIsStillZero(self):
-        """
-        Given: a caller that measured the count and it genuinely IS zero
-        When: the payload is built
-        Then: 0 is published. This is the whole point of the distinction: a
-              measured zero is real news, and it must remain sayable now that
-              an unmeasured one has stopped being said.
-        """
-        assert _state(syncPending=0)["sync"]["pending"] == 0
+    @pytest.mark.parametrize("retired", ["syncPending", "syncRows"])
+    def test_emitSignature_hasNoRetiredParameter(self, retired, tmp_path):
+        emit = makeSystemStatusEmitter(str(tmp_path), syncStaleThresholdS=60)
 
-    def test_buildSystemStatusState_pendingKeyIsAlwaysPresent(self):
-        """
-        Given: an unmeasured count
-        When: the payload is built
-        Then: the KEY still exists carrying null -- an intermittently-absent key
-              is the shape that lets a renderer fall through to a wrong branch,
-              which is the sibling defect of coercing the value
-        """
-        assert "pending" in _state(syncPending=None)["sync"]
+        assert retired not in inspect.signature(emit).parameters
+        assert retired not in inspect.signature(buildSystemStatusState).parameters
 
 
-class TestTheEmitterNoLongerInventsACount:
-    """The producer half of the two-layer fix, pinned at its source."""
+class TestTheCallSiteNoLongerPassesACount:
+    """The producer half, pinned at its source."""
 
-    def test_cardStateEmitter_doesNotPassAHardCodedZero(self):
+    def test_cardStateEmitter_passesNeitherRetiredInput(self):
         """
         Given: the orchestrator call site that fills the system-status payload
         When: its source is read
-        Then: it passes syncPending=None. Pinned STRUCTURALLY because no
-              behavioural test of the emitter can see this: the call site is
-              what chose the value, and a behavioural test would just observe
-              whatever it chose.
+        Then: it passes neither syncPending nor syncRows, and caches no
+              _lastSyncRows. Structural because a behavioural test of the
+              emitter only observes what the call site chose.
         """
-        from pi.obdii.orchestrator import card_state_emitter
+        from pi.obdii.orchestrator import card_state_emitter, core
 
         source = inspect.getsource(card_state_emitter)
 
-        assert "syncPending=None" in source
-        assert "syncPending=0" not in source
-
-    def test_systemStatusEmitter_signaturesAcceptNone(self):
-        """
-        Given: the emitter's public entry point
-        When: its annotation is read
-        Then: the parameter is optional. A test that only passes None at runtime
-              would pass against an `int` annotation too -- the contract has to
-              SAY the field can be unmeasured, or the next caller re-adds a 0
-              to satisfy the type.
-        """
-        annotation = inspect.signature(buildSystemStatusState).parameters["syncPending"].annotation
-
-        assert "None" in str(annotation)
+        assert "syncPending=" not in source
+        assert "syncRows=" not in source
+        assert "self._lastSyncRows" not in source
+        assert "_lastSyncRows: int" not in source
+        assert "_lastSyncRows" not in inspect.getsource(core)

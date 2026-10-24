@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -781,14 +782,15 @@ def test_configJsonLuxFullChange_reReadAfterOneSecond_notAtHalf(tmp_path: Path):
     assert _levelFor(500.0) != _levelFor(1000.0)
 
 
-def test_luxFullInConfigLocalJsonOnly_isIgnored(tmp_path: Path):
+def test_luxFullInConfigLocalJsonOnly_isApplied(tmp_path: Path):
     """
     Given: config.json carries luxFull 1000
     When: config.local.json alone sets pi.display.autoDim.luxFull 500 and the
         mtime check runs
-    Then: IGNORED -- the bridge keeps the config.json value (autoDim is not
-        in the overlay allow-list; Atlas ruled B)
+    Then: APPLIED -- the next burst uses 500 (US-895-b: the CIO reversed Atlas
+        ruling B 2026-10-19, so luxFull is in the overlay allow-list)
     """
+    # MOVED PIN (US-895-b): was test_luxFullInConfigLocalJsonOnly_isIgnored.
     configPath = tmp_path / "config.json"
     _writeJson(configPath, _autoDimConfig(1000.0), mtimeNs=1_000_000_000)
     clock = _Clock()
@@ -801,8 +803,41 @@ def test_luxFullInConfigLocalJsonOnly_isIgnored(tmp_path: Path):
     )
     clock.now = 1.1
 
-    assert _burstLevel(bridge, 1) == _levelFor(1000.0)
+    assert _burstLevel(bridge, 1) == _levelFor(500.0)
+    assert bridge.autoDim["luxFull"] == 500.0
+
+
+def test_aCrossingLuxFullInConfigLocalJson_isDropped_withTheRuleNamed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """
+    Given: config.json carries luxMin 3, luxFull 1000
+    When: config.local.json alone sets luxFull 2 (below luxMin) and the mtime
+        check runs
+    Then: the bridge keeps the config.json luxFull, and exactly one WARNING
+        names the rule 'luxFull > luxMin' (US-895-b, Atlas S110 r2)
+    """
+    configPath = tmp_path / "config.json"
+    _writeJson(
+        configPath,
+        {"pi": {"display": {"autoDim": {"luxMin": 3.0, "luxFull": 1000.0}}}},
+        mtimeNs=1_000_000_000,
+    )
+    clock = _Clock()
+    bridge = _ConfiguredBridge(str(configPath), clock, {"luxMin": 3.0, "luxFull": 1000.0})
+
+    _writeJson(
+        tmp_path / "config.local.json",
+        {"pi.display.autoDim.luxFull": 2.0},
+        mtimeNs=2_000_000_000,
+    )
+    clock.now = 1.1
+    with caplog.at_level(logging.WARNING):
+        _burstLevel(bridge, 1)
+
     assert bridge.autoDim["luxFull"] == 1000.0
+    named = [r for r in caplog.records if "luxFull > luxMin" in r.getMessage()]
+    assert len(named) == 1
 
 
 def test_noConfigPath_startConfigStands(tmp_path: Path):

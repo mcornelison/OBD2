@@ -16,7 +16,7 @@
 #   equally true of a top bar that failed to render at all, of a carousel.js that
 #   threw on load, and of a `glyphs` block someone removed wholesale. Every
 #   absence asserted below is therefore read in the SAME pass as the siblings
-#   that must survive it -- BT, sync and WiFi in the markup; `btGlyphState` /
+#   that must survive it -- BT, sync and WiFi in the markup; `linkChainGlyph` /
 #   `syncGlyphState` / `wifiGlyphState` in the source; the other three keys in
 #   the view. That is this office's standing lesson (US-638): an absence measured
 #   on a surface that did not render is not a measurement.
@@ -28,10 +28,14 @@
 #   US-502) and other consumers read it. Removing a DISPLAY must not remove a
 #   MEASUREMENT, and the two are one keystroke apart in this file's diff.
 #
+#   MOVED PIN (US-894-e): the POWER tile/drill row below is now the System
+#   page's UPS row (spec s4.5), which still renders the sensed source.
 #   THE SYSTEM STATUS CARD'S POWER ROW STAYS. It is a drill-down with a typed
 #   reason, not chrome, and the ruling was about the top bar. Pinned here rather
 #   than left to the drill-down suite, because "the CIO asked for the power
 #   display to go" is exactly the sentence a future session would over-apply.
+#   MOVED PIN (US-894-f): the drill-down (systemIssueRows) is deleted (US-759
+#   closed by the design); the UPS row is where the sensed source stays.
 #
 #   BAND BUDGET (F-127): removing a glyph FREES space, and the confirmation the
 #   story asks for lives in test_topbar_three_column_grid.py where the width
@@ -56,6 +60,16 @@
 #               |              | that the sensed source outlived its display.
 # 2026-09-10    | Ralph (Rex)  | US-720 -- band-budget note amended to the
 #               |              | measured-advance finding (comment only).
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): btGlyphState retired for
+#               |              | linkChainGlyph; glyphs.bt is the chain object.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): powerTile and the drill's
+#               |              | POWER row are retired with the Battery card;
+#               |              | the sensed source is rendered by the System
+#               |              | page's UPS row (upsRowView), so AC-3 and the
+#               |              | power-row pin read it there.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-f): the drill-down
+#               |              | (systemIssueRows) is deleted, US-759 (comment
+#               |              | only; the UPS-row pins are unchanged).
 # ================================================================================
 ################################################################################
 
@@ -115,7 +129,9 @@ SURVIVING_GLYPH_IDS = ("glyph-bt", "glyph-sync", "glyph-wifi")
 
 # The state functions that MUST outlive `powerGlyphState`. Same purpose: a
 # truncated or unreadable carousel.js cannot satisfy the removal by accident.
-SURVIVING_GLYPH_FNS = ("btGlyphState", "syncGlyphState", "wifiGlyphState")
+# MOVED PIN (US-894-a): btGlyphState retired; the BT slot's state function is
+# the link chain's.
+SURVIVING_GLYPH_FNS = ("linkChainGlyph", "syncGlyphState", "wifiGlyphState")
 
 _NOW = "2026-09-10T14:20:00Z"
 
@@ -153,12 +169,9 @@ def _systemStatus(**overrides: Any) -> dict:
     change, so the fixture has to come from the producer.
     """
     args: dict[str, Any] = {
-        "obdLinkState": "linked",
-        "obdRetries": 0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": "2026-09-10T14:19:40Z",
-        "syncRows": 1204,
-        "syncPending": 0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         "syncStale": False,
         "powerSource": "external",
         "driveState": "idle",
@@ -269,11 +282,14 @@ def test_glyphView_carriesTheOtherThreeStates_andNoPowerKey():
     satisfied by returning `{}`, which would blank the whole bar and is the
     single most likely way to over-delete here.
     """
-    view = _view("systemStatusView", _systemStatus())
+    # MOVED PIN (US-894-a): glyphs.bt is the link chain, read from `link`.
+    up = {"state": "up", "ts": _NOW, "lastOkTs": _NOW}
+    view = _view("systemStatusView", _systemStatus(link={"bt": up, "adapter": up, "ecu": up}))
 
     assert sorted(view["glyphs"]) == ["bt", "sync", "wifi"]
-    assert view["glyphs"]["bt"] == "ok"
-    assert view["glyphs"]["sync"] == "ok"
+    assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
+    # MOVED PIN (US-894-c, I4): the sync glyph is neutral without a member.
+    assert view["glyphs"]["sync"] == "neutral"
 
 
 # ---------------------------------------------------------------------------
@@ -281,16 +297,18 @@ def test_glyphView_carriesTheOtherThreeStates_andNoPowerKey():
 # ---------------------------------------------------------------------------
 
 
+# MOVED PIN (US-894-e): the tile's value/level became the UPS row's words; on
+# battery is NEUTRAL there (spec s4.0/s4.5: no UPS member, Atlas A4).
 @pytest.mark.parametrize(
-    "source,value,level",
+    "source,words",
     [
-        ("external", "EXTERNAL", "ok"),
-        ("battery", "BATTERY", "amber"),
-        ("unknown", "—", "unavailable"),
+        ("external", "on external power"),
+        ("battery", "on battery"),
+        ("unknown", "power source unknown"),
     ],
 )
 def test_theMeasurementSurvivedTheDisplay_sourceIsSensedAndStillRendered(
-    source: str, value: str, level: str
+    source: str, words: str
 ):
     """`power.source` is the SENSED fact, not chrome -- other consumers read it.
 
@@ -306,24 +324,22 @@ def test_theMeasurementSurvivedTheDisplay_sourceIsSensedAndStillRendered(
 
     assert payload["power"]["source"] == source
 
-    tile = _view("powerTile", payload["power"])
-    assert tile["value"] == value
-    assert tile["level"] == level
+    row = _view("upsRowView", payload, None, None)
+    assert row["sentence"] == words
+    assert row["level"] == "secondary"
 
 
-def test_theSystemStatusCard_stillCarriesItsPowerRow():
-    """The drill-down Power row STAYS -- it is a typed reason, not chrome, and
-    the ruling was about the top bar.
+def test_theSystemPage_stillCarriesThePowerSource_onItsUpsRow():
+    """The source is still on the page -- the ruling was about the top bar.
 
-    Driven from a BATTERY payload on purpose: `systemIssueRows` lists what is
-    not ok, so a healthy external supply would be absent from it for the right
-    reason and this test would pass with the row deleted.
+    MOVED PIN (US-894-e): was `test_theSystemStatusCard_stillCarriesItsPowerRow`
+    (the drill's POWER row from powerTile, both retired with the Battery card).
+    Driven from a BATTERY payload on purpose: that is the state a lit screen
+    cannot tell you, so it is the one that must still be on the glass.
     """
     payload = _systemStatus(powerSource="battery")
     view = _view("systemStatusView", payload)
 
-    assert view["tiles"]["power"]["value"] == "BATTERY"
-    assert view["tiles"]["power"]["level"] == "amber"
-
-    labels = [row["label"] for row in view["drill"]["rows"]]
-    assert "POWER" in labels, f"the Power row left with the glyph: {labels}"
+    rows = {row["key"]: row for row in view["rows"]}
+    assert "ups" in rows, f"the source left with the glyph: {list(rows)}"
+    assert rows["ups"]["sentence"] == "on battery"

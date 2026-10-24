@@ -749,9 +749,10 @@ after a failed attempt waits out the whole ceiling. Two rules now hold:
   blocker).
 - **Retries are one series per outage.** `ObdConnection` numbers every port
   attempt in the current outage, whichever loop makes it, and resets on a
-  successful connect. `connection_log.retry_count` and `obdLink.retries` both
-  read that number, so a boot `connect()` followed by the heartbeat reads
-  0, 1, 2, … instead of 0..5 then 0, 0, 0.
+  successful connect. `connection_log.retry_count` reads that number (so did
+  system-status `obdLink.retries` until US-894-b retired the block), so a boot
+  `connect()` followed by the heartbeat reads 0, 1, 2, … instead of 0..5 then
+  0, 0, 0.
 
 A `/dev/rfcomm0` present beside `Connected: no` is `rfcomm-bind.service`'s
 lazy binding: `rfcomm bind` creates the node without opening the link. Every
@@ -1934,6 +1935,45 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `pi.network` | Pi infrastructure addresses (host, user, path, port, hostname, deviceId) — B-044 canonical source (US-201) |
 | `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
 | `pi.location.home` | Home reference point (lat/lon + elevation ASL) — altitude anchor + future GPS home-geofence; PII, `.env`-only (US-517) |
+
+### Pi-local overlay: the cross-key seam (US-878-c, Sprint 110 / V0.30)
+
+The F-126 overlay (`config.local.json`, `src/common/config/overlay.py`) is applied by
+`secrets_loader` BEFORE `main.py` validates, so an operator value that breaks a
+ConfigValidator cross-key rule would stop the collector at boot. **ONE function,
+`overlay.enforceCrossKeyRules`, checks the cross-key rules for an overlay on the
+EFFECTIVE config** = overlay → config.json → validator `DEFAULTS` (the order the
+validator sees at boot; `from .validator import DEFAULTS`). Rules (`CROSS_KEY_RULES`):
+`overrideLevel >= minLevel` (when overrideLevel is not null) and `luxFull > luxMin`.
+
+- **Drop, never repair.** When a rule breaks, EVERY overlay-sourced key in that rule
+  is dropped (the fallbacks are config.json / DEFAULTS, already validator-proven), so
+  one pass per rule is stable; the loop is capped at the rule count and raises if a
+  rule is still broken (a code bug). A rule the SHIPPED config breaks on its own is
+  not the seam's: config.json still fails loud at the validator (US-627 AC-4).
+- **Two production callers.** `resolveEffectiveConfig` drops with the existing
+  `invalid, using default` warning, which names the broken rule, once per dropped key
+  per resolve (Atlas B6). `states_http_server._handleSettingsWrite` refuses through
+  `overlay.crossKeyRefusal` (the proposed entry judged with the stored overlay):
+  400, nothing written.
+- **One 400 shape** for a broken rule AND a per-key invalid value (Atlas B7):
+  `{ok: false, key, value: <re-read effective>, error: <rule text>}`, so the band can
+  snap back to what is really stored.
+- **`DISPLAY_SETTINGS` entries are `{found, value}`** (Atlas B13): a key that resolves
+  to null (overrideLevel = auto) is distinct from one that cannot be resolved
+  (`found: false`, rendered Unknown). The band reads `.value`.
+- **autoDim luxMin/luxFull overridable -- CIO reversed ruling B 2026-10-19** (Atlas
+  acked; US-895-b). Both are in `OVERRIDABLE_KEYS`, FIRST (finite numbers > 0, the
+  validator's rule), so `luxFull > luxMin` is now judged on real overlay values at
+  both seams.
+- **overrideLevel overridable (US-895-c, CIO 2026-10-19 US-878-c IN).**
+  `pi.display.autoDim.overrideLevel` is in `OVERRIDABLE_KEYS`, FIRST of all (DISPLAY
+  order: brightness, auto-dim ends, rotate): null (auto) or a finite number in [0, 1]
+  (`_isLevelOrNone`). Its floor is NOT the per-key rule's: `overrideLevel >= minLevel`
+  stays the cross-key seam's (Atlas A5), so a hand-edited `config.local.json`
+  overrideLevel under the effective minLevel is dropped at boot with ONE warning naming
+  that rule (no fixed brightness), and a POST of one is refused 400. The seam tests run
+  on the real allow-list; the US-878-c allow-list patch is retired.
 
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
@@ -4790,6 +4830,18 @@ Chromium kiosk can't reach the panel backlight) from the `states/light` feed.
 > stripped): no `luxMin`/`luxFull`/`minLevel` numeric literal and zero `Math.log`
 > in carousel.js. The paragraph below is the US-483-b history of the page curve.
 
+> **US-878-c (Sprint 110 / V0.30): the applier's `fixed` step (Atlas B4).**
+> `appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive, settings)`
+> gained step 2, after STOP: `pi.display.autoDim.overrideLevel` found in the
+> per-request settings blob (`window.DISPLAY_SETTINGS`, `{found, value}`) and a finite
+> number in [0, 1] → `{overrideLevel, 'fixed'}`; outside [0, 1] it falls through,
+> never clamped (US-627). Order: STOP → fixed → fresh bridge level → defaultLevel.
+> The override is a CONFIG fact (validator default `None` = auto; None or a finite
+> number in [minLevel, 1.0]; config.json `"overrideLevel": null`), so a fixed level
+> survives a dead light sensor. The blob is its ONLY carrier: no `states/light` key,
+> no bridge timer, the light bridge untouched. The Light page status reads
+> `BRIGHTNESS 80 % (fixed in Settings)` in `--text-secondary`, never amber (Iris I12).
+
 Before US-893-a the page computed it itself: `brightnessLevel(lightData, cfg, nowMs,
 alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
 fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
@@ -4836,9 +4888,11 @@ hardware-backlight scalar). Tuning is a **config change, not code** (CIO
 2026-07-22): `eclipse-states-http` injects the `pi.display.autoDim` object into
 the served `dashboard.html` at serve time — the same same-origin seam as the
 `__SPLASH_TOKEN__` SSOT — via the quoted `"__DISPLAY_AUTODIM__"` placeholder
-(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe; no
-config → `null` → the carousel's built-in grounded defaults, which mirror
-config.json). The consumer reads **only** `states/light` — it opens no OBD/second
+(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe through the
+overlay seam, **per request** since US-895-b -- Atlas B15 retired the construction-time
+blob, because the lux ends are now operator settings; no configPath → the
+constructor's `displayConfig` stands, and no config → `null` → the carousel's built-in
+grounded defaults, which mirror config.json). The consumer reads **only** `states/light` — it opens no OBD/second
 connection.
 
 **Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
@@ -6650,10 +6704,12 @@ window.DISPLAY_STALE = {"imuSec": 3.0};
   through `overlay.readEffectiveValue`, never cached at construction, so a config.json
   change reaches the kiosk on its next reload with no unit restart. A value that is not
   a finite number > 0, an absent key or an unreadable config serves the validator default.
-- **imuSec / autoDim are config.json keys, read per request (882-c) / on mtime change
-  (878-b) through overlay.resolveEffectiveConfig; not operator-overridable.** They are
-  not in `OVERRIDABLE_KEYS` (Atlas ruled B, 2026-10-14), so a value in config.local.json
-  is ignored and nothing is added to `/settings`.
+- **imuSec / autoDim are config.json keys, read per request (882-c; `DISPLAY_AUTODIM`
+  since US-895-b) / on mtime change (878-b) through overlay.resolveEffectiveConfig.**
+  imuSec is not in `OVERRIDABLE_KEYS` (Atlas ruled B, 2026-10-14), so a value in
+  config.local.json is ignored. **autoDim luxMin/luxFull overridable -- CIO reversed
+  ruling B 2026-10-19** (US-895-b): those two are written by `/settings` and honoured
+  from config.local.json; the rest of autoDim is not.
 - **Page side.** `imuView` compares the reading's age against
   `resolveImuStaleSec(window.DISPLAY_STALE)`. When the injection is absent (a `file://`
   preview leaves the placeholder string) or not a finite positive number it uses
@@ -6707,9 +6763,12 @@ pre-US-893-a carousel.js in node, config = the validator `DEFAULTS` autoDim) is 
 reference for the curve; the bridge matches it to 1e-9. The bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
 lifecycle passes, Atlas G5) re-reads it through `overlay.resolveEffectiveConfig` when
 config.json or config.local.json changes mtime, checked at most once per second on a
-monotonic clock. It never uses the HTTP server's start-time cache (Atlas gap 5).
-autoDim is not in `OVERRIDABLE_KEYS`, so a config.local.json value is ignored; an
-unreadable config.json keeps the current autoDim and is retried on the next check.
+monotonic clock. It never uses the HTTP server's `DISPLAY_AUTODIM` (Atlas gap 5).
+**autoDim luxMin/luxFull overridable -- CIO reversed ruling B 2026-10-19** (US-895-b):
+a config.local.json luxMin/luxFull applies on the next burst after the mtime check (a
+pair breaking `luxFull > luxMin` is dropped, with the seam's one warning per key); no
+other autoDim key is overridable. An unreadable config.json keeps the current autoDim
+and is retried on the next check.
 
 **Replay:** `src/pi/sensors/replay_feeder.py` publishes the same burst for every
 replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every row,
@@ -6991,6 +7050,73 @@ unknown"*. No label contains *moving*. Server unchanged (Atlas B3): `dtc_clear`
 and `states_http_server` gain no parked check. Pinned by
 `tests/ui/test_warnings_code_detail.py` (the KOEO F2 regression and the
 fail-closed gear cases) and `tests/ui/test_carousel_parked_debounce.py`.
+
+**The Settings band is a parked-only consumer too (US-895-a, F-126; system spec
+4.7, 4.7.2; Atlas A1/A8/B10, Iris I11/I13).** It reads the fact ONLY through the
+module accessor US-894-b added — `currentParked()` `{parked (debounced), gearKnown
+(raw)}` — never `gearParked` (that would skip the 8 s hold) or `engineParked`.
+`settingsLockView(parked, gearKnown)` mirrors `clearButtonView`: only a strict
+`parked === true` unlocks; locked, the one line at the top of the band (`#settings-lock`)
+is *"🔒 view only — stop to change"* when `gearKnown`, else *"🔒 view only — gear
+unknown"* (no word says *moving* or *engine off to change*). Locked, the band stays
+readable at its stored values: segments `disabled` in `--text-tertiary` (the active one
+keeps a tertiary outline), steppers draw no `−`/`+`, and `postSetting` — the one write
+path — refuses (no write, no `saving…`). The lock repaints **in place** on the
+accessor's edge callback (`onParkedChange`); each row repaints from its own last
+`{value, note}`, so a write in flight across the edge still ends `saved` / `couldn't
+save`. The band opens from the ⋮ (unchanged: always visible, long-press free of any
+parked gate, US-659) and from **SETTINGS ›** on the System verdict line, shown in every
+state, which calls `menuBtn.click()` — one open path. Layout: `SETTINGS_SPECS` rows carry
+a `section` (DISPLAY then SYSTEM, heads in `--accent`) and UPPER-CASE labels; the overlay
+head reads `‹ BACK` / `SETTINGS` (it covers the top bar); the list scrolls with a visible
+scrollbar. **Auto-rotate is kind `steps`** (the `seconds` kind is deleted): declared
+`steps` 0 (`Off`) · 5 · 8 · 10 · 15 · 30 s, the stored seconds shown exactly (`12 s`),
+and `settingsStepNext` moves to the nearest declared step beyond the stored value in the
+tap's direction (12 → + 15 / − 10; − from 5 s → Off; an end hides its control); the
+write is the chosen seconds through the same `autoRotateS` key. No new
+`OVERRIDABLE_KEYS` entry. Pinned by `tests/ui/test_settings_lock.py` over the
+generated `tests/ui/fixtures/states/system/settings-*` fixtures (the 8 s hold is
+driven by the clock: 7 s locked, 8 s unlocked).
+
+**AUTO-DIM ENDS (US-895-b, spec s4.7, Iris I11).** The DISPLAY row after BRIGHTNESS
+(first until US-895-c): `luxMin`
+(`DIM-START`) and `luxFull` (`FULL-BRIGHT`) are two `SETTINGS_SPECS` of the new kind
+**`ladder`**, drawn as ONE `.set-row` (their shared `row: "AUTO-DIM ENDS"`; the row
+carries the first key, each end is a `.set-end` with its own `data-key`). Each end is
+a `− value +` stepper over `SETTINGS_LUX_LADDER` 1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100
+· 200 · 300 · 500 · 1000 lux; the outer ends hide their `−` / `+`; a stored value off the
+ladder shows as stored (`4 lux`) and the next tap goes to the neighbouring rung
+(`settingsStepNext`: 4 → + 5 / − 3). `below` / `above` name the partner, and
+`settingsStepCrosses` disables (drawn, `disabled`, no listener) the step that would make
+`luxMin >= luxFull`; an unknown partner disables nothing. The seam is the rule: a
+crossing POST is the recorded real 400 (`settings-lux-cross-rejected`) → `couldn't save`
+and the end snaps back to the re-read value. Apply tag: the new `SETTINGS_APPLY_NOTES`
+state `light-reading`, **"applies at the next light reading"** (Atlas B12: the light
+bridge re-reads on its next burst; no time claim). The two ends share the row's one
+apply tag, which shows the status note of the last real paint. Pinned by
+`tests/ui/test_settings_lux_ends.py`.
+
+**BRIGHTNESS (US-895-c, spec s4.7, Atlas A5/B12-B14, Iris I11).** The first DISPLAY
+row, before the auto-dim ends: `overrideLevel` as the new kind **`level`** -- an
+`AUTO | FIXED` segmented control, then a `− nn % +` stepper. `AUTO` is pressed only for
+a key FOUND as null (B13); not found reads `Unknown` with nothing pressed. `AUTO` writes
+null; `FIXED` steps in integer percent, `SETTINGS_LEVEL_STEP_PCT` (5) apart, from the
+**effective minLevel** -- `window.DISPLAY_AUTODIM.minLevel`, resolved per request -- to
+100 % (`settingsLevelSteps`; an off-grid minLevel is itself the lowest step, rounded up
+to a whole percent so it never sits under the seam's floor), storing `round(pct)/100`
+(B14). No literal floor exists in carousel.js (spec AC 9). A minLevel that is not a
+level in [0, 1] (missing, null) disables `FIXED` (drawn, no listener) and the stepper
+reads `Unknown`. `AUTO → FIXED` writes the level last applied to `#screen`
+(`lastAppliedLevel`, set by `applyBrightness`) rounded to the nearest 5 % and clamped to
+[floor, 100 %], or 100 % when none has been applied (I11). The stepper hides only under
+a known `AUTO` with a known floor; the chosen segment carries no listener. Apply tag
+`reload` ("applies on reload", B12): a confirmed save reloads the page and
+`appliedBrightness` reads `{level, 'fixed'}` from the per-request settings blob, which
+survives a dead light sensor. `settingsSaveResult` gains `found` (the body carried a
+re-read), so a re-read null repaints AUTO, not Unknown. Pinned by
+`tests/ui/test_settings_brightness_row.py` over the generated
+`settings-floor-from-minlevel` fixture (the real loader's DISPLAY_AUTODIM for minLevel
+0.75 and for a config with none).
 
 **Gear P/N = stopped (US-511-a, F-124).** The derived gear's `P` and `N` both
 mean *the car is stopped*, which is what lets parked-only controls read them
@@ -7461,7 +7587,101 @@ kiosk smoke on the panel, which remains the per-story on-Pi render check.
 #### System Status card + `system-status` emitter (US-400) [Atlas A-3]
 
 The **System Status** card (Card 1) renders the `system-status` state file at 4
-Hz: OBD-link / sync / power / drive tiles + the top-bar BT/sync/power glyphs.
+Hz: the System page (verdict line + rows, below) + the top-bar link-chain / sync /
+WiFi glyphs.
+
+**System page = verdict line + rows (US-894-b, spec
+`specs/v030-system-page-design.md` §3 layout A, §4.1, §4.2, §4.6).** The US-489
+`SYSTEM · …` summary line, the 2×2 tile grid (`SYS_TILE_ORDER`) and the OBD-link
+tile are gone. `systemStatusView` returns `verdict` (`systemVerdictView`:
+`ALL OK` green at `verdict.issueCount` 0, `n ISSUE(S)` amber otherwise, `--`
+when the verdict is absent / malformed **or the file is unreadable** — never
+`ALL OK`), `rows` (one per subsystem, `.sys-row`, ≥ `--row-min` 44 px, one-line
+ellipsis; never `.tile`; rows not yet built are absent) and `obdDetail`. The
+**OBD row** (`obdRowView`) is the chain `BT → ADAPTER → ECU` from
+`link.<layer>.state`, each step the top-bar dot's look (`linkChainGlyph`) except
+a null layer is **dashed**, never the solid `down` look (AC 4). Its sentence is
+a `bt` / `adapter` verdict member's `reason` **verbatim** (amber), else the
+first non-up layer's words from `OBD_LAYER_SENTENCE` (Iris I1; neutral; later
+layers never speak; all up = `ECU answering`). The page composes no reason text
+and applies no threshold: amber appears only where a verdict member maps.
+**Taps are parked-only** (Atlas B9): the module accessor `currentParked()` →
+`{parked, gearKnown}` exposes the tick's DEBOUNCED `engineParked.parked` (gear
+P/N held 8 s, US-511-b) and the RAW `states/gear` `available === true`; the
+tick's `publishParked` is its only writer and `onParkedChange` listeners fire on
+a change of either value (the page repaints its taps on the edge). Not parked,
+no tap opens and no `›` shows. A parked tap on the OBD row opens the **OBD
+detail** in `#sys-detail` (per layer: state, `since` = `ts`, `last success` =
+`lastOkTs`, `--` where unpublished; then the sentence in full; no MAC and no
+retry count — no publish field); a parked tap on the verdict opens the **Pi
+detail** (US-894-f, below). `#version-chip` shows only in the Pi detail and
+never in a row's detail (Iris I8).
+
+**DATA row (US-894-c, spec §4.3, §4.6; Atlas A4, Iris I3/I4/W3).** The second
+row (`dataRowView(data, captureData)`), replacing the SYNC / DRIVE / CAPTURE
+tiles (`syncTile` / `driveTile` / `captureTile` are gone).
+**Value** = the capture word, then ` · synced <when>`: `stalled` (amber) **if
+and only if** a `capture` verdict member exists — the member comes from
+`feeds.*.state` alone; otherwise from `capture-health`'s top-level `state`:
+`ok` → `recording` (green), `idle` → `idle`, a member-less top-level `stalled`
+→ `no rows` (`reason` `never_written`) or `stopped` (`--text-secondary`, never
+`stalled`, never counted), absent / `unknown` → `--` (tertiary). `<when>` is
+`sync.lastOkTs` against the payload's `ts`, in local time: the same day → the
+time (`6:42 PM`), the day before → `yesterday` with **no time**, older →
+`Oct 12`; null → ` · no sync on record`. **Sentence** (` · ` joined): the
+`capture` member's `reason` verbatim (amber), else `all 4 feeds writing` /
+`not driving` / `capture not read yet`, or for `no rows` / `stopped` a cause
+only from the fact that carries it — `ECU not answering` only while `link.ecu`
+is `down` / `retrying` / `connecting`, otherwise `no row logged this session` /
+`last row <age>` (`lastRowSecondsAgo` through the `agoText` vocabulary); then
+`away from home` only when `wifi.home === false`; then `n rows waiting`
+(`fmtThousands`, `1 row waiting`; a non-empty `notCounted` puts `+` on the
+number: `12,345+ rows waiting`; null → `rows not read`, never 0); then
+`n event rows` only when `edrRowsWaiting` > 0. The parked **DATA detail**
+(`dataDetailView`) lists each feed (OBD, light, IMU, UPS) `writing` / `stalled`
+/ `idle` / `--` with its `lastSampleSecondsAgo` as a freshness age (`N s ago`,
+`999+ s ago`, `--` undated), then last data stored (full `fmtStamp`), rows
+waiting, event rows, `not counted: <table>, …` and at home `yes` / `no` /
+`unknown`. **The top-bar sync glyph is neutral** (`syncGlyphState(data)`):
+`sync.stale` has no verdict member (Atlas P9, Iris I4), so the glyph is amber
+only while a `sync` member exists (US-917).
+
+**UPS row (US-894-e, spec §4.5, §4.6.1; Atlas A1/A3/A4/P8, Iris I6/I7/W2).**
+The fourth row (`upsRowView(data, batteryData, nowMs)`), replacing the Battery
+card (9 cards → 8) and the POWER tile (`powerTile`, with its `wall/car power`
+detail and battery amber, is gone). **Two files, two facts** (Atlas A1):
+**value** = `states/battery-health` `vcellV` (`4.12 V`, `--text-primary`;
+null / no payload → `--`; `source.ups` unavailable → `--` + the typed reason,
+e.g. `-- · gauge unreadable`, the US-429 rule); **sentence** = the SENSED
+`system-status.power.source` → `on external power` / `on battery` / anything
+else `power source unknown` — never derived from battery-health, never `wall`
+or `car` — then ` · <age>`, the cell's **freshness** age (Iris I6: the S105 M7
+rule through the one shared `freshAgeText` Motion uses — floor, clamp 0,
+`N s ago`, cap `999+ s ago`; never `agoText`'s `just now`) against the tick's
+`nowMs`; undated → no age. **Never amber**: there is no UPS verdict member, so
+`on battery` is neutral (Atlas A4). Never on the row: SOC, a runtime,
+`charging`, `crate`. The tick's system-status branch fetches
+`states/battery-health` through `stateOnce` (Atlas P8). The parked **UPS
+detail** (`upsDetailView`, in `#sys-detail`) is described with the emitter
+below. LAST STOP moved there from the drill's diagnostics (the drill itself is
+deleted by US-894-f).
+
+**Top-bar link indicator = the three-layer link chain (US-894-a, spec
+`specs/v030-system-page-design.md` §4.2.1).** The single `BT` glyph is retired
+(with `btGlyphState`). `#glyph-bt` keeps its slot, id and title and holds one
+inline SVG (`.chain-mark`, declared `3ch × 1em`, relative units only): three
+dots BT → ADAPTER → ECU, each a `.chain-dot` with its own `data-layer` +
+`data-state`. `systemStatusView` returns `glyphs.bt = {bt, adapter, ecu}` from
+`linkChainGlyph`, which reads `system-status.link.<layer>.state` **verbatim**
+and ignores `source.obd`: `up` → green, `connecting` → neutral,
+`retrying` → `--text-secondary`, `down` → `--text-tertiary`, null / an
+unpublished word → a **hollow** ring. **Amber is keyed to the verdict member,
+never to a state** (§4.0): a dot is amber only while its layer is a
+`verdict.members[].key` (`bt`, or `adapter` while BT is up). An unreadable
+system-status file resets the chain to three hollow dots (`resetSystemGlyphs`).
+The JS vocabulary copies (`LINK_CHAIN_LAYERS`, `LINK_STATE_LOOK`,
+`LINK_MEMBER_LAYERS`) are pinned to `system_status_emitter`'s constants by
+`tests/ui/test_topbar_chain_glyph.py`.
 
 **`system-status` emitter (`src/pi/splash/system_status_emitter.py`).** The
 **orchestrator/sync tier owns this emitter** (A-3): it holds the live BT-link,
@@ -7474,12 +7694,26 @@ orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
 reusing the boot-state primitives). Schema (spec §7):
 
 ```json
-{ "obdLink": {"state":"reconnecting","retries":3},
-  "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
-  "power": {"mode":"car","source":"external"},
-  "drive": {"state":"recording","driveId":27},
+{ "sync": {"lastOkTs":"…","stale":false,
+           "rowsWaiting":0,"edrRowsWaiting":0,"notCounted":["…"]},
+  "power": {"source":"external","reasons":{}},
+  "wifi": {"state":"up","ssid":"…","rssiDbm":-55,"home":true,"ts":"…"},
+  "pi": {"cpuTempC":51.2, "…": "…", "overLimit":[]},
+  "link": {"bt":{…}, "adapter":{…}, "ecu":{…}},
+  "drive": {"state":"recording","driveId":27, "…": "…"},
+  "idle": false, "priorShutdown": {…}, "runMode": "live",
+  "source": {"obd":{"available":true,"reason":null}, "wifi":{…}},
+  "verdict": {"issueCount":0,"members":[]},
   "ts":"…" }
 ```
+
+**`obdLink` is retired (US-894-b, Atlas A2/P6).** `buildSystemStatusState`,
+`emit()` and `_emitSystemStatusState` no longer take `obdLinkState` /
+`obdRetries` and publish no `obdLink` block; the link chain (`link`, below) is
+the one link fact. `_gatherObdLinkState` and `OBD_LINKED` / `OBD_RECONNECTING` /
+`OBD_DOWN` stay: the gear producer (`_emitGearState`) derives its link health
+from them. The one non-UI reader, `tools/imu/drive_console.py`, reads
+`link.ecu.state`.
 
 (US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`, and US-896-b
 adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
@@ -7505,8 +7739,7 @@ block, one entry per layer of the chain, every key always present:
 - **`lastOkTs`** is the last time the layer was up this session (null if never;
   never carried across a boot).
 - **Never blanked** when `source.obd.available` is false — that blanking was
-  the ARCH-061 grey. `obdLink {state, retries}` ships **unchanged** beside it
-  (S110 retires it); link `retrying` is not reflected in `obdLink.retries`.
+  the ARCH-061 grey of the retired `obdLink` block (US-894-b).
 
 One rule decides every layer: `deriveLinkLayerState` + `LinkLayerTracker` in
 `system_status_emitter.py`. The tracker (one per layer, held by the
@@ -7628,7 +7861,7 @@ its link, it never manages it):
 Every key always present; null = not read, never 0:
 
 ```json
-"sync": {"lastOkTs": "2026-10-22T08:00:00Z", "rows": 12, "pending": null,
+"sync": {"lastOkTs": "2026-10-22T08:00:00Z",
          "stale": false, "rowsWaiting": 0, "edrRowsWaiting": 1771,
          "notCounted": ["profiles", "startup_log", "vehicle_info"]}
 ```
@@ -7638,8 +7871,8 @@ Every key always present; null = not read, never 0:
   words it **"last data stored"**, never "last contact". It survives a restart
   (it lives in obd.db) and advances on every stored push, powerwatch's key-off
   drain (`forcePush`) included. Null until the first ok push after deploy.
-  `_recordSyncOutcome` no longer stamps a time (it still caches `rows` and
-  re-anchors the altitude).
+  `_recordSyncOutcome` no longer stamps a time and caches no row count; it
+  re-anchors the altitude (US-518).
 - **`rowsWaiting`** = `pi.sync.backlog.countOutstandingRows` — the push's own
   predicate, never a second counter — with the shutdown drain's EDR exclusion;
   **`edrRowsWaiting`** = the same count over `EDR_SYNC_TABLES` only, reported
@@ -7647,7 +7880,10 @@ Every key always present; null = not read, never 0:
   be read (a partial count is never published).
 - **`notCounted`** = the snapshot tables (`SNAPSHOT_TABLES` + `SNAPSHOT_SYNC`),
   sorted: named, never folded into a count.
-- **`pending`** is kept, null (S110 retires it with the page).
+- **`rows` and `pending` are retired (US-894-c, Atlas P7).** Neither key is
+  published; `buildSystemStatusState` / `emit()` take no `syncRows` /
+  `syncPending`, and the orchestrator holds no `_lastSyncRows`. The backlog is
+  `rowsWaiting`, never a last-batch count.
 - **Read.** `backlog.readSyncHealth(dbPath)` — read-only opens, 1 s busy
   timeout, never migrates (a sync_log without `last_ok_at` → `lastOkTs` null,
   no raise). The orchestrator reads it from `_database.dbPath` at most every
@@ -7747,12 +7983,14 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
   it to the verdict in-process — never a file read-back of the previous tick
   (`tests/pi/orchestrator/test_card_state_emit_order.py`).
 
-**I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
-`linked` (green) / `reconnecting` (amber, with `retries`) / `down`
-(red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
-flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
-tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
-reconnect, closing the I-033 "did it capture my drive?" blind spot).
+**I-033 reconnect visibility.** The link chain's layer states are reported
+**verbatim**, never fabricated as `up`. On a mid-drive BT drop `link.bt` goes
+`retrying` and the 4 Hz poll surfaces it within ≤2 s on the top-bar chain's BT
+dot (US-894-a) and the System page's OBD row (US-894-b): amber, with the `bt`
+member's reason as the row's sentence, while the provider counts `bt` as a
+verdict member (`link.bt` retrying while recording, or down); otherwise
+`--text-secondary`. (The `obdLink` `reconnecting` tile that carried this before
+is retired, US-894-b.)
 
 **Power-mode SSOT (US-421 / F-098, Sprint 52 / V0.29.6).** The `power.mode`
 field (`car` / `wall` / `unknown`) reports the **deployment context** — Pi
@@ -7761,8 +7999,10 @@ installed in-car vs. bench/wall power — which is a *different fact* from
 acquisition path is `PowerModeProvider` (`src/pi/power/`), which reads the
 static config key **`pi.power.mode ∈ {car, wall, unknown}`** (validator DEFAULT
 `unknown`) and is THE SSOT for the fact (zero other acquisition paths). The
-provider is wired through `system_status_emitter.buildSystemStatusState` into
-`carousel.js#powerTile`, which renders CAR / WALL / **unknown**. An
+provider is wired through `system_status_emitter.buildSystemStatusState`; the
+`carousel.js#powerTile` that rendered it is retired (US-668 dropped the mode
+from the display; US-894-e deleted the tile — the sensed source is the UPS
+row's words, never `wall` or `car`). An
 absent/stale/invalid config resolves to `unknown` — **never a confident wrong
 mode** (honest-instrument). The seam is designed so acquisition can later swap
 config → a GPIO sense line behind the same `PowerModeProvider` interface with
@@ -7774,7 +8014,7 @@ is **`ok` (green) only when the underlying state is genuinely good**. A
 down/reconnecting link, a stale sync, or running on battery renders
 amber/down/neutral — never green. A missing sub-object renders that tile
 `unavailable` (the rest of the card still renders); a missing/malformed file
-renders the whole card `unavailable` and resets the glyphs to neutral (no
+renders the verdict `--` with no rows (US-894-b) and resets the glyphs (no
 lingering stale-green). Tiles are built with `textContent` (no `innerHTML`), so
 emitter values render verbatim, never as markup.
 
@@ -7785,51 +8025,95 @@ sync exceeds the threshold — and treats an absent/unparseable last-sync as sta
 and supplied by config: the emitter takes `syncStaleThresholdS` as a required
 parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
 
-**Summary drill-down (US-509, Sprint 68 / V0.29.23).** The US-489 one-glance
-`SYSTEM · N ISSUE` line is **tappable → a drill-down overlay** (`#sys-detail`,
-`carousel.js#systemIssueRows` / `#systemDrill`), one row per non-OK source,
-**worst-first**: source label + state chip + the tile's own reason + freshness,
-with a `‹ Back` that always returns. It is a **presentation of the same tiles**
-the 2×2 grid renders — the drill rows travel on `systemStatusView().drill`, so
-one read of the state file feeds the grid, the summary **and** the overlay, and
-the overlay is structurally incapable of contradicting the card behind it. No
-source state is recomputed. Four decisions are load-bearing:
+**Verdict → Pi detail; the amber set IS the member set (US-894-f, spec §4.0,
+§4.1, §4.6.2, AC 7; Iris I8/I9; Atlas P1/P2/P8/A5).** The US-509 summary
+drill-down — `systemIssueRows` / `systemDrill` / `systemDiagnostics`, its
+worst-first rank (`sysLevelRank`) and its typed-absent freshness pair
+(`sysRowFreshness` / `SYS_NO_AGE`) — is **deleted**, and with it US-759 is
+closed **by the design, not by a list**: there is no issue list to order, omit
+or date. The thing that is counted is marked where it is shown.
 
-- **The listing floor is `unavailable`, not `amber`.** `ok` is never listed (a
-  green source in a fault list is a *fabricated* fault) and `neutral` is not
-  either — `DRIVE=IDLE` means "not recording", **not broken**, so listing it
-  would report a fault in the commonest state there is. But a known-**unknown**
-  *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
-  excluding unavailables would make a tappable headline open an **empty**
-  overlay — the exact dead end this surface exists to remove.
-- **Freshness is never fabricated.** No source publishes a per-source age (the
-  always-null `obdLink.lastSeenS` was removed, US-876-a), so every row's
-  freshness reads **"age not reported"**, never
-  `"seen 0s ago"` (which would claim we had just seen a source we never timed —
-  the zeroed-altitude lie of US-508 in a different costume).
-- **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a
-  healthy card never advertises detail it does not have.
+- **The colour gate (AC 7, Atlas A5).** An *amber element* is any element with
+  `data-level="amber"` on the System page, in `#sys-detail` and in the top bar.
+  Every one carries `data-member="<key>"` naming exactly **one**
+  `verdict.members[].key`, and every member has **at least one** (the BT step,
+  its top-bar dot and the OBD row are three elements for one `bt` member —
+  legal). One renderer helper (`setMemberLevel`) is the only way an element
+  gets its level; top-bar glyphs go through `paintGlyph` (an amber dot's member
+  is its own layer, the WiFi glyph's `wifi`, the sync glyph's `sync`), and any
+  non-amber repaint drops a stale `data-member`. An amber **look** set on
+  `data-state` always also sets `data-level="amber"`, so nothing amber is
+  invisible to the gate. The verdict **count** is `data-level="issues"` (same
+  amber hue): it is the member set itself, not an element of one member, so it
+  carries no `data-member`. `tests/ui/test_system_page_amber_equals_members.py`
+  runs the gate over every `tests/ui/fixtures/states/system/` fixture except
+  `settings-*`, with each detail open in turn, and proves it bites (an orphan
+  key and a member with none both fail).
+- **The verdict opens the Pi detail** (parked only, `currentParked()`; ` ›` on
+  the verdict while the tap works). **The Pi line** (`piLineView`) sits under
+  the verdict only while `pi` is a member: one mono `--fs-meta` amber line,
+  the member's `reason` verbatim, + ` ›` (space + U+203A) **only while parked**
+  (I9); parked, it opens the Pi detail too.
+- **The Pi detail** (`piDetailView`, in `#sys-detail`) reads the S109 `pi` block
+  verbatim: CPU `cpuTempC` at 0.1 °C + `limit <cpuTempLimitC> °C` (the published
+  limit, never a page constant); THROTTLING now / since boot in words + the
+  hex; DISK `diskFreeBytes` in GiB floored to 0.1 (the emitter's integer floor)
+  + `limit <diskThresholdBytes> GiB`; UPTIME `under 1 min` / `42 min` /
+  `3 h 2 min` / `2 days 3 h` (`1 day 3 h`), null `--`. Each value shows its
+  **own** read time (`cpuTempTs` / `throttledTs` / `diskTs` / `uptimeTs`) —
+  the block has no ts, and a block stamp would date a 10-minute-old disk read
+  as now. A value is amber only when its name is in `overLimit` **and** the
+  `pi` member exists. The version is `#version-chip` — the ONE
+  `.deploy-version` reader (Atlas P8) — shown only in this detail.
 - **An open overlay repaints on every poll** rather than freezing on the
-  snapshot that opened it — a frozen age readout is the same fabrication the
-  g-dot (US-497) and the rotate bar (US-506) are guarded against.
+  snapshot that opened it (unchanged from US-509).
 
 The overlay **reuses the US-406 per-code detail shell** (`.detail-head` /
-`.detail-body` / `.detail-card`, the same `‹ Back`) so the two drill-downs speak
+`.detail-body` / `.detail-card`, the same `‹ Back`) so every detail speaks
 one interaction language, and it inherits the auto-rotate pause from the single
 document-level `pointerdown` seam US-506 established — no per-overlay pause call
 site to forget.
 
-#### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+#### UPS row + detail (ex-Battery Health card) + `battery-health` emitter (US-401, US-894-e) [Atlas A-3]
 
 > **VERDICT SUPERSEDED — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source.**
 > Same card, same `health` vocabulary (`good`/`degraded`/`replace`/`unknown`) and F-9 line; the verdict is T (battery time to the
 > reserve floor) vs J (the at-home job). The six `reasons.health` codes, `timeToFloorS`/`jobAvgS`/`jobMaxS`/`provisional`, and
 > `runtimeToCutoffS` (now = T) are defined there. Where this section and that file disagree, that file governs.
 
-The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
-Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder
-**only during a real drain**. The cell is the **Pi UPS-HAT LiPo (MAX17048 fuel
-gauge), never the car's 12 V lead-acid (F-11)**.
+**The Battery card is RETIRED (US-894-e, CIO 2026-10-19; spec §4.5 / §4.6.1).**
+The `battery-health` state file now feeds the System page's **UPS row** (VCELL +
+age, above) and its parked **UPS detail** (`carousel.js#upsDetailView`, in
+`#sys-detail`), labelled `Pi UPS battery`. The cell is the **Pi UPS-HAT LiPo
+(MAX17048 fuel gauge), never the car's 12 V lead-acid (F-11)**. The detail
+carries, all neutral (no UPS member):
+
+- **CELL** — `vcellTile`'s `4.12 V` + the M7 freshness age; with `source.ups`
+  unavailable, the typed NA alone (`-- · gauge unreadable`) and no health or
+  SOC line beside it.
+- **SOURCE** — the sensed `power.source` words, and for an unresolved source
+  its typed `power.reasons.source` in words (Iris W2): `provider_absent` → `no
+  power sensor running`, `source_unreadable` → `power sensor unreadable`,
+  `read_failed` → `power sensor read failed`; any other reason prints no words,
+  and nothing ever says `no UPS fitted`. `POWER_SOURCE_REASON_WORDS`' keys are
+  pinned to `card_state_emitter.POWER_SOURCE_UNKNOWN_REASONS` by
+  `tests/ui/test_system_page_ups_row.py`.
+- **HEALTH** — `healthValue` `GOOD` / `DEGRADED` / `REPLACE` / `--`, coloured by
+  `healthLevel` (green for good, neutral otherwise; never amber or red, Spool),
+  then the unknown reason (`healthReasonText`) or a resolved verdict's T-vs-J
+  margin (`healthMarginText`, `11 min vs 40 s job` — exempt from "never a
+  runtime": detail only, resolved verdict only, always with its `vs n s job`
+  half), then **always** the F-9 `last health check · <date> (<age>)` line.
+- **SOC** — `≈ 92 % (modelled)` when `socCalibrated === true`, else
+  `≈ 92 % (modelled, uncalibrated)`; only when `soc` is a real number (F-8).
+- **LAST STOP** — the US-744 prior-shutdown verdict through the shipped
+  `priorShutdownTile`, unchanged (Iris I7), from `system-status.priorShutdown`.
+
+**Dropped with the card:** the drain ladder and its `~N min to cutoff` (a banned
+runtime — capacity unmeasured), pack epoch and voltage trend (no field),
+`batteryHealthView` / `ladderView` / `socTile` / `renderBatteryHealthBody` /
+`appendLadder`, the `.ladder*` CSS and the card's `SOURCE_CARDS` entry. The
+emitter and its states file **stay** (drain_forensics reads it).
 
 **`battery-health` emitter (`src/pi/splash/battery_health_emitter.py`).** The
 **orchestrator/power tier owns this emitter** (A-3): it holds the live MAX17048
@@ -7854,9 +8138,9 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
   misnamed `*_soc` columns that stored volts were dropped in US-426. The emitter
   has **no code path from `vcellV` to `soc`** —
   the percent comes only from the MAX17048 SoC register, and a `null` register read
-  passes through as `soc:null`. `carousel.js#batteryHealthView`/`socTile` renders
-  the percent **only when `soc` is a real number** (tagged `(uncalibrated)` when
-  `socCalibrated:false`); a `null` soc omits the percent and the card shows volts
+  passes through as `soc:null`. The UPS detail (`upsDetailView`) renders the
+  SOC line **only when `soc` is a real number** (`(modelled, uncalibrated)` when
+  `socCalibrated:false`); a `null` soc omits the line and the cell shows volts
   (`vcellTile`, `"3.44 V"`). The trap is locked by **absence** — a voltage can
   never be painted as a percent.
 - **Stale-green guard (F-9).** A GREEN verdict **always** carries
@@ -7868,15 +8152,16 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
   US-632 machine reasons in `reasons.health` (`battery_health_verdict.UNKNOWN_REASONS`).
   `carousel.js#BATTERY_HEALTH_REASON_TEXT` is the ONE renderer table for them;
   its keys equal `UNKNOWN_REASONS` exactly (guard:
-  `tests/ui/test_carousel_battery_health_reason_text.py`). The HEALTH tile's
-  detail reads `"<reason text> · last health check · <date> (<age>)"` -- the F-9
-  line is kept whole, never swapped out. Fallbacks are typed and never equal a
+  `tests/ui/test_carousel_battery_health_reason_text.py`). The UPS detail's
+  HEALTH line is followed by the reason text, then the F-9 line -- kept whole,
+  never swapped out. Fallbacks are typed and never equal a
   known string: no usable reason -> `"reason not reported"`; an unrecognised
   code -> `"unrecognised reason (<code>)"`. A resolved verdict (good/degraded/
   replace) ignores any reason. The idle-home BATTERY fact is unchanged.
 
-**Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
-never a fabricated number.
+**Temp honest (F-10).** No temperature is rendered anywhere (US-504: the
+MAX17048 has no temperature register); `ambientTempC` survives in the schema for
+a future BMP390.
 
 **No-false-failsafe (A-6 / F-2).** The failsafe `ladder` block (stage + thresholds
 + runtime) renders **only when `draining === true`**. The invariant is enforced in
@@ -7884,8 +8169,8 @@ the **pure builder** (`buildBatteryHealthState` forces `ladder=None` whenever
 `draining` is false, even if a caller supplies one) — the SSOT, so a buggy caller
 can't light a phantom drain. The **live runtime-remaining + ladder thresholds
 (3.70/3.55/3.45 V) are Spool-owned (S-2, failsafe-only)** and arrive inside the
-caller's `ladder` dict; the emitter/render **never fabricate** them — a draining
-pack with no Spool data shows the stage + volts only, no minutes.
+caller's `ladder` dict; the emitter **never fabricates** them. Since US-894-e
+no display renders the ladder (spec §4.6.1).
 
 **C-5 states-dir writers.** The `battery-health` emitter is the third post-boot
 writer into the F-103-provisioned `states/` tmpfs dir, after `system-status` and

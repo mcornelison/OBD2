@@ -40,12 +40,9 @@ _BLOCK = {
     "dataQuality": "full",
 }
 _BASE: dict = {
-    "obdLinkState": "down",
-    "obdRetries": 0,
     # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
     "syncLastOkTs": None,
-    "syncRows": 0,
-    "syncPending": 0,
+    # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
     "syncStale": False,
     "powerSource": "external",
     "driveState": "idle",

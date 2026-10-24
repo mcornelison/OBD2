@@ -34,6 +34,9 @@
 #               |                | is served as the provider's PULL OVER at
 #               |                | /alerts (brightnessAlarmActive keys on it);
 #               |                | every assertion is unchanged.
+# 2026-10-23    | Rex (US-878-c) | The width budget covers the 'fixed' status.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
+#               |              | (9 -> 8).
 # ================================================================================
 ################################################################################
 
@@ -494,11 +497,12 @@ def _sectionTags(html: str) -> list[str]:
 
 def test_slot_lightIsRightAfterMotion():
     """E-2 / Iris Q6: Driving, NAV, Engine, Fuel, Motion, Light, then the
-    INTERIM Alerts / System / Battery tail."""
+    INTERIM Alerts / System tail. MOVED PIN (US-894-e): the Battery card
+    is retired (9 -> 8)."""
     tags = _sectionTags(_read(_HTML))
     labels = [re.search(r'aria-label="([^"]+)"', t).group(1) for t in tags]
     assert labels == ["Driving", "Navigation", "Engine", "Fuel", "Motion", "Light",
-                      "Alerts", "System Status", "Battery"]
+                      "Alerts", "System Status"]
     tag = tags[5]
     for attr in ('id="light-card"', 'data-state="light"', 'data-page-name="LIGHT"'):
         assert attr in tag, attr
@@ -581,7 +585,8 @@ def test_widthBudget_NIGHTWithItsGlyph_theWidestAmbient_andEveryStatusFit():
     ambient = len("30,000") * ADVANCE_OBSERVED * primary + len(" lux") * ADVANCE_OBSERVED * label
     assert ambient <= left
     gap = _px("--light-notes-gap", root)
-    for basis in ("auto", "fallback", "alert"):
+    # US-878-c: the 'fixed' basis ('(fixed in Settings)') must fit too.
+    for basis in ("auto", "fallback", "alert", "fixed"):
         s = _call("lightStatusView", {"level": 1.0, "basis": basis})
         width = michromaWidthPx(s["label"], meta) + gap + len(s["value"]) * ADVANCE_OBSERVED * label
         if s["note"]:

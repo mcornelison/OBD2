@@ -82,6 +82,27 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idle face LAST DRIVE cases
 #                               retire (LAST DRIVE is on NAV, US-896-b); the
 #                               System card cases stay.
+# 2026-10-23    | Ralph (Rex)  | US-894-b -- MOVED PIN: the 2x2 grid and the
+#                               `SYSTEM · …` summary are retired, and the DRIVE
+#                               tile is not painted until its DATA row lands
+#                               (US-894-c). The DRIVE cases now read the tile the
+#                               VIEW still builds (it feeds the drill), resolve
+#                               its colour through the shipped `.tile` cascade,
+#                               and open the drill from the verdict line
+#                               (parked-only). The summary-count assertions retire.
+# 2026-10-23    | Ralph (Rex)  | US-894-c -- MOVED PIN: the DRIVE tile is RETIRED
+#                               (spec s4.3, Iris I3: the DATA row's capture word
+#                               comes from capture-health, NEVER from the drive
+#                               state). Its tile cases are deleted; what survives
+#                               is pinned on the DATA row: the drive state does
+#                               not decide the word, an unreadable drive block
+#                               moves nothing and lists no row, and the page
+#                               prints no drive id.
+# 2026-10-23    | Ralph (Rex)  | US-894-f -- MOVED PIN: the issue list behind the
+#                               verdict is deleted (US-759 closed by the design);
+#                               the verdict opens the Pi detail. The idle case
+#                               reads that OPENED detail (asserted open, never
+#                               vacuous), and the view carries no drill/tiles.
 # ================================================================================
 ################################################################################
 
@@ -93,6 +114,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -112,6 +134,8 @@ sys.path.insert(
 import render_harness as rh  # noqa: E402
 
 from pi.obdii.drive_summary import SCHEMA_DRIVE_SUMMARY  # noqa: E402
+from pi.obdii.gear_derivation import GEAR_PARK, REASON_PARK, GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
     CardStateEmitterMixin,
 )
@@ -165,12 +189,9 @@ def _systemStatus(**overrides: Any) -> dict:
     the drive block.
     """
     args: dict[str, Any] = {
-        "obdLinkState": "linked",
-        "obdRetries": 0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": _FRESH_SYNC,
-        "syncRows": 1204,
-        "syncPending": 0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         "syncStale": False,
         "powerSource": "external",
         "driveState": "idle",
@@ -291,7 +312,12 @@ def _emitToStateFile(tmp_path, **kwargs: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _surface(payload: Any, steps: list[dict[str, Any]] | None = None, imu: Any = None):
+def _surface(
+    payload: Any,
+    steps: list[dict[str, Any]] | None = None,
+    imu: Any = None,
+    parked: bool = False,
+):
     """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet.
 
     `imu` is left ABSENT by default, which is the shipped Pi today:
@@ -302,17 +328,28 @@ def _surface(payload: Any, steps: list[dict[str, Any]] | None = None, imu: Any =
     routes: dict[str, Any] = {} if payload is None else {"/system-status": payload}
     if imu is not None:
         routes["/imu"] = imu
-    tree = rh.runDashboard(routes=routes, steps=steps, viewport=PANEL)["tree"]
+    if parked:
+        # US-894-b: System taps are parked-only -- gear P held past the 8 s hold.
+        routes["/gear"] = buildGearState(
+            GearReading(True, GEAR_PARK, REASON_PARK), nowIso=_NOW
+        )
+    tree = rh.runDashboard(
+        routes=routes, steps=steps, viewport=PANEL,
+        nowMs=_NOW_MS if parked else None,
+    )["tree"]
     return rh.dashboardSurface(tree, viewport=PANEL)
 
 
-# The drill-down is rendered only while the overlay is OPEN, so reaching it means
-# TAPPING the summary line the way the operator does. The line is built by
-# carousel.js and carries no id, so it is reached by class via the `clickNth`
-# step US-635 added for exactly this reason.
+_NOW_MS = 1788187560000  # _NOW as epoch ms
+
+# The detail is rendered only while the overlay is OPEN, so reaching it means
+# TAPPING the line the way the operator does. MOVED PIN (US-894-b): that line is
+# the verdict (`.sys-verdict`), and the tap only works parked.
+# MOVED PIN (US-894-f): the verdict opens the Pi detail; the issue list is gone.
 _OPEN_DRILL = [
     {"flush": 4},
-    {"clickNth": {"selector": ".sys-summary", "index": 0}},
+    {"advanceMs": 9000, "flush": 4},
+    {"clickNth": {"selector": ".sys-verdict", "index": 0}},
     {"flush": 1},
 ]
 
@@ -326,47 +363,29 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _tileByLabel(surface, label: str) -> dict | None:
-    """The rendered `.tile` whose own label reads `label`, as the operator sees it.
-
-    Found by its PRINTED LABEL rather than by grid position, so a tile that moved
-    in the layout still resolves and a tile that VANISHED returns None instead of
-    silently matching its neighbour. Returns the printed value/detail, the level
-    the stylesheet is keyed on, and the COLOUR that level actually resolves to --
-    because "not green" is a claim about the panel, and a level token only means
-    not-green while the sheet agrees.
-    """
-    for path in surface.pathsByClass("tile"):
-        printed = _textOf(path[-1])
-        if not printed or printed[0] != label:
-            continue
-        if not surface.rendered(path):
-            continue
-        value = ""
-        detail = ""
-        valuePath = None
-        for child in path[-1].get("children", []):
-            classes = (child.get("attrs", {}).get("class") or "").split()
-            if "tile-value" in classes:
-                value = " ".join(_textOf(child))
-                valuePath = path + [child]
-            elif "tile-detail" in classes:
-                detail = " ".join(_textOf(child))
-        declaration = (
-            surface.winningDeclaration(valuePath, "color") if valuePath else None
-        )
-        return {
-            "value": value,
-            "detail": detail,
-            "level": path[-1].get("attrs", {}).get("data-level"),
-            "colour": declaration[0] if declaration else "",
-            "texts": printed,
-        }
-    return None
+def _view(payload: Any, capture: Any = None) -> dict:
+    """systemStatusView through the shipped carousel.js (node probe)."""
+    probe = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
+    args = [json.dumps(payload)] + ([json.dumps(capture)] if capture is not None else [])
+    proc = subprocess.run(
+        [_NODE, probe, "systemStatusView", *args],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
 
 
-def _driveTile(payload: Any, **kwargs: Any) -> dict | None:
-    return _tileByLabel(_surface(payload, **kwargs), "DRIVE")
+def _dataRow(payload: Any, capture: Any = None) -> dict:
+    """The DATA row (US-894-c), the surface that replaced the DRIVE tile."""
+    rows = [r for r in _view(payload, capture)["rows"] if r["key"] == "data"]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def _captureHealth(state: str) -> dict:
+    """A capture-health payload in the shape the REAL emitter writes."""
+    return {"state": state, "lastRowSecondsAgo": None if state == "idle" else 0.4,
+            "stallSeconds": 60.0, "reason": None, "ts": _NOW}
 
 
 def _systemCardText(payload: Any, **kwargs: Any) -> list[str]:
@@ -379,12 +398,15 @@ def _systemCardText(payload: Any, **kwargs: Any) -> list[str]:
 
 
 def _drillRows(payload: Any) -> list[str]:
-    """The drill-down's issue rows, as printed, with the overlay OPEN."""
-    surface = _surface(payload, steps=_OPEN_DRILL)
-    return [
-        " ".join(_textOf(path[-1]))
-        for path in surface.pathsByClass("sys-issue-row")
-    ]
+    """The detail behind the verdict, as printed, with the overlay OPEN.
+
+    MOVED PIN (US-894-f): the overlay's head and body text (the Pi detail);
+    an overlay that did not open fails here rather than reading empty.
+    """
+    surface = _surface(payload, steps=_OPEN_DRILL, parked=True)
+    assert surface.pathById("sys-detail")[-1]["attrs"].get("hidden") is None
+    assert _textOf(surface.pathById("sys-detail-head")[-1]) == ["PI"]
+    return _textOf(surface.pathById("sys-detail-body")[-1])
 
 
 # ---------------------------------------------------------------------------
@@ -405,13 +427,12 @@ def test_theStylesheetPaintsGreenOnlyForTheOkLevel():
           and a sheet that painted `neutral` green would leave this file passing
           while a parked Pi claimed an active recording.
     """
+    # MOVED PIN (US-894-b): no DRIVE tile is painted; any rendered `.tile`
+    # carries the same `.tile[data-level] .tile-value` cascade.
     surface = _surface(_systemStatus())
-    path = None
-    for candidate in surface.pathsByClass("tile"):
-        printed = _textOf(candidate[-1])
-        if printed and printed[0] == "DRIVE":
-            path = candidate
-    assert path is not None
+    tiles = surface.pathsByClass("tile")
+    assert tiles, "no rendered .tile"
+    path = tiles[0]
     valuePath = None
     for child in path[-1].get("children", []):
         if "tile-value" in (child.get("attrs", {}).get("class") or "").split():
@@ -437,47 +458,50 @@ def test_theStylesheetPaintsGreenOnlyForTheOkLevel():
 # ---------------------------------------------------------------------------
 
 
-def test_atlasIdleObservation_paintsIdleNotRecording_andIsNotGreen():
+def test_theDriveStateDoesNotDecideTheDataWord_captureHealthDoes():
     """
-    Given: Atlas's punch-list 3.4 reading -- `drive.state: "idle"`
-    When: the shipped panel renders it
-    Then: the DRIVE tile reads IDLE / "not recording" at the `neutral` level, and
-          is NOT green.
+    Given: Atlas's punch-list 3.4 reading -- `drive.state: "idle"` -- and the
+           opposite, a recording drive
+    When: the DATA row is built beside a capture-health payload
+    Then: the word follows CAPTURE-HEALTH both ways (spec s4.3, Iris I3), and a
+          parked Pi's row is never green.
 
-          THE RECORDED PASS for the drive-state half. Green here would be a
-          claim that a drive is being captured, which is the one thing a parked
-          Pi must not say.
+          MOVED PIN (US-894-c): this pinned the DRIVE tile's IDLE / REC. The
+          tile is retired; the honest-instrument half that survives is that the
+          page never paints recording from a drive-state string.
     """
-    tile = _driveTile(_systemStatus())
+    parked = _dataRow(_systemStatus(), _captureHealth("idle"))
+    assert (parked["word"], parked["look"]) == ("idle", "secondary"), parked
 
-    assert tile is not None
-    assert tile["value"] == "IDLE", tile
-    assert tile["detail"] == "not recording", tile
-    assert tile["level"] == "neutral", tile
-    assert tile["colour"] != GREEN, tile
+    # A drive "recording" while capture-health says idle: the capture fact wins.
+    driving = _dataRow(_systemStatus(driveState="recording", driveId=52),
+                       _captureHealth("idle"))
+    assert driving["word"] == "idle", driving
+
+    # And the reverse: rows landing on a parked drive state still read recording.
+    landing = _dataRow(_systemStatus(), _captureHealth("ok"))
+    assert (landing["word"], landing["look"]) == ("recording", "ok"), landing
 
 
-def test_idleIsNominalNotAFault_soTheCardStillReadsSystemOk():
+def test_idleIsNominalNotAFault_theVerdictIsNotMovedByIt():
     """
     Given: a parked Pi with every other source healthy
-    When: the summary line compresses the four tiles
-    Then: it reads SYSTEM . OK.
+    When: the System page renders
+    Then: the verdict reads the provider's ALL OK.
 
-          `neutral` is the third bucket in SYS_LEVEL_RANK and it exists FOR this
-          tile: DRIVE=IDLE means "not recording", not "broken". Ranked as a
-          fault it would make green unreachable in the commonest state there is
-          (key on, no drive started) -- crying wolf, which is its own dishonesty.
-          Nothing pinned that ranking on a rendered card until now.
+          MOVED PIN (US-894-b): this pinned `SYSTEM · OK` from the retired
+          summary's SYS_LEVEL_RANK. The page counts nothing now; DRIVE=IDLE is
+          not a verdict member, so the line stays ALL OK.
     """
     printed = _systemCardText(_systemStatus())
 
-    assert "SYSTEM · OK" in printed, printed
-    assert "IDLE" in printed, printed
+    assert printed[0] == "ALL OK", printed
 
 
 def test_idleIsNeverListedAsAnIssueInTheDrillDown():
     """
-    Given: the drill-down lists every source at or above the `unavailable` floor
+    Given: the verdict opens the detail behind it (US-894-f: the Pi detail;
+           the US-509 issue list is deleted)
     When: the overlay is opened on a parked but otherwise healthy Pi
     Then: no DRIVE row appears.
 
@@ -490,115 +514,27 @@ def test_idleIsNeverListedAsAnIssueInTheDrillDown():
     assert [row for row in rows if "DRIVE" in row] == [], rows
 
 
-def test_recordingPaintsRecWithTheActiveDriveId():
+def test_unreadableDriveBlock_movesNothingAndListsNoRow():
     """
-    Given: a drive is actively recording as drive 52
-    When: the shipped panel renders it
-    Then: the DRIVE tile reads REC / "drive 52" and IS green.
+    Given: a state file with NO drive block at all (an old or truncated file),
+           every other source healthy
+    When: the page and the drill-down are built
+    Then: the DATA row is exactly what it is with the block present, the
+          verdict is the provider's, and no DRIVE row is listed.
 
-          The positive branch. Without it every "not green" assertion in this
-          file could be satisfied by a tile that is never green.
+          MOVED PIN (US-894-c): the DRIVE tile that painted the typed absence
+          (and listed it in the drill) is retired with the drive fact's place
+          on the page. A row that silently changed with a block it no longer
+          reads would be a second, hidden reader.
     """
-    tile = _driveTile(_systemStatus(driveState="recording", driveId=52))
-
-    assert tile is not None
-    assert tile["value"] == "REC", tile
-    assert tile["detail"] == "drive 52", tile
-    assert tile["level"] == "ok", tile
-    assert tile["colour"] == GREEN, tile
-
-
-def test_recordingWithNoMintedId_saysQuestionMarkNeverAFabricatedNumber():
-    """
-    Given: a drive is recording but the id could not be read (the orchestrator
-           reaches this whenever `getCurrentDriveId()` returns None -- a drive
-           past its US-625 bounded idle, or a counter not yet ensured)
-    When: the shipped panel renders it
-    Then: the detail reads "drive ?" and carries NO DIGIT.
-
-          Asserted as "no digit" rather than "not drive 0", because the family of
-          wrong answers here is bigger than zero: the last known id, the row
-          count, and 0 are all plausible-looking numbers, and every one of them
-          would attribute the recording to a drive nobody minted.
-    """
-    tile = _driveTile(_systemStatus(driveState="recording", driveId=None))
-
-    assert tile is not None
-    assert tile["value"] == "REC", tile
-    assert tile["detail"] == "drive ?", tile
-    assert not any(ch.isdigit() for ch in tile["detail"]), tile
-
-
-def test_absentDriveBlock_paintsATypedAbsence_notIdle():
-    """
-    Given: a state file with NO drive block at all (an old or truncated file)
-    When: the shipped panel renders it
-    Then: the DRIVE tile reads the em-dash / "unavailable" -- and specifically
-          NOT "IDLE".
-
-          THE STORY'S NEGATIVE CASE for this half, and the sharp edge of it.
-          "IDLE" is a MEASUREMENT -- we looked, and nothing is recording.
-          Painting it over a block nobody could read is the unread-as-settled
-          defect class the whole punch list is chasing (2.1), one field across.
-    """
-    tile = _driveTile(_withoutDriveBlock())
-
-    assert tile is not None
-    assert tile["value"] == EM_DASH, tile
-    assert tile["detail"] == "unavailable", tile
-    assert tile["level"] == "unavailable", tile
-    assert "IDLE" not in tile["texts"], tile
-    assert "REC" not in tile["texts"], tile
-
-
-def test_unrecognisedStateString_paintsTheTypedAbsence_neverGuessesIdle():
-    """
-    Given: `drive.state` carries a word this renderer has not been taught
-           ("starting"), as a future producer or a partially-deployed Pi could
-    When: the shipped panel renders it
-    Then: the tile falls to the typed absence -- never to IDLE, never to REC.
-
-          The default is load-bearing (US-634's lesson): `driveTile` matches
-          "recording" and "idle" EXACTLY and falls through otherwise, and a
-          fall-through that landed on either real state would be a confident
-          reading manufactured out of an unrecognised one.
-    """
-    payload = _systemStatus()
-    payload["drive"]["state"] = "starting"
-    tile = _driveTile(payload)
-
-    assert tile is not None
-    assert tile["value"] == EM_DASH, tile
-    assert tile["level"] == "unavailable", tile
-
-
-def test_unreadableDriveBlock_blocksTheCardsGreenAndIsListed():
-    """
-    Given: the drive source cannot be read while every other source is healthy
-    When: the summary line and the drill-down are rendered
-    Then: the card refuses to say OK, names DRIVE, and lists it as a row.
-
-          The counterweight to the two IDLE tests above. Those assert that a
-          nominal-inactive source does NOT raise an alarm; this asserts the
-          `neutral` bucket did not swallow the UNKNOWN one with it. Without it, a
-          renderer that ranked every non-fault drive state as neutral would pass
-          this file while claiming OK over a source nobody read.
-    """
-    payload = _withoutDriveBlock()
-    printed = _systemCardText(payload)
-
-    assert "SYSTEM · OK" not in printed, printed
-    assert "SYSTEM · 1 UNAVAILABLE" in printed, printed
-    assert "DRIVE · " + EM_DASH in printed, printed
-
-    rows = _drillRows(payload)
-    driveRows = [row for row in rows if "DRIVE" in row]
-    assert len(driveRows) == 1, rows
-    # The drive source publishes no `lastSeenS`, so the row must SAY the age was
-    # not reported. "seen 0s ago" would claim we had just read a source we never
-    # timed -- an unmeasured quantity rendered as a zero (US-508's class).
-    assert "age not reported" in driveRows[0], driveRows
-    assert "seen" not in driveRows[0], driveRows
+    capture = _captureHealth("ok")
+    assert _dataRow(_withoutDriveBlock(), capture) == _dataRow(_systemStatus(), capture)
+    view = _view(_withoutDriveBlock(), capture)
+    assert view["verdict"]["text"] == "ALL OK"
+    # MOVED PIN (US-894-f): the drill and its tiles are deleted (US-759), so
+    # no DRIVE tile or drill row can exist at all.
+    assert "tiles" not in view
+    assert "drill" not in view
 
 
 # ---------------------------------------------------------------------------
@@ -617,26 +553,6 @@ def test_unreadableDriveBlock_blocksTheCardsGreenAndIsListed():
 # ---------------------------------------------------------------------------
 
 
-def test_aNeverDrivenPiStillShowsTheLiveRecording():
-    """
-    Given: a drive is recording on a Pi whose completed-drive log is EMPTY (the
-           first drive this Pi has ever taken)
-    When: the shipped panel renders it
-    Then: the DRIVE tile still reads REC / "drive 52".
-
-          The other direction. Gate the state on the identity and the very first
-          drive -- the one where a driver is most likely to be watching the
-          panel -- would render as if nothing were being captured.
-    """
-    tile = _driveTile(
-        _systemStatus(driveState="recording", driveId=52, lastDrive=None)
-    )
-
-    assert tile is not None
-    assert tile["value"] == "REC", tile
-    assert tile["detail"] == "drive 52", tile
-
-
 # ---------------------------------------------------------------------------
 # NO LINGERING. A tile that keeps its last good reading after the producer dies
 # is indistinguishable from a healthy one, so the failure is invisible on the
@@ -652,18 +568,14 @@ def test_aNeverDrivenPiStillShowsTheLiveRecording():
 # ---------------------------------------------------------------------------
 
 
-def test_realOrchestratorWhileDriving_paintsRecWithNoFabricatedId(tmp_path):
+def test_realOrchestratorWhileDriving_theDataRowReadsCaptureNotTheDrive(tmp_path):
     """
     Given: the REAL orchestrator with a detector reporting a drive in progress
            and no id minted in this process
-    When: the panel renders what it emitted
-    Then: the DRIVE tile reads REC / "drive ?".
-
-          Exercises `_gatherDriveState`'s second branch on the production path:
-          `getCurrentDriveId()` legitimately returns None (US-625 bounded idle,
-          or a counter this process never ensured) and the emitter must publish
-          `driveId: null` rather than an id it does not have. The renderer's "?"
-          then carries that absence to the glass instead of a number.
+    When: the page is built from what it emitted, with no capture-health file
+    Then: the emitted drive block is the producer's (recording, driveId null)
+          and the DATA row reads `--` / `capture not read yet` -- a recording
+          drive never stands in for a capture reading (spec s4.3).
     """
     emitted = _emitToStateFile(
         tmp_path,
@@ -674,10 +586,9 @@ def test_realOrchestratorWhileDriving_paintsRecWithNoFabricatedId(tmp_path):
     assert emitted["drive"]["state"] == "recording", emitted["drive"]
     assert emitted["drive"]["driveId"] is None, emitted["drive"]
 
-    tile = _driveTile(emitted)
-    assert tile is not None
-    assert tile["value"] == "REC", tile
-    assert tile["detail"] == "drive ?", tile
+    row = _dataRow(emitted)
+    assert row["word"] == "--", row
+    assert row["sentence"].startswith("capture not read yet"), row
 
 
 # ---------------------------------------------------------------------------
@@ -699,20 +610,19 @@ def test_realOrchestratorWhileDriving_paintsRecWithNoFabricatedId(tmp_path):
 # closes on US-896-b), pinned in tests/ui/test_nav_page.py.
 
 
-def test_theDriveTileNeverPrintsADriveIdWhileIdle_characterisation():
+def test_theSystemPageNeverPrintsADriveId_characterisation():
     """
     Given: a parked Pi with drive 51 on record
-    When: the System card's DRIVE tile is rendered
-    Then: it prints no digit at all.
+    When: the System page's rows are built
+    Then: no row names a drive or prints its id.
 
-          The second half of I-us638, and the reason the first half MATTERS: the
-          System card is reachable on every face, so if the DRIVE tile carried
-          the completed-drive id the live-face gap would be cosmetic. It does
-          not, so the identity has exactly one surface and that surface is
-          conditional. Whoever closes the finding by surfacing the id HERE will
-          fail this test -- which is the intended moment to read the issue.
+          The second half of I-us638, re-recorded (US-894-c): the DRIVE tile is
+          retired and the DATA row carries capture and sync, never the
+          completed-drive identity -- which lives on the NAV trip row
+          (US-896-b).
     """
-    tile = _driveTile(_systemStatus())
+    view = _view(_systemStatus(), _captureHealth("idle"))
+    printed = json.dumps([[r.get("value"), r["sentence"]] for r in view["rows"]])
 
-    assert tile is not None
-    assert not any(ch.isdigit() for ch in " ".join(tile["texts"])), tile
+    assert str(_ATLAS_DRIVE_ID) not in printed, printed
+    assert "drive" not in printed.lower(), printed

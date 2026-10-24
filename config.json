@@ -89,7 +89,8 @@
         "minLevel": 0.75,
         "defaultLevel": 1.0,
         "luxStaleSec": 10,
-        "curve": "logarithmic"
+        "curve": "logarithmic",
+        "overrideLevel": null
       }
     },
     "autoStart": {

@@ -40,6 +40,8 @@
 #               |              | states/alerts; noDataView carries no dtc entry
 #               |              | and its absence is warningsPageView's '--' +
 #               |              | 'no warnings data'.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: an absent power block is the
+#               |              | UPS row's 'power source unknown'.
 # ================================================================================
 ################################################################################
 
@@ -249,7 +251,10 @@ def test_lightPageView_freshReadingWithoutABand_dashesTheWordAlone():
 
 def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
     """Honest-availability applies INSIDE a card: one absent sub-block grays its
-    own tile while every other tile still renders its real value."""
+    own tile while every other tile still renders its real value.
+    MOVED PIN (US-894-b): the OBD LINK tile is retired; sync is the witness.
+    MOVED PIN (US-894-c): the SYNC tile is retired too; the DATA row (its
+    sync stamp) is the witness that the rest of the card still renders."""
     view = _view(
         "systemStatusView",
         {
@@ -260,9 +265,15 @@ def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
             "ts": _TS,
         },
     )
-    assert view["tiles"]["power"]["level"] == "unavailable"
-    assert view["tiles"]["obdLink"]["value"] == "LINKED"
-    assert view["tiles"]["drive"]["value"] == "IDLE"
+    # MOVED PIN (US-894-e): the POWER tile is retired; an absent power block
+    # is the UPS row's `power source unknown`, never a guessed source.
+    assert view["rows"][3]["key"] == "ups"
+    assert view["rows"][3]["sentence"] == "power source unknown"
+    assert view["rows"][1]["key"] == "data"
+    assert view["rows"][1]["value"].endswith("no sync on record")
+    # MOVED PIN (US-894-c): the DRIVE tile is retired (spec s4.3 I3).
+    # MOVED PIN (US-894-f): the tiles went with the drill (US-759).
+    assert "tiles" not in view
 
 
 # ---------------------------------------------------------------------------

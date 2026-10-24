@@ -320,12 +320,9 @@ def test_buildSystemStatusState_refusesAReasonBesideAResolvedSource():
     from pi.splash.system_status_emitter import buildSystemStatusState
 
     state = buildSystemStatusState(
-        obdLinkState="linked",
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=None,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         powerSourceReason=REASON_POWER_SOURCE_UNREADABLE,
@@ -344,11 +341,7 @@ def test_buildSystemStatusState_unknownWithNoReasonStaysSilentRatherThanGuessing
     from pi.splash.system_status_emitter import buildSystemStatusState
 
     state = buildSystemStatusState(
-        obdLinkState="linked",
-        obdRetries=0,
         syncLastOkTs=None,
-        syncRows=0,
-        syncPending=None,
         syncStale=False,
         powerSource="unknown",
         driveState="idle",

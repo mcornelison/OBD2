@@ -23,6 +23,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-07    | Ralph (Rex)  | Initial -- US-532 F-126 settings band.
+# 2026-10-23    | Ralph (Rex)  | US-895-a MOVED PIN: auto-rotate is kind 'steps'.
 # ================================================================================
 ################################################################################
 
@@ -123,21 +124,25 @@ def test_settingsRowView_rendersEveryOverridableKey(key):
 
 @_NODE_TESTS
 def test_autoRotate_isDerivedFromSeconds_notASeparateBool():
-    assert _row(_AUTO_ROTATE, 8)["on"] is True
-    assert _row(_AUTO_ROTATE, 20)["on"] is True
-    assert _row(_AUTO_ROTATE, 0)["on"] is False
+    # MOVED PIN (US-895-a): auto-rotate is a stepper (kind 'steps'), so the row
+    # shows the stored seconds -- 0 is Off -- instead of an On/Off derived flag.
+    assert _row(_AUTO_ROTATE, 8)["display"] == "8 s"
+    assert _row(_AUTO_ROTATE, 20)["display"] == "20 s"
+    assert _row(_AUTO_ROTATE, 0)["display"] == "Off"
 
 
 @_NODE_TESTS
 def test_autoRotate_writesZeroOff_andTheShippedIntervalOn():
     """US-530 GAP 3a: off writes 0, on writes the shipped interval -- so the two
     directions round-trip through one key."""
+    # MOVED PIN (US-895-a): the stepper writes the chosen step's seconds (0 =
+    # Off) through the one key; the shipped 8 s is one of its steps.
     spec = _spec(_AUTO_ROTATE)
-    assert _view("settingsWriteValue", spec, False) == 0
-    on = _view("settingsWriteValue", spec, True)
-    assert on > 0
-    # And what it writes must read back as ON, or the toggle would not round-trip.
-    assert _row(_AUTO_ROTATE, on)["on"] is True
+    assert _view("settingsWriteValue", spec, 0) == 0
+    on = _view("settingsWriteValue", spec, 8)
+    assert on == 8
+    # And what it writes must read back as that step, or it would not round-trip.
+    assert _row(_AUTO_ROTATE, on)["display"] == "8 s"
 
 
 @_NODE_TESTS

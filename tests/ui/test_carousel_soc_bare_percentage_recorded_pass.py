@@ -70,6 +70,11 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-657 punch-list 4.3: the bare
 #               |              | percentage recorded, the tile hedge characterised.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the Battery card is retired.
+#               |              | The SOC is the parked UPS detail's line
+#               |              | `≈ 96 % (modelled[, uncalibrated])` (spec s4.6.1,
+#               |              | Iris I6 -- the caveat survives by ruling), never
+#               |              | on the UPS row. Characterisations re-recorded.
 # ================================================================================
 ################################################################################
 
@@ -79,6 +84,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from types import SimpleNamespace
@@ -99,9 +105,12 @@ from pi.hardware.ups_monitor import (  # noqa: E402
     REGISTER_VCELL,
     UpsMonitor,
 )
+from pi.obdii.gear_derivation import GEAR_PARK, REASON_PARK, GearReading  # noqa: E402
+from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
 from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
     CardStateEmitterMixin,
 )
+from pi.splash.system_status_emitter import buildSystemStatusState  # noqa: E402
 
 _NODE = shutil.which("node")
 
@@ -116,6 +125,10 @@ PANEL = (480, 320)
 # Spelled as named constants, never inline -- this file is written and re-read on
 # a Windows SMB share where raw non-ASCII copy has been mangled before.
 EM_DASH = "—"
+APPROX = "≈"
+MIDDOT = "·"
+# MOVED PIN (US-894-e): the page's one no-data mark (spec s4.4).
+NO_DATA = "--"
 
 CELL = "CELL"
 CHARGE = "CHARGE"
@@ -133,22 +146,27 @@ ATLAS_VCELL_RAW = 53299
 ATLAS_VCELL_PRINTED = "4.16 V"
 ATLAS_SOC_RAW = 0x6040
 ATLAS_SOC_PERCENT = 96
-ATLAS_SOC_PRINTED = "96%"
+# MOVED PIN (US-894-e): the percent as the UPS detail's SOC line prints it.
+ATLAS_SOC_PRINTED = "96 %"
 
 # A DIFFERENT percent, reachable by moving the SOC register ALONE. Used to prove
 # the printed percent tracks the register rather than the voltage.
 OTHER_SOC_RAW = 0x2A00
 OTHER_SOC_PERCENT = 42
-OTHER_SOC_PRINTED = "42%"
+OTHER_SOC_PRINTED = "42 %"
 
 # A genuinely FLAT pack. 0 is a LEGAL reading from this register, not a sentinel,
 # and the ruling's "never 0%" cannot be read as a ban on the digit -- see
 # test_aRealZeroPercentIsRenderedAndAnUnreadableGaugeIsNot.
 FLAT_VCELL_RAW = 44800
 FLAT_SOC_RAW = 0x0000
-FLAT_SOC_PRINTED = "0%"
+FLAT_SOC_PRINTED = "0 %"
 
 CRATE_DISABLED_ON_THIS_CHIP = 0xFFFF
+
+# MOVED PIN (US-894-e): spec s4.6.1 (Iris I6) -- the SOC line's two forms.
+SOC_UNCALIBRATED_TAIL = "(modelled, uncalibrated)"
+SOC_CALIBRATED_TAIL = "(modelled)"
 
 # The hedge vocabulary, carried over VERBATIM from US-656's file so this ruling is
 # enforced by ONE vocabulary across the panel rather than two that can drift. The
@@ -275,13 +293,34 @@ def _emit(tmp_path, upsMonitor: Any) -> dict:
 
 # ---------------------------------------------------------------------------
 # Reading the rendered panel.
+#
+# MOVED PIN (US-894-e): the Battery card is RETIRED (spec s4.5 / s4.6.1). The
+# cell voltage is the System page's UPS row value; the SOC is the parked UPS
+# detail's line. The helpers render the System page with a parked gear, open
+# the UPS detail, and read the row and the detail together.
 # ---------------------------------------------------------------------------
+
+# A fixed page clock, later than any stamp the real emitter writes, so the
+# row's freshness age is deterministic whatever day this runs.
+_NOW_ISO = "2030-01-01T00:00:00Z"
+_NOW_MS = 1893456000000
+_OPEN_UPS = [{"clickNth": {"selector": ".sys-row", "index": 3}}, {"flush": 1}]
 
 
 def _surface(payload: Any, steps: list[dict[str, Any]] | None = None):
-    """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet."""
-    routes: dict[str, Any] = {} if payload is None else {"/battery-health": payload}
-    tree = rh.runDashboard(routes=routes, steps=steps, viewport=PANEL)["tree"]
+    """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet, parked,
+    with the UPS detail open; `steps` run after it opened."""
+    routes: dict[str, Any] = {
+        "/system-status": buildSystemStatusState(
+            syncLastOkTs=_NOW_ISO, syncStale=False, powerSource="external",
+            driveState="idle", driveId=None, nowIso=_NOW_ISO,
+        ),
+        "/gear": buildGearState(GearReading(True, GEAR_PARK, REASON_PARK), nowIso=_NOW_ISO),
+    }
+    if payload is not None:
+        routes["/battery-health"] = payload
+    allSteps = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}] + _OPEN_UPS + (steps or [])
+    tree = rh.runDashboard(routes=routes, steps=allSteps, viewport=PANEL, nowMs=_NOW_MS)["tree"]
     return rh.dashboardSurface(tree, viewport=PANEL)
 
 
@@ -295,63 +334,112 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _cardPath(surface):
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "battery-health":
+def _classes(path: list[dict]) -> set[str]:
+    return set((path[-1].get("attrs", {}).get("class") or "").split())
+
+
+def _child(path: list[dict], cls: str):
+    """The first descendant path carrying `cls`, or None."""
+    stack = [path]
+    while stack:
+        cur = stack.pop(0)
+        if cur is not path and cls in _classes(cur):
+            return cur
+        for child in cur[-1].get("children", []):
+            if "text" not in child:
+                stack.append(cur + [child])
+    return None
+
+
+def _upsRow(surface):
+    for path in surface.pathsByClass("sys-row"):
+        if path[-1].get("attrs", {}).get("data-row") == "ups":
             return path
     return None
 
 
+def _cardPath(surface):
+    """The UPS row (the surface every reading here starts from)."""
+    return _upsRow(surface)
+
+
 def _cardText(payload: Any, steps: list[dict[str, Any]] | None = None) -> list[str]:
-    """Every word the Battery card paints, in reading order.
+    """Every word the UPS row and the open UPS detail paint, in reading order.
 
-    Read from the card DOWN rather than tile by tile, because the absence
-    assertions here ("no percent anywhere on this card") are claims about the
-    WHOLE card -- a stale reading that migrated into the title or a stray tile
-    would slip past a per-tile lookup.
+    Read from the surface DOWN rather than line by line, because the absence
+    assertions here ("no percent anywhere") are claims about the WHOLE surface
+    -- a stale reading that migrated into a label or a stray line would slip
+    past a per-line lookup.
     """
     surface = _surface(payload, steps)
-    path = _cardPath(surface)
-    if path is None or not surface.rendered(path):
-        return []
-    return _textOf(path[-1])
+    row = _upsRow(surface)
+    body = surface.pathById("sys-detail-body")
+    out = _textOf(row[-1]) if row is not None else []
+    return out + (_textOf(body[-1]) if body is not None else [])
 
 
-def _tile(payload: Any, label: str, steps: list[dict[str, Any]] | None = None):
-    """The rendered `.tile` on the Battery card whose printed label is `label`.
-
-    Found by its PRINTED LABEL rather than by grid position, so a tile that moved
-    in the layout still resolves and a tile that VANISHED returns None instead of
-    silently matching its neighbour.
-    """
+def _cellText(payload: Any, steps: list[dict[str, Any]] | None = None) -> list[str]:
+    """The reading surfaces only: the row's value and the detail's CELL / SOC
+    lines. The row's sentence carries the payload's AGE, a different fact, so a
+    digit sweep over it would measure the clock, not the reading."""
     surface = _surface(payload, steps)
-    card = _cardPath(surface)
-    if card is None:
-        return None
-    for path in surface.pathsByClass("tile"):
-        if not any(node is card[-1] for node in path):
-            continue
-        printed = _textOf(path[-1])
-        if not printed or printed[0] != label:
+    out: list[str] = []
+    row = _upsRow(surface)
+    if row is not None:
+        value = _child(row, "sys-row-value")
+        if value is not None:
+            out.extend(_textOf(value[-1]))
+    for label in ("CELL", "SOC"):
+        fact = _fact(surface, label)
+        if fact is not None:
+            out.append(fact["value"])
+    return out
+
+
+def _fact(surface, label: str):
+    """The UPS detail fact line whose printed label is `label`, or None."""
+    for path in surface.pathsByClass("data-fact-row"):
+        head = _child(path, "sys-diag-label")
+        if head is None or " ".join(_textOf(head[-1])) != label:
             continue
         if not surface.rendered(path):
             continue
-        value = ""
-        detail = ""
-        for child in path[-1].get("children", []):
-            classes = (child.get("attrs", {}).get("class") or "").split()
-            if "tile-value" in classes:
-                value = " ".join(_textOf(child))
-            elif "tile-detail" in classes:
-                detail = " ".join(_textOf(child))
+        value = _child(path, "sys-diag-text")
+        declaration = surface.winningDeclaration(value, "color") if value else None
+        text = " ".join(_textOf(value[-1])) if value else ""
         return {
-            "value": value,
-            "detail": detail,
-            "text": printed,
-            "allText": " ".join(printed),
-            "level": path[-1].get("attrs", {}).get("data-level"),
+            "value": text,
+            "text": [label, text],
+            "allText": text,
+            "colour": declaration[0] if declaration else "",
         }
     return None
+
+
+def _tile(payload: Any, label: str, steps: list[dict[str, Any]] | None = None):
+    """The reading the operator sees under `label`, or None.
+
+    CELL is the UPS row's value (`detail` = the row's sentence); CHARGE is the
+    UPS detail's SOC line; any other label is looked up among the detail's
+    fact lines, so a nonsense label resolves to None rather than a neighbour.
+    """
+    surface = _surface(payload, steps)
+    if label == CELL:
+        row = _upsRow(surface)
+        word = _child(row, "sys-row-word") if row is not None else None
+        if word is None:
+            return None
+        sentence = _child(row, "sys-row-sentence")
+        value = " ".join(_textOf(word[-1]))
+        detail = " ".join(_textOf(sentence[-1])) if sentence else ""
+        return {"value": value, "detail": detail, "allText": value + " " + detail}
+    return _fact(surface, "SOC" if label == CHARGE else label)
+
+
+def _socOf(value: str) -> int | None:
+    """The integer percent of a SOC line `≈ 96 % (modelled...)`, else None."""
+    m = re.match(r"^" + APPROX + r" (\d+) % \(modelled", value)
+    return int(m.group(1)) if m else None
 
 
 # A panel that reads a good gauge, then reads a state file the producer has
@@ -384,18 +472,20 @@ def test_theBatteryCardActuallyRendersBeforeAnythingIsClaimedAboutIt(tmp_path):
     """
     Given: Atlas's live gauge reading
     When:  the shipped panel is booted at 480x320
-    Then:  the Battery card is present AND painted
+    Then:  the UPS row is present AND painted, and the UPS detail opened
 
     Without this every absence assertion in the file is satisfied by a probe
-    that found no card at all.
+    that found no surface at all. MOVED PIN (US-894-e): the Battery card is the
+    UPS row + detail now.
     """
     payload = _emit(tmp_path, _atlasGauge())
     surface = _surface(payload)
-    card = _cardPath(surface)
+    row = _cardPath(surface)
 
-    assert card is not None, "no Battery card in the rendered tree"
-    assert surface.rendered(card), "the Battery card is in the tree but not painted"
-    assert BATTERY_LABEL in _textOf(card[-1])
+    assert row is not None, "no UPS row in the rendered tree"
+    assert surface.rendered(row), "the UPS row is in the tree but not painted"
+    assert _textOf(surface.pathById("sys-detail-head")[-1]) == ["UPS"]
+    assert BATTERY_LABEL in _textOf(surface.pathById("sys-detail-body")[-1])
 
 
 def test_theChargeTileIsFoundByItsPrintedLabel(tmp_path):
@@ -422,10 +512,12 @@ def test_atlasReadingPaintsTheBarePercentOnTheRenderedPanel(tmp_path):
     """
     Given: a MAX17048 holding Atlas's punch-list 4.3 SOC register word
     When:  the Battery card is rendered at 480x320
-    Then:  the CHARGE tile's value is the bare percent "96%"
+    Then:  the UPS detail's SOC line reads "≈ 96 % (modelled, uncalibrated)",
+           and the UPS row carries no percent at all
 
-    THE RECORDED PASS. The value half of the CIO's ruling holds: a real
-    uncalibrated reading is shown as a plain number.
+    THE RECORDED PASS, re-stated by MOVED PIN (US-894-e): the number is the
+    register's integer, the SOC lives ONLY in the detail (s4.5: never on the
+    row), and it always carries its `(modelled` caveat (s4.6.1, Iris I6).
     """
     payload = _emit(tmp_path, _atlasGauge())
 
@@ -434,34 +526,40 @@ def test_atlasReadingPaintsTheBarePercentOnTheRenderedPanel(tmp_path):
 
     tile = _tile(payload, CHARGE)
     assert tile is not None
-    assert tile["value"] == ATLAS_SOC_PRINTED
+    assert tile["value"] == APPROX + " " + ATLAS_SOC_PRINTED + " " + SOC_UNCALIBRATED_TAIL
+    cell = _tile(payload, CELL)
+    assert "%" not in cell["allText"], cell
 
 
 def test_theBarePercentValueCarriesNoHedgeOfAnyKind(tmp_path):
     """
     Given: the rendered CHARGE tile on Atlas's reading
     When:  its VALUE is swept for hedge vocabulary and hedge marks
-    Then:  none is present -- the number stands alone
+    Then:  the NUMBER carries none -- the hedge lives only in the line's one
+           ruled caveat, and the UPS row carries no hedge and no percent
 
-    The ruling as a RULE, not an equality: appending " (approx)" to the value
-    fails here even though the equality assertion above would still be re-read
-    as passing by someone changing only the format.
+    The ruling as a RULE, not an equality. MOVED PIN (US-894-e): the bare
+    number is the `96 %` token; s4.6.1 rules the `≈` and `(modelled...)` caveat
+    onto the line, so the sweep runs over the number and the row, never bare.
     """
     payload = _emit(tmp_path, _atlasGauge())
     tile = _tile(payload, CHARGE)
 
     assert tile is not None
-    assert _hedgesIn(tile["value"]) == [], (
-        f"the CHARGE value hedges: {tile['value']!r}"
-    )
-    assert "(" not in tile["value"] and ")" not in tile["value"]
+    number = tile["value"][len(APPROX) + 1:].split(" (")[0]
+    assert number == ATLAS_SOC_PRINTED, tile
+    assert _hedgesIn(number) == [], f"the SOC number hedges: {number!r}"
+    cell = _tile(payload, CELL)
+    assert _hedgesIn(cell["allText"]) == [], cell
+    assert "%" not in cell["allText"], cell
 
 
 def test_theBarePercentIsShownAtTheNeutralLevelNotAWarningTier(tmp_path):
     """
     Given: a real but uncalibrated SOC reading
     When:  the CHARGE tile's level is read
-    Then:  it is `neutral` -- not `unavailable` and not an alarm tier
+    Then:  it is --text-secondary (s4.6.1) -- not an alarm tier. MOVED PIN
+           (US-894-e): the detail line's resolved colour replaces the tile level.
 
     The ruling is that an uncalibrated reading is FIT TO DISPLAY. Painting it at
     a degraded level would hedge through the stylesheet what the text no longer
@@ -471,7 +569,7 @@ def test_theBarePercentIsShownAtTheNeutralLevelNotAWarningTier(tmp_path):
     tile = _tile(payload, CHARGE)
 
     assert tile is not None
-    assert tile["level"] == "neutral"
+    assert tile["colour"] == "var(--text-secondary)", tile
 
 
 def test_thePrintedPercentTracksTheSocRegisterAndNotTheVoltage(tmp_path):
@@ -489,8 +587,8 @@ def test_thePrintedPercentTracksTheSocRegisterAndNotTheVoltage(tmp_path):
     atlas = _emit(tmp_path / "a", _atlasGauge())
     other = _emit(tmp_path / "b", _atlasGauge(soc=OTHER_SOC_RAW))
 
-    assert _tile(atlas, CHARGE)["value"] == ATLAS_SOC_PRINTED
-    assert _tile(other, CHARGE)["value"] == OTHER_SOC_PRINTED
+    assert _socOf(_tile(atlas, CHARGE)["value"]) == ATLAS_SOC_PERCENT
+    assert _socOf(_tile(other, CHARGE)["value"]) == OTHER_SOC_PERCENT
     # The voltage did NOT move: the two readings are independent.
     assert _tile(atlas, CELL)["value"] == ATLAS_VCELL_PRINTED
     assert _tile(other, CELL)["value"] == ATLAS_VCELL_PRINTED
@@ -512,7 +610,7 @@ def test_thePercentIsAnIntegerWithNoFabricatedPrecision(tmp_path):
 
     assert tile is not None
     assert "." not in tile["value"], f"fabricated precision: {tile['value']!r}"
-    assert tile["value"] == ATLAS_SOC_PRINTED
+    assert _socOf(tile["value"]) == ATLAS_SOC_PERCENT
 
 
 # ===========================================================================
@@ -524,10 +622,11 @@ def test_anUnreadableGaugeRendersATypedAbsenceWithItsReason(tmp_path):
     """
     Given: a gauge present on the bus whose every register read fails
     When:  the Battery card is rendered
-    Then:  the whole card is a typed NA carrying "gauge unreadable"
+    Then:  the cell is the typed absence `--` carrying "gauge unreadable"
 
-    US-429: the UPS/MAX17048 is a SINGLE source, so an unreadable gauge takes the
-    whole card rather than leaving half-tiles standing.
+    US-429: the UPS/MAX17048 is a SINGLE source, so an unreadable gauge takes
+    every cell line rather than leaving half-readings standing. MOVED PIN
+    (US-894-e): the whole-card NA is the row's `--` + reason.
     """
     payload = _emit(tmp_path, _deadGauge())
 
@@ -535,8 +634,8 @@ def test_anUnreadableGaugeRendersATypedAbsenceWithItsReason(tmp_path):
     assert payload["source"]["ups"]["available"] is False
 
     text = _cardText(payload)
-    assert "NA" in text
-    assert REASON_GAUGE_UNREADABLE in text
+    assert _tile(payload, CELL)["value"] == NO_DATA
+    assert (NO_DATA + " " + MIDDOT + " " + REASON_GAUGE_UNREADABLE) in " ".join(text)
     assert BATTERY_LABEL in text
 
 
@@ -544,26 +643,31 @@ def test_anUnreadableGaugeLeavesNoPercentAnywhereOnTheCard(tmp_path):
     """
     Given: an unreadable gauge
     When:  every word the card paints is collected
-    Then:  no percent sign and no digit appears anywhere on it
+    Then:  no percent sign appears anywhere on the row or the detail, and no
+           digit on the reading surfaces
 
-    Asserted on the WHOLE card, at DIGIT level rather than string level: a
-    renderer that helpfully coerced a missing reading to "0%" would be caught,
-    and so would one that left the percent in the title.
+    Asserted on the WHOLE surface for the percent, at DIGIT level on the
+    reading surfaces (MOVED PIN US-894-e: the row's sentence carries the
+    payload's age, a different fact): a renderer that coerced a missing reading
+    to "0 %" would be caught either way.
     """
     payload = _emit(tmp_path, _deadGauge())
     text = _cardText(payload)
 
-    assert text, "control: the card must have rendered for this absence to mean anything"
+    assert text, "control: the surface must have rendered for this absence to mean anything"
     assert "%" not in " ".join(text), f"a percent survived an unreadable gauge: {text}"
-    assert _digitsOf(text) == "", f"a digit survived an unreadable gauge: {text}"
+    cells = _cellText(payload)
+    assert NO_DATA in cells, cells
+    assert _digitsOf(cells) == "", f"a digit survived an unreadable gauge: {cells}"
 
 
 def test_aRealZeroPercentIsRenderedAndAnUnreadableGaugeIsNot(tmp_path):
     """
     Given: a genuinely FLAT pack (SOC register reads 0) and, separately, a dead gauge
     When:  both are rendered
-    Then:  the flat pack paints "0%" at `neutral`; the dead gauge paints NA and
-           no digit at all -- the two are never confused
+    Then:  the flat pack paints "≈ 0 % (modelled...)"; the dead gauge paints
+           `--` and no SOC line at all -- the two are never confused (MOVED PIN
+           US-894-e)
 
     THE STORY'S "NEVER 0%" RE-STATED AS THE CLAIM IT CAN ACTUALLY BE.
 
@@ -585,14 +689,14 @@ def test_aRealZeroPercentIsRenderedAndAnUnreadableGaugeIsNot(tmp_path):
     # A real zero is a reading, and it is SHOWN.
     assert flat["soc"] == 0
     flatTile = _tile(flat, CHARGE)
-    assert flatTile is not None, "a flat pack must still have a CHARGE tile"
-    assert flatTile["value"] == FLAT_SOC_PRINTED
-    assert flatTile["level"] == "neutral"
+    assert flatTile is not None, "a flat pack must still have a SOC line"
+    assert _socOf(flatTile["value"]) == 0, flatTile
+    assert flatTile["colour"] == "var(--text-secondary)", flatTile
 
     # An absent reading is NOT dressed as that same zero.
     deadText = _cardText(dead)
     assert FLAT_SOC_PRINTED not in " ".join(deadText)
-    assert _tile(dead, CHARGE) is None, "an unreadable gauge must have no CHARGE tile"
+    assert _tile(dead, CHARGE) is None, "an unreadable gauge must have no SOC line"
 
     # And the two rendered cards are not the same card.
     assert _cardText(flat) != deadText
@@ -602,7 +706,7 @@ def test_theLiveReadingDoesNotSurviveTheGaugeThatProducedIt(tmp_path):
     """
     Given: a panel driven live at 96% for four poll rounds
     When:  the gauge dies under it and the producer rewrites the state file
-    Then:  96 is gone from the card, replaced by the typed NA
+    Then:  96 is gone, replaced by the typed absence `--` + reason (US-894-e)
 
     "Never a stale value shown as current", tested as a REPLACEMENT rather than
     as a cold boot. "An NA payload renders NA" is trivially true of a fresh boot
@@ -614,11 +718,12 @@ def test_theLiveReadingDoesNotSurviveTheGaugeThatProducedIt(tmp_path):
 
     after = _cardText(live, steps=_thenReplacedWith(dead))
 
-    assert after, "the card must still render after the replacement"
+    assert after, "the surface must still render after the replacement"
     assert ATLAS_SOC_PRINTED not in " ".join(after), f"stale percent held: {after}"
-    assert str(ATLAS_SOC_PERCENT) not in _digitsOf(after), f"stale digits held: {after}"
-    assert "NA" in after
-    assert REASON_GAUGE_UNREADABLE in after
+    cells = _cellText(live, steps=_thenReplacedWith(dead))
+    assert str(ATLAS_SOC_PERCENT) not in _digitsOf(cells), f"stale digits held: {cells}"
+    assert NO_DATA in cells, cells
+    assert REASON_GAUGE_UNREADABLE in " ".join(after)
 
 
 def test_theControlProvesTheSecondRenderIsNotABlanketReset(tmp_path):
@@ -665,8 +770,12 @@ def test_aVanishedStateFileDoesNotLeaveThePercentStanding(tmp_path):
 def test_characterisation_theChargeTilePaintsAnUncalibratedQualifier(tmp_path):
     """
     Given: Atlas's live, real, uncalibrated SOC reading
-    When:  the CHARGE tile's DETAIL line is read off the rendered panel
-    Then:  it paints "(uncalibrated)" beside the bare value
+    When:  the UPS detail's SOC line is read off the rendered panel
+    Then:  it paints "(modelled, uncalibrated)" after the number
+
+    RE-RECORDED, MOVED PIN (US-894-e): the CHARGE tile retired with the Battery
+    card; spec s4.6.1 (Iris I6) keeps the shipped uncalibrated caveat on the UPS
+    detail's SOC line, BY RULING. The finding below is history for the tile.
 
     THE FINDING, MEASURED. validationCriteria 1 asks for "a bare percentage, no
     qualifier". The VALUE is bare; the TILE is not. The driver reads
@@ -685,9 +794,9 @@ def test_characterisation_theChargeTilePaintsAnUncalibratedQualifier(tmp_path):
     tile = _tile(payload, CHARGE)
 
     assert tile is not None
-    assert tile["detail"] == "(uncalibrated)", (
-        "RE-RECORD THIS TEST -- the CHARGE detail changed. If the qualifier was "
-        f"REMOVED per the US-657 ruling, that is the fix: {tile['detail']!r}"
+    assert tile["value"].endswith(" " + SOC_UNCALIBRATED_TAIL), (
+        "RE-RECORD THIS TEST -- the SOC line's caveat changed: "
+        f"{tile['value']!r}"
     )
 
 
@@ -695,7 +804,8 @@ def test_characterisation_theChargeTileStillHedgesUnderTheSharedVocabulary(tmp_p
     """
     Given: the whole rendered CHARGE tile on a live reading
     When:  it is swept with the SAME hedge vocabulary US-656 applied to HEADING
-    Then:  a hedge IS found -- the ruling is not yet satisfied on this tile
+    Then:  a hedge IS found -- the s4.6.1 caveat (MOVED PIN US-894-e: the SOC
+           line in the UPS detail)
 
     The vocabulary is shared with US-656 deliberately: one ruling, one
     vocabulary, so the two tiles cannot drift apart in what they consider a
@@ -717,9 +827,10 @@ def test_characterisation_theChargeTileStillHedgesUnderTheSharedVocabulary(tmp_p
 
 def test_theHedgeSweepIsDiscriminatingAndNotABlanketDetailBan(tmp_path):
     """
-    Given: the CELL tile, whose detail line reads "Pi UPS battery"
-    When:  the same hedge sweep is applied to it
-    Then:  it finds nothing
+    Given: the UPS row (value + sentence) and the detail's "Pi UPS battery"
+           label line
+    When:  the same hedge sweep is applied to them
+    Then:  it finds nothing (MOVED PIN US-894-e: the CELL tile is the UPS row)
 
     NOT a characterisation -- a CONTROL, and a load-bearing one. Without it the
     sweep above could be flagging the mere PRESENCE of a detail line, which would
@@ -732,8 +843,10 @@ def test_theHedgeSweepIsDiscriminatingAndNotABlanketDetailBan(tmp_path):
     cell = _tile(payload, CELL)
 
     assert cell is not None
-    assert cell["detail"] == BATTERY_LABEL
-    assert _hedgesIn(cell["allText"]) == []
+    assert cell["value"] == ATLAS_VCELL_PRINTED
+    assert _hedgesIn(cell["allText"]) == [], cell
+    assert BATTERY_LABEL in _cardText(payload)
+    assert _hedgesIn(BATTERY_LABEL) == []
 
 
 def test_characterisation_theQualifierIsUnconditionalBecauseNoProducerCalibrates(
@@ -761,14 +874,15 @@ def test_characterisation_theQualifierIsUnconditionalBecauseNoProducerCalibrates
     ):
         payload = _emit(tmp_path / name, gauge)
         assert payload["socCalibrated"] is False, f"{name}: socCalibrated moved"
-        assert _tile(payload, CHARGE)["detail"] == "(uncalibrated)", f"{name}"
+        assert _tile(payload, CHARGE)["value"].endswith(" " + SOC_UNCALIBRATED_TAIL), name
 
 
 def test_characterisation_theCalibratedBranchIsUnreachableFromTheProducer(tmp_path):
     """
     Given: a payload HAND-FORCED to socCalibrated:true -- which no producer writes
     When:  it is rendered
-    Then:  the tile paints "register" instead
+    Then:  the SOC line paints "(modelled)" instead (MOVED PIN US-894-e: the
+           retired tile's "register")
 
     Records that the branch EXISTS and what it would paint, so the finding above
     is a statement about the PRODUCER rather than about dead renderer code. Both
@@ -787,8 +901,8 @@ def test_characterisation_theCalibratedBranchIsUnreachableFromTheProducer(tmp_pa
     tile = _tile(payload, CHARGE)
 
     assert tile is not None
-    assert tile["value"] == ATLAS_SOC_PRINTED, "the value does not move with the tag"
-    assert tile["detail"] == "register"
+    assert _socOf(tile["value"]) == ATLAS_SOC_PERCENT, "the value does not move with the tag"
+    assert tile["value"] == APPROX + " " + ATLAS_SOC_PRINTED + " " + SOC_CALIBRATED_TAIL
 
 
 def test_characterisation_theSuiteItselfPinsTheQualifierInTheDeployKit():
@@ -809,7 +923,9 @@ def test_characterisation_theSuiteItselfPinsTheQualifierInTheDeployKit():
     with open(kit, encoding="utf-8") as handle:
         source = handle.read()
 
-    assert "uncalibrated tag" in source, (
+    # MOVED PIN (US-894-e): re-recorded. The kit's US-401 script moved to the
+    # UPS detail's SOC line and now asserts the spec s4.6.1 caveat verbatim.
+    assert "(modelled, uncalibrated)" in source, (
         "RE-RECORD THIS TEST -- the deploy kit's uncalibrated assertion moved or "
         "was retired. If it was retired as part of the US-657 fix, that is correct."
     )

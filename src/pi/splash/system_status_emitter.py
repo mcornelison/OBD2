@@ -50,6 +50,8 @@
 #               |              | published blocks + this tick's capture-health.
 # 2026-10-22    | Rex (US-877-c)| emit returns the payload it wrote (None on a
 #               |              | failed write) for the alerts arbiter.
+# 2026-10-23    | Rex (US-894-c)| sync.rows and sync.pending are RETIRED (Atlas
+#               |              | P7): the syncRows / syncPending inputs go too.
 # ================================================================================
 ################################################################################
 
@@ -77,11 +79,12 @@ logger = logging.getLogger(__name__)
 # The single SSOT slot the carousel System Status card polls (4 Hz tmpfs read).
 SYSTEM_STATUS_FILENAME = "system-status"
 
-# OBD-link states (consumer-side view of the orchestrator's connection state).
-#   linked       = an OBD read succeeded recently -> green.
-#   reconnecting = the link dropped + the reconnect loop is retrying -> amber
-#                  (I-033 visibility: the operator SEES the reconnect attempt).
-#   down         = no link + not (yet) recovering -> red.
+# OBD-link states (the orchestrator's connection state, _gatherObdLinkState).
+# US-894-b retired the `obdLink` block they used to publish; they stay because
+# the gear producer derives its link health from them (Atlas A2 2026-10-22).
+#   linked       = an OBD read succeeded recently.
+#   reconnecting = the link dropped + the reconnect loop is retrying.
+#   down         = no link + not (yet) recovering.
 OBD_LINKED = "linked"
 OBD_RECONNECTING = "reconnecting"
 OBD_DOWN = "down"
@@ -97,7 +100,8 @@ RUN_MODE_SIMULATE = "simulate"
 RUN_MODE_REPLAY = "replay"
 
 # US-876-c link-chain layer states (Atlas L1, exact). A DIFFERENT vocabulary
-# from obdLink's, which ships unchanged until S110 retires it with the page.
+# from the OBD_* states above; since US-894-b this chain is the only link
+# fact system-status publishes.
 #   up         = the latest observation of the layer was positive.
 #   connecting = not up, and never up this session (neutral, not counted).
 #   retrying   = not up, but up earlier this session (counted).
@@ -614,11 +618,7 @@ def deriveWifiState(
 
 def buildSystemStatusState(
     *,
-    obdLinkState: str,
-    obdRetries: int,
     syncLastOkTs: str | None,
-    syncRows: int,
-    syncPending: int | None,
     syncStale: bool,
     powerSource: str,
     driveState: str,
@@ -652,16 +652,8 @@ def buildSystemStatusState(
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
     Args:
-        obdLinkState: One of ``OBD_LINKED`` / ``OBD_RECONNECTING`` / ``OBD_DOWN``.
-        obdRetries: Reconnect attempt count for the current drop (0 when linked).
         syncLastOkTs: When the server last STORED data: max(sync_log.last_ok_at)
             (US-916), canonical UTC; None when none is stored.
-        syncRows: Rows synced in the last successful batch.
-        syncPending: Rows captured but not yet synced, or None when no caller
-            actually measures it (US-564). None is carried through to the display
-            as a typed NA -- it must never be coerced to 0 here or below, because
-            "0 pending" is an all-clear on data safety and an unmeasured
-            all-clear is the exact defect class this project keeps finding.
         syncStale: Whether the last sync is stale-while-driving (caller policy;
             see ``isSyncStaleWhileDriving``). The display renders amber when True.
         powerSource: ``external`` (USB/car) or ``battery`` (running on the UPS),
@@ -679,8 +671,8 @@ def buildSystemStatusState(
         driveId: Active drive ID when recording; None when idle.
         nowIso: ISO-8601 emission timestamp (freshness marker).
         obdAvailable: Whether the OBD source is present at all (US-429). False on
-            wall power / car off -- the OBD-link tile then renders a typed NA, not
-            a fabricated or stale link state. Defaults True (backward compatible).
+            wall power / car off: ``source.obd`` then carries the typed reason
+            and ``idle`` may be true. Defaults True (backward compatible).
         obdUnavailableReason: The typed-NA reason when ``obdAvailable`` is False.
             Ignored when available. NO DEFAULT (US-672): an unsupplied reason
             falls through to ``buildSourceState``'s bare ``"unavailable"``, never
@@ -715,7 +707,7 @@ def buildSystemStatusState(
             ``{state, ts, lastOkTs}`` as :class:`LinkLayerTracker` publishes
             it. Normalised to every layer and key; a missing layer or a null
             state is all three null. NEVER blanked by ``obdAvailable`` -- that
-            blanking is the ARCH-061 grey this block replaces.
+            blanking was the ARCH-061 grey of the retired obdLink block.
         wifiAvailable: US-732: whether the WiFi link was read
             (``source.wifi.available``). False blanks state/ssid/rssiDbm/home.
         wifiUnavailableReason: Why not read -- ``nmcli_absent`` /
@@ -750,13 +742,9 @@ def buildSystemStatusState(
         ``source`` block (one availability truth per source) and the US-480-a
         ``idle`` boolean (the idle-SSOT the display consumes, never re-derives).
     """
-    # US-429 honest-availability: the OBD source owns the obdLink tile. When the
-    # source is unavailable, its value is a fresh typed NULL (never the last real
-    # state left stale) and the reason travels in `source.obd`.
-    if obdAvailable:
-        obdLink = {"state": obdLinkState, "retries": obdRetries}
-    else:
-        obdLink = {"state": None, "retries": 0}
+    # US-894-b (Atlas A2/P6): no `obdLink` block. The link chain below is the
+    # page's one link fact; the OBD source's availability travels in
+    # `source.obd`.
     # US-480-a idle-SSOT (Atlas ruling b): the emitter OWNS the idle decision --
     # it holds BOTH inputs (obdAvailable + driveState), so the display renders
     # this flag and never re-derives idle from the drive-state string (the
@@ -774,11 +762,10 @@ def buildSystemStatusState(
     if powerSource not in RESOLVED_POWER_SOURCES and powerSourceReason:
         powerReasons["source"] = powerSourceReason
     state = {
-        "obdLink": obdLink,
         "sync": {
+            # US-894-c (Atlas P7): `rows` and `pending` are retired -- the
+            # backlog is rowsWaiting below, never a last-batch count.
             "lastOkTs": syncLastOkTs,
-            "rows": syncRows,
-            "pending": syncPending,
             "stale": syncStale,
             # US-916: transported verbatim; null = not read, never 0.
             "rowsWaiting": syncRowsWaiting,
@@ -819,7 +806,7 @@ def buildSystemStatusState(
         # US-877-a (Atlas Y-5, P2): always a key, every key always present.
         "pi": _publishPiHealth(piHealth),
         # US-876-c (Atlas L6): always a key, every layer always present, and
-        # deliberately NOT gated on obdAvailable like obdLink above.
+        # deliberately NOT gated on obdAvailable.
         "link": _publishLinkChain(link),
         # `lastDrive` is ALWAYS present as a key (null when unknown) rather than
         # sometimes-absent: an intermittently-missing key is the shape that lets
@@ -938,11 +925,7 @@ def makeSystemStatusEmitter(
 
     def emit(
         *,
-        obdLinkState: str,
-        obdRetries: int,
         syncLastOkTs: str | None,
-        syncRows: int,
-        syncPending: int | None,
         powerSource: str,
         driveState: str,
         driveId: int | None,
@@ -977,11 +960,7 @@ def makeSystemStatusEmitter(
                 driveState, syncLastOkTs, nowIso, thresholdS=syncStaleThresholdS
             )
             payload = buildSystemStatusState(
-                obdLinkState=obdLinkState,
-                obdRetries=obdRetries,
                 syncLastOkTs=syncLastOkTs,
-                syncRows=syncRows,
-                syncPending=syncPending,
                 syncStale=syncStale,
                 powerSource=powerSource,
                 powerSourceReason=powerSourceReason,

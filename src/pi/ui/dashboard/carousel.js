@@ -697,92 +697,6 @@
     return nowMs - startedAtMs;
   }
 
-  // OBD link tile: linked -> ok; reconnecting -> amber (I-033 visibility, the
-  // operator SEES the retry); down -> red; missing/unknown -> unavailable.
-  function obdLinkTile(o) {
-    if (!isObj(o)) {
-      return { label: "OBD LINK", value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    if (o.state === "linked") {
-      return { label: "OBD LINK", value: "LINKED", detail: "", level: "ok" };
-    }
-    if (o.state === "reconnecting") {
-      var d = "retry " + (o.retries == null ? 0 : o.retries);
-      return { label: "OBD LINK", value: "RECONNECTING", detail: d, level: "amber" };
-    }
-    if (o.state === "down") {
-      return { label: "OBD LINK", value: "DOWN", detail: "no signal", level: "down" };
-    }
-    return { label: "OBD LINK", value: "—", detail: "unavailable", level: "unavailable" };
-  }
-
-  // Sync tile: stale-while-driving -> amber (I-4); otherwise ok. The emitter
-  // owns the stale DECISION (no green-when-broken); the tile renders it.
-  function syncTile(s) {
-    if (!isObj(s)) {
-      // No counts to carry: nothing was measured and nothing was even offered.
-      // An em-dash pair here would invent a diagnostics line for a source that
-      // never reported (the fabrication one layer up from US-564's zero).
-      return {
-        label: "SYNC", value: "—", detail: "unavailable",
-        level: "unavailable", counts: "",
-      };
-    }
-    // US-564: a null count renders as an em-dash, NEVER as 0. Both halves of this
-    // had to change together -- the emitter stopped inventing `syncPending=0`
-    // and this line stopped re-inventing it -- because either coercion alone
-    // ships green and the panel still reads "0 pending", which is an all-clear
-    // on whether the drive is backed up that nobody ever measured.
-    var pending = s.pending == null ? "—" : s.pending;
-    var counts = (s.rows == null ? "—" : s.rows) + " rows · " + pending + " pending";
-    // US-559 (CIO placement call, 2026-08-20): the STAMP is what gets read at a
-    // glance, so it takes the tile's one detail line to itself; the counts are
-    // diagnostics you go looking for and move to the System drill-down. They are
-    // still derived HERE, once, and the overlay merely presents `counts` -- a
-    // drill-down that re-derived them could disagree with the card behind it.
-    //
-    // No "last " prefix: the tile is already labelled SYNC, and the prefix cost
-    // characters on a band P-3 had just re-budgeted. `never` stays bare and
-    // unformatted -- an absent sync is the one place a date would be the worst
-    // possible fabrication.
-    var last = s.lastOkTs == null ? "never" : fmtStamp(s.lastOkTs);
-    if (s.stale === true) {
-      // The stamp is MORE load-bearing on this branch, not less: it is the
-      // answer to "how stale?".
-      return { label: "SYNC", value: "STALE", detail: last, level: "amber", counts: counts };
-    }
-    return { label: "SYNC", value: "OK", detail: last, level: "ok", counts: counts };
-  }
-
-  // Power tile: running on battery (UPS backup) -> amber; external -> ok.
-  function powerTile(p) {
-    if (!isObj(p)) {
-      return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    // US-668: the tile now renders the SENSED SOURCE as its value.
-    //
-    // It used to render the operator-declared MODE (CAR/WALL) as the value, with
-    // the source only in the detail line. The CIO removed the mode on 2026-09-02
-    // -- "if I can see the screen then the power is on, it doesn't matter if it
-    // is car or wall, it is on" -- and he is right: the value slot was spending
-    // the tile's most prominent characters on a fact the viewer already knew by
-    // looking at the panel.
-    //
-    // What it says now is the fact the screen CANNOT tell you by being lit:
-    // external power, or running down the UPS battery. During the 2026-08-31 UPS
-    // test the panel stayed lit for the whole time the Pi ran on battery toward
-    // a graceful poweroff -- BATTERY is exactly the state a viewer cannot infer.
-    if (p.source === "battery") {
-      return { label: "POWER", value: "BATTERY", detail: "on UPS", level: "amber" };
-    }
-    if (p.source === "external") {
-      return { label: "POWER", value: "EXTERNAL", detail: "wall/car power", level: "ok" };
-    }
-    // Unresolved stays unavailable rather than guessing a source. US-628's typed
-    // reason travels in `reasons.source`, not here.
-    return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
-  }
-
   // -------------------------------------------------------------------------
   // US-744 -- the PREVIOUS shutdown's verdict, rendered.
   //
@@ -796,7 +710,7 @@
   //
   // LEVEL IS ALWAYS `neutral`, including UNGRACEFUL. The verdict is HISTORY:
   // it describes a shutdown that already happened, not a live fault. An amber
-  // tile would hold the card at "SYSTEM · 1 ISSUE" for the whole session over
+  // tile would hold the card at one issue for the whole session over
   // something no longer happening -- the crying-wolf failure the US-509 row
   // floor already refuses for DRIVE=IDLE.
   // -------------------------------------------------------------------------
@@ -844,400 +758,905 @@
     return { label: "LAST STOP", value: word, detail: detail, level: "neutral" };
   }
 
-  // Drive tile: recording -> active (ok); idle -> neutral (no warning, no green).
-  function driveTile(d) {
-    if (!isObj(d)) {
-      return { label: "DRIVE", value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    if (d.state === "recording") {
-      var id = d.driveId == null ? "?" : d.driveId;
-      return { label: "DRIVE", value: "REC", detail: "drive " + id, level: "ok" };
-    }
-    if (d.state === "idle") {
-      return { label: "DRIVE", value: "IDLE", detail: "not recording", level: "neutral" };
-    }
-    return { label: "DRIVE", value: "—", detail: "unavailable", level: "unavailable" };
-  }
-
-  // US-688 -- the CAPTURE tile. `data_logger_last_row_seconds_ago` has gone out
-  // on the Pi's health-check line every 60 s since US-302 and nothing has ever
-  // rendered it; on 2026-09-04 it read `never_written` for two days while a
-  // loose dongle produced zero rows, and a human found it by looking at the
-  // dongle. This is the surface that would have said so.
-  //
-  // 🔴 THE LEVELS ARE THE DESIGN, and two of them are load-bearing:
-  //   stalled -> `down`. The ALERT. Only amber/down are counted as ISSUES by
-  //              systemSummary, so anything softer would block green without
-  //              ever TELLING the operator anything -- which is the defect.
-  //   idle    -> `neutral`. The car's power is off and no rows are EXPECTED.
-  //              Neutral is the bucket DRIVE=IDLE already occupies for exactly
-  //              this reason: a fault reported in the commonest state there is
-  //              (parked) is crying wolf, and an alert that cries wolf is off
-  //              forever. This car spends most of its life parked.
-  // An absent payload or an unrecognised state resolves to `unavailable`, never
-  // to `ok` -- a dark producer must not be able to paint capture healthy.
-  var CAPTURE_REASON_TEXT = {
-    never_written: "no rows since start",
-    stalled: "no rows recently",
-    logger_absent: "no logger",
-    unreadable: "unreadable",
-  };
-
-  function captureDetail(c) {
-    var age = c.lastRowSecondsAgo;
-    var hasAge = typeof age === "number" && isFinite(age) && age >= 0;
-    if (c.state === "stalled") {
-      // An age is only printed when one exists. `never_written` has NO age, and
-      // "no rows for 0s" -- what `age || 0` produces -- is the exact inversion
-      // of the truth it would be standing in for.
-      return hasAge ? "no rows for " + Math.round(age) + "s" : "no rows since start";
-    }
-    if (c.state === "ok") {
-      return hasAge ? "row " + Math.round(age) + "s ago" : "logging";
-    }
-    if (c.state === "idle") return "car off";
-    return captureReasonText(c.reason);
-  }
-
-  // Machine tokens become driver English HERE, at the renderer, so the state
-  // file keeps the exact token for tests, logs and any future consumer. An
-  // unknown token degrades to words (underscores stripped) rather than leaking
-  // snake_case onto a panel read at speed.
-  function captureReasonText(reason) {
-    if (typeof reason !== "string" || reason === "") return "not reported";
-    if (Object.prototype.hasOwnProperty.call(CAPTURE_REASON_TEXT, reason)) {
-      return CAPTURE_REASON_TEXT[reason];
-    }
-    return reason.replace(/_/g, " ");
-  }
-
-  function captureTile(c) {
-    if (!isObj(c)) {
-      return { label: "CAPTURE", value: "—", detail: "unavailable",
-               level: "unavailable" };
-    }
-    if (c.state === "stalled") {
-      return { label: "CAPTURE", value: "NO DATA", detail: captureDetail(c),
-               level: "down" };
-    }
-    if (c.state === "ok") {
-      return { label: "CAPTURE", value: "LOGGING", detail: captureDetail(c),
-               level: "ok" };
-    }
-    if (c.state === "idle") {
-      return { label: "CAPTURE", value: "IDLE", detail: captureDetail(c),
-               level: "neutral" };
-    }
-    return { label: "CAPTURE", value: "—", detail: captureDetail(c),
-             level: "unavailable" };
-  }
-
   // Top-bar glyph states (bound to data-state CSS in dashboard.css).
-  function btGlyphState(o) {
-    if (!isObj(o)) return "neutral";
-    if (o.state === "linked") return "ok";
-    if (o.state === "reconnecting") return "amber";
-    if (o.state === "down") return "down";
-    return "neutral";
+  //
+  // US-894-a (spec s4.2.1, closes US-713 + ARCH-061): the single BT glyph is
+  // retired with btGlyphState. The slot holds the three-layer link chain, one
+  // dot per layer, read VERBATIM from system-status.link -- never from obdLink,
+  // and never forced by source.obd (S109 publishes link regardless). Copies of
+  // the provider vocabulary (pi.splash.system_status_emitter LINK_LAYERS /
+  // LINK_* / VERDICT_*), pinned equal by tests/ui/test_topbar_chain_glyph.py.
+  var LINK_CHAIN_LAYERS = ["bt", "adapter", "ecu"];
+  // The colour rule (s4.0): amber is keyed to a verdict MEMBER's layer, never to
+  // a state, so no state maps to amber here. A key absent from this table --
+  // null, or a word the provider has not published -- is a dot we did not
+  // read: hollow, never the solid `down` look (ARCH-062).
+  var LINK_STATE_LOOK = {
+    up: "ok",
+    connecting: "neutral",
+    retrying: "secondary",
+    down: "tertiary",
+  };
+  // The verdict member keys that name a chain layer (s4.1): only these two can
+  // paint a dot amber. The ECU is never a member.
+  var LINK_MEMBER_LAYERS = ["bt", "adapter"];
+
+  // The verdict members' keys as a set. A malformed verdict names nobody, so it
+  // paints no amber: an amber dot is a claim the provider has to have made.
+  function verdictMemberKeys(data) {
+    var keys = {};
+    var verdict = isObj(data) ? data.verdict : null;
+    var members = isObj(verdict) && Array.isArray(verdict.members) ? verdict.members : [];
+    for (var i = 0; i < members.length; i++) {
+      if (isObj(members[i]) && typeof members[i].key === "string") {
+        keys[members[i].key] = true;
+      }
+    }
+    return keys;
   }
-  function syncGlyphState(s) {
-    if (!isObj(s)) return "neutral";
-    return s.stale === true ? "amber" : "ok";
+
+  // One look per layer -> {bt, adapter, ecu}. The page applies no threshold:
+  // a member's layer is amber whatever its state, everything else is the
+  // lookup above.
+  function linkChainGlyph(data) {
+    var link = isObj(data) && isObj(data.link) ? data.link : {};
+    var members = verdictMemberKeys(data);
+    var looks = {};
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var layer = LINK_CHAIN_LAYERS[i];
+      var block = link[layer];
+      var state = isObj(block) ? block.state : null;
+      if (LINK_MEMBER_LAYERS.indexOf(layer) !== -1 && members[layer] === true) {
+        looks[layer] = "amber";
+      } else if (typeof state === "string"
+                 && Object.prototype.hasOwnProperty.call(LINK_STATE_LOOK, state)) {
+        looks[layer] = LINK_STATE_LOOK[state];
+      } else {
+        looks[layer] = "hollow";
+      }
+    }
+    return looks;
+  }
+  // US-894-c (spec s4.3, Iris I4, Atlas P9): the sync glyph is NEUTRAL. It
+  // used to paint `sync.stale` amber with no verdict member behind it -- an
+  // amber nobody counted, the s4.0 failure. Sync has no member until US-917,
+  // and the glyph goes amber exactly while that member is present.
+  function syncGlyphState(data) {
+    return verdictMemberKeys(data).sync === true ? "amber" : "neutral";
   }
   // US-696 (CIO ruling 2026-09-09): there is NO `powerGlyphState`. The top-bar
   // lightning glyph was removed -- "if I can see the screen the power is on",
   // so restating it spent a slot in a band that has none to spare. The state
   // function went with its only consumer rather than lingering as residue.
   // The MEASUREMENT is untouched: `power.source` is still sensed and still
-  // rendered by `powerTile` on the System Status card, which keeps its Power
-  // row. Recorded here because the argument against removal is real and should
+  // rendered -- since US-894-e in the UPS row's words (upsRowView). Recorded here because the argument against removal is real and should
   // not have to be rediscovered: the glyph was the only on-screen signal during
   // a UPS ride-down. The CIO's call is that the automatic sequenced poweroff
   // makes that signal unactionable.
 
   // -------------------------------------------------------------------------
-  // US-489 (Iris polish P-1) -- the one-glance SUMMARY line. A lossy
-  // compression of the four tiles, which makes it exactly the place a
-  // "green when broken" lie would enter, so honest-instrument F-1 is restated
-  // here at the CARD level: the line is `ok` ONLY when every source is
-  // genuinely good. Presentation-only -- it reads the tiles the card already
-  // renders, never a second read of the state.
+  // US-894-b (spec s3 layout A, s4.1, s4.2) -- the System page is a VERDICT
+  // line plus one row per subsystem. It replaces the US-489 summary line and
+  // the 2x2 tile grid. The verdict is the provider's (system-status.verdict,
+  // S109): the page counts nothing, compares nothing, and composes no reason
+  // text -- a member's reason is printed verbatim.
   // -------------------------------------------------------------------------
 
-  // Display order == grid order, so "the worst source" is always named in a
-  // stable, predictable place.
-  // US-688 appends `capture` LAST: it is the newest source and the grid order
-  // is the drill-down's tie-break order, so putting it anywhere else would
-  // reshuffle four rows the operator has already learned the position of.
-  // Absent from `tiles` when no capture payload was fetched -- both the summary
-  // and the row builder skip a non-object tile, so a caller that passes nothing
-  // gets the exact pre-US-688 card.
-  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive", "capture"];
+  // The one no-data mark (spec s4.4): two hyphens, never an em dash.
+  var SYS_NO_DATA = "--";
 
-  // Severity rank over the tile-level vocabulary. Three buckets, not two:
-  //   ok            -- genuinely good.
-  //   neutral       -- nominal but inactive. DRIVE=IDLE is the only neutral
-  //                    this card produces and it means "not recording", NOT
-  //                    "broken"; counting it as a fault would make green
-  //                    unreachable in the commonest state (key on, no drive
-  //                    started), which is its own dishonesty -- crying wolf.
-  //   unavailable   -- a known-UNKNOWN. Blocks green (never claim OK over a
-  //                    source we cannot read) without raising an alarm.
-  //   amber / down  -- the only ISSUES.
-  var SYS_LEVEL_RANK = { ok: 0, neutral: 1, unavailable: 2, amber: 3, down: 4 };
-  var SYS_ISSUE_RANK = SYS_LEVEL_RANK.amber;
-
-  // A level this mapper has not been taught resolves to `unavailable`, NEVER to
-  // ok -- a future tile level must not be able to paint the card green by
-  // default.
-  function sysLevelRank(level) {
-    return Object.prototype.hasOwnProperty.call(SYS_LEVEL_RANK, level)
-      ? SYS_LEVEL_RANK[level]
-      : SYS_LEVEL_RANK.unavailable;
+  // s4.1: `ALL OK` when the provider counted nothing, `n ISSUE` / `n ISSUES`
+  // otherwise. An absent or malformed verdict is `--`, never ALL OK: ALL OK is
+  // the provider's claim that it looked.
+  //
+  // US-894-f (AC 7, Atlas A5): the count's level is `issues`, painted amber,
+  // and deliberately NOT `amber`. `data-level="amber"` is reserved for an
+  // element that belongs to exactly ONE member; the count belongs to all of
+  // them at once, so it is the member set itself, not an element of it.
+  function systemVerdictView(data) {
+    var verdict = isObj(data) ? data.verdict : null;
+    var n = isObj(verdict) ? verdict.issueCount : null;
+    if (typeof n !== "number" || !isFinite(n) || n < 0 || Math.floor(n) !== n) {
+      return { text: SYS_NO_DATA, level: "unavailable" };
+    }
+    if (n === 0) return { text: "ALL OK", level: "ok" };
+    return { text: n + (n === 1 ? " ISSUE" : " ISSUES"), level: "issues" };
   }
 
-  function sysNoStateSummary() {
+  // The OBD row's step labels, chain order (spec s3).
+  var OBD_STEP_LABELS = { bt: "BT", adapter: "ADAPTER", ecu: "ECU" };
+
+  // s4.2 sentence table (Iris I1): the FIRST layer that is not `up` speaks,
+  // looked up by its state -- a lookup on a provider enum, never a comparison
+  // (the LIGHT_REASON_TEXT pattern). `null` is the key for a layer not read;
+  // a state word the provider has not published is no reading either. The
+  // down / retrying words are fallbacks only: under S109 those states make a
+  // verdict member, whose reason speaks instead (obdRowView).
+  var OBD_LAYER_SENTENCE = {
+    bt: {
+      connecting: "Bluetooth trying to link (key off?)",
+      down: "Bluetooth not linked",
+      retrying: "Bluetooth retrying…",
+      "null": "Bluetooth not read yet",
+    },
+    adapter: {
+      connecting: "adapter connecting…",
+      down: "adapter not answering",
+      retrying: "adapter retrying…",
+      "null": "adapter not read yet",
+    },
+    ecu: {
+      connecting: "ECU not answering (key off?)",
+      down: "ECU not answering (key off?)",
+      retrying: "ECU not answering (key off?)",
+      "null": "ECU not read yet",
+    },
+  };
+  var OBD_ALL_UP_SENTENCE = "ECU answering";
+
+  function linkLayerState(data, layer) {
+    var link = isObj(data) && isObj(data.link) ? data.link : {};
+    var block = link[layer];
+    var state = isObj(block) ? block.state : null;
+    return typeof state === "string"
+      && Object.prototype.hasOwnProperty.call(LINK_STATE_LOOK, state) ? state : null;
+  }
+
+  // The first verdict member whose key is in `keys` (with a string reason);
+  // null when none of them is a member.
+  function verdictMember(data, keys) {
+    var verdict = isObj(data) ? data.verdict : null;
+    var members = isObj(verdict) && Array.isArray(verdict.members) ? verdict.members : [];
+    for (var i = 0; i < members.length; i++) {
+      var m = members[i];
+      if (isObj(m) && keys.indexOf(m.key) !== -1 && typeof m.reason === "string") {
+        return m;
+      }
+    }
+    return null;
+  }
+
+  // That member's reason, verbatim; null when there is none.
+  function verdictMemberReason(data, keys) {
+    var m = verdictMember(data, keys);
+    return m !== null ? m.reason : null;
+  }
+
+  function obdWalkSentence(data) {
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var layer = LINK_CHAIN_LAYERS[i];
+      var state = linkLayerState(data, layer);
+      if (state === "up") continue;
+      var words = OBD_LAYER_SENTENCE[layer];
+      return state !== null && Object.prototype.hasOwnProperty.call(words, state)
+        ? words[state] : words["null"];
+    }
+    return OBD_ALL_UP_SENTENCE;
+  }
+
+  // The OBD row (s4.2): one step look per layer -- the top-bar chain's looks
+  // (linkChainGlyph, so the bar and the row cannot disagree), except that a
+  // layer not read is DASHED here where the bar draws it hollow (AC 4: never
+  // the solid `down` look). The sentence is a member's reason verbatim when
+  // the row has one (amber, it is counted); otherwise the walk above (neutral).
+  function obdRowView(data) {
+    var looks = linkChainGlyph(data);
+    var steps = [];
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var look = looks[LINK_CHAIN_LAYERS[i]];
+      steps.push(look === "hollow" ? "dashed" : look);
+    }
+    var member = verdictMember(data, LINK_MEMBER_LAYERS);
     return {
-      text: "SYSTEM · UNAVAILABLE",
-      detail: "no system state",
-      level: "unavailable",
-      issues: 0,
+      key: "obd",
+      label: "OBD",
+      steps: steps,
+      sentence: member !== null ? member.reason : obdWalkSentence(data),
+      level: member !== null ? "amber" : "secondary",
+      // AC 7: the member the row's amber belongs to (null when neutral).
+      member: member !== null ? member.key : null,
     };
   }
 
-  // Summarise the four rendered tiles. The ISSUE COUNT is the glanceable fact;
-  // the worst source is NAMED in the detail so the line says what to look at
-  // without the operator reading all four tiles.
-  function systemSummary(tiles) {
-    if (!isObj(tiles)) return sysNoStateSummary();
-    var worst = null;
-    var worstRank = -1;
-    var issues = 0;
-    var unknowns = 0;
-    for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
-      var tile = tiles[SYS_TILE_ORDER[i]];
-      if (!isObj(tile)) continue;
-      var rank = sysLevelRank(tile.level);
-      if (rank >= SYS_ISSUE_RANK) issues++;
-      else if (rank === SYS_LEVEL_RANK.unavailable) unknowns++;
-      if (rank > worstRank) {
-        worstRank = rank;
-        worst = tile;
-      }
-    }
-    if (worst === null) return sysNoStateSummary();
-    var named = worst.label + " · " + worst.value;
-    if (issues > 0) {
-      // `worst` carries the highest rank, so with any issue present it IS an
-      // issue tile -- its level is amber/down and drives the headline hue.
-      return {
-        text: "SYSTEM · " + issues + (issues === 1 ? " ISSUE" : " ISSUES"),
-        detail: named,
-        level: worst.level,
-        issues: issues,
-      };
-    }
-    if (unknowns > 0) {
-      return {
-        text: "SYSTEM · " + unknowns + " UNAVAILABLE",
-        detail: named,
-        level: "unavailable",
-        issues: 0,
-      };
-    }
-    return { text: "SYSTEM · OK", detail: "", level: "ok", issues: 0 };
-  }
-
-  // -------------------------------------------------------------------------
-  // US-509 (F-124) -- the drill-down behind the summary line. The headline is a
-  // lossy compression of four tiles; without this it is a dead end that names a
-  // count and nothing to act on. The rows are a PRESENTATION of the SAME tiles
-  // the grid renders -- no second read, no re-derivation, so the overlay can
-  // never contradict the card behind it.
-  // -------------------------------------------------------------------------
-
-  // The listing floor. Deliberately `unavailable`, not `amber`:
-  //   * `ok`      -- never listed. A green source in a fault list is a
-  //                  FABRICATED fault.
-  //   * `neutral` -- never listed either. DRIVE=IDLE is the only neutral this
-  //                  card produces and it means "not recording", NOT "broken";
-  //                  listing it would report a fault in the commonest state
-  //                  there is (key on, no drive started) -- crying wolf.
-  //   * `unavailable` and worse -- listed. The summary reads "SYSTEM · N
-  //                  UNAVAILABLE" in that state, so excluding known-unknowns
-  //                  would make a tappable headline open an EMPTY overlay,
-  //                  which is the exact dead end this story removes.
-  var SYS_ROW_FLOOR = SYS_LEVEL_RANK.unavailable;
-
-  // The typed absence for a source that publishes no age at all. No source
-  // publishes a per-source age today (the OBD link's was always null and was
-  // removed, US-876-a), so every row MUST say the age was not reported rather
-  // than render "seen 0s ago" -- which would claim we had just seen a source we
-  // never timed. Same fabrication as a zeroed altitude (US-508): an unmeasured
-  // quantity is an absence, never a zero.
-  var SYS_NO_AGE = "age not reported";
-
-  // One source's freshness for its drill-down row: always the typed absence
-  // until a provider publishes a real per-source age.
-  function sysRowFreshness() {
-    return SYS_NO_AGE;
-  }
-
-  // Worst-first rows, one per non-OK source. Ties keep the 2x2 grid order, so
-  // the list never reshuffles between polls under the operator's eyes. Built by
-  // walking the rank buckets top-down rather than sorting, which makes that
-  // stability a property of the construction instead of the sort algorithm.
-  function systemIssueRows(tiles, data) {
-    var rows = [];
-    if (!isObj(tiles)) return rows;
-    var rank = SYS_LEVEL_RANK.down;
-    for (; rank >= SYS_ROW_FLOOR; rank--) {
-      for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
-        var key = SYS_TILE_ORDER[i];
-        var tile = tiles[key];
-        if (!isObj(tile) || sysLevelRank(tile.level) !== rank) continue;
-        var freshness = sysRowFreshness();
-        var detail = typeof tile.detail === "string" ? tile.detail : "";
-        rows.push({
-          key: key,
-          label: tile.label,
-          value: tile.value,
-          // The row carries the TILE's level verbatim -- the chip and the grid
-          // cell behind it are then incapable of disagreeing.
-          level: tile.level,
-          // The emitter's own words. The drill-down explains what the card
-          // already said; it does not re-diagnose. Dropped when it only repeats
-          // the freshness the row prints beside it.
-          reason: detail === freshness ? "" : detail,
-          freshness: freshness,
-        });
-      }
-    }
-    return rows;
-  }
-
-  // US-559: the SYNC counts moved off the tile (CIO 2026-08-20) and land here.
-  // Reference facts, NOT faults -- so they are a section of their own rather
-  // than a row in the issue list, where a healthy source would read as a
-  // fabricated fault (the US-509 floor above still holds, untouched).
-  //
-  // Taken VERBATIM off the tile the grid renders. The overlay presents a fact
-  // the card already computed; it never re-derives one, so the two cannot
-  // disagree -- the same rule the issue rows follow.
-  // US-744 adds the PREVIOUS shutdown's verdict here, and deliberately NOT as a
-  // sixth grid tile: the card is held to a 4-fact ceiling (US-557 / Iris), which
-  // a sixth tile breaks -- and the story forbids re-budgeting the band or
-  // shrinking type to make room. It belongs in this section on its own merits
-  // anyway: it is a REFERENCE FACT about a boot that already ended, not a live
-  // source, so it is neither a fault (it would cry wolf all session) nor a
-  // status tile (it describes the past, not now).
-  function systemDiagnostics(tiles, data) {
-    var diags = [];
-    if (!isObj(tiles)) return diags;
-    var sync = tiles.sync;
-    if (isObj(sync) && typeof sync.counts === "string" && sync.counts !== "") {
-      diags.push({ key: "sync", label: sync.label, text: sync.counts });
-    }
-    // Built from the payload the card was rendered from -- one read, so the
-    // overlay can never contradict it. Listed on every REAL card, including
-    // when the verdict is absent: the absence is itself the fact worth reading
-    // ("not read"), and a row that vanishes when the producer goes dark is how
-    // this verdict stayed invisible from US-728 until US-744 found it.
-    //
-    // Gated on the card having tiles at all, which keeps US-509's guarantee
-    // intact: a drill built over NO card still has nothing behind it and stays
-    // untappable. Pinning that gate open is the inert-guard shape its own test
-    // (test_systemDrill_nothingBehindTheLine_isStillNotATapTarget) forbids.
-    if (isObj(data) && Object.keys(tiles).length > 0) {
-      var ps = priorShutdownTile(data.priorShutdown, data.ts);
-      diags.push({
-        key: "priorShutdown",
-        label: ps.label,
-        text: ps.value + " · " + ps.detail,
+  // The OBD detail (s4.6, parked): per layer, THIS session only (ARCH-062) --
+  // the state, since when (the layer's `ts`), and the last success
+  // (`lastOkTs`, S109 publishes it per layer); `--` wherever the provider
+  // published nothing, never a time from an earlier boot. No adapter MAC and
+  // no retry count: neither has a publish field (Atlas A3), so neither line is
+  // drawn.
+  function obdDetailView(data) {
+    var link = isObj(data) && isObj(data.link) ? data.link : {};
+    var row = obdRowView(data);
+    var layers = [];
+    for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+      var layer = LINK_CHAIN_LAYERS[i];
+      var block = isObj(link[layer]) ? link[layer] : {};
+      var state = linkLayerState(data, layer);
+      layers.push({
+        layer: layer,
+        label: OBD_STEP_LABELS[layer],
+        look: row.steps[i],
+        state: state === null ? SYS_NO_DATA : state,
+        since: state !== null && typeof block.ts === "string"
+          ? fmtStamp(block.ts) : SYS_NO_DATA,
+        lastOk: state !== null && typeof block.lastOkTs === "string"
+          ? fmtStamp(block.lastOkTs) : SYS_NO_DATA,
       });
     }
-    return diags;
+    return {
+      head: "OBD", layers: layers, sentence: row.sentence, level: row.level, member: row.member,
+    };
   }
 
-  // The summary line is a tap target ONLY when something is behind it -- an
-  // affordance that opens an empty list is a misleading control.
-  //
-  // US-559 widened WHAT counts as "something", and deliberately not the rule
-  // itself: US-509 gated this on faults because faults were all the overlay
-  // held. Now the counts live here too, so a healthy card is tappable. Left
-  // gated on faults, a non-zero PENDING backlog on an otherwise-OK sync would
-  // have been unreachable and "moved to the drill-down" would have meant
-  // deleted. The gate still reads real content -- it is not pinned open.
-  function systemDrill(tiles, data) {
-    var rows = systemIssueRows(tiles, data);
-    var diagnostics = systemDiagnostics(tiles, data);
+  // -------------------------------------------------------------------------
+  // US-894-c (spec s4.3, s4.6; Atlas A4, Iris I3/W3) -- the DATA row: capture
+  // and sync on one row, replacing the SYNC / DRIVE / CAPTURE tiles. The
+  // capture word comes from states/capture-health, never from the drive
+  // state; `stalled` comes from the `capture` verdict MEMBER alone (one source
+  // per fact), so the row and the count can never disagree.
+  // -------------------------------------------------------------------------
+
+  // Copies of the provider's vocabulary (pi.obdii.capture_health STATE_* /
+  // REASON_NEVER_WRITTEN / FEED_NAMES), pinned equal by
+  // tests/ui/test_system_page_data_row.py.
+  var CAPTURE_STATE_WORD = { ok: "recording", idle: "idle" };
+  var CAPTURE_STATE_STALLED = "stalled";
+  var CAPTURE_REASON_NEVER_WRITTEN = "never_written";
+  // s4.6 feed order and labels (OBD, light, IMU, UPS).
+  var CAPTURE_FEEDS = [["obd", "OBD"], ["light", "LIGHT"], ["imu", "IMU"], ["ups", "UPS"]];
+  var CAPTURE_FEED_WORD = { ok: "writing", stalled: "stalled", idle: "idle" };
+  var CAPTURE_MEMBER_KEY = "capture";
+  // A4: the ECU states whose fact carries `ECU not answering`. A member-less
+  // stall names that cause only from link.ecu; with the ECU up, or not read,
+  // no cause is printed (on a cold boot it would be false).
+  var DATA_ECU_SILENT_STATES = ["down", "retrying", "connecting"];
+
+  // `n rows waiting`, `1 row waiting`; a `+` on the number itself when tables
+  // were left out of the count (`1+ rows waiting` stays plural). Null is
+  // `rows not read`, never 0.
+  function rowsWaitingText(n, notCounted) {
+    if (typeof n !== "number" || !isFinite(n) || n < 0) return "rows not read";
+    var plus = Array.isArray(notCounted) && notCounted.length > 0 ? "+" : "";
+    return fmtThousands(n) + plus + (n === 1 && plus === "" ? " row waiting" : " rows waiting");
+  }
+
+  // `n event rows` only when > 0; zero, null and junk print nothing.
+  function eventRowsText(n) {
+    if (typeof n !== "number" || !isFinite(n) || n <= 0) return null;
+    return fmtThousands(n) + (n === 1 ? " event row" : " event rows");
+  }
+
+  function sameLocalDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+      && a.getDate() === b.getDate();
+  }
+
+  // s4.3 date rule (Iris I3, UIDEV-010), local time against the payload's own
+  // `ts`: the same day -> the time (`6:42 PM`); the day before -> `yesterday`
+  // with NO time (the time would not fit, and the ellipsis would cut it to a
+  // wrong-looking stub); older -> `Oct 12`. A bare time is only ever today's,
+  // so with no usable `now` the date form is used. Null -> `no sync on
+  // record`; an unparseable stamp is `--`, never a raw string or 1970.
+  function syncWhenText(lastOkTs, nowTs) {
+    if (typeof lastOkTs !== "string") return "no sync on record";
+    if (!ISO_INSTANT.test(lastOkTs)) return "synced " + SYS_NO_DATA;
+    var d = new Date(lastOkTs);
+    if (isNaN(d.getTime())) return "synced " + SYS_NO_DATA;
+    var now = typeof nowTs === "string" && ISO_INSTANT.test(nowTs) ? new Date(nowTs) : null;
+    if (now !== null && !isNaN(now.getTime())) {
+      if (sameLocalDay(d, now)) return "synced " + fmtTimeOfDay(d, false);
+      var yesterday = new Date(now.getTime());
+      yesterday.setDate(yesterday.getDate() - 1);
+      if (sameLocalDay(d, yesterday)) return "synced yesterday";
+    }
+    return "synced " + STAMP_MONTHS[d.getMonth()] + " " + two(d.getDate());
+  }
+
+  // The capture word and its look. s4.0: amber ONLY for the member.
+  function dataCaptureWord(data, captureData) {
+    if (verdictMemberReason(data, [CAPTURE_MEMBER_KEY]) !== null) {
+      return { word: CAPTURE_STATE_STALLED, look: "amber", basis: "member" };
+    }
+    var cap = isObj(captureData) ? captureData : {};
+    if (cap.state === CAPTURE_STATE_STALLED) {
+      // W3: a top-level stall with no member never reads `stalled`.
+      return {
+        word: cap.reason === CAPTURE_REASON_NEVER_WRITTEN ? "no rows" : "stopped",
+        look: "secondary",
+        basis: cap.reason === CAPTURE_REASON_NEVER_WRITTEN ? "noRows" : "stopped",
+      };
+    }
+    if (cap.state === "ok") return { word: CAPTURE_STATE_WORD.ok, look: "ok", basis: "recording" };
+    if (cap.state === "idle") return { word: CAPTURE_STATE_WORD.idle, look: "secondary", basis: "idle" };
+    return { word: SYS_NO_DATA, look: "tertiary", basis: "unread" };
+  }
+
+  // The sentence's first part: the member's reason verbatim, else the
+  // capture state's words; null when a member-less stall has no cause to
+  // name and no age to print.
+  function dataCaptureSentence(data, captureData, capture) {
+    if (capture.basis === "member") {
+      return verdictMemberReason(data, [CAPTURE_MEMBER_KEY]);
+    }
+    if (capture.basis === "recording") return "all 4 feeds writing";
+    if (capture.basis === "idle") return "not driving";
+    if (capture.basis === "unread") return "capture not read yet";
+    if (DATA_ECU_SILENT_STATES.indexOf(linkLayerState(data, "ecu")) !== -1) {
+      return "ECU not answering";
+    }
+    if (capture.basis === "noRows") return "no row logged this session";
+    var age = isObj(captureData) ? captureData.lastRowSecondsAgo : null;
+    if (typeof age !== "number" || !isFinite(age)) return null;
+    return "last row " + agoSecsText(Math.floor(age));
+  }
+
+  // The DATA row: value = the capture word (its own look) + ` · synced
+  // <when>` (neutral); the sentence as parts, so only the member's reason
+  // is amber and the rows waiting beside it stay neutral (s4.0).
+  function dataRowView(data, captureData) {
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
+    var capture = dataCaptureWord(data, captureData);
+    var parts = [];
+    var first = dataCaptureSentence(data, captureData, capture);
+    if (first !== null) {
+      parts.push({ text: first, level: capture.basis === "member" ? "amber" : "secondary" });
+    }
+    // s4.3 (F-155): neutral, never counted; a null home is no word at all.
+    if (wifi.home === false) parts.push({ text: "away from home", level: "secondary" });
+    parts.push({ text: rowsWaitingText(sync.rowsWaiting, sync.notCounted), level: "secondary" });
+    var events = eventRowsText(sync.edrRowsWaiting);
+    if (events !== null) parts.push({ text: events, level: "secondary" });
+    var texts = [];
+    for (var i = 0; i < parts.length; i++) texts.push(parts[i].text);
+    var tail = " · " + syncWhenText(sync.lastOkTs, isObj(data) ? data.ts : null);
     return {
-      rows: rows,
-      diagnostics: diagnostics,
-      tappable: rows.length > 0 || diagnostics.length > 0,
+      key: "data",
+      label: "DATA",
+      word: capture.word,
+      look: capture.look,
+      tail: tail,
+      value: capture.word + tail,
+      parts: parts,
+      sentence: texts.join(" · "),
+      level: capture.basis === "member" ? "amber" : "secondary",
+      member: capture.basis === "member" ? CAPTURE_MEMBER_KEY : null,
+    };
+  }
+
+  // The DATA detail (s4.6, parked): per feed its word and freshness age
+  // (`lastSampleSecondsAgo` -- lastRowSecondsAgo is top-level only), then
+  // sync: last data stored (full stamp), rows waiting, event rows, the
+  // uncounted tables by name, and at home. A stalled feed is amber only while
+  // the `capture` member exists (the member's amber sits on the feed).
+  function dataDetailView(data, captureData) {
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
+    var feeds = isObj(captureData) && isObj(captureData.feeds) ? captureData.feeds : {};
+    var member = verdictMemberReason(data, [CAPTURE_MEMBER_KEY]) !== null;
+    var rows = [];
+    for (var i = 0; i < CAPTURE_FEEDS.length; i++) {
+      var name = CAPTURE_FEEDS[i][0];
+      var feed = isObj(feeds[name]) ? feeds[name] : {};
+      var known = typeof feed.state === "string"
+        && Object.prototype.hasOwnProperty.call(CAPTURE_FEED_WORD, feed.state);
+      var look = "tertiary";
+      if (feed.state === "ok") look = "ok";
+      else if (feed.state === CAPTURE_STATE_STALLED) look = member ? "amber" : "secondary";
+      else if (feed.state === "idle") look = "secondary";
+      var age = freshAgeText(feed.lastSampleSecondsAgo);
+      rows.push({
+        feed: name,
+        label: CAPTURE_FEEDS[i][1],
+        state: known ? CAPTURE_FEED_WORD[feed.state] : SYS_NO_DATA,
+        look: look,
+        age: age === null ? SYS_NO_DATA : age,
+      });
+    }
+    var events = sync.edrRowsWaiting;
+    var notCounted = Array.isArray(sync.notCounted) && sync.notCounted.length > 0
+      ? "not counted: " + sync.notCounted.join(", ") : null;
+    var row = dataRowView(data, captureData);
+    return {
+      head: "DATA",
+      feeds: rows,
+      lastStored: typeof sync.lastOkTs === "string" ? fmtStamp(sync.lastOkTs) : "no sync on record",
+      rowsWaiting: typeof sync.rowsWaiting === "number" && isFinite(sync.rowsWaiting)
+        && sync.rowsWaiting >= 0 ? fmtThousands(sync.rowsWaiting) : "rows not read",
+      eventRows: typeof events === "number" && isFinite(events) && events >= 0
+        ? fmtThousands(events) : SYS_NO_DATA,
+      notCounted: notCounted,
+      atHome: wifi.home === true ? "yes" : wifi.home === false ? "no" : "unknown",
+      sentence: row.sentence,
+      level: row.level,
+      member: row.member,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-894-b (Atlas B9 + A1 2026-10-22) -- THE parked fact for the System page.
+  // ONE module-level accessor: `parked` is the tick's DEBOUNCED engineParked
+  // (gear P/N held 8 s, US-511-b) and `gearKnown` the RAW `states/gear`
+  // available === true -- the same fact clearButtonView(data, parked,
+  // gearKnown) is handed. The tick is its ONLY writer (publishParked). Never
+  // gearParked here: that is the raw per-tick predicate, and reading it would
+  // skip the 8 s hold. Listeners fire on a change of EITHER value.
+  // -------------------------------------------------------------------------
+  var parkedFact = { parked: false, gearKnown: false };
+  var parkedListeners = [];
+
+  function currentParked() {
+    return { parked: parkedFact.parked, gearKnown: parkedFact.gearKnown };
+  }
+
+  function onParkedChange(fn) {
+    if (typeof fn === "function") parkedListeners.push(fn);
+  }
+
+  // Returns true when the fact changed (and the listeners fired). Only a
+  // strict true is parked or known: anything else fails closed.
+  function publishParked(parked, gearKnown) {
+    var next = { parked: parked === true, gearKnown: gearKnown === true };
+    if (next.parked === parkedFact.parked && next.gearKnown === parkedFact.gearKnown) {
+      return false;
+    }
+    parkedFact = next;
+    for (var i = 0; i < parkedListeners.length; i++) {
+      parkedListeners[i](currentParked());
+    }
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // US-894-f (spec s4.1, s4.6.2; Iris I8/I9; Atlas P1/P2) -- Pi health. The
+  // `pi` block (S109 US-877-a) is read VERBATIM: the provider computed every
+  // value, every limit (cpuTempLimitC is published, never a page constant)
+  // and the overLimit list. The page compares nothing; a limit is amber only
+  // when it is in overLimit AND the `pi` member exists (s4.0, AC 7).
+  //
+  // US-759 is closed by the design, not by a list: the US-509 issue list
+  // behind the verdict (its rows, its freshness pair, its rank) is gone. The
+  // amber element IS the marked, counted thing; there is nothing to list.
+  // -------------------------------------------------------------------------
+
+  // Copies of pi.hardware.pi_health OVER_LIMIT_* and system_status_emitter
+  // VERDICT_PI, pinned equal by tests/ui/test_system_page_pi_detail.py.
+  var PI_MEMBER_KEY = "pi";
+  var PI_OVER_CPU_TEMP = "cpuTemp";
+  var PI_OVER_THROTTLED = "throttled";
+  var PI_OVER_DISK = "disk";
+  // s4.6.2: disk free prints GiB (2^30), floored to 0.1 -- the emitter's unit.
+  var PI_BYTES_PER_GIB = 1073741824;
+
+  function piBlock(data) {
+    return isObj(data) && isObj(data.pi) ? data.pi : {};
+  }
+
+  function finiteNumber(v) {
+    return typeof v === "number" && isFinite(v);
+  }
+
+  // A limit as the emitter prints one (Python `:g`, six significant digits),
+  // so `limit 80 °C` / `limit 20 GiB`, never `80.000`.
+  function piLimitText(n) {
+    return String(parseFloat(n.toPrecision(6)));
+  }
+
+  // s4.6.2 (I9): `under 1 min` / `42 min` / `3 h 2 min` / `2 days 3 h`
+  // (`1 day 3 h`); null, junk or a negative -> `--`.
+  function uptimeText(s) {
+    if (!finiteNumber(s) || s < 0) return SYS_NO_DATA;
+    if (s < 60) return "under 1 min";
+    if (s < 3600) return Math.floor(s / 60) + " min";
+    if (s < 86400) return Math.floor(s / 3600) + " h " + Math.floor((s % 3600) / 60) + " min";
+    var days = Math.floor(s / 86400);
+    return days + (days === 1 ? " day " : " days ") + Math.floor((s % 86400) / 3600) + " h";
+  }
+
+  // The Pi line under the verdict (s4.1): only while `pi` is a member, its
+  // reason verbatim. The ` ›` is the renderer's, and only while parked (I9).
+  function piLineView(data) {
+    var member = verdictMember(data, [PI_MEMBER_KEY]);
+    if (member === null) return null;
+    return { text: member.reason, level: "amber", member: PI_MEMBER_KEY };
+  }
+
+  // Each value's OWN read time (cpuTempTs, throttledTs, diskTs, uptimeTs) --
+  // the block has no ts of its own, and a block stamp would date a value
+  // read ten minutes earlier (the disk) as if it were read now.
+  function piReadText(ts) {
+    return "read " + (typeof ts === "string" ? fmtStamp(ts) : SYS_NO_DATA);
+  }
+
+  // The Pi detail (s4.6.2, parked; opened from the verdict and the Pi line):
+  // CPU, THROTTLING, DISK, UPTIME, each {value, note, read}; the version is
+  // the #version-chip itself (Atlas P8: the ONE .deploy-version reader), so
+  // it is not a field here. A row is amber only as the `pi` member's.
+  function piDetailView(data) {
+    var pi = piBlock(data);
+    var over = Array.isArray(pi.overLimit) ? pi.overLimit : [];
+    var member = verdictMember(data, [PI_MEMBER_KEY]) !== null;
+    function level(name) {
+      return member && over.indexOf(name) !== -1 ? "amber" : "neutral";
+    }
+    function row(key, label, value, note, ts, rowLevel) {
+      return {
+        key: key, label: label, value: value, note: note, read: piReadText(ts),
+        level: rowLevel, member: rowLevel === "amber" ? PI_MEMBER_KEY : null,
+      };
+    }
+    var throttled = SYS_NO_DATA;
+    if (typeof pi.throttled === "boolean") {
+      throttled = (pi.throttled ? "throttled now" : "not throttled now") + " · "
+        + (pi.throttledSinceBoot === true ? "throttled since boot"
+           : pi.throttledSinceBoot === false ? "not since boot" : "since boot " + SYS_NO_DATA);
+    }
+    var disk = SYS_NO_DATA;
+    if (finiteNumber(pi.diskFreeBytes) && pi.diskFreeBytes >= 0) {
+      // Toward the breach, never up to the limit (the emitter's floor).
+      var tenths = Math.floor(pi.diskFreeBytes * 10 / PI_BYTES_PER_GIB);
+      disk = Math.floor(tenths / 10) + "." + (tenths % 10) + " GiB";
+    }
+    return {
+      head: "PI",
+      rows: [
+        row("cpuTemp", "CPU",
+            finiteNumber(pi.cpuTempC) ? pi.cpuTempC.toFixed(1) + " °C" : SYS_NO_DATA,
+            finiteNumber(pi.cpuTempLimitC) ? "limit " + piLimitText(pi.cpuTempLimitC) + " °C" : null,
+            pi.cpuTempTs, level(PI_OVER_CPU_TEMP)),
+        row("throttled", "THROTTLING", throttled,
+            typeof pi.throttledHex === "string" ? pi.throttledHex : null,
+            pi.throttledTs, level(PI_OVER_THROTTLED)),
+        row("disk", "DISK", disk,
+            finiteNumber(pi.diskThresholdBytes)
+              ? "limit " + piLimitText(pi.diskThresholdBytes / PI_BYTES_PER_GIB) + " GiB" : null,
+            pi.diskTs, level(PI_OVER_DISK)),
+        // Uptime has no limit, so it is never amber.
+        row("uptime", "UPTIME", uptimeText(pi.uptimeS), null, pi.uptimeTs, "neutral"),
+      ],
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-894-d (spec s4.4, s4.6; Iris I5, W1; Atlas A6) -- the WIFI row, its
+  // detail and the top-bar glyph, keyed on (wifi.state, source.wifi.reason).
+  // The emitter derives `state` (ARCH-007); the page applies NO RSSI
+  // threshold. Amber is the `wifi` verdict MEMBER's (s4.0): a failed read is
+  // the one counted WiFi state, and `weak` is never amber.
+  // -------------------------------------------------------------------------
+
+  // Copies of the provider's vocabulary (pi.network.wifi_reader
+  // WIFI_REASON_*, system_status_emitter REASON_WIFI_UNKNOWN / VERDICT_WIFI
+  // and deriveWifiState's bands), pinned equal by
+  // tests/ui/test_system_page_wifi_row.py. There is no `not_associated`
+  // (Atlas A6): not associated is the reading `down`, reason null.
+  var WIFI_REASON_NOT_READ = "not_read";
+  var WIFI_REASON_NMCLI_ABSENT = "nmcli_absent";
+  var WIFI_REASON_READ_FAILED = "read_failed";
+  var WIFI_MEMBER_KEY = "wifi";
+  var WIFI_STATE_DOWN = "down";
+  // The two absences in words; read_failed speaks through its member.
+  var WIFI_REASON_WORDS = {
+    not_read: "not read yet",
+    nmcli_absent: "no WiFi tool on this host",
+  };
+  // `up` only means above the weak band, so `good`, never `strong`.
+  var WIFI_SIGNAL_WORD = { up: "good signal", weak: "weak signal" };
+  var WIFI_STRENGTH_WORD = { up: "good", weak: "weak" };
+  var WIFI_NO_LEVEL = "no signal level";
+
+  function wifiReading(data) {
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : {};
+    var source = isObj(data) && isObj(data.source) && isObj(data.source.wifi)
+      ? data.source.wifi : {};
+    return {
+      wifi: wifi,
+      state: typeof wifi.state === "string" ? wifi.state : null,
+      ssid: typeof wifi.ssid === "string" && wifi.ssid ? wifi.ssid : null,
+      available: source.available === true,
+      reason: typeof source.reason === "string" ? source.reason : null,
+    };
+  }
+
+  // True when the link was read and wlan0 is on a network: a band (up /
+  // weak), or W1's associated-with-no-level (available, state null). The page
+  // tells that from an unread link by `available`, never by a missing ssid.
+  function wifiLinked(r) {
+    if (!r.available) return false;
+    if (r.state === null) return r.wifi.state === null;
+    return Object.prototype.hasOwnProperty.call(WIFI_SIGNAL_WORD, r.state);
+  }
+
+  // The home word (I5): home true -> `home` green; false -> `other network`;
+  // null -> `connected` (never guessed either way).
+  function wifiHomeWord(home) {
+    if (home === true) return { word: "home", look: "ok" };
+    if (home === false) return { word: "other network", look: "secondary" };
+    return { word: "connected", look: "secondary" };
+  }
+
+  // The WIFI row (s4.4 table). A member's reason is printed verbatim.
+  function wifiRowView(data) {
+    var r = wifiReading(data);
+    var isMember = verdictMemberKeys(data)[WIFI_MEMBER_KEY] === true;
+    var word = SYS_NO_DATA;
+    var look = "tertiary";
+    var sentence = "";
+    if (isMember || r.reason === WIFI_REASON_READ_FAILED) {
+      // Amber only with the member: a verdict-absent file counted nothing.
+      var member = verdictMemberReason(data, [WIFI_MEMBER_KEY]);
+      word = "? not read";
+      look = isMember ? "amber" : "secondary";
+      sentence = member !== null ? member : "";
+    } else if (wifiLinked(r)) {
+      var home = wifiHomeWord(r.wifi.home);
+      word = home.word;
+      look = home.look;
+      sentence = (r.ssid !== null ? r.ssid + " · " : "")
+        + (r.state === null ? WIFI_NO_LEVEL : WIFI_SIGNAL_WORD[r.state]);
+    } else if (r.available && r.state === WIFI_STATE_DOWN) {
+      word = "down";
+      sentence = "not connected";
+    } else if (!r.available) {
+      sentence = r.reason === WIFI_REASON_NMCLI_ABSENT
+        ? WIFI_REASON_WORDS.nmcli_absent : WIFI_REASON_WORDS.not_read;
+    }
+    return {
+      key: "wifi",
+      label: "WIFI",
+      word: word,
+      look: look,
+      tail: "",
+      value: word,
+      sentence: sentence,
+      level: isMember ? "amber" : "secondary",
+      member: isMember ? WIFI_MEMBER_KEY : null,
+    };
+  }
+
+  // The WIFI detail (s4.6, parked): SSID, strength (word + dBm; `no signal
+  // level` and no dBm when associated with no level), home yes / no /
+  // unknown, `not connected to any network` for `down`, and the typed reason
+  // in words. No IP: there is no field, so the line is not drawn (I5).
+  function wifiDetailView(data) {
+    var r = wifiReading(data);
+    var row = wifiRowView(data);
+    var member = verdictMemberReason(data, [WIFI_MEMBER_KEY]);
+    var rssi = r.available && typeof r.wifi.rssiDbm === "number" && isFinite(r.wifi.rssiDbm)
+      ? r.wifi.rssiDbm : null;
+    var strength = SYS_NO_DATA;
+    if (rssi !== null) {
+      strength = (Object.prototype.hasOwnProperty.call(WIFI_STRENGTH_WORD, r.state)
+        ? WIFI_STRENGTH_WORD[r.state] + " · " : "") + rssi + " dBm";
+    } else if (wifiLinked(r) && r.state === null) {
+      strength = WIFI_NO_LEVEL;
+    }
+    var reason = null;
+    if (member !== null) {
+      reason = member;
+    } else if (r.reason !== null && !r.available
+               && Object.prototype.hasOwnProperty.call(WIFI_REASON_WORDS, r.reason)) {
+      reason = WIFI_REASON_WORDS[r.reason];
+    } else if (r.reason === WIFI_REASON_READ_FAILED) {
+      reason = SYS_NO_DATA;
+    }
+    var home = r.available ? r.wifi.home : null;
+    return {
+      head: "WIFI",
+      state: { text: row.word, look: row.look },
+      network: r.available && r.ssid !== null ? r.ssid : SYS_NO_DATA,
+      strength: strength,
+      link: r.available && r.state === WIFI_STATE_DOWN ? "not connected to any network" : null,
+      home: home === true ? "yes" : home === false ? "no" : "unknown",
+      reason: reason,
+      reasonLevel: row.level,
+      member: row.member,
+    };
+  }
+
+  // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3) + US-894-d (s4.4). The
+  // emitter has ALREADY derived the band; this maps it to a glyph state and
+  // applies NO threshold of its own:
+  //   `up` ok; `weak` neutral (a band on a working link, never amber);
+  //   `down` the slashed glyph (a MEASUREMENT: we looked, no link);
+  //   no reading -- not_read, nmcli_absent, associated with no level, or no
+  //   payload -- `dim` arcs with NO slash (a slash claims down, lit arcs a
+  //   level); read_failed amber, the one amber WiFi state.
+  function wifiGlyphState(data) {
+    var r = wifiReading(data);
+    var member = verdictMemberKeys(data)[WIFI_MEMBER_KEY] === true;
+    // Before the unread return: a failed read is also unavailable. Amber is
+    // the member's (s4.0), so a failed read nothing counted stays dim.
+    if (member || r.reason === WIFI_REASON_READ_FAILED) return member ? "amber" : "dim";
+    if (!r.available) return "dim";
+    if (r.state === "up") return "ok";
+    if (r.state === "weak") return "neutral";
+    if (r.state === WIFI_STATE_DOWN) return "down";
+    return "dim";
+  }
+
+  // -------------------------------------------------------------------------
+  // US-894-e (spec s4.5, s4.6.1; Atlas A1/A3/A4, Iris I6/I7/W2) -- the UPS
+  // row and its parked detail, replacing the Battery card. Two files, two
+  // facts (Atlas A1): the cell (VCELL, SOC, the health verdict) is
+  // states/battery-health; the SENSED power source is system-status
+  // power.source -- never derived from battery-health. There is no UPS
+  // verdict member (s4.1), so nothing here is ever amber: on battery is
+  // neutral (Atlas A4), and the words say it.
+  // -------------------------------------------------------------------------
+
+  // The sensed source in words. Never `wall` or `car` (CIO 2026-10-19).
+  var POWER_SOURCE_WORDS = { external: "on external power", battery: "on battery" };
+  var POWER_SOURCE_UNKNOWN = "power source unknown";
+  // W2: an unresolved source's typed `power.reasons.source` in words. Keys
+  // are card_state_emitter.POWER_SOURCE_UNKNOWN_REASONS verbatim, pinned
+  // equal by tests/ui/test_system_page_ups_row.py; a reason outside them
+  // prints no words. The words name the SENSOR, never the UPS or the pack.
+  var POWER_SOURCE_REASON_WORDS = {
+    provider_absent: "no power sensor running",
+    source_unreadable: "power sensor unreadable",
+    read_failed: "power sensor read failed",
+  };
+
+  function powerSourceWords(data) {
+    var power = isObj(data) && isObj(data.power) ? data.power : {};
+    return typeof power.source === "string"
+      && Object.prototype.hasOwnProperty.call(POWER_SOURCE_WORDS, power.source)
+      ? POWER_SOURCE_WORDS[power.source] : POWER_SOURCE_UNKNOWN;
+  }
+
+  // The typed reason in words, only beside an UNRESOLVED source (a reason
+  // explains an absence); null when there is none to print.
+  function powerSourceReasonWords(data) {
+    if (powerSourceWords(data) !== POWER_SOURCE_UNKNOWN) return null;
+    var power = isObj(data) && isObj(data.power) ? data.power : {};
+    var code = isObj(power.reasons) ? power.reasons.source : null;
+    return typeof code === "string"
+      && Object.prototype.hasOwnProperty.call(POWER_SOURCE_REASON_WORDS, code)
+      ? POWER_SOURCE_REASON_WORDS[code] : null;
+  }
+
+  // The cell reading: `4.12 V` (vcellTile's 2 decimals), `--` when vcellV is
+  // not a number or the payload is absent, and `--` + the typed reason when
+  // the gauge source is unavailable (the shipped US-429 rule: never a stale
+  // last-real cell reading).
+  function upsCellReading(batteryData) {
+    if (isObj(batteryData) && sourceUnavailable(batteryData, "ups")) {
+      return { text: SYS_NO_DATA, reason: sourceReason(batteryData, "ups"), usable: false };
+    }
+    if (!isObj(batteryData) || typeof batteryData.vcellV !== "number") {
+      return { text: SYS_NO_DATA, reason: null, usable: isObj(batteryData) };
+    }
+    return { text: vcellTile(batteryData).value, reason: null, usable: true };
+  }
+
+  // s4.5 (I6): the cell's FRESHNESS age -- the S105 M7 rule through the ONE
+  // shared helper Motion uses, never agoText (`just now` would hide `12 s
+  // ago`). `nowMs` is the tick's clock (US-496); undated -> no age.
+  function upsAgeText(batteryData, nowMs) {
+    return typeof nowMs === "number" ? freshAgeText(readAgeSec(batteryData, nowMs)) : null;
+  }
+
+  // The UPS row (s4.5): value = VCELL in --text-primary; sentence = the
+  // sensed source + ` · <age>`, neutral. Never a SOC, a runtime, `charging`
+  // or `crate` on the row.
+  function upsRowView(data, batteryData, nowMs) {
+    var cell = upsCellReading(batteryData);
+    var age = upsAgeText(batteryData, nowMs);
+    var words = powerSourceWords(data);
+    var tail = cell.reason !== null ? " · " + cell.reason : "";
+    return {
+      key: "ups",
+      label: "UPS",
+      word: cell.text,
+      look: cell.text === SYS_NO_DATA ? "tertiary" : "primary",
+      tail: tail,
+      value: cell.text + tail,
+      sentence: age !== null ? words + " · " + age : words,
+      level: "secondary",
+    };
+  }
+
+  // The SOC line (s4.6.1, I6; F-8): only when `soc` is a real number, with
+  // the shipped (uncalibrated) caveat. Never a readiness signal.
+  function upsSocText(batteryData) {
+    if (!isObj(batteryData) || typeof batteryData.soc !== "number"
+        || !isFinite(batteryData.soc)) {
+      return null;
+    }
+    return "≈ " + batteryData.soc + " % ("
+      + (batteryData.socCalibrated === true ? "modelled" : "modelled, uncalibrated") + ")";
+  }
+
+  // The UPS detail (s4.6.1, parked): VCELL + age; the source + its typed
+  // reason in words; the health verdict (never amber, never red) with its
+  // unknown reason or its T-vs-J margin, and ALWAYS the F-9 check line; the
+  // SOC line; LAST STOP through the shipped priorShutdownTile, unchanged
+  // (I7). No ladder, no `min to cutoff`, no pack epoch, no trend. With the
+  // gauge unreadable the cell section is the typed NA alone (US-429), so no
+  // health or SOC line stands beside it.
+  function upsDetailView(data, batteryData, nowMs) {
+    var cell = upsCellReading(batteryData);
+    var age = upsAgeText(batteryData, nowMs);
+    var health = null;
+    var healthCheck = null;
+    if (cell.usable) {
+      // US-736: the reason goes IN FRONT of the F-9 line, never in place of
+      // it; ARCH-065: so does a resolved verdict's margin -- detail only,
+      // resolved verdict only, always with its `vs n s job` half (I6).
+      var reason = healthReasonText(batteryData);
+      health = {
+        value: healthValue(batteryData.health),
+        level: healthLevel(batteryData.health),
+        note: reason !== null ? reason : healthMarginText(batteryData),
+      };
+      healthCheck = healthCheckLine(batteryData).label;
+    }
+    var stop = priorShutdownTile(isObj(data) ? data.priorShutdown : null,
+                                 isObj(data) ? data.ts : null);
+    return {
+      head: "UPS",
+      label: BATTERY_LABEL,
+      cell: cell.text + (cell.reason !== null ? " · " + cell.reason
+                         : age !== null ? " · " + age : ""),
+      source: powerSourceWords(data),
+      sourceReason: powerSourceReasonWords(data),
+      health: health,
+      healthCheck: healthCheck,
+      soc: cell.usable ? upsSocText(batteryData) : null,
+      lastStop: {
+        label: stop.label,
+        text: stop.value + " · " + stop.detail,
+        level: stop.level,
+      },
     };
   }
 
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
-  // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3). The emitter has ALREADY
-  // derived the band; this maps its verdict to a glyph state and applies NO
-  // threshold of its own.
-  //
-  // The load-bearing line is the last one: an unreadable link renders NEUTRAL,
-  // never amber. `down` is a MEASUREMENT -- we looked and there is no link.
-  // Painting "no signal" when the truth is "we could not look" is a fabricated
-  // reading, which is the defect class this contract exists to prevent.
-  function wifiGlyphState(data) {
-    var src = data && data.source && data.source.wifi;
-    if (!src || src.available !== true) return "neutral";
-    var wifi = data.wifi || {};
-    if (wifi.state === "up") return "ok";
-    if (wifi.state === "weak") return "amber";
-    if (wifi.state === "down") return "down";
-    return "neutral";   // available but ungradeable -- still not a claim
-  }
 
   // US-688: `captureData` is a SECOND state file (states/capture-health), read
   // on the same slow tick. It is a separate slot rather than a key inside
   // system-status because the two have different producers -- capture health is
   // the orchestrator's fact about ITSELF, not about a car source -- and the
-  // gear tile already established this shape. Optional: every pre-US-688 call
-  // site passes one argument and gets the four-tile card unchanged.
-  function systemStatusView(data, captureData) {
+  // gear tile already established this shape. Optional: a caller that passes
+  // one argument gets no capture tile.
+  //
+  // US-894-b: the page is `verdict` + `rows` (spec s3 layout A); the OBD row
+  // is the first row, and the rows not yet built are absent. The obdLink tile
+  // is gone with the block it read (Atlas A2/P6).
+  //
+  // US-894-c: the DATA row is the second row; the SYNC / DRIVE / CAPTURE
+  // tiles are gone.
+  // US-894-d: the WIFI row is the third.
+  // US-894-e: the UPS row is the fourth, reading a THIRD state file
+  // (states/battery-health, `batteryData`) against the tick's `nowMs`. The
+  // POWER tile (powerTile) is gone with it.
+  // US-894-f: the Pi line (only with a `pi` member) and the Pi detail behind
+  // the verdict. The US-509 drill and its `tiles` are gone (US-759 closed).
+  function systemStatusView(data, captureData, batteryData, nowMs) {
     if (!isObj(data)) return null;
-    // US-429: the OBD source owns the OBD-link tile + glyph. When the source is
-    // unavailable (car off / wall power), render a typed NA ("OBD: off") rather
-    // than a fabricated or stale link state -- sync/power/drive are their own
-    // sources and stay honest independently (one truth per SOURCE).
-    var obdOff = sourceUnavailable(data, "obd");
-    var obdTile = obdOff
-      ? naTile("OBD LINK", sourceReason(data, "obd"))
-      : obdLinkTile(data.obdLink);
-    var tiles = {
-      obdLink: obdTile,
-      sync: syncTile(data.sync),
-      power: powerTile(data.power),
-      drive: driveTile(data.drive),
-    };
-    // Only present when a payload was actually fetched. An UNDEFINED tile is
-    // skipped by the summary and the row builder alike, so "the producer is
-    // dark" renders as the card that existed before this story rather than as
-    // a fifth tile permanently reading unavailable.
-    if (captureData !== undefined && captureData !== null) {
-      tiles.capture = captureTile(captureData);
-    }
     return {
-      // US-489: derived from the SAME tiles rendered below, so the headline can
-      // never contradict the grid it summarises.
-      summary: systemSummary(tiles),
-      // US-509: and so is the drill-down behind that headline -- one read of
-      // the state file feeds the grid, the summary AND the overlay.
-      drill: systemDrill(tiles, data),
-      tiles: tiles,
+      // s4.1: the provider's count, never the page's.
+      verdict: systemVerdictView(data),
+      rows: [
+        obdRowView(data), dataRowView(data, captureData), wifiRowView(data),
+        upsRowView(data, batteryData, nowMs),
+      ],
+      // s4.6: the rows' details, from the SAME read.
+      obdDetail: obdDetailView(data),
+      dataDetail: dataDetailView(data, captureData),
+      wifiDetail: wifiDetailView(data),
+      upsDetail: upsDetailView(data, batteryData, nowMs),
+      // s4.1 / s4.6.2: the Pi line under the verdict, and the Pi detail the
+      // verdict (and the line) open -- the same read again.
+      piLine: piLineView(data),
+      piDetail: piDetailView(data),
       glyphs: {
-        bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
-        sync: syncGlyphState(data.sync),
+        // US-894-a: the link chain ignores source.obd (s4.2.1).
+        bt: linkChainGlyph(data),
+        // US-894-c (I4): neutral without a `sync` member.
+        sync: syncGlyphState(data),
         wifi: wifiGlyphState(data),
       },
       ts: typeof data.ts === "string" ? data.ts : null,
@@ -1245,10 +1664,11 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-401 Battery Health card -- pure render logic, node-testable (F-8/F-9/
-  // F-10/F-11/F-2). The card is an HONEST consumer of the `battery-health`
-  // emitter (Atlas A-3 schema) for the Pi UPS LiPo cell -- NEVER the car
-  // battery (F-11). The two render-breaking traps are locked here:
+  // US-401 battery-health view helpers -- pure render logic, node-testable
+  // (F-8/F-9/F-10/F-11). US-894-e retired the Battery card; these helpers feed
+  // the System page's UPS detail (upsDetailView). An HONEST consumer of the
+  // `battery-health` emitter (Atlas A-3 schema) for the Pi UPS LiPo cell --
+  // NEVER the car battery (F-11). The two render-breaking traps are locked here:
   //   F-8  the SoC percent is shown ONLY when `soc` is a real number; a null
   //        soc omits the percent and shows volts -- a voltage is NEVER painted
   //        as a percent.
@@ -1257,7 +1677,8 @@
   //        month-old reading is never mistaken for live. The producer adds a
   //        second layer upstream: it forces `unknown` once the pack's counted
   //        monthly test is over 45 days old (ARCH-065; US-504 used 90 days).
-  // The drain ladder DOM is present ONLY when `draining === true` (F-2 / A-6).
+  // US-894-e: the drain ladder and its `~N min to cutoff` are gone (s4.6.1: a
+  // banned runtime -- the pack capacity is unmeasured).
   // -------------------------------------------------------------------------
 
   var BATTERY_LABEL = "Pi UPS battery"; // F-11: never "vehicle/car battery".
@@ -1287,7 +1708,8 @@
     if (h === "good") return "GOOD";
     if (h === "degraded") return "DEGRADED";
     if (h === "replace") return "REPLACE";
-    return "—";
+    // s4.6.1: `--`, the page's one no-data mark.
+    return SYS_NO_DATA;
   }
 
   // US-736: WHY the verdict is unknown. US-632 publishes one of six machine
@@ -1370,14 +1792,20 @@
     var now = Date.parse(nowTs);
     var then = Date.parse(thenTs);
     if (isNaN(now) || isNaN(then)) return "age unknown";
-    var secs = Math.floor((now - then) / 1000);
+    return agoSecsText(Math.floor((now - then) / 1000));
+  }
+
+  // agoText's words for an age already in whole seconds (US-894-c: the DATA
+  // row's `last row <age>` is capture-health's lastRowSecondsAgo, an age, not
+  // an instant). floor(secs / 86400) is ageDays' floor for the same span.
+  function agoSecsText(secs) {
     // A FUTURE instant means clock skew, not a negative age. The Pi has no RTC
     // battery and boots before NTP settles, so a stamp ahead of `now` is a
     // routine transient -- "-5 min ago" would be a visible nonsense.
     if (secs < 60) return "just now";
     if (secs < 3600) return Math.floor(secs / 60) + " min ago";
     if (secs < 86400) return Math.floor(secs / 3600) + " h ago";
-    return ageText(ageDays(nowTs, thenTs));
+    return ageText(Math.floor(secs / 86400));
   }
 
   // The stale-green guard line (F-9). ALWAYS produced so a GREEN verdict can
@@ -1408,88 +1836,12 @@
     };
   }
 
-  // SoC tile (F-8) -- the percent renders ONLY when `soc` is a real number from
-  // the MAX17048 register; null -> omit the percent (shown:false), the card
-  // falls back to volts. A voltage is NEVER rendered as a percent.
-  function socTile(d) {
-    if (typeof d.soc !== "number") {
-      return {
-        label: "CHARGE",
-        value: "—",
-        detail: "% unavailable · see volts",
-        level: "unavailable",
-        shown: false,
-      };
-    }
-    return {
-      label: "CHARGE",
-      value: d.soc + "%",
-      detail: d.socCalibrated === true ? "register" : "(uncalibrated)",
-      level: "neutral",
-      shown: true,
-    };
-  }
-
   // US-504: the TEMP tile is REMOVED. The MAX17048 is a voltage-based fuel
   // gauge (VCELL/SOC/CRATE/MODE/VERSION/HIBRT/CONFIG/VALRT/VRESET/STATUS) with
   // no temperature register at all, so the tile had no source it could ever
   // read and rendered "not captured" on every row ever logged. The
   // `ambient_temp_c` COLUMN survives -- a future BMP390 carries a temperature
   // channel that legitimately fills it, and the tile comes back with it.
-
-  // Failsafe ladder view (F-2 / A-6) -- present ONLY when draining is true. The
-  // runtime minutes render ONLY when the power tier supplied a real number
-  // (Spool S-2); otherwise the failsafe shows stage + volts, never a fabricated
-  // estimate. draining:false -> null (the DOM renderer draws no ladder).
-  function ladderView(d) {
-    if (d.draining !== true) return null;
-    var l = isObj(d.ladder) ? d.ladder : {};
-    var rt = typeof l.runtimeRemainingS === "number" ? l.runtimeRemainingS : null;
-    return {
-      stage: typeof l.stage === "string" ? l.stage : "DRAINING",
-      thresholds: isObj(l.thresholds) ? l.thresholds : null,
-      runtimeRemainingS: rt,
-    };
-  }
-
-  // The full structured view consumed by the DOM renderer + the node tests.
-  // Non-object payload -> null (the shell renders `unavailable`).
-  function batteryHealthView(data) {
-    if (!isObj(data)) return null;
-    // US-429: the UPS/MAX17048 is a single source -- when it is unavailable the
-    // WHOLE card is a typed NA ("gauge unreadable"), never a blank or a stale
-    // last-real cell reading.
-    if (sourceUnavailable(data, "ups")) {
-      return {
-        label: BATTERY_LABEL,
-        unavailable: true,
-        reason: sourceReason(data, "ups"),
-        ts: typeof data.ts === "string" ? data.ts : null,
-      };
-    }
-    // US-736: the reason goes IN FRONT of the F-9 line, never in place of it.
-    // ARCH-065: so does a resolved verdict's T-vs-J margin.
-    var reason = healthReasonText(data);
-    var margin = reason === null ? healthMarginText(data) : null;
-    var checkLabel = healthCheckLine(data).label;
-    return {
-      label: BATTERY_LABEL,
-      unavailable: false,
-      health: {
-        label: "HEALTH",
-        value: healthValue(data.health),
-        detail: reason !== null ? reason + " · " + checkLabel
-              : margin !== null ? margin + " · " + checkLabel : checkLabel,
-        level: healthLevel(data.health),
-        reason: reason,
-      },
-      vcell: vcellTile(data),
-      soc: socTile(data),
-      healthCheck: healthCheckLine(data),
-      ladder: ladderView(data),
-      ts: typeof data.ts === "string" ? data.ts : null,
-    };
-  }
 
   // -------------------------------------------------------------------------
   // US-420 / US-661 LTFT Trend card -- pure render logic, node-testable (F-096).
@@ -1695,10 +2047,6 @@
   // (it is still painted when the body is a typed NA).
   var SOURCE_CARDS = [
     {
-      key: "battery-health", title: "Battery",
-      noData: { label: "BATTERY", reason: "no data -- UPS feed absent" },
-    },
-    {
       key: "light", title: "Light",
       noData: { label: "AMBIENT", reason: "no data -- light feed absent" },
     },
@@ -1724,17 +2072,16 @@
   }
 
   // Build the per-source view. Kept as a switch on the key rather than a
-  // function reference in the table so the three signatures (which genuinely
+  // function reference in the table so the signatures (which genuinely
   // differ -- only the light view needs the dim config, a clock and the STOP
   // test) stay explicit.
   //
   // US-893-b: the Light page paints its OWN absence ('--' + 'no light data' in
   // its own layout, the brightness it fell back to beside it), so its view is
   // built even with no payload; `absent` tells the shell the feed is missing.
-  function sourceView(key, data, cfg, nowMs, alarmActive) {
-    if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive);
+  function sourceView(key, data, cfg, nowMs, alarmActive, settings) {
+    if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive, settings);
     if (cardAvailability(data) !== "available") return null;
-    if (key === "battery-health") return batteryHealthView(data);
     if (key === "ltft-trend") return fuelTrendView(data);
     return null;
   }
@@ -1745,7 +2092,7 @@
   // t=0. Fixing one and not the other would re-create the confusion one swipe
   // away, which is why the story's conditionalOutcome names the shared shape
   // rather than the three tiles it was reported on.
-  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs, alarmActive) {
+  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs, alarmActive, settings) {
     var base = { key: spec.key, title: spec.title, label: spec.noData.label };
     // The gate is checked FIRST and short-circuits: a gated card must carry no
     // reading, not a suppressed one (nothing downstream can leak what was never
@@ -1760,7 +2107,7 @@
       base.view = null;
       return base;
     }
-    var view = sourceView(spec.key, data, cfg, nowMs, alarmActive);
+    var view = sourceView(spec.key, data, cfg, nowMs, alarmActive, settings);
     base.gated = false;
     if (view === null || view.absent === true) {
       if (loadPhase(data, waitedMs) === "loading") {
@@ -1865,10 +2212,27 @@
   // which is exactly what test_noDeadApplyStatesAreLeftInTheMapping forbids: a
   // label nobody has checked against a consumer, waiting for the next story to
   // reach for it as though it had been.
+  // US-895-b (Atlas B12): "light-reading" is the lux ends' -- the light bridge
+  // re-reads config on its next burst. It claims no time: with no sensor, no
+  // reading comes and nothing applies it.
   var SETTINGS_APPLY_NOTES = {
     reload: "applies on reload",
     "capture-restart": "applies on capture restart",
+    "light-reading": "applies at the next light reading",
   };
+
+  // US-895-b (spec s4.7, Iris I11): the lux ends' 1-2-3-5-per-decade ladder,
+  // bounded 1..1000 lux (twilight ~3.4 lux, overcast daylight ~1000 lux: the
+  // validator's autoDim DEFAULTS grounding; the shipped 3 / 300 sit on it).
+  var SETTINGS_LUX_LADDER = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500, 1000];
+
+  // US-895-c (spec s4.7 "Step: 5 %"): the FIXED stepper's grid, in integer
+  // percent. The TOP is 100 % because full is the top of the 0..1 range (the
+  // STOP_ALARM_LEVEL definition), not a tunable. There is deliberately NO
+  // floor here: the floor is the effective minLevel (spec AC 9).
+  var SETTINGS_LEVEL_STEP_PCT = 5;
+  var SETTINGS_LEVEL_TOP_PCT = 100;
+  var SETTINGS_LEVEL_MODES = { auto: "AUTO", fixed: "FIXED" };
 
   // AUTO-ROTATE is "reload", NOT "restart" -- and the difference is load-bearing.
   // Atlas's original GAP 1 remedy was an eclipse-states-http bounce, but that
@@ -1891,14 +2255,51 @@
   // "restart" US-532 shipped was true but useless, because the unit the operator
   // would reach for (states-http, the only one this band talks to) is the wrong
   // one. Name the service or the label does not help anybody.
+  //
+  // US-895-a (spec s4.7, Iris I13): every row names its `section` (DISPLAY
+  // then SYSTEM, drawn in this order) and its label is UPPER CASE -- the
+  // Michroma subset has no lower case. AUTO-ROTATE is kind "steps" (Atlas
+  // A8/B10): a stepper over its declared `steps`, 0 = Off (US-541-a), the
+  // CIO-approved Off · 5 s · 8 s · 10 s · 15 s · 30 s.
+  //
+  // US-895-b (spec s4.7): the auto-dim ends are kind "ladder" -- two specs
+  // drawn as ONE row (their shared `row` names it), each a stepper over the
+  // lux ladder. `below` / `above` name the partner key an end must stay
+  // strictly below / above (luxFull > luxMin), so the page can disable the
+  // crossing step; the seam's 400 is still the rule. First in the table
+  // because they are first in OVERRIDABLE_KEYS (Atlas B11).
+  //
+  // US-895-c (spec s4.7, Atlas A5/B12-B14, Iris I11): BRIGHTNESS is kind
+  // "level" -- an AUTO | FIXED segmented control, then a `− nn % +` stepper
+  // while FIXED. AUTO writes null; FIXED writes round(pct)/100. Its floor is
+  // the EFFECTIVE minLevel the server injects per request (DISPLAY_AUTODIM),
+  // never a number written here. "reload": the applier reads the override
+  // from the per-request settings blob on the reload the band triggers. First,
+  // as in OVERRIDABLE_KEYS (DISPLAY order: brightness, auto-dim ends, rotate).
   var SETTINGS_SPECS = [
-    { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
-      kind: "seconds", apply: "reload" },
-    { key: "pi.calibration.mode", label: "Calibration mode",
-      kind: "bool", apply: "capture-restart" },
-    { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
-      kind: "bool", apply: "capture-restart" },
+    { key: "pi.display.autoDim.overrideLevel", label: "BRIGHTNESS",
+      section: "DISPLAY", kind: "level", apply: "reload" },
+    { key: "pi.display.autoDim.luxMin", label: "DIM-START", row: "AUTO-DIM ENDS",
+      section: "DISPLAY", kind: "ladder", steps: SETTINGS_LUX_LADDER,
+      below: "pi.display.autoDim.luxFull", apply: "light-reading" },
+    { key: "pi.display.autoDim.luxFull", label: "FULL-BRIGHT", row: "AUTO-DIM ENDS",
+      section: "DISPLAY", kind: "ladder", steps: SETTINGS_LUX_LADDER,
+      above: "pi.display.autoDim.luxMin", apply: "light-reading" },
+    { key: "pi.display.carousel.autoRotateS", label: "ROTATE PAGES",
+      section: "DISPLAY", kind: "steps", steps: [0, 5, 8, 10, 15, 30],
+      apply: "reload" },
+    { key: "pi.calibration.mode", label: "CALIBRATION MODE",
+      section: "SYSTEM", kind: "bool", apply: "capture-restart" },
+    { key: "pi.analysis.triggerAfterDrive", label: "ANALYZE EACH DRIVE",
+      section: "SYSTEM", kind: "bool", apply: "capture-restart" },
   ];
+
+  // US-895-a (spec s4.7.2, mirroring clearButtonView(data, parked, gearKnown)):
+  // the one line at the top of a locked band. The word follows the CURRENT
+  // raw gear, not the debounced state; neither says "moving" (the lock also
+  // holds in the 8 s hold and with the gear unknown).
+  var SETTINGS_LOCK_STOP = "🔒 view only — stop to change";
+  var SETTINGS_LOCK_GEAR_UNKNOWN = "🔒 view only — gear unknown";
 
   var SETTINGS_PENDING_NOTE = "saving…";
 
@@ -1919,7 +2320,12 @@
       out.push({
         key: spec.key,
         label: spec.label,
+        section: spec.section,
         kind: spec.kind,
+        steps: spec.steps ? spec.steps.slice() : null,
+        row: spec.row || null,
+        below: spec.below || null,
+        above: spec.above || null,
         apply: spec.apply,
         // Derived from one mapping, never written per row: a future `apply` flip
         // then cannot leave a stale note contradicting it.
@@ -1967,29 +2373,237 @@
   // shape is a property OF a spec -- a future kind that needs a different
   // control adds a branch here, and the coverage guard makes sure it is a kind
   // the table actually declares.
+  // US-895-a: kind "steps" is that branch -- its choices are the spec's own
+  // declared steps, labelled as the stepper shows them.
+  // US-895-b: kind "ladder" likewise offers its declared rungs, in lux.
   function settingsChoices(spec) {
+    if (spec && (spec.kind === "steps" || spec.kind === "ladder")) {
+      var steps = settingsSteps(spec);
+      var out = [];
+      for (var i = 0; i < steps.length; i++) {
+        out.push({ value: steps[i], label: settingsValueLabel(spec, steps[i]) });
+      }
+      return out;
+    }
+    // US-895-c: kind "level" is the AUTO | FIXED segmented control. A choice
+    // is a MODE; the value it writes is settingsLevelChoiceWrite's.
+    if (spec && spec.kind === "level") {
+      return [
+        { value: SETTINGS_LEVEL_MODES.auto, label: SETTINGS_LEVEL_MODES.auto },
+        { value: SETTINGS_LEVEL_MODES.fixed, label: SETTINGS_LEVEL_MODES.fixed },
+      ];
+    }
     return [
       { value: false, label: "Off" },
       { value: true, label: "On" },
     ];
   }
 
+  // A 0..1 level as percent, with the binary-float noise taken off (0.29 * 100
+  // is 28.999999999999996), so a stored 0.8 is exactly 80.
+  function settingsLevelPct(level) {
+    return Math.round(level * 100 * 1e6) / 1e6;
+  }
+
+  function settingsIsLevel(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0 && value <= 1;
+  }
+
+  // US-895-c (spec s4.7, Atlas A5): the FIXED steps in integer percent, from
+  // the EFFECTIVE minLevel to 100 %, 5 % apart. An off-grid minLevel is itself
+  // the lowest step, then the next multiple of 5 (0.72 -> 72, 75, 80 ...); a
+  // fractional percent rounds UP so the lowest step never sits under the floor
+  // the seam enforces. A minLevel that is not a level (missing, null, outside
+  // 0..1) -> null: FIXED cannot be offered, because a guessed floor would be a
+  // fabricated one.
+  function settingsLevelSteps(minLevel) {
+    if (!settingsIsLevel(minLevel)) return null;
+    var floor = Math.ceil(settingsLevelPct(minLevel));
+    var out = [floor];
+    var next = floor - (floor % SETTINGS_LEVEL_STEP_PCT) + SETTINGS_LEVEL_STEP_PCT;
+    for (var p = next; p <= SETTINGS_LEVEL_TOP_PCT; p += SETTINGS_LEVEL_STEP_PCT) out.push(p);
+    return out;
+  }
+
+  // Iris I11: AUTO -> FIXED starts at the level the screen is applying NOW
+  // (appliedBrightness().level), rounded to the nearest 5 % and clamped to
+  // [floor, 100 %], so switching mode never jumps the panel; an unknown applied
+  // level starts at 100 %. Null when the floor is unknown (FIXED not offered).
+  function settingsLevelFirstFixed(appliedLevel, minLevel) {
+    var steps = settingsLevelSteps(minLevel);
+    if (steps === null) return null;
+    if (typeof appliedLevel !== "number" || !isFinite(appliedLevel)) {
+      return SETTINGS_LEVEL_TOP_PCT;
+    }
+    var pct = Math.round(settingsLevelPct(appliedLevel) / SETTINGS_LEVEL_STEP_PCT) *
+      SETTINGS_LEVEL_STEP_PCT;
+    return Math.min(SETTINGS_LEVEL_TOP_PCT, Math.max(steps[0], pct));
+  }
+
+  // Atlas B14: the stored value is round(pct) / 100.
+  function settingsLevelWrite(pct) {
+    return Math.round(pct) / 100;
+  }
+
+  // The value a tap on an AUTO | FIXED choice writes: AUTO is null (auto);
+  // FIXED is the I11 first value, or undefined when there is none to write
+  // (floor unknown) -- the renderer then wires no listener at all.
+  function settingsLevelChoiceWrite(mode, appliedLevel, minLevel) {
+    if (mode === SETTINGS_LEVEL_MODES.auto) return null;
+    var first = settingsLevelFirstFixed(appliedLevel, minLevel);
+    return first === null ? undefined : settingsLevelWrite(first);
+  }
+
+  // A stored level as shown: its percent, to 0.1 % so a hand-edited 0.825
+  // reads '82.5 %' rather than a rounded value nobody stored.
+  function settingsLevelLabel(pct) {
+    return String(Math.round(pct * 10) / 10) + " %";
+  }
+
+  // A steps spec's declared values, ascending; anything else declares none.
+  function settingsSteps(spec) {
+    var steps = spec && Array.isArray(spec.steps) ? spec.steps : [];
+    var out = [];
+    for (var i = 0; i < steps.length; i++) {
+      if (typeof steps[i] === "number" && isFinite(steps[i])) out.push(steps[i]);
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  // 0 is Off (US-541-a; mono `Off`, matching the switches, Iris I11); any
+  // other value -- a declared step or a stored off-step one -- is its seconds.
+  function settingsStepLabel(value) {
+    return value === 0 ? "Off" : String(value) + " s";
+  }
+
+  // A stepper's value as shown: a ladder end is its lux, stored exactly (a
+  // hand-edited 4 reads '4 lux'); a steps row is its seconds.
+  function settingsValueLabel(spec, value) {
+    if (spec && spec.kind === "ladder") return String(value) + " lux";
+    return settingsStepLabel(value);
+  }
+
+  // US-895-b (spec s4.7): would stepping a lux end to `next` cross its
+  // partner? `below` must stay strictly under the partner, `above` strictly
+  // over it (luxFull > luxMin). An unknown partner disables nothing -- the
+  // seam's 400 is the rule, this is the page's convenience.
+  function settingsStepCrosses(spec, next, partnerValue) {
+    if (typeof next !== "number" || typeof partnerValue !== "number" ||
+        !isFinite(partnerValue)) {
+      return false;
+    }
+    if (spec && spec.below) return next >= partnerValue;
+    if (spec && spec.above) return next <= partnerValue;
+    return false;
+  }
+
+  // The value one tap moves a steps row to, or null when there is none (an
+  // end, whose control is hidden, or an unknown value: nothing to step from).
+  // ONE rule covers on-step and off-step values alike (Iris I11): the nearest
+  // declared step strictly beyond the stored value in the tap's direction --
+  // so a hand-edited 12 goes + to 15 and - to 10, and - from 5 s is Off.
+  function settingsStepNext(spec, value, direction) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    var steps = settingsSteps(spec);
+    if (direction > 0) {
+      for (var i = 0; i < steps.length; i++) if (steps[i] > value) return steps[i];
+    } else if (direction < 0) {
+      for (var j = steps.length - 1; j >= 0; j--) if (steps[j] < value) return steps[j];
+    }
+    return null;
+  }
+
+  // The value one tap of a row's − / + moves to, as settingsStepNext rules it:
+  // a level row steps its percent over the floor-derived steps the view
+  // carries (null when not FIXED or the floor is unknown); others their value.
+  function settingsRowStepNext(spec, view, direction) {
+    if (spec && spec.kind === "level") {
+      if (!view || view.on !== SETTINGS_LEVEL_MODES.fixed || view.pct === null) return null;
+      return settingsStepNext({ steps: view.steps }, view.pct, direction);
+    }
+    return settingsStepNext(spec, view ? view.value : null, direction);
+  }
+
+  // US-895-a (spec s4.7.2): the band's lock, from the module's ONE parked
+  // fact (currentParked: the debounced `parked`, the raw `gearKnown`). Only a
+  // strict true unlocks; locked, the line's word follows the raw gear.
+  function settingsLockView(parked, gearKnown) {
+    if (parked === true) return { locked: false, note: null };
+    return {
+      locked: true,
+      note: gearKnown === true ? SETTINGS_LOCK_STOP : SETTINGS_LOCK_GEAR_UNKNOWN,
+    };
+  }
+
+  // The band as a whole: its sections in SETTINGS_SPECS order (DISPLAY then
+  // SYSTEM), and the lock.
+  function settingsBandView(parked, gearKnown) {
+    var sections = [];
+    for (var i = 0; i < SETTINGS_SPECS.length; i++) {
+      if (sections.indexOf(SETTINGS_SPECS[i].section) < 0) {
+        sections.push(SETTINGS_SPECS[i].section);
+      }
+    }
+    var lock = settingsLockView(parked, gearKnown);
+    return { sections: sections, locked: lock.locked, note: lock.note };
+  }
+
+  // US-878-c (Atlas B13): one entry of the injected settings blob. The server
+  // sends {found, value} per key, so a key that RESOLVED to null (overrideLevel
+  // = auto) is told apart from one it could not resolve. Anything else -- no
+  // blob, a missing key, a bare value, found not exactly true -- is not found.
+  function settingsEntry(source, key) {
+    var entry = isObj(source) ? source[key] : null;
+    if (!isObj(entry) || entry.found !== true ||
+        !Object.prototype.hasOwnProperty.call(entry, "value")) {
+      return { found: false, value: null };
+    }
+    return { found: true, value: entry.value };
+  }
+
   // Render one settings row from its EFFECTIVE value. `known:false` means the
   // server could not resolve a value -- rendered Unknown, never Off: "Off" is a
   // claim about stored state, and we were told there isn't one (honest
-  // instrument). GAP 3a: auto-rotate is DERIVED from autoRotateS > 0; no
+  // instrument). GAP 3a: auto-rotate is the one autoRotateS key (0 = off); no
   // separate autoRotate bool exists on this side either.
-  function settingsRowView(spec, value) {
+  // US-895-a: a steps row shows its stored seconds EXACTLY, on a step or off
+  // one ('12 s'); a value the overlay could never store (negative, not a
+  // finite number) is Unknown.
+  //
+  // US-895-c: a level row also needs `ctx` -- {found} (B13: AUTO shows only
+  // for a key FOUND as null; not found is Unknown) and {minLevel}, the
+  // effective floor. `on` is the mode (AUTO / FIXED); `display` is what the
+  // stepper reads, which is Unknown whenever the floor is (spec s4.7). The
+  // view adds `steps` (percent, null = floor unknown), `pct` (the stored
+  // percent while FIXED), `fixedAllowed` and `showValue` (the stepper is
+  // hidden only under a known AUTO with a known floor).
+  function settingsRowView(spec, value, ctx) {
     var kind = spec ? spec.kind : null;
     var known = false;
     var on = null;
     var display = "Unknown";
-    if (kind === "seconds") {
-      known = typeof value === "number" && isFinite(value);
-      if (known) {
-        on = value > 0;
-        display = on ? "On" : "Off";
+    var level = null;
+    if (kind === "level") {
+      level = { steps: settingsLevelSteps(ctx ? ctx.minLevel : null), pct: null };
+      var found = !!ctx && ctx.found === true;
+      if (found && value === null) {
+        known = true;
+        on = SETTINGS_LEVEL_MODES.auto;
+        display = SETTINGS_LEVEL_MODES.auto;
+      } else if (found && settingsIsLevel(value)) {
+        known = true;
+        on = SETTINGS_LEVEL_MODES.fixed;
+        level.pct = settingsLevelPct(value);
+        if (level.steps !== null) display = settingsLevelLabel(level.pct);
       }
+    } else if (kind === "steps") {
+      known = typeof value === "number" && isFinite(value) && value >= 0;
+      if (known) display = settingsStepLabel(value);
+    } else if (kind === "ladder") {
+      // US-895-b: a lux end the overlay could store is a finite number > 0,
+      // shown exactly as stored, on the ladder or off it.
+      known = typeof value === "number" && isFinite(value) && value > 0;
+      if (known) display = settingsValueLabel(spec, value);
     } else if (kind === "bool") {
       known = typeof value === "boolean";
       if (known) {
@@ -1997,7 +2611,7 @@
         display = on ? "On" : "Off";
       }
     }
-    return {
+    var view = {
       key: spec ? spec.key : null,
       label: spec ? spec.label : "",
       kind: kind,
@@ -2008,6 +2622,13 @@
       on: on,
       display: display,
     };
+    if (level !== null) {
+      view.steps = level.steps;
+      view.pct = level.pct;
+      view.fixedAllowed = level.steps !== null;
+      view.showValue = !(on === SETTINGS_LEVEL_MODES.auto && view.fixedAllowed);
+    }
+    return view;
   }
 
   // Is this choice the one currently stored? An unknown row selects NOTHING --
@@ -2019,14 +2640,16 @@
     return view.on === choiceValue;
   }
 
-  // The value to PERSIST for a chosen control state. GAP 3a: auto-rotate off
-  // writes 0 and on writes the shipped interval, so both directions round-trip
-  // through the one autoRotateS key. Booleans are coerced to REAL booleans --
+  // The value to PERSIST for a chosen control state. US-895-a: a steps row
+  // writes the chosen seconds through its one key (0 = Off), so every step
+  // round-trips through autoRotateS. Booleans are coerced to REAL booleans --
   // the overlay's validator takes bool only, so a truthy string would 400.
   function settingsWriteValue(spec, desired) {
     if (!spec) return null;
-    if (spec.kind === "seconds") {
-      return desired ? CAROUSEL_DEFAULTS.autoRotateS : 0;
+    // US-895-c: a level row's desired IS its write (null = AUTO, or a
+    // settingsLevelWrite value); coercing it would turn AUTO into false.
+    if (spec.kind === "steps" || spec.kind === "ladder" || spec.kind === "level") {
+      return desired;
     }
     return !!desired;
   }
@@ -2041,10 +2664,13 @@
     var has =
       obj && Object.prototype.hasOwnProperty.call(res, "value");
     var ok = obj && res.ok === true;
+    // US-895-c: `found` -- the body carried a re-read at all. A level row needs
+    // it to tell a re-read null (AUTO) from no answer (Unknown).
     return {
       ok: ok,
       note: ok ? "saved" : "couldn't save",
       value: has ? res.value : null,
+      found: !!has,
     };
   }
 
@@ -3163,6 +3789,10 @@
     return out;
   }
 
+  // US-878-c: the fixed-brightness key, as the server injects it in the
+  // settings blob (the overlay's flat dot-path).
+  var OVERRIDE_LEVEL_KEY = "pi.display.autoDim.overrideLevel";
+
   // brightnessAlarmActive (the alarm input below) is US-899-a1's: it keys on the
   // states/alerts takeover, beside takeoverAlertView.
 
@@ -3175,12 +3805,18 @@
   //      surface is FULL before anything else is read, so a dark cabin (or a dead
   //      light sensor) can never dim a PULL-OVER alarm. It SUPERSEDED the old
   //      alarmFloorLevel key outright, which is why US-595 could retire it.
-  //   2. FRESH -> {data.brightnessLevel, data.brightnessMode}: the level the
+  //   2. US-878-c (Atlas B4): pi.display.autoDim.overrideLevel found in the
+  //      per-request settings blob and a finite number in [0, 1] -> {it,
+  //      'fixed'}. A CONFIG fact, not a sensor one, so a fixed level survives a
+  //      dead light sensor. The blob is its only carrier (no states/light key,
+  //      no bridge timer). Outside [0, 1] it falls through, never clamped
+  //      (US-627); null (auto) or not found falls through too.
+  //   3. FRESH -> {data.brightnessLevel, data.brightnessMode}: the level the
   //      bridge published, applied as published ('auto', or 'default' when the
   //      bridge had no reading). FRESH = an object, not sourceUnavailable, a
   //      parseable ts no older than luxStaleSec, and a brightnessLevel that is a
   //      finite number in [0, 1].
-  //   3. otherwise -> {injected defaultLevel, 'fallback'}.
+  //   4. otherwise -> {injected defaultLevel, 'fallback'}.
   //
   // lux is NOT consulted: the bridge already turned it into the level. An
   // out-of-range brightnessLevel is fallback, NEVER clamped (US-627: never
@@ -3188,8 +3824,13 @@
   // never takes effect). The fallback defaultLevel is applied UNCLAMPED for the
   // same reason; validate_config enforces defaultLevel >= minLevel. A payload
   // with no brightnessLevel at all (an older producer) is fallback, not a throw.
-  function appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) {
+  function appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive, settings) {
     if (alarmActive) return { level: STOP_ALARM_LEVEL, basis: "alert" };
+    var override = settingsEntry(settings, OVERRIDE_LEVEL_KEY);
+    if (override.found && typeof override.value === "number" && isFinite(override.value) &&
+        override.value >= 0 && override.value <= 1) {
+      return { level: override.value, basis: "fixed" };
+    }
     var c = resolveAutoDimConfig(injectedAutoDim);
     var fallback = { level: c.defaultLevel, basis: "fallback" };
     if (!isObj(lightData) || sourceUnavailable(lightData, "light")) return fallback;
@@ -3328,7 +3969,8 @@
     var value = Math.round(applied.level * 100) + " %";
     var label = applied.basis === "auto" ? "BRIGHTNESS AUTO" : "BRIGHTNESS";
     var note = applied.basis === "auto" ? null
-      : applied.basis === "alert" ? "(alert)" : "(default, no reading)";
+      : applied.basis === "alert" ? "(alert)"
+      : applied.basis === "fixed" ? "(fixed in Settings)" : "(default, no reading)";
     return {
       label: label, value: value, note: note,
       text: label + " " + value + (note ? " " + note : ""),
@@ -3409,8 +4051,8 @@
   // lightBand is '--' with no glyph. Stale (age > luxStaleSec, or undated)
   // dims the word tile, the curve and the raw row -- never the status, which
   // reports what the kiosk applied.
-  function lightPageView(data, cfg, nowMs, alarmActive) {
-    var applied = appliedBrightness(data, cfg, nowMs, alarmActive);
+  function lightPageView(data, cfg, nowMs, alarmActive, settings) {
+    var applied = appliedBrightness(data, cfg, nowMs, alarmActive, settings);
     var status = lightStatusView(applied);
     if (!isObj(data) || sourceUnavailable(data, "light")) {
       return {
@@ -3988,6 +4630,16 @@
     return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
 
+  // The S105 M7 freshness age as one helper (spec s4.5 I6): floor, clamped at
+  // 0 (a future ts is clock skew), `N s ago` with a space, capped at `999+`.
+  // Null when there is no age -- an undated reading shows no age. The Motion
+  // UPDATED cell and the DATA detail's feeds both read it.
+  function freshAgeText(ageSec) {
+    if (typeof ageSec !== "number" || isNaN(ageSec)) return null;
+    var shown = Math.max(0, Math.floor(ageSec));
+    return (shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown)) + " s ago";
+  }
+
   function healthCell(value, tone, sub) {
     return { value: value, tone: tone, sub: sub === undefined ? null : sub };
   }
@@ -3998,9 +4650,7 @@
   function motionUpdatedCell(data, nowMs, staleSec) {
     var age = readAgeSec(data, nowMs);
     if (age === null) return healthCell("--", "none", MOTION_NO_TIMESTAMP_TEXT);
-    var shown = Math.max(0, Math.floor(age));
-    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
-    return healthCell(text + " s ago", age > staleSec ? "warn" : "plain");
+    return healthCell(freshAgeText(age), age > staleSec ? "warn" : "plain");
   }
 
   // Only a boolean is a verdict. Absent: the provider's own reason when it
@@ -5311,25 +5961,43 @@
     feedObserved: feedObserved,
     feedWaitedMs: feedWaitedMs,
     LOADING_GRACE_MS: LOADING_GRACE_MS,
-    obdLinkTile: obdLinkTile,
-    syncTile: syncTile,
-    powerTile: powerTile,
-    driveTile: driveTile,
-    btGlyphState: btGlyphState,
+    linkChainGlyph: linkChainGlyph,
+    LINK_CHAIN_LAYERS: LINK_CHAIN_LAYERS,
+    LINK_STATE_LOOK: LINK_STATE_LOOK,
+    LINK_MEMBER_LAYERS: LINK_MEMBER_LAYERS,
     syncGlyphState: syncGlyphState,
-    systemSummary: systemSummary,
-    sysRowFreshness: sysRowFreshness,
-    systemIssueRows: systemIssueRows,
-    systemDiagnostics: systemDiagnostics,
-    systemDrill: systemDrill,
+    systemVerdictView: systemVerdictView,
+    obdRowView: obdRowView,
+    obdDetailView: obdDetailView,
+    OBD_LAYER_SENTENCE: OBD_LAYER_SENTENCE,
+    OBD_ALL_UP_SENTENCE: OBD_ALL_UP_SENTENCE,
+    currentParked: currentParked,
+    onParkedChange: onParkedChange,
+    publishParked: publishParked,
+    piLineView: piLineView,
+    piDetailView: piDetailView,
+    uptimeText: uptimeText,
     systemStatusView: systemStatusView,
-    captureTile: captureTile,
+    dataRowView: dataRowView,
+    dataDetailView: dataDetailView,
+    wifiRowView: wifiRowView,
+    wifiDetailView: wifiDetailView,
+    wifiGlyphState: wifiGlyphState,
+    syncWhenText: syncWhenText,
+    freshAgeText: freshAgeText,
+    CAPTURE_STATE_WORD: CAPTURE_STATE_WORD,
+    CAPTURE_FEEDS: CAPTURE_FEEDS,
+    CAPTURE_FEED_WORD: CAPTURE_FEED_WORD,
     priorShutdownTile: priorShutdownTile,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
-    socTile: socTile,
-    ladderView: ladderView,
-    batteryHealthView: batteryHealthView,
+    upsRowView: upsRowView,
+    upsDetailView: upsDetailView,
+    POWER_SOURCE_REASON_WORDS: POWER_SOURCE_REASON_WORDS,
+    healthValue: healthValue,
+    healthLevel: healthLevel,
+    healthReasonText: healthReasonText,
+    healthMarginText: healthMarginText,
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
     fuelTrendView: fuelTrendView,
@@ -5351,7 +6019,17 @@
     settingsApplyStates: settingsApplyStates,
     settingsReloadNeeded: settingsReloadNeeded,
     settingsChoices: settingsChoices,
+    settingsStepNext: settingsStepNext,
+    settingsRowStepNext: settingsRowStepNext,
+    settingsLevelSteps: settingsLevelSteps,
+    settingsLevelFirstFixed: settingsLevelFirstFixed,
+    settingsLevelWrite: settingsLevelWrite,
+    settingsLevelChoiceWrite: settingsLevelChoiceWrite,
+    settingsStepCrosses: settingsStepCrosses,
+    settingsLockView: settingsLockView,
+    settingsBandView: settingsBandView,
     settingsRowView: settingsRowView,
+    settingsEntry: settingsEntry,
     settingsChoiceActive: settingsChoiceActive,
     settingsWriteValue: settingsWriteValue,
     settingsSaveResult: settingsSaveResult,
@@ -5457,7 +6135,12 @@
     // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
     // software dim -- the browser kiosk can't drive the panel backlight). Setting
     // a var (not style.filter) keeps the CSS the single owner of the filter rule.
+    // US-895-c (Iris I11): the level last applied, which the Settings band's
+    // AUTO -> FIXED starts from. Null until the first tick applies one.
+    var lastAppliedLevel = null;
+
     function applyBrightness(level) {
+      lastAppliedLevel = level;
       var screenEl = document.getElementById("screen");
       if (screenEl) screenEl.style.setProperty("--display-brightness", String(level));
     }
@@ -5468,109 +6151,258 @@
     // The level drives the colour via [data-level] CSS -- a degraded tile is
     // never green (F-1). Built with textContent (no innerHTML) so emitter values
     // render verbatim, never as markup.
-    // US-489: `withDot` prepends the per-tile status dot. It is OPT-IN because
-    // appendTile is shared with the idle, battery and LTFT cards -- defaulting
-    // it on would restyle three shipped cards from a story scoped to one.
-    function appendTile(parent, tile, withDot) {
+    // US-894-b: the US-489 `withDot` status dot went with the System grid,
+    // its only caller.
+    function appendTile(parent, tile) {
       var el = document.createElement("div");
       el.className = "tile";
       el.setAttribute("data-level", tile.level);
       var label = document.createElement("span");
       label.className = "tile-label";
       label.textContent = tile.label;
-      if (withDot) {
-        // The dot takes no level of its own -- it inherits the tile's
-        // [data-level], so it can never disagree with the value beside it.
-        var head = document.createElement("div");
-        head.className = "tile-head";
-        var dot = document.createElement("span");
-        dot.className = "tile-dot";
-        head.appendChild(dot);
-        head.appendChild(label);
-        el.appendChild(head);
-      }
       var value = document.createElement("span");
       value.className = "tile-value";
       value.textContent = tile.value;
       var detail = document.createElement("span");
       detail.className = "tile-detail";
       detail.textContent = tile.detail;
-      if (!withDot) el.appendChild(label);
+      el.appendChild(label);
       el.appendChild(value);
       el.appendChild(detail);
       parent.appendChild(el);
     }
 
-    function renderSystemStatusCard(card, view, glyphEls) {
-      // US-509: the drill-down is fed by the SAME poll that paints the card, and
-      // an OPEN overlay is repainted with it. A drill-down left frozen on the
-      // snapshot that opened it would keep printing "seen 42s ago" while the
-      // age climbed -- the frozen-instrument fabrication this project names for
-      // the g-dot and the rotate bar, in a third geometry.
-      lastSysView = view;
-      if (sysDetailOpen()) renderSysDetail(view);
-      var body = card.querySelector(".card-body");
-      if (body) {
-        body.textContent = "";
-        // US-489 P-1: the one-glance headline, then the 2x2 grid. Built with
-        // textContent (no innerHTML) so emitter values render verbatim.
-        var summary = document.createElement("div");
-        summary.className = "sys-summary";
-        summary.setAttribute("data-level", view.summary.level);
-        var summaryText = document.createElement("span");
-        summaryText.className = "sys-summary-text";
-        summaryText.textContent = view.summary.text;
-        summary.appendChild(summaryText);
-        if (view.summary.detail) {
-          var summaryDetail = document.createElement("span");
-          summaryDetail.className = "sys-summary-detail";
-          summaryDetail.textContent = view.summary.detail;
-          summary.appendChild(summaryDetail);
-        }
-        // US-509: the headline becomes a control ONLY when there is something
-        // behind it. An always-tappable summary that opens an empty list on a
-        // healthy system is a misleading affordance -- it promises detail the
-        // card does not have. The chevron is part of the same gate, so the
-        // affordance and the behaviour can never disagree.
-        if (view.drill && view.drill.tappable) {
-          summary.classList.add("sys-summary-tappable");
-          summary.setAttribute("role", "button");
-          summary.setAttribute("tabindex", "0");
-          var chevron = document.createElement("span");
-          chevron.className = "sys-summary-chevron";
-          chevron.textContent = "›";
-          summary.appendChild(chevron);
-          summary.onclick = function () { openSysDetail(); };
-        }
-        body.appendChild(summary);
-        var grid = document.createElement("div");
-        grid.className = "sys-grid";
-        appendTile(grid, view.tiles.obdLink, true);
-        appendTile(grid, view.tiles.sync, true);
-        appendTile(grid, view.tiles.power, true);
-        appendTile(grid, view.tiles.drive, true);
-        // US-688. Guarded because the tile is absent whenever no capture-health
-        // payload was fetched. It MUST be painted whenever it exists: the
-        // summary counts it, so a card that summarised it without showing it
-        // would read "SYSTEM · 1 ISSUE" over four healthy-looking tiles.
-        if (view.tiles.capture) appendTile(grid, view.tiles.capture, true);
-        body.appendChild(grid);
+    // US-894-f (spec AC 7, Atlas A5): THE one way an element is painted on
+    // its level. An amber element names the ONE verdict member it belongs to
+    // (data-member), so the page-wide gate can check that the amber set is
+    // the member set; any other level carries no member (and a repaint of a
+    // reused element drops a stale one).
+    function setMemberLevel(el, level, member) {
+      el.setAttribute("data-level", level);
+      if (level === "amber" && typeof member === "string") {
+        el.setAttribute("data-member", member);
+      } else {
+        el.removeAttribute("data-member");
       }
-      if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
-      if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
+    }
+
+    // US-894-b (spec s3 layout A): the verdict line, then one row per
+    // subsystem. Built with textContent (no innerHTML) so provider values --
+    // a member's reason above all -- render verbatim, never as markup. Rows
+    // are `.sys-row`, never `.tile`.
+    // US-894-f: the verdict's tap opens the Pi detail (s4.1, parked only).
+    function appendSysVerdict(body, verdict, tappable) {
+      var line = document.createElement("div");
+      line.className = "sys-verdict";
+      line.setAttribute("data-level", verdict.level);
+      var text = document.createElement("span");
+      text.className = "sys-verdict-text";
+      text.textContent = verdict.text;
+      line.appendChild(text);
+      if (tappable) {
+        // s4.1 I9: the ` ›` only while the tap works (parked). A chevron that
+        // leads nowhere is the US-758 failure.
+        line.classList.add("sys-tappable");
+        line.setAttribute("role", "button");
+        line.setAttribute("tabindex", "0");
+        var chevron = document.createElement("span");
+        chevron.className = "sys-chevron";
+        chevron.textContent = " ›";
+        line.appendChild(chevron);
+        line.onclick = function () { openSysDetail("pi"); };
+      }
+      appendSysSettings(line);
+      body.appendChild(line);
+    }
+
+    // US-895-a (spec s3, s4.7.2): SETTINGS › on the verdict line, in EVERY
+    // state -- it only navigates (R5, like the Warnings icon), and the band it
+    // opens carries the lock. It clicks the ⋮ itself, so the two entries are
+    // one open path and can never differ. Its tap stops at the link: the
+    // verdict line under it opens the Pi detail.
+    function appendSysSettings(line) {
+      var link = document.createElement("span");
+      link.className = "sys-settings";
+      link.setAttribute("role", "button");
+      link.setAttribute("tabindex", "0");
+      link.textContent = "SETTINGS ›";
+      link.addEventListener("click", function (e) {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        var menuBtn = document.getElementById("menu-btn");
+        if (menuBtn) menuBtn.click();
+      });
+      line.appendChild(link);
+    }
+
+    // s4.1: the Pi line -- one amber mono line under the verdict, the `pi`
+    // member's reason verbatim. Parked, it opens the Pi detail and carries
+    // ` ›` (space + U+203A, I9); not parked it opens nothing and shows none.
+    function appendPiLine(body, piLine, tappable) {
+      var line = document.createElement("div");
+      line.className = "sys-pi-line";
+      setMemberLevel(line, piLine.level, piLine.member);
+      var text = document.createElement("span");
+      text.className = "sys-pi-reason";
+      text.textContent = piLine.text;
+      line.appendChild(text);
+      if (tappable) {
+        line.classList.add("sys-tappable");
+        line.setAttribute("role", "button");
+        line.setAttribute("tabindex", "0");
+        var chevron = document.createElement("span");
+        chevron.className = "sys-pi-chevron";
+        chevron.textContent = " ›";
+        line.appendChild(chevron);
+        line.onclick = function () { openSysDetail("pi"); };
+      }
+      body.appendChild(line);
+    }
+
+    // The OBD row's chain: three outlined steps joined by short rules, each
+    // step's look on its own data-state (a null layer is `dashed`, AC 4).
+    function appendObdChain(parent, steps) {
+      var chain = document.createElement("span");
+      chain.className = "obd-chain";
+      for (var i = 0; i < LINK_CHAIN_LAYERS.length; i++) {
+        var layer = LINK_CHAIN_LAYERS[i];
+        if (i > 0) {
+          var join = document.createElement("span");
+          join.className = "obd-join";
+          join.textContent = "━";
+          chain.appendChild(join);
+        }
+        var step = document.createElement("span");
+        step.className = "obd-step";
+        step.setAttribute("data-layer", layer);
+        step.setAttribute("data-state", steps[i]);
+        // An amber step is its own layer's member (linkChainGlyph's rule).
+        if (steps[i] === "amber") setMemberLevel(step, "amber", layer);
+        step.textContent = OBD_STEP_LABELS[layer];
+        chain.appendChild(step);
+      }
+      parent.appendChild(chain);
+    }
+
+    function appendSysRow(parent, row, tappable) {
+      var el = document.createElement("div");
+      el.className = "sys-row";
+      el.setAttribute("data-row", row.key);
+      setMemberLevel(el, row.level, row.member);
+      var label = document.createElement("span");
+      label.className = "sys-row-label";
+      label.textContent = row.label;
+      el.appendChild(label);
+      var main = document.createElement("div");
+      main.className = "sys-row-main";
+      var value = document.createElement("div");
+      value.className = "sys-row-value";
+      if (row.steps) {
+        appendObdChain(value, row.steps);
+      } else {
+        // US-894-c: a word in its own look, then a neutral tail.
+        var word = document.createElement("span");
+        word.className = "sys-row-word";
+        word.setAttribute("data-state", row.look);
+        if (row.look === "amber") setMemberLevel(word, "amber", row.member);
+        word.textContent = row.word;
+        value.appendChild(word);
+        var tail = document.createElement("span");
+        tail.className = "sys-row-tail";
+        tail.textContent = row.tail;
+        value.appendChild(tail);
+      }
+      main.appendChild(value);
+      var sentence = document.createElement("span");
+      sentence.className = "sys-row-sentence";
+      if (row.parts) {
+        // US-894-c: one span per part, each on its own level, so a member's
+        // reason is amber and the counts beside it are not (s4.0). The ` · `
+        // lives inside the span it introduces.
+        for (var p = 0; p < row.parts.length; p++) {
+          var part = document.createElement("span");
+          part.className = "sys-row-part";
+          setMemberLevel(part, row.parts[p].level, row.member);
+          part.textContent = (p > 0 ? " · " : "") + row.parts[p].text;
+          sentence.appendChild(part);
+        }
+      } else {
+        sentence.textContent = row.sentence;
+      }
+      main.appendChild(sentence);
+      el.appendChild(main);
+      if (tappable) {
+        el.classList.add("sys-tappable");
+        el.setAttribute("role", "button");
+        el.setAttribute("tabindex", "0");
+        var chevron = document.createElement("span");
+        chevron.className = "sys-chevron";
+        chevron.textContent = "›";
+        el.appendChild(chevron);
+        el.onclick = function () { openSysDetail(row.key); };
+      }
+      parent.appendChild(el);
+    }
+
+    // The page body from a view. Taps are offered only while parked (the ONE
+    // accessor, currentParked); not parked, nothing opens and no chevron shows.
+    function renderSystemBody(card, view) {
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+      var parked = currentParked().parked === true;
+      appendSysVerdict(body, view.verdict, parked);
+      if (view.piLine) appendPiLine(body, view.piLine, parked);
+      var rows = document.createElement("div");
+      rows.className = "sys-rows";
+      for (var i = 0; i < view.rows.length; i++) appendSysRow(rows, view.rows[i], parked);
+      body.appendChild(rows);
+    }
+
+    function renderSystemStatusCard(card, view, glyphEls) {
+      // US-509: the detail is fed by the SAME poll that paints the page, and
+      // an OPEN overlay is repainted with it -- never frozen on the snapshot
+      // that opened it.
+      lastSysView = view;
+      lastSysCard = card;
+      if (sysDetailOpen()) renderSysDetail(view);
+      renderSystemBody(card, view);
+      paintLinkChain(glyphEls.bt, view.glyphs.bt);
+      paintGlyph(glyphEls.sync, view.glyphs.sync, "sync");
       // ARCH-007: render the emitter's verdict. The display applies NO
       // threshold of its own (ruling s2.1) -- two rules for one fact disagree
       // the first time either moves.
-      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", view.glyphs.wifi);
+      paintGlyph(glyphEls.wifi, view.glyphs.wifi, "wifi");
     }
 
-    // --- US-509 System-Status drill-down overlay (browser only) -------------
+    // s4.1: system-status unreadable -> the verdict is `--`, never ALL OK, and
+    // no row claims a reading. The view is dropped so no tap can open a detail
+    // built from a reading that is gone.
+    function renderSystemUnavailable(card) {
+      lastSysView = null;
+      lastSysCard = card;
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+      appendSysVerdict(body, systemVerdictView(null), false);
+    }
 
-    // The most-recent card view, so a tap on the summary line has rows to show
-    // without a second read of the state file. It is set by the renderer above,
-    // which means the overlay is fed by exactly the same poll that painted the
-    // card -- the two can never drift apart.
+    // US-894-b: a parked edge repaints the page from the last view, so a tap
+    // and its chevron appear (or go) on the edge, not a tick later.
+    function repaintSystemOnParkedEdge() {
+      if (lastSysCard && lastSysView) renderSystemBody(lastSysCard, lastSysView);
+    }
+
+    // --- US-509 System-Status detail overlay (browser only) -----------------
+
+    // The most-recent page view, so a tap has content to show without a second
+    // read of the state file. It is set by the renderer above, which means the
+    // overlay is fed by exactly the same poll that painted the page.
     var lastSysView = null;
+    var lastSysCard = null;
+    // US-894-b: which detail #sys-detail shows -- a row's key ("obd",
+    // "data", "wifi", "ups") or "pi" (US-894-f: behind the verdict and the Pi
+    // line). Every detail renders in the one overlay (I8).
+    var sysDetailKind = "pi";
 
     // Elements are looked up LAZILY rather than captured at init: this renderer
     // lives in the shared render scope (not the browser-only block below), and a
@@ -5580,77 +6412,231 @@
       var bodyEl = document.getElementById("sys-detail-body");
       if (!bodyEl) return;
       bodyEl.textContent = "";
-      var head = document.getElementById("sys-detail-head");
-      // The head repeats the LINE THE OPERATOR TAPPED verbatim, rather than
-      // recounting the rows into a second headline. A drill-down whose title
-      // disagrees with the summary that opened it is its own small lie -- and
-      // the counts genuinely differ (the summary counts ISSUES; the list also
-      // carries known-unknowns).
-      if (head) head.textContent = view && view.summary ? view.summary.text : "";
-      var rows = view && view.drill ? view.drill.rows : [];
-      if (!rows.length) {
-        // Reachable while the overlay is OPEN and the last fault clears, and --
-        // since US-559 -- the NORMAL state of a healthy card, which is now
-        // reachable for its diagnostics. Saying so is the honest move; an empty
-        // box reads as a broken overlay, and closing it would yank the surface
-        // out from under the operator.
-        var none = document.createElement("div");
-        none.className = "sys-issue-none";
-        none.textContent = "all sources OK";
-        bodyEl.appendChild(none);
+      // I8: the version chip -- the ONE .deploy-version reader (Atlas P8) --
+      // shows only in the Pi detail; every row's detail hides it.
+      var chip = document.getElementById("version-chip");
+      if (chip) chip.hidden = sysDetailKind !== "pi";
+      if (sysDetailKind === "obd") {
+        renderObdDetail(bodyEl, view);
+        return;
       }
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
+      if (sysDetailKind === "data") {
+        renderDataDetail(bodyEl, view);
+        return;
+      }
+      if (sysDetailKind === "wifi") {
+        renderWifiDetail(bodyEl, view);
+        return;
+      }
+      if (sysDetailKind === "ups") {
+        renderUpsDetail(bodyEl, view);
+        return;
+      }
+      renderPiDetail(bodyEl, view);
+    }
+
+    // s4.6.2 Pi detail (US-894-f): per value its label, the value (amber only
+    // as the `pi` member's crossed limit), the limit / hex note and its OWN
+    // read time; the version is the #version-chip below the body. A view that
+    // is gone (the file went unreadable while open) shows every value `--`.
+    function renderPiDetail(bodyEl, view) {
+      var detail = view && view.piDetail ? view.piDetail : piDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      for (var i = 0; i < detail.rows.length; i++) {
+        var row = detail.rows[i];
         var el = document.createElement("div");
-        el.className = "detail-card sys-issue-row";
-        // The row's level came straight off the tile, so the chip colour here
-        // and the grid cell behind the overlay are incapable of disagreeing.
-        el.setAttribute("data-level", row.level);
+        el.className = "detail-card pi-row";
+        el.setAttribute("data-row", row.key);
+        setMemberLevel(el, row.level, row.member);
         var rowHead = document.createElement("div");
         rowHead.className = "sys-issue-head";
         var label = document.createElement("span");
         label.className = "sys-issue-label";
         label.textContent = row.label;
-        var chip = document.createElement("span");
-        chip.className = "sys-issue-chip";
-        chip.textContent = row.value;
+        var value = document.createElement("span");
+        value.className = "pi-value";
+        value.textContent = row.value;
         rowHead.appendChild(label);
-        rowHead.appendChild(chip);
+        rowHead.appendChild(value);
         el.appendChild(rowHead);
-        // Omitted when the view found it only repeated the freshness beside it.
-        if (row.reason) {
-          var reason = document.createElement("span");
-          reason.className = "sys-issue-reason";
-          reason.textContent = row.reason;
-          el.appendChild(reason);
+        if (row.note !== null) {
+          var note = document.createElement("span");
+          note.className = "obd-layer-fact pi-note";
+          note.textContent = row.note;
+          el.appendChild(note);
         }
-        var fresh = document.createElement("span");
-        fresh.className = "sys-issue-freshness";
-        fresh.textContent = row.freshness;
-        el.appendChild(fresh);
+        var read = document.createElement("span");
+        read.className = "obd-layer-fact pi-read";
+        read.textContent = row.read;
+        el.appendChild(read);
         bodyEl.appendChild(el);
       }
-      renderSysDiagnostics(bodyEl, view && view.drill ? view.drill.diagnostics : []);
     }
 
-    // US-559: the reference facts, below the faults. Built with textContent (no
-    // innerHTML) like every other row here, so emitter values render verbatim
-    // and never as markup.
-    function renderSysDiagnostics(bodyEl, diags) {
-      if (!diags || !diags.length) return;
-      for (var i = 0; i < diags.length; i++) {
+    // s4.6 OBD detail: per layer its state, since when and last success, then
+    // the row's sentence in full (the row ellipsizes it). A view that is gone
+    // (the file went unreadable while open) shows every value as `--`.
+    function renderObdDetail(bodyEl, view) {
+      var detail = view && view.obdDetail ? view.obdDetail : obdDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      for (var i = 0; i < detail.layers.length; i++) {
+        var layer = detail.layers[i];
         var el = document.createElement("div");
-        el.className = "detail-card sys-diag-row";
+        el.className = "detail-card obd-layer-row";
+        el.setAttribute("data-layer", layer.layer);
+        var rowHead = document.createElement("div");
+        rowHead.className = "sys-issue-head";
         var label = document.createElement("span");
-        label.className = "sys-diag-label";
-        label.textContent = diags[i].label;
-        var text = document.createElement("span");
-        text.className = "sys-diag-text";
-        text.textContent = diags[i].text;
-        el.appendChild(label);
-        el.appendChild(text);
+        label.className = "obd-step";
+        label.setAttribute("data-state", layer.look);
+        if (layer.look === "amber") setMemberLevel(label, "amber", layer.layer);
+        label.textContent = layer.label;
+        var state = document.createElement("span");
+        state.className = "obd-layer-state";
+        state.textContent = layer.state;
+        rowHead.appendChild(label);
+        rowHead.appendChild(state);
+        el.appendChild(rowHead);
+        var since = document.createElement("span");
+        since.className = "obd-layer-fact";
+        since.textContent = "since " + layer.since;
+        el.appendChild(since);
+        var lastOk = document.createElement("span");
+        lastOk.className = "obd-layer-fact";
+        lastOk.textContent = "last success " + layer.lastOk;
+        el.appendChild(lastOk);
         bodyEl.appendChild(el);
       }
+      var sentence = document.createElement("div");
+      sentence.className = "detail-card obd-detail-sentence";
+      setMemberLevel(sentence, detail.level, detail.member);
+      sentence.textContent = detail.sentence;
+      bodyEl.appendChild(sentence);
+    }
+
+    // s4.6 DATA detail: per feed its word (in its look) and freshness age,
+    // then the sync facts, then the row's sentence in full. A view that is
+    // gone shows every value unread.
+    function appendDataFact(bodyEl, label, text, cls) {
+      var el = document.createElement("div");
+      el.className = "detail-card data-fact-row" + (cls ? " " + cls : "");
+      var head = document.createElement("span");
+      head.className = "sys-diag-label";
+      head.textContent = label;
+      var value = document.createElement("span");
+      value.className = "sys-diag-text";
+      value.textContent = text;
+      el.appendChild(head);
+      el.appendChild(value);
+      bodyEl.appendChild(el);
+      return el;
+    }
+
+    function renderDataDetail(bodyEl, view) {
+      var detail = view && view.dataDetail ? view.dataDetail : dataDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      for (var i = 0; i < detail.feeds.length; i++) {
+        var feed = detail.feeds[i];
+        var el = document.createElement("div");
+        el.className = "detail-card data-feed-row";
+        el.setAttribute("data-feed", feed.feed);
+        var rowHead = document.createElement("div");
+        rowHead.className = "sys-issue-head";
+        var label = document.createElement("span");
+        label.className = "sys-issue-label";
+        label.textContent = feed.label;
+        var state = document.createElement("span");
+        state.className = "sys-row-word data-feed-state";
+        state.setAttribute("data-state", feed.look);
+        if (feed.look === "amber") setMemberLevel(state, "amber", detail.member);
+        state.textContent = feed.state;
+        rowHead.appendChild(label);
+        rowHead.appendChild(state);
+        el.appendChild(rowHead);
+        var age = document.createElement("span");
+        age.className = "obd-layer-fact";
+        age.textContent = "last row " + feed.age;
+        el.appendChild(age);
+        bodyEl.appendChild(el);
+      }
+      appendDataFact(bodyEl, "LAST DATA STORED", detail.lastStored);
+      appendDataFact(bodyEl, "ROWS WAITING", detail.rowsWaiting);
+      appendDataFact(bodyEl, "EVENT ROWS WAITING", detail.eventRows);
+      if (detail.notCounted !== null) appendDataFact(bodyEl, "NOT COUNTED", detail.notCounted);
+      appendDataFact(bodyEl, "AT HOME", detail.atHome);
+      var sentence = document.createElement("div");
+      sentence.className = "detail-card obd-detail-sentence";
+      setMemberLevel(sentence, detail.level, detail.member);
+      sentence.textContent = detail.sentence;
+      bodyEl.appendChild(sentence);
+    }
+
+    // s4.6 WIFI detail (US-894-d): the state word in its look, then SSID,
+    // strength, `not connected to any network` for `down`, home, and the
+    // reason in words -- amber only as the `wifi` member's. No IP line.
+    function renderWifiDetail(bodyEl, view) {
+      var detail = view && view.wifiDetail ? view.wifiDetail : wifiDetailView(null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      var stateEl = appendDataFact(bodyEl, "STATE", "", "wifi-state-row");
+      var word = stateEl.querySelector(".sys-diag-text");
+      if (word) {
+        word.className = "sys-diag-text sys-row-word";
+        word.setAttribute("data-state", detail.state.look);
+        if (detail.state.look === "amber") setMemberLevel(word, "amber", detail.member);
+        word.textContent = detail.state.text;
+      }
+      appendDataFact(bodyEl, "NETWORK", detail.network);
+      appendDataFact(bodyEl, "STRENGTH", detail.strength);
+      if (detail.link !== null) appendDataFact(bodyEl, "LINK", detail.link);
+      appendDataFact(bodyEl, "HOME NETWORK", detail.home);
+      if (detail.reason !== null) {
+        var reasonEl = appendDataFact(bodyEl, "REASON", detail.reason, "wifi-reason");
+        setMemberLevel(reasonEl, detail.reasonLevel, detail.member);
+      }
+    }
+
+    // s4.6.1 UPS detail (US-894-e): the label, the cell + age, the source
+    // and its typed reason in words, the health verdict (never amber) with
+    // its reason or margin and the F-9 line, the SOC line, LAST STOP. All
+    // neutral: there is no UPS member. A view that is gone reads `--`.
+    function renderUpsDetail(bodyEl, view) {
+      var detail = view && view.upsDetail ? view.upsDetail : upsDetailView(null, null, null);
+      var head = document.getElementById("sys-detail-head");
+      if (head) head.textContent = detail.head;
+      appendUpsLine(bodyEl, detail.label, "ups-label");
+      appendDataFact(bodyEl, "CELL", detail.cell, "ups-cell");
+      appendDataFact(bodyEl, "SOURCE", detail.source, "ups-source");
+      if (detail.sourceReason !== null) {
+        appendDataFact(bodyEl, "SENSOR", detail.sourceReason, "ups-source-reason");
+      }
+      if (detail.health !== null) {
+        var healthEl = appendDataFact(bodyEl, "HEALTH", "", "ups-health");
+        var word = healthEl.querySelector(".sys-diag-text");
+        if (word) {
+          word.textContent = detail.health.value;
+          word.setAttribute("data-level", detail.health.level);
+        }
+        // The unknown reason, or the margin (I6: detail only, always with its
+        // `vs n s job` half) -- in words, never in the verdict's colour.
+        if (detail.health.note !== null) {
+          appendUpsLine(bodyEl, detail.health.note, "ups-health-note");
+        }
+      }
+      // F-9: the line already names itself (`last health check · ...`).
+      if (detail.healthCheck !== null) appendUpsLine(bodyEl, detail.healthCheck, "ups-health-check");
+      if (detail.soc !== null) appendDataFact(bodyEl, "SOC", detail.soc, "ups-soc");
+      appendDataFact(bodyEl, detail.lastStop.label, detail.lastStop.text, "ups-last-stop");
+    }
+
+    function appendUpsLine(bodyEl, text, cls) {
+      var el = document.createElement("div");
+      el.className = "detail-card " + cls;
+      el.textContent = text;
+      bodyEl.appendChild(el);
     }
 
     function sysDetailOpen() {
@@ -5658,11 +6644,13 @@
       return !!el && el.hidden === false;
     }
 
-    function openSysDetail() {
+    // Opens a detail ONLY while parked (Atlas B9: row and verdict taps), read
+    // at tap time from the one accessor -- a stale listener left on a row
+    // painted while parked cannot open it after the car moves off.
+    function openSysDetail(which) {
       var el = document.getElementById("sys-detail");
-      // Guarded on `tappable` as well as the handler that called it, so a stale
-      // listener left on a recovered card cannot open an empty overlay.
-      if (!el || !lastSysView || !lastSysView.drill.tappable) return;
+      if (!el || !lastSysView || currentParked().parked !== true) return;
+      sysDetailKind = which;
       renderSysDetail(lastSysView);
       el.hidden = false;
     }
@@ -5672,35 +6660,46 @@
       if (el) el.hidden = true;
     }
 
+    // US-894-a: each `.chain-dot` in #glyph-bt carries its own data-state, keyed
+    // by its data-layer. A dot the view has no look for falls to hollow rather
+    // than keeping a previous paint (no stale-green).
+    function paintLinkChain(chainEl, looks) {
+      if (!chainEl) return;
+      var dots = chainEl.querySelectorAll(".chain-dot");
+      for (var i = 0; i < dots.length; i++) {
+        var layer = dots[i].getAttribute("data-layer");
+        var look = isObj(looks) && typeof looks[layer] === "string" ? looks[layer] : "hollow";
+        paintGlyph(dots[i], look, layer);
+      }
+    }
+
+    // A top-bar glyph's look on data-state; an amber look also carries the
+    // member it belongs to (AC 7: the chain dot's member is its own layer,
+    // the WiFi glyph's is `wifi`, the sync glyph's `sync`). Any other look
+    // clears both, so a repaint never leaves a stale member behind.
+    function paintGlyph(el, look, member) {
+      if (!el) return;
+      el.setAttribute("data-state", look);
+      if (look === "amber") {
+        setMemberLevel(el, "amber", member);
+      } else {
+        el.removeAttribute("data-level");
+        el.removeAttribute("data-member");
+      }
+    }
+
     // Honest-instrument reset: a missing/malformed system-status file returns the
     // glyphs to neutral so a prior good read can't linger green (no stale-green).
+    // US-894-a: the chain resets to three HOLLOW dots -- an unreadable file is
+    // no reading of any layer (spec s4.2.1, AC 4).
     function resetSystemGlyphs(glyphEls) {
-      if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
-      if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
-      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", "neutral");
+      paintLinkChain(glyphEls.bt, linkChainGlyph(null));
+      paintGlyph(glyphEls.sync, "neutral", "sync");
+      // US-894-d: no reading -> dim arcs, no slash (s4.4).
+      paintGlyph(glyphEls.wifi, wifiGlyphState(null), "wifi");
     }
 
     // --- US-401 Battery Health DOM render (browser only) --------------------
-
-    // Render the failsafe ladder block (F-2 / A-6) -- built ONLY when draining.
-    // Minutes appear only when the power tier supplied a real runtimeRemainingS
-    // (Spool S-2); otherwise stage + volts only, no fabricated estimate.
-    function appendLadder(parent, ladder) {
-      var box = document.createElement("div");
-      box.className = "ladder";
-      box.setAttribute("data-stage", ladder.stage);
-      var banner = document.createElement("span");
-      banner.className = "ladder-banner";
-      banner.textContent = "DRAINING · " + ladder.stage;
-      box.appendChild(banner);
-      if (ladder.runtimeRemainingS != null) {
-        var rt = document.createElement("span");
-        rt.className = "ladder-runtime";
-        rt.textContent = "~" + Math.round(ladder.runtimeRemainingS / 60) + " min to cutoff";
-        box.appendChild(rt);
-      }
-      parent.appendChild(box);
-    }
 
     // US-429: render a whole-card typed NA -- one "NA (<reason>)" tile, honest
     // (never a blank or a stale last-real card) when the card's source is down.
@@ -6015,28 +7014,6 @@
       }
       bar.setAttribute("data-stale", view.stale ? "true" : "false");
       bar.setAttribute("data-redline", view.redline ? "true" : "false");
-    }
-
-    // US-507: the three merged renderers take a BODY element, not a card. They
-    // used to reach for their own `.card-body`, which silently assumed one
-    // source per card -- the assumption the Health card overturns. Taking the
-    // slot as an argument is what lets three of them paint into one card.
-    function renderBatteryHealthBody(body, view) {
-      if (!body || !view) return;
-      // US-429: UPS source unavailable -> the whole SECTION is a typed NA.
-      if (view.unavailable) {
-        renderNaBody(body, view.label, view.reason);
-        return;
-      }
-      body.textContent = "";
-      appendTile(body, view.health);
-      appendTile(body, view.vcell);
-      // F-8: render the percent tile only when a real SoC exists; a null soc
-      // omits the percent (volts already shown above), never a voltage-as-%.
-      if (view.soc.shown) appendTile(body, view.soc);
-      // US-504: no TEMP tile -- the MAX17048 has no temperature register.
-      // F-2 / A-6: the ladder DOM exists only when actually draining.
-      if (view.ladder) appendLadder(body, view.ladder);
     }
 
     // --- SVG helpers + the US-892-b Motion card render (browser only) -------
@@ -6573,8 +7550,7 @@
         renderNaBody(body, view.na.label, view.na.reason);
         return;
       }
-      if (view.key === "battery-health") renderBatteryHealthBody(body, view.view);
-      else if (view.key === "light") renderLightBody(body, view.view);
+      if (view.key === "light") renderLightBody(body, view.view);
       else if (view.key === "ltft-trend") renderFuelTrendBody(body, view.view);
     }
 
@@ -7010,11 +7986,17 @@
       // Deliberately NO confirm: these are non-destructive preferences, and
       // borrowing the service-control confirm would train the operator to
       // dismiss the modal that guards a service stop (Iris §4).
-      function postSetting(spec, desired, render, currentValue) {
+      // US-895-c: `currentFound` rides with `currentValue` so a level row's
+      // pending paint keeps AUTO (a found null) rather than reading Unknown.
+      function postSetting(spec, desired, render, currentValue, currentFound) {
+        // US-895-a (spec s4.7.2): while not parked a tap does NOTHING -- no
+        // write, no `saving…`. Asked here, the one write path, so no control
+        // can reach the route around it (`disabled` alone is a paint).
+        if (settingsLock().locked) return;
         // The pending paint keeps the value we already know is stored -- it must
         // not show the REQUESTED one, which is the optimistic success Iris ruled
         // out wearing a nicer label.
-        render(currentValue, settingsPendingNote());
+        render(currentValue, settingsPendingNote(), false, currentFound);
         var headers = { "Content-Type": "application/json" };
         if (token) headers["X-Splash-Token"] = token;
         fetch("/settings", {
@@ -7033,7 +8015,7 @@
             // Repaint FIRST, unconditionally: the operator must see the REAL
             // stored value even if the reload below is slow, blocked, or never
             // due -- the truth must not depend on the apply mechanism firing.
-            render(out.value, out.note);
+            render(out.value, out.note, false, out.found);
             // US-533 B1: the row said "applies on reload", so this is where the
             // band keeps that promise. The server resolves pi.display.carousel
             // per request, so the reloaded page picks the new period up with NO
@@ -7046,60 +8028,234 @@
           })
           .then(null, function () {
             // A rejected fetch tells us nothing about what is stored -> Unknown.
-            render(null, settingsSaveResult(null).note);
+            render(null, settingsSaveResult(null).note, false, false);
           });
       }
+
+      // US-895-a (spec s4.7.2) -- the band's lock, from the module's ONE
+      // parked fact (currentParked), never gearParked or the tick's debounce.
+      // `settingsRepaints` holds one repaint per row of the band as last
+      // built, so the parked edge repaints IN PLACE: no reload, no close.
+      var settingsLockEl = document.getElementById("settings-lock");
+      var settingsRepaints = [];
+
+      function settingsLock() {
+        var fact = currentParked();
+        return settingsLockView(fact.parked, fact.gearKnown);
+      }
+
+      function paintSettingsLock(lock) {
+        if (settingsList) settingsList.setAttribute("data-locked", String(lock.locked));
+        if (settingsLockEl) {
+          settingsLockEl.textContent = lock.note || "";
+          settingsLockEl.hidden = !lock.locked;
+        }
+      }
+
+      // The accessor's edge callback (it fires on a change of parked OR
+      // gearKnown, so the line's word follows the raw gear too). Each row
+      // repaints from ITS OWN last state: a write in flight keeps `saving…`,
+      // and its answer still lands through the same render.
+      onParkedChange(function () {
+        paintSettingsLock(settingsLock());
+        for (var i = 0; i < settingsRepaints.length; i++) settingsRepaints[i]();
+      });
 
       function buildSettings() {
         if (!settingsList) return;
         settingsList.textContent = "";
+        settingsRepaints = [];
+        var fact = currentParked();
+        var band = settingsBandView(fact.parked, fact.gearKnown);
+        paintSettingsLock(band);
         var specs = settingsSpecs();
-        for (var i = 0; i < specs.length; i++) {
-          (function (spec) {
-            var row = document.createElement("div");
-            row.className = "set-row";
-            var name = document.createElement("span");
-            name.className = "set-name";
-            name.textContent = spec.label;
-            row.appendChild(name);
-            var note = document.createElement("span");
-            note.className = "set-apply";
-            row.appendChild(note);
-            var controls = document.createElement("div");
-            controls.className = "set-controls";
-            row.appendChild(controls);
-
-            var choices = settingsChoices(spec);
-
-            // The ONE paint path for this row. Built with textContent (no
-            // innerHTML) so a config value can never become markup.
-            function render(value, statusNote) {
-              var view = settingsRowView(spec, value);
-              note.textContent = statusNote
-                ? view.applyNote + " · " + statusNote
-                : view.applyNote;
-              controls.textContent = "";
-              for (var c = 0; c < choices.length; c++) {
-                (function (choice) {
-                  var btn = document.createElement("button");
-                  btn.className = "set-btn tap-target";
-                  btn.textContent = choice.label;
-                  btn.setAttribute(
-                    "aria-pressed",
-                    String(settingsChoiceActive(view, choice.value))
-                  );
-                  btn.addEventListener("click", function () {
-                    postSetting(spec, choice.value, render, view.value);
-                  });
-                  controls.appendChild(btn);
-                })(choices[c]);
-              }
-            }
-
-            render(settingsSource ? settingsSource[spec.key] : null, "");
-            settingsList.appendChild(row);
-          })(specs[i]);
+        for (var s = 0; s < band.sections.length; s++) {
+          var title = document.createElement("h4");
+          title.className = "set-section";
+          title.textContent = band.sections[s];
+          settingsList.appendChild(title);
+          // US-895-b: specs sharing a `row` draw into one shell, per build.
+          var shells = {};
+          for (var i = 0; i < specs.length; i++) {
+            if (specs[i].section === band.sections[s]) buildSettingsRow(specs[i], shells);
+          }
         }
+      }
+
+      // One `.set-row`: name, apply tag, controls. A spec with a `row` (the
+      // two lux ends) shares its shell with the specs of the same row; the
+      // row carries the first one's key, and each end its own `.set-end`.
+      // `values` / `repaints` let one end read and repaint its partner, and
+      // the shared tag shows the note of the end that last changed it.
+      function settingsShell(spec, shells) {
+        if (spec.row && shells[spec.row]) return shells[spec.row];
+        var row = document.createElement("div");
+        row.className = "set-row";
+        row.setAttribute("data-key", spec.key);
+        var name = document.createElement("span");
+        name.className = "set-name";
+        name.textContent = spec.row || spec.label;
+        row.appendChild(name);
+        var note = document.createElement("span");
+        note.className = "set-apply";
+        row.appendChild(note);
+        var controls = document.createElement("div");
+        controls.className = spec.row ? "set-controls set-ends" : "set-controls";
+        row.appendChild(controls);
+        settingsList.appendChild(row);
+        var shell = { note: note, controls: controls, values: {}, repaints: {}, noteText: "" };
+        if (spec.row) shells[spec.row] = shell;
+        return shell;
+      }
+
+      function buildSettingsRow(spec, shells) {
+        var shell = settingsShell(spec, shells);
+        var note = shell.note;
+        var controls = shell.controls;
+        if (spec.row) {
+          var end = document.createElement("div");
+          end.className = "set-end";
+          end.setAttribute("data-key", spec.key);
+          var endName = document.createElement("span");
+          endName.className = "set-end-name";
+          endName.textContent = spec.label;
+          end.appendChild(endName);
+          controls = document.createElement("div");
+          controls.className = "set-end-controls";
+          end.appendChild(controls);
+          shell.controls.appendChild(end);
+        }
+        var partnerKey = spec.below || spec.above;
+
+        var choices = settingsChoices(spec);
+        // This end's last painted value, kept per key for the repaints; the
+        // status note is the shell's, so the lock's repaint never drops a
+        // pending or settled note.
+        var state = { value: null, found: false };
+
+        function stepButton(view, direction, locked) {
+          // Locked: no − / + at all; at an end, that end's is hidden.
+          var next = settingsRowStepNext(spec, view, direction);
+          if (locked || next === null) return;
+          // US-895-c: a level row steps in percent and stores round(pct)/100.
+          var write = spec.kind === "level" ? settingsLevelWrite(next) : next;
+          var btn = document.createElement("button");
+          btn.className =
+            "set-step " + (direction < 0 ? "set-step-minus" : "set-step-plus") + " tap-target";
+          btn.textContent = direction < 0 ? "−" : "+";
+          // US-895-b: a lux end's step that would cross its partner is shown
+          // disabled and wired to nothing; the seam refuses it regardless.
+          if (partnerKey && settingsStepCrosses(spec, next, shell.values[partnerKey])) {
+            btn.disabled = true;
+          } else {
+            btn.addEventListener("click", function () {
+              postSetting(spec, write, render, view.value, view.known);
+            });
+          }
+          controls.appendChild(btn);
+        }
+
+        // US-895-c (spec s4.7): BRIGHTNESS -- AUTO | FIXED, then the
+        // `− nn % +` stepper. A segment that cannot write (locked, the one
+        // already chosen, FIXED with the floor unknown) carries NO listener.
+        function renderLevel(view, locked) {
+          for (var c = 0; c < choices.length; c++) {
+            (function (choice) {
+              var btn = document.createElement("button");
+              btn.className = "set-btn tap-target";
+              btn.textContent = choice.label;
+              var active = settingsChoiceActive(view, choice.value);
+              btn.setAttribute("aria-pressed", String(active));
+              var minLevel = displayAutoDim ? displayAutoDim.minLevel : null;
+              // Disabled iff the choice has nothing to write; the write itself
+              // is taken at the TAP, from the level applied at that moment.
+              if (locked || settingsLevelChoiceWrite(choice.value, null, minLevel) === undefined) {
+                btn.disabled = true;
+              }
+              if (!btn.disabled && !active) {
+                btn.addEventListener("click", function () {
+                  postSetting(
+                    spec, settingsLevelChoiceWrite(choice.value, lastAppliedLevel, minLevel),
+                    render, view.value, view.known
+                  );
+                });
+              }
+              controls.appendChild(btn);
+            })(choices[c]);
+          }
+          if (!view.showValue) return;
+          stepButton(view, -1, locked);
+          var shown = document.createElement("span");
+          shown.className = "set-value";
+          shown.textContent = view.display;
+          controls.appendChild(shown);
+          stepButton(view, 1, locked);
+        }
+
+        // The ONE paint path for this row. Built with textContent (no
+        // innerHTML) so a config value can never become markup.
+        // `repaint` (the lock edge, or the partner end changed): same value,
+        // and the shared status note is left as the last real paint set it
+        // -- a write in flight keeps `saving…` -- and nothing cascades.
+        function render(value, statusNote, repaint, found) {
+          state.value = value;
+          state.found = found === true;
+          var view = settingsRowView(spec, value, {
+            found: state.found,
+            minLevel: displayAutoDim ? displayAutoDim.minLevel : null,
+          });
+          shell.values[spec.key] = view.value;
+          var locked = settingsLock().locked;
+          if (!repaint) shell.noteText = statusNote || "";
+          note.textContent = shell.noteText
+            ? view.applyNote + " · " + shell.noteText
+            : view.applyNote;
+          controls.textContent = "";
+          // The partner's crossing step follows this end's value.
+          if (!repaint && partnerKey && shell.repaints[partnerKey]) {
+            shell.repaints[partnerKey]();
+          }
+          if (spec.kind === "level") {
+            renderLevel(view, locked);
+            return;
+          }
+          if (spec.kind === "steps" || spec.kind === "ladder") {
+            stepButton(view, -1, locked);
+            var shown = document.createElement("span");
+            shown.className = "set-value";
+            shown.textContent = view.display;
+            controls.appendChild(shown);
+            stepButton(view, 1, locked);
+            return;
+          }
+          for (var c = 0; c < choices.length; c++) {
+            (function (choice) {
+              var btn = document.createElement("button");
+              btn.className = "set-btn tap-target";
+              btn.textContent = choice.label;
+              btn.setAttribute(
+                "aria-pressed",
+                String(settingsChoiceActive(view, choice.value))
+              );
+              // Locked: readable, inert (spec s4.7.2); postSetting refuses too.
+              if (locked) btn.disabled = true;
+              btn.addEventListener("click", function () {
+                postSetting(spec, choice.value, render, view.value, view.known);
+              });
+              controls.appendChild(btn);
+            })(choices[c]);
+          }
+        }
+
+        function repaint() {
+          render(state.value, "", true, state.found);
+        }
+        settingsRepaints.push(repaint);
+        shell.repaints[spec.key] = repaint;
+        // US-878-c: a not-found entry is null here, i.e. Unknown.
+        // US-895-c: and its `found`, which tells a level row AUTO from Unknown.
+        render(settingsEntry(settingsSource, spec.key).value, "", false,
+          settingsEntry(settingsSource, spec.key).found);
       }
 
       if (menuBtn) {
@@ -7195,8 +8351,9 @@
 
     // Honest-instrument poll: fetch each card's state file; missing/malformed ->
     // `unavailable` (never a crash, never green-when-broken). The shell sets the
-    // availability class; the per-card renderer (US-400 system-status; US-401
-    // battery-health) paints the fields on top when available.
+    // availability class; the per-card renderer (US-400 system-status, which
+    // since US-894-e also reads battery-health for its UPS row) paints the
+    // fields on top when available.
     function startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange) {
       async function fetchState(name) {
         try {
@@ -8074,6 +9231,8 @@
       // the two overlays' escape hatches live together. AC2 -- never traps.
       var sysDetailBack = document.getElementById("sys-detail-back");
       if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
+      // US-894-b: the System page's taps follow the parked fact's edges.
+      onParkedChange(repaintSystemOnParkedEdge);
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -8146,12 +9305,13 @@
           var name = card.getAttribute("data-state");
           if (!name) continue;
           var data = await stateOnce(name);
-          // US-540-b: the three source cards route through their OWN view,
-          // deliberately BEFORE the generic availability path below. Two of
-          // them (battery, light) would survive that path; fuel trim would not
-          // -- its gate has to be evaluated before its data, and the generic
-          // path reads the data first. One route for all three keeps the rule
-          // "which card is this?" in exactly one place.
+          // US-540-b: the source cards route through their OWN view,
+          // deliberately BEFORE the generic availability path below. Light
+          // would survive that path; fuel trim would not -- its gate has to be
+          // evaluated before its data, and the generic path reads the data
+          // first. One route for all of them keeps the rule "which card is
+          // this?" in exactly one place. (US-894-e: the Battery card is gone;
+          // its cell is the System page's UPS row.)
           var spec = sourceCardSpec(name);
           if (spec) {
             // The gate resolves against the SAME system-status the rest of the
@@ -8166,7 +9326,8 @@
               sourceCardView(
                 spec, data, await stateOnce("system-status"), displayAutoDim,
                 nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs),
-                brightnessAlarmActive(await stateOnce("alerts"))
+                brightnessAlarmActive(await stateOnce("alerts")),
+                settingsSource
               )
             );
             continue;
@@ -8198,6 +9359,9 @@
                 nd ? nd.label : (card.getAttribute("data-page-name") || "")
               );
             } else if (body && nd) renderNaBody(body, nd.label, nd.reason);
+            // US-894-b (s4.1): the System page's unavailable path is the
+            // verdict `--`, never ALL OK.
+            else if (body && name === "system-status") renderSystemUnavailable(card);
             else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
@@ -8211,8 +9375,13 @@
             // A null (producer dark / 404 / fetch aborted) yields NO capture
             // tile, which is the pre-US-688 card -- never a fabricated `ok`.
             var captureData = await stateOnce("capture-health");
+            // US-894-e (Atlas P8): with the Battery card gone, the UPS row's
+            // cell is fetched here -- the same cached read, so nothing else
+            // can resolve the cell against a different sample. A null yields
+            // `--`, never a fabricated reading.
+            var batteryData = await stateOnce("battery-health");
             renderSystemStatusCard(
-              card, systemStatusView(data, captureData), glyphEls
+              card, systemStatusView(data, captureData, batteryData, nowMs), glyphEls
             );
           }
           // US-508: the standalone Motion branch is GONE with the card it
@@ -8281,6 +9450,9 @@
         // US-511-b: fed from THIS tick's states/gear (lastGear, read above --
         // no second fetch), never from system-status idle.
         engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);
+        // US-894-b: the ONE write of the module's parked fact -- the debounced
+        // value just advanced, and the RAW gear-known fact (Atlas B9 + A1).
+        publishParked(engineParked.parked, isObj(lastGear) && lastGear.available === true);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
         // moves the dismiss on first (a codeAlert-null re-read settles it).
@@ -8345,7 +9517,8 @@
             lightData,
             displayAutoDim,
             nowMs,
-            brightnessAlarmActive(lastAlerts)
+            brightnessAlarmActive(lastAlerts),
+            settingsSource
           ).level
         );
       }

@@ -33,6 +33,21 @@
 # 2026-07-31    | Ralph (Rex)  | Initial -- US-509 System-Status drill-down.
 # 2026-10-22    | Ralph (Rex)  | US-876-a MOVED PIN: no source publishes an age;
 #               |              | seen-age freshness/dedup cases reworked.
+# 2026-10-23    | Ralph (Rex)  | US-894-b MOVED PIN: the summary line is the
+#               |              | verdict line (parked-only tap); the OBD LINK
+#               |              | tile is retired, so the view case reads POWER.
+# 2026-10-23    | Ralph (Rex)  | US-894-e MOVED PIN: the POWER tile is retired
+#               |              | (UPS row) and LAST STOP moved to the UPS
+#               |              | detail, so systemStatusView feeds the drill no
+#               |              | tiles and no diagnostics: it lists nothing and
+#               |              | is not a tap target until US-894-f retires it.
+#               |              | The renderer-field scan reads the whole
+#               |              | function, not a fixed 2200-char window.
+# 2026-10-23    | Ralph (Rex)  | US-894-f MOVED PIN: US-759 is closed by the
+#               |              | design -- the issue list and its freshness pair
+#               |              | are DELETED, so their tests retire; the verdict
+#               |              | opens the Pi detail, and the wiring / CSS-guard
+#               |              | tests read that detail.
 # ================================================================================
 ################################################################################
 
@@ -95,35 +110,24 @@ def _view(fn: str, *args: object) -> object:
     return json.loads(proc.stdout)
 
 
-# --- fixtures ---------------------------------------------------------------
-
-
-def _tile(level: str, label: str, value: str, detail: str = "") -> dict:
-    return {"label": label, "value": value, "detail": detail, "level": level}
-
-
-def _tiles(
-    obd: str = "ok",
-    sync: str = "ok",
-    power: str = "ok",
-    drive: str = "ok",
-    obdDetail: str = "",
-) -> dict:
-    """The 4 System Status tiles, addressed by LEVEL so a test reads as a state."""
-    return {
-        "obdLink": _tile(obd, "OBD LINK", "LINKED", obdDetail),
-        "sync": _tile(sync, "SYNC", "OK", "50 rows . 0 pending"),
-        "power": _tile(power, "POWER", "CAR", "external"),
-        "drive": _tile(drive, "DRIVE", "REC", "drive 27"),
-    }
+# ---------------------------------------------------------------------------
+# MOVED PIN (US-894-f): US-759 is CLOSED BY THE DESIGN (spec s4.1, AC 7).
+#
+# The issue list behind the verdict is deleted: systemIssueRows, systemDrill,
+# systemDiagnostics, sysRowFreshness, SYS_NO_AGE and sysLevelRank are gone,
+# and with them the four ways it could lie (order, omission / crying wolf, a
+# fabricated freshness, re-derivation). There is nothing to order, omit or
+# date: the amber row IS the marked, counted thing, and every amber element
+# names its verdict member (tests/ui/test_system_page_amber_equals_members.py).
+# The tests below pin that the list is really gone, and that the overlay the
+# verdict opens is the Pi detail (tests/ui/test_system_page_pi_detail.py).
+# ---------------------------------------------------------------------------
 
 
 def _sysState(**over: object) -> dict:
     """A healthy system-status emitter payload (US-400 / Atlas A-3 schema)."""
     state: dict = {
-        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
-        "obdLink": {"state": "linked", "retries": 0},
-        "sync": {"lastOkTs": "2026-07-31T11:41:50Z", "rows": 50, "pending": 0, "stale": False},
+        "sync": {"lastOkTs": "2026-07-31T11:41:50Z", "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "recording", "driveId": 27},
         "ts": "2026-07-31T12:00:00Z",
@@ -132,358 +136,55 @@ def _sysState(**over: object) -> dict:
     return state
 
 
-def _labels(rows: list) -> list:
-    return [r["label"] for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# AC1 -- WORST-FIRST. The drill-down exists to say "look at THIS one". An order
-# that buries the live fault under an unknown defeats the whole surface.
-# ---------------------------------------------------------------------------
-
-
-@_NODE_TESTS
-def test_systemIssueRows_worstSourceIsListedFirst():
-    """
-    Given: SYNC is amber while POWER is down (the worse state)
-    When: the drill-down rows are built
-    Then: POWER leads, even though SYNC comes first in display order
-    """
-    rows = _view("systemIssueRows", _tiles(sync="amber", power="down"), _sysState())
-
-    assert _labels(rows) == ["POWER", "SYNC"]
+def test_us759_theIssueListIsDeleted_notMerelyUnused():
+    js = _stripJsComments(_read(_JS))
+    for name in ("systemIssueRows", "systemDrill", "systemDiagnostics", "sysRowFreshness",
+                 "SYS_NO_AGE", "sysLevelRank"):
+        assert re.search(r"\b" + name + r"\b", js) is None, name
+    assert "age not reported" not in _read(_JS)
 
 
 @_NODE_TESTS
-def test_systemIssueRows_ordersDownThenAmberThenUnavailable():
-    """
-    Given: one source at each degraded level
-    When: the rows are built
-    Then: they descend by severity -- a known-UNKNOWN never outranks a real fault
-    """
-    rows = _view(
-        "systemIssueRows",
-        _tiles(obd="unavailable", sync="amber", power="down"),
-        _sysState(),
+def test_us759_theDeletedExportsAreGone():
+    proc = subprocess.run(
+        [_NODE, "-e",
+         "const c=require(process.argv[1]);"
+         "console.log(JSON.stringify([typeof c.systemIssueRows, typeof c.systemDrill,"
+         " typeof c.systemDiagnostics, typeof c.sysRowFreshness]));",
+         _JS],
+        capture_output=True, text=True, encoding="utf-8",
     )
-
-    assert _labels(rows) == ["POWER", "SYNC", "OBD LINK"]
-
-
-@_NODE_TESTS
-def test_systemIssueRows_equalSeverityKeepsTheCardsDisplayOrder():
-    """
-    Given: two sources degraded to the SAME level
-    When: the rows are built
-    Then: they follow the 2x2 grid order, so the list never reshuffles between
-          polls while the operator is reading it
-    """
-    rows = _view("systemIssueRows", _tiles(obd="amber", power="amber"), _sysState())
-
-    assert _labels(rows) == ["OBD LINK", "POWER"]
-
-
-# ---------------------------------------------------------------------------
-# AC3 -- honest-instrument: only ACTUALLY-degraded sources appear. Two opposite
-# failures are pinned here, because the surface can lie in both directions.
-# ---------------------------------------------------------------------------
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == ["undefined"] * 4
 
 
 @_NODE_TESTS
-def test_systemIssueRows_healthySourceIsNeverListed():
-    """
-    Given: only SYNC is degraded
-    When: the rows are built
-    Then: SYNC is the only row -- listing a green source is a fabricated fault
-    """
-    rows = _view("systemIssueRows", _tiles(sync="amber"), _sysState())
-
-    assert _labels(rows) == ["SYNC"]
-
-
-@_NODE_TESTS
-def test_systemIssueRows_allSourcesGood_listsNothing():
-    """
-    Given: every source is genuinely good
-    When: the rows are built
-    Then: there is nothing to drill into
-    """
-    rows = _view("systemIssueRows", _tiles(), _sysState())
-
-    assert rows == []
-
-
-@_NODE_TESTS
-def test_systemIssueRows_driveIdleIsNominal_neverListedAsDegraded():
-    """
-    Given: DRIVE is `neutral` (IDLE -- not recording), everything else good
-    When: the rows are built
-    Then: nothing is listed. `neutral` means "nominal but inactive", NOT broken;
-          listing it would report a fault in the commonest state there is
-    """
-    rows = _view("systemIssueRows", _tiles(drive="neutral"), _sysState())
-
-    assert rows == []
-
-
-@_NODE_TESTS
-def test_systemIssueRows_unavailableSourceIsListed_soTheHeadlineIsNotADeadEnd():
-    """
-    Given: a source is `unavailable` and nothing is amber/down
-    When: the rows are built
-    Then: it IS listed. The summary line reads "SYSTEM . 1 UNAVAILABLE" in this
-          state, and a tappable headline that opens an empty overlay is the very
-          dead end this story removes
-    """
-    rows = _view("systemIssueRows", _tiles(obd="unavailable"), _sysState())
-
-    assert _labels(rows) == ["OBD LINK"]
-    assert rows[0]["level"] == "unavailable"
-
-
-@_NODE_TESTS
-def test_systemIssueRows_unrecognisedLevel_isListedNeverSilentlyDropped():
-    """
-    Given: a tile carries a level this mapper has not been taught
-    When: the rows are built
-    Then: it is listed (the card ranks an unknown level as `unavailable`), so a
-          future tile level cannot vanish from the drill-down by being new
-    """
-    rows = _view("systemIssueRows", _tiles(sync="banana"), _sysState())
-
-    assert _labels(rows) == ["SYNC"]
-
-
-@_NODE_TESTS
-def test_systemIssueRows_nonObjectTiles_listNothingRatherThanCrash():
-    """
-    Given: a malformed tiles payload
-    When: the rows are built
-    Then: an empty list -- a broken read is never a fabricated fault list
-    """
-    for bad in (None, "x", []):
-        assert _view("systemIssueRows", bad, _sysState()) == []
-
-
-# ---------------------------------------------------------------------------
-# AC1 -- each row = label + state chip + honest reason + freshness.
-# ---------------------------------------------------------------------------
-
-
-@_NODE_TESTS
-def test_systemIssueRows_rowCarriesLabelChipAndLevel():
-    """
-    Given: OBD LINK is reconnecting (amber)
-    When: the row is built
-    Then: it carries the source label, the state chip text and the level that
-          colours the chip
-    """
-    tiles = _tiles(obd="amber")
-    tiles["obdLink"]["value"] = "RECONNECTING"
-    row = _view("systemIssueRows", tiles, _sysState())[0]
-
-    assert row["label"] == "OBD LINK"
-    assert row["value"] == "RECONNECTING"
-    assert row["level"] == "amber"
-
-
-@_NODE_TESTS
-def test_systemIssueRows_reasonIsTheTilesOwnDetail_notReWorded():
-    """
-    Given: a degraded tile whose detail explains WHY
-    When: the row is built
-    Then: the row repeats the emitter's own words -- the drill-down explains, it
-          does not re-diagnose
-    """
-    tiles = _tiles(sync="amber")
-    tiles["sync"]["detail"] = "50 rows . 12 pending"
-    row = _view("systemIssueRows", tiles, _sysState())[0]
-
-    assert row["reason"] == "50 rows . 12 pending"
-
-
-@_NODE_TESTS
-def test_systemIssueRows_obdRowFreshnessIsTypedAbsent_noSourcePublishesAnAge():
-    """
-    MOVED PIN (US-876-a): was ...freshnessReadsSeenSecondsAgoWhenThePublisherReportsIt.
-    Given: a DOWN OBD source -- obdLink carries {state, retries} and no age
-    When: the row is built
-    Then: the freshness is the typed absence, like every other source's
-    """
-    rows = _view(
-        "systemIssueRows",
-        _tiles(obd="down"),
-        _sysState(obdLink={"state": "down", "retries": 3}),
-    )
-
-    assert rows[0]["freshness"] == "age not reported"
-
-
-@_NODE_TESTS
-def test_systemIssueRows_freshnessIsTypedAbsent_whenTheSourceReportsNoAge():
-    """
-    Given: SYNC is degraded, and no source but OBD publishes an age at all
-    When: the row is built
-    Then: the freshness says the age was not reported. "seen 0s ago" would claim
-          we just saw a source we never timed -- a fabricated reading, and the
-          exact shape of the zeroed-altitude lie US-508 pinned against
-    """
-    row = _view("systemIssueRows", _tiles(sync="amber"), _sysState())[0]
-
-    assert row["freshness"] == "age not reported"
-    assert "0s" not in row["freshness"]
-
-
-@_NODE_TESTS
-def test_systemIssueRows_freshnessIsTypedAbsent_evenWhenAnOldPayloadCarriesAnAge():
-    """
-    MOVED PIN (US-876-a): was ...freshnessIsTypedAbsent_whenLastSeenIsNull.
-    Given: a state file written before the upgrade, still carrying a numeric
-           obdLink age
-    When: the row is built
-    Then: the freshness is the typed absence -- the page no longer reads an age
-          the producer does not publish
-    """
-    row = _view(
-        "systemIssueRows",
-        _tiles(obd="down"),
-        _sysState(obdLink={"state": "down", "retries": 0, "lastSeenS": 42}),
-    )[0]
-
-    assert row["freshness"] == "age not reported"
-
-
-@_NODE_TESTS
-def test_systemIssueRows_downObdRow_keepsItsReason_besideTheNoAgeFreshness():
-    """
-    MOVED PIN (US-876-a): reworked from ...reasonIsDroppedWhenItOnlyRepeatsTheFreshness,
-    which can no longer happen -- the DOWN OBD tile's detail was the seen-age
-    string, and no age is published any more.
-    Given: a DOWN OBD tile whose detail is "no signal"
-    When: the row is built
-    Then: the reason is the tile's own words and the freshness the typed absence
-    """
-    tiles = _tiles(obd="down", obdDetail="no signal")
-    row = _view(
-        "systemIssueRows",
-        tiles,
-        _sysState(obdLink={"state": "down", "retries": 3}),
-    )[0]
-
-    assert row["freshness"] == "age not reported"
-    assert row["reason"] == "no signal"
-
-
-# ---------------------------------------------------------------------------
-# AC4 -- the rows READ the rendered tile levels; they never recompute a state.
-# ---------------------------------------------------------------------------
-
-
-@_NODE_TESTS
-def test_systemIssueRows_levelsMatchTheTilesTheGridRenders():
-    """
-    Given: a mixed state
-    When: the rows are built
-    Then: every row's level is the level of the tile it names, so the overlay
-          can never contradict the card behind it
-    """
-    tiles = _tiles(obd="down", sync="amber", power="unavailable")
-    rows = _view("systemIssueRows", tiles, _sysState())
-
-    byLabel = {r["label"]: r["level"] for r in rows}
-    assert byLabel == {"OBD LINK": "down", "SYNC": "amber", "POWER": "unavailable"}
-
-
-@_NODE_TESTS
-def test_systemStatusView_carriesTheDrillDownAlongsideTheSummary():
+def test_systemStatusView_carriesThePiDetail_noDrillNoTiles():
     """
     Given: a real degraded emitter payload
     When: the full card view is built
-    Then: the drill rows travel WITH the view, derived from the same tiles --
-          no second read of the state file
+    Then: the detail behind the verdict (the Pi detail) travels WITH the view
+          -- no second read of the state file -- and no drill or tile does.
     """
     view = _view(
         "systemStatusView",
-        _sysState(obdLink={"state": "down", "retries": 5}),
+        _sysState(power={"mode": "car", "source": "battery"}),
     )
 
-    assert view["drill"]["rows"][0]["label"] == "OBD LINK"
-    assert view["drill"]["rows"][0]["level"] == view["tiles"]["obdLink"]["level"]
-
-
-# ---------------------------------------------------------------------------
-# AC2 -- the summary is a tap target ONLY when there is something behind it.
-# ---------------------------------------------------------------------------
+    assert "drill" not in view and "tiles" not in view
+    assert view["piDetail"]["head"] == "PI"
+    assert {r["key"]: r for r in view["rows"]}["ups"]["sentence"] == "on battery"
 
 
 @_NODE_TESTS
-def test_systemStatusView_allGood_listsNoIssueRows():
-    """
-    Given: every source is good
-    When: the card view is built
-    Then: the issue list is EMPTY -- a green source in a fault list is a
-          fabricated fault, and that half of US-509 is untouched.
-
-          THIS PIN MOVED, IT WAS NOT DELETED. It used to assert
-          `tappable is False` here as well, on the reasoning that "an
-          affordance that opens an empty list is misleading". That invariant
-          still holds and is still enforced (see the two tests below) -- but
-          US-559 put the SYNC counts behind this line on the CIO's 2026-08-20
-          placement call, so on a healthy card the list is no longer empty and
-          the affordance is no longer a promise the card cannot keep. What was
-          one assertion about two things is now two assertions that fail for
-          two different reasons.
-    """
-    view = _view("systemStatusView", _sysState())
-
-    assert view["drill"]["rows"] == []
-
-
-@_NODE_TESTS
-def test_systemStatusView_allGood_isStillReachableForItsDiagnostics():
-    """
-    Given: every source is good -- the COMMON case
-    When: the card view is built
-    Then: the summary IS tappable, because the sync counts live behind it.
-          Had the gate stayed on faults alone, a non-zero pending backlog on an
-          otherwise-OK sync would have been unreachable and US-559's "counts
-          move to the drill-down" would have meant "counts deleted".
-    """
-    view = _view("systemStatusView", _sysState())
-
-    assert view["drill"]["tappable"] is True
-    assert view["drill"]["diagnostics"]
-
-
-@_NODE_TESTS
-def test_systemDrill_nothingBehindTheLine_isStillNotATapTarget():
-    """
-    Given: neither issue rows nor diagnostics
-    When: the drill is built
-    Then: NOT tappable. US-509's actual guarantee, preserved verbatim through
-          the content change: without this the widened gate could be hard-coded
-          true and every assertion above would still pass.
-    """
-    drill = _view("systemDrill", {}, {})
-
-    assert drill["rows"] == []
-    assert drill["diagnostics"] == []
-    assert drill["tappable"] is False
-
-
-@_NODE_TESTS
-def test_systemStatusView_degradedSource_summaryBecomesATapTarget():
-    """
-    Given: the sync source has gone stale
-    When: the card view is built
-    Then: the summary is tappable
-    """
+def test_systemStatusView_aDegradedSourceIsOnItsRow_neverInAList():
+    """A stale sync is read on the DATA row; no list repeats it."""
     view = _view(
         "systemStatusView",
-        _sysState(sync={"lastOkTs": None, "rows": 50, "pending": 9, "stale": True}),
+        _sysState(sync={"lastOkTs": None, "stale": True}),
     )
-
-    assert view["drill"]["tappable"] is True
+    assert {r["key"]: r for r in view["rows"]}["data"]["value"].endswith("no sync on record")
+    assert "age not reported" not in json.dumps(view)
 
 
 # ---------------------------------------------------------------------------
@@ -526,14 +227,20 @@ def test_carouselJs_summaryLineIsTappableOnlyWhenRowsExist():
     """
     Given: the System Status card renderer
     When: its source is read
-    Then: it gates the tap affordance on `drill.tappable`, so an all-good card
-          never advertises a drill-down that would open empty
+    Then: the verdict's tap affordance is gated on parked.
+
+          MOVED PIN (US-894-b): the verdict line is the tap target, painted by
+          renderSystemBody (and gated on parked as well).
+          MOVED PIN (US-894-f): `drill.tappable` is deleted with the drill; the
+          verdict always has the Pi detail behind it, so parked is the gate.
     """
     js = _stripJsComments(_read(_JS))
-    start = js.index("function renderSystemStatusCard(")
-    body = js[start : start + 2600]
+    start = js.index("function renderSystemBody(")
+    body = js[start : js.index("\n    }", start)]
 
-    assert "drill.tappable" in body
+    assert "drill" not in body
+    assert "currentParked().parked" in body
+    assert "appendSysVerdict(body, view.verdict, parked)" in body
 
 
 def test_carouselJs_summaryTapOpensTheDrillDown():
@@ -542,12 +249,16 @@ def test_carouselJs_summaryTapOpensTheDrillDown():
     When: its source is read
     Then: the summary element's handler opens the overlay -- a computed row list
           nobody can reach is not a drill-down
+
+          MOVED PIN (US-894-b): the verdict line's handler (appendSysVerdict).
+          MOVED PIN (US-894-f): it opens the Pi detail.
     """
     js = _stripJsComments(_read(_JS))
-    start = js.index("function renderSystemStatusCard(")
-    body = js[start : start + 2600]
+    start = js.index("function appendSysVerdict(")
+    body = js[start : js.index("\n    }", start)]
 
-    assert "openSysDetail" in body
+    assert 'openSysDetail("pi")' in body
+    assert '"drill"' not in js
 
 
 def test_carouselJs_backButtonClosesTheDrillDown():
@@ -564,17 +275,21 @@ def test_carouselJs_backButtonClosesTheDrillDown():
 
 def test_carouselJs_drillDownRendererPaintsEveryRowField():
     """
-    Given: the drill-down row renderer
+    Given: the detail renderer behind the verdict
     When: its source is read
-    Then: it paints the label, the chip, the reason and the freshness. A field
-          the view computes but nobody paints is not a readout (US-508)
+    Then: it paints every field the view computes. A field the view computes
+          but nobody paints is not a readout (US-508)
+
+          MOVED PIN (US-894-f): the issue rows (label, chip, reason,
+          freshness) are deleted (US-759); the verdict's detail is the Pi
+          detail -- label, value, note, read time, level + member.
     """
     js = _stripJsComments(_read(_JS))
-    start = js.index("function renderSysDetail(")
-    body = js[start : start + 2200]
+    start = js.index("function renderPiDetail(")
+    body = js[start : js.index("function renderObdDetail(", start)]
 
-    for field in (".label", ".value", ".reason", ".freshness", ".level"):
-        assert field in body, f"renderSysDetail never paints row{field}"
+    for field in (".label", ".value", ".note", ".read", ".level", ".member"):
+        assert field in body, f"renderPiDetail never paints row{field}"
 
 
 def test_carouselJs_openingTheOverlayPausesAutoRotateViaTheSharedSeam():
@@ -778,7 +493,9 @@ def test_colourGuard_policedRegionIsNotSilentlyEmpty():
     selectors = {rule.selector.strip() for rule in rules}
 
     assert len(rules) > 10
-    assert {"#sys-detail", "#sys-detail-back", ".sys-issue-chip"} <= selectors
+    # MOVED PIN (US-894-f): the issue chip went with the issue list (US-759);
+    # the detail layout rules the OBD / DATA / Pi details share remain.
+    assert {"#sys-detail", "#sys-detail-back", ".sys-issue-head", ".pi-value"} <= selectors
 
 
 def test_everyDrillDownOnlyRuleLivesInsideThePolicedRegion():

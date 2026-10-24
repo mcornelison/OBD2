@@ -41,7 +41,7 @@
          US-898-a made that re-layout: WiFi shrank to a 1ch SVG and the
          warnings icon took the room, and the bound now says no FIFTH glyph. -->
     <div class="topbar-left">
-      <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
+      <span class="glyph" id="glyph-bt" title="Bluetooth"><svg class="chain-mark" viewBox="0 0 36 20" aria-hidden="true" focusable="false"><path class="chain-line" d="M10 10H14M22 10H26"/><circle class="chain-dot" data-layer="bt" data-state="hollow" cx="6" cy="10" r="4"/><circle class="chain-dot" data-layer="adapter" data-state="hollow" cx="18" cy="10" r="4"/><circle class="chain-dot" data-layer="ecu" data-state="hollow" cx="30" cy="10" r="4"/></svg></span>
       <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
       <!-- US-696 (CIO ruling 2026-09-09): the lightning POWER glyph stood here
            and was removed -- "if I can see the screen the power is on", so
@@ -62,7 +62,7 @@
            apply -- to give the warnings icon its room. `((•))` spent five
            characters on the fact the driver needs least. The id, title and
            data-state binding are unchanged; only the drawing moved. -->
-      <span class="glyph" id="glyph-wifi" data-state="neutral" title="WiFi"><svg class="wifi-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.1 10.1A14 14 0 0 1 21.9 10.1"/><path d="M5.28 13.28A9.5 9.5 0 0 1 18.72 13.28"/><path d="M8.46 16.46A5 5 0 0 1 15.54 16.46"/><circle cx="12" cy="20" r="1.6"/></svg></span>
+      <span class="glyph" id="glyph-wifi" data-state="neutral" title="WiFi"><svg class="wifi-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.1 10.1A14 14 0 0 1 21.9 10.1"/><path d="M5.28 13.28A9.5 9.5 0 0 1 18.72 13.28"/><path d="M8.46 16.46A5 5 0 0 1 15.54 16.46"/><circle cx="12" cy="20" r="1.6"/><line class="wifi-slash" x1="3" y1="3" x2="21" y2="21"/></svg></span>
       <!-- US-898-a (F-127; specs/v030-warnings-page-design.md s4.2): the
            warnings icon, on every page. A FIXED three-character slot so the
            cluster never reflows as the count changes. carousel.js paints it
@@ -488,22 +488,11 @@
                data-page-name="SYSTEM">
         <div class="card-body">unavailable</div>
       </section>
-      <!-- US-540-b (F-127): the US-507 merged "Health" card RETIRES and its
-           three readouts become cards again (4 -> 6). US-507 merged them
-           because the CIO called six screens too many; the US-540-a legibility
-           scale changes the arithmetic under that call -- at secondary 26px a
-           card affords ~3 facts, and Health was carrying six. A container of
-           three unrelated facts is the one thing the scale cannot pay for, so
-           the screen count is the cheaper thing to spend.
-
-           Each card consumes its OWN state file through the SAME view function
-           it used as a section (and as a standalone card before that), so this
-           is a RELOCATION in the opposite direction, not a redesign. The
-           per-source independence the merge had to fight for is now free: a
-           dead UPS cannot reach the Light card at all. -->
-      <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
-        <div class="card-body">unavailable</div>
-      </section>
+      <!-- US-894-e (spec s4.5 / s4.6.1, CIO 2026-10-19): the Battery card is
+           RETIRED (9 cards -> 8). Its cell is the System page's UPS row, and
+           what survives of the card is the UPS detail in #sys-detail. The
+           battery-health emitter and its states file stay (drain_forensics
+           reads it). -->
     </div>
   </main>
 
@@ -579,9 +568,12 @@
        powerwatch Stop is rendered disabled (safe-shutdown guard, F-7). A ✕
        (back) is always present so the menu never traps the operator. -->
   <div id="setup-menu" hidden role="dialog" aria-label="System Setup">
+    <!-- US-895-a (spec s4.7, I13): this head is the top bar while the band is
+         open (the overlay covers #topbar): '‹ BACK' left, 'SETTINGS' in the
+         page-name slot. Same #menu-close, so every way out is unchanged. -->
     <header class="menu-head">
-      <span class="menu-title">System Setup</span>
-      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">✕</button>
+      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">‹ BACK</button>
+      <span class="menu-title">SETTINGS</span>
     </header>
     <!-- US-532 (F-126) Settings band -- Iris Option B, CIO-chosen 2026-08-03.
          Deliberately the FIRST section: safe, non-destructive preferences sit
@@ -594,8 +586,12 @@
          apply-state its consumer actually earned; auto-rotate reloads the page
          itself, because the states-http restart it would otherwise need is
          polkit-denied. -->
+    <!-- US-895-a (spec s4.7.2): readable but LOCKED until parked (gear P/N
+         held 8 s). #settings-lock is the one line at the top of a locked band;
+         JS fills it from settingsLockView and repaints it on the parked edge.
+         JS also draws the DISPLAY / SYSTEM section heads inside the list. -->
     <section class="menu-section">
-      <h3 class="menu-section-title">Settings</h3>
+      <p id="settings-lock" class="settings-lock" hidden></p>
       <div id="settings-list"><!-- JS fills setting rows (effective values) --></div>
       <p class="settings-foot">Saved on the Pi · survives deploys &amp; reboots</p>
     </section>

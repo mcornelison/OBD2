@@ -1,0 +1,128 @@
+{
+  "description": "AC 3: a drive is recording and the link dropped after being up this session -> the bt member, 1 ISSUE, BT step amber, the sentence is the member's reason verbatim (bt retrying is a member only while recording, Atlas E3).",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "recording",
+      "driveId": 212,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "adapter": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "ecu": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        }
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "adapter": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "ecu": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        }
+      },
+      "drive": {
+        "state": "recording",
+        "driveId": 212,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "bt",
+            "reason": "Link dropped. Retrying."
+          }
+        ]
+      }
+    }
+  }
+}

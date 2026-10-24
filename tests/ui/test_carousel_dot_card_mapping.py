@@ -53,6 +53,9 @@
 #                               Motion. Battery is now the TRAILING card and Light
 #                               the MID-ROW one, so the gate tests swap the card
 #                               they gate (same two shapes, same assertions).
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
+#               |              | (9 -> 8); System Status is the trailing card (index
+#               |              | 7).
 # ================================================================================
 ################################################################################
 
@@ -93,9 +96,11 @@ _NODE_ONLY = pytest.mark.skipif(
 # no index moved.
 # MOVED PIN (US-893-b): the Light card moves to index 5, right after Motion;
 # Alerts, System Status and Battery each moved +1 (Battery is index 8, last).
+# MOVED PIN (US-894-e): the Battery card is retired (9 -> 8); System Status
+# is the trailing card, index 7. No index before it moved.
 _CARD_SET = [
     "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
-    "System Status", "Battery",
+    "System Status",
 ]
 
 # carousel.js labels each dot by its ABSOLUTE card index, 1-based.
@@ -328,21 +333,23 @@ class TestGatedCardOwnsNoDot:
 
     def test_trailingGatedCard_contributesNoDot(self):
         """
-        Given: the Battery card (the last card since US-893-b) put behind the
-               vehicle gate, and no vehicle
+        Given: the System Status card (the last card since US-894-e; was
+               Battery) put behind the vehicle gate, and no vehicle
         Then: it does not paint, ITS dot does not paint, and five remain
 
         Asserted by NAME, not by count: `len(dots) == 5` is also satisfied by
         dropping the wrong dot, which would leave every remaining tap one card
         off with a perfectly plausible-looking row of five.
         """
-        surface = _boot(markupPath=_gatedMarkup("Battery"))
+        # MOVED PIN (US-894-e): the trailing card is System Status (index 7).
+        surface = _boot(markupPath=_gatedMarkup("System Status"))
         assert _visibleCards(surface) == _CARD_SET[:-1]
         assert _visibleDots(surface) == [_dotLabel(i) for i in range(len(_CARD_SET) - 1)]
         # US-888-a: Light is absolute index 6 now (Driving at 0).
         # US-889-b: 7 (Engine at 1). US-896-a: 8 (NAV at 1).
         # US-893-b: Battery is the trailing card, index 8.
-        assert _dotLabel(8) not in _visibleDots(surface)
+        # US-894-e: Battery is retired; System Status trails, index 7.
+        assert _dotLabel(7) not in _visibleDots(surface)
 
     def test_midRowGatedCard_contributesNoDot(self):
         """
@@ -360,11 +367,11 @@ class TestGatedCardOwnsNoDot:
         # US-890-a: +1 again behind the Fuel card (Battery is index 6).
         # US-896-a: +1 again behind the NAV card (Battery is index 7).
         # US-893-b: Light (index 5) is the mid-row card now; Battery is last.
+        # MOVED PIN (US-894-e): Battery is retired; System Status is last (7).
         assert _visibleCards(surface) == [
             "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
-            "Battery",
         ]
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 6, 7, 8)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 6, 7)]
 
     @pytest.mark.parametrize(
         "index,card",
@@ -373,9 +380,10 @@ class TestGatedCardOwnsNoDot:
         # US-890-a: the Fuel card at 2; Home..System Status +1, Battery (6) gated.
         # US-896-a: the NAV card at 1; Engine..System Status +1, Battery (7) gated.
         # US-893-b: Light (5) is the gated mid-row card; Alerts..Battery +1.
+        # MOVED PIN (US-894-e): Battery (8) is retired.
         [
             (0, "Driving"), (1, "Navigation"), (2, "Engine"), (3, "Fuel"), (4, "Motion"),
-            (6, "Alerts"), (7, "System Status"), (8, "Battery"),
+            (6, "Alerts"), (7, "System Status"),
         ],
     )
     def test_midRowGate_everySurvivingDotStillLandsOnItsOwnCard(self, index: int, card: str):
@@ -520,18 +528,20 @@ class TestOneCardRegistry:
         # US-896-a: nine shipped (NAV at 1), so this markup is TEN cards; Spare
         # is 7 and the gated Battery 8.
         # US-893-b: Spare is 5 and the gated Light 6; Alerts..Battery are 7-9.
+        # MOVED PIN (US-894-e): Battery is retired, so this markup is NINE
+        # cards; Alerts and System Status are 7-8.
         expected = [
             "Driving", "Navigation", "Engine", "Fuel", "Motion", "Spare", "Alerts",
-            "System Status", "Battery",
+            "System Status",
         ]
 
         surface = _boot(markupPath=markup)
         assert _visibleCards(surface) == expected
-        # Ten cards, so ten dots exist; the gated one (absolute index 6) is
+        # Nine cards, so nine dots exist; the gated one (absolute index 6) is
         # the only one absent.
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 7, 8, 9)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 7, 8)]
 
-        for index, card in zip((0, 1, 2, 3, 4, 5, 7, 8, 9), expected, strict=True):
+        for index, card in zip((0, 1, 2, 3, 4, 5, 7, 8), expected, strict=True):
             surface = _boot(markupPath=markup, steps=_clickDot(index))
             assert _landedCard(surface) == card, f"dot {index} did not reach {card}"
             assert _activeDot(surface) == _dotLabel(index)

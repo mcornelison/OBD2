@@ -342,7 +342,6 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 'syncStaleThresholdSeconds', DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
             )
         )
-        self._lastSyncRows: int = 0
         # for the system-status power tile; built once in
         # _initializeCardStateEmitters.  None on the bench / when disabled.
 

@@ -24,15 +24,24 @@
 #               |              | are replaced by assertions on the SENSED fact
 #               |              | they stood for, and two node IDs are renamed
 #               |              | because their old names claimed a bolt.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): powerTile is deleted with
+#               |              | the Battery card; the sensed source now reaches
+#               |              | the System page's UPS row (upsRowView), so the
+#               |              | three tile assertions are re-pointed at its
+#               |              | words. The battery amber does not carry over
+#               |              | (spec s4.0/s4.5: on battery is neutral).
 # ================================================================================
 ################################################################################
 
-"""US-502: emitted power state -> carousel powerTile (node).
+"""US-502: emitted power state -> carousel UPS row (node).
 
 US-696 removed the top-bar bolt half of this chain. What the file pins is
 unchanged in substance -- the Pi's real AC/battery state reaches the renderer --
 but the surviving surface is the System Status card's POWER tile, so the bolt
 assertions were re-pointed at `power.source` rather than deleted.
+
+MOVED PIN (US-894-e): the POWER tile is gone too; the surviving surface is the
+System page's UPS row sentence (upsRowView, spec s4.5).
 """
 
 import json
@@ -54,18 +63,21 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _view(fn: str, arg):
+def _upsRow(state: dict) -> dict:
+    """MOVED PIN (US-894-e): the UPS row built from the REAL emitted
+    system-status (no battery-health payload, no clock: the words alone)."""
     # encoding="utf-8" is load-bearing on Windows: `text=True` alone decodes
     # node's UTF-8 stdout with the locale codec (cp1252 here), which turns the
-    # tile's `—` / `·` glyphs into U+FFFD and fails a correct assertion.
+    # row's `·` glyph into U+FFFD and fails a correct assertion.
     proc = subprocess.run(
-        [_NODE, _PROBE, fn, json.dumps(arg)],
+        [_NODE, _PROBE, "--map", "upsRowView"],
+        input=json.dumps([[state, None, None]]),
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout)
+    return json.loads(proc.stdout)[0]
 
 
 class _Orch(CardStateEmitterMixin):
@@ -95,15 +107,14 @@ class _Orch(CardStateEmitterMixin):
         self._lastSyncRows = 0
 
 
-def _emitPower(tmp_path, provider) -> dict:
-    """Run the real emitter, return the `power` object the carousel reads."""
+def _emitState(tmp_path, provider) -> dict:
+    """Run the real emitter, return the system-status the carousel reads."""
     orch = _Orch(str(tmp_path / "states"), provider)
     orch._initializeCardStateEmitters()
     assert orch._maybeEmitCardStates() is True
-    state = json.loads(
+    return json.loads(
         (tmp_path / "states" / "system-status").read_text(encoding="utf-8")
     )
-    return state["power"]
 
 
 def _pld(present: bool, available: bool = True):
@@ -126,14 +137,14 @@ def test_onExternalPower_tileIsReal(tmp_path):
     removed by CIO ruling, and a node ID asserting a surface that no longer
     exists is the stale-pointer class this sprint is closing.
     """
-    power = _emitPower(tmp_path, _pld(present=True))
+    state = _emitState(tmp_path, _pld(present=True))
+    power = state["power"]
 
-    tile = _view("powerTile", power)
-    # US-668: the tile renders the SENSED source as its value now, not the
-    # operator-declared mode. EXTERNAL is the fact a lit screen cannot give you.
-    assert tile["value"] == "EXTERNAL"
-    assert tile["detail"] == "wall/car power"
-    assert tile["level"] == "ok"
+    # MOVED PIN (US-894-e): the POWER tile is gone; the UPS row says the
+    # SENSED source in words -- never `wall/car power` (CIO 2026-10-19).
+    row = _upsRow(state)
+    assert row["sentence"] == "on external power"
+    assert row["level"] == "secondary"
     # US-696 removed the top-bar bolt this line used to assert. The claim it was
     # making -- that the SENSED source reached the consumer -- is kept on the
     # surface that survived: the emitted fact itself. Deleting the assertion
@@ -150,14 +161,16 @@ def test_onBatteryPower_tileSaysBattery(tmp_path):
     lives one card in rather than on persistent chrome. That is the cost the
     CIO accepted; it is recorded here because this is where it would be felt.
     """
-    power = _emitPower(tmp_path, _pld(present=False))
+    state = _emitState(tmp_path, _pld(present=False))
+    power = state["power"]
 
-    tile = _view("powerTile", power)
-    assert tile["value"] == "BATTERY"
-    # Escapes, not literals: this file stays pure ASCII so the pin cannot be
-    # softened by whatever encoding a given box reads the source with.
-    assert tile["detail"] == "on UPS"
-    assert tile["level"] == "amber"
+    # MOVED PIN (US-894-e): the UPS row says `on battery`, NEUTRAL -- there is
+    # no UPS verdict member, so the old tile's amber does not carry over
+    # (spec s4.0 / s4.5, Atlas A4). The words carry the ride-down.
+    row = _upsRow(state)
+    assert row["sentence"] == "on battery"
+    assert row["level"] == "secondary"
+    assert row["look"] != "amber"
     # US-696: same substitution as above -- the bolt is gone, the fact is not.
     assert power["source"] == "battery"
 
@@ -166,13 +179,14 @@ def test_unreadableLine_staysHonestlyUnavailable(tmp_path):
     """Honest-instrument: a PLD we cannot read renders the neutral/unavailable
     tile and a neutral bolt -- the SAME surface as before this story. Wiring a
     real source must not turn "I don't know" into a confident claim."""
-    power = _emitPower(tmp_path, _pld(present=False, available=False))
+    state = _emitState(tmp_path, _pld(present=False, available=False))
+    power = state["power"]
     assert power["source"] == "unknown"
 
-    tile = _view("powerTile", power)
-    assert tile["value"] == "\u2014"
-    assert tile["detail"] == "unavailable"
-    assert tile["level"] == "unavailable"
+    # MOVED PIN (US-894-e): the UPS row's words for an unresolved source.
+    row = _upsRow(state)
+    assert row["sentence"] == "power source unknown"
+    assert row["level"] == "secondary"
     # US-696: the `source == "unknown"` half of this claim is asserted above,
     # before the tile is built -- an unreadable line must not become a confident
     # reading at either layer, and the bolt is no longer one of them.

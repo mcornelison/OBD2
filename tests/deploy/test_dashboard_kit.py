@@ -45,6 +45,16 @@
 # 2026-10-22    | Ralph (Rex)  | US-511-b -- MOVED PIN: clearButtonView's third input
 #                               is whether the raw gear is known: 'stop to clear'
 #                               (moving) vs 'gear unknown' (parked_unknown).
+# 2026-10-23    | Ralph (Rex)  | US-894-a -- MOVED PIN: glyphs.bt is the link chain
+#                               {bt, adapter, ecu}, read from link + verdict.
+# 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is
+#                               retired (9 -> 8 cards); the power-source and
+#                               battery-health render scripts read the UPS row
+#                               and detail; the ladder CSS pin is inverted.
+# 2026-10-23    | Ralph (Rex)  | US-894-f -- MOVED PIN: the view carries no tiles
+#                               (the drill is deleted, US-759), so the retired-
+#                               tile pins read `tiles` undefined; the count's
+#                               level is `issues` (AC 7).
 # ================================================================================
 ################################################################################
 
@@ -122,11 +132,13 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     # MOVED PIN (US-892-b): the Motion card replaces the Home card in its slot.
     # MOVED PIN (US-893-b): the Light card moves to index 5, right after Motion
     # (E-2, Iris Q6) -- still 9 cards.
-    assert html.count('class="card"') == 9
+    # MOVED PIN (US-894-e): the Battery card is retired (its cell is the System
+    # page's UPS row) -- 9 -> 8 cards.
+    assert html.count('class="card"') == 8
     labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
     assert labels == [
         "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
-        "System Status", "Battery",
+        "System Status",
     ]
     assert 'data-state="system-status"' in html
     # MOVED PIN (US-898-b1): the Alerts card reads states/alerts and is found
@@ -140,8 +152,11 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     # trivially true if the three readouts left with it.
     assert "Health" not in labels
     assert "data-states=" not in html, "a multi-source card outlived the retirement"
-    for state in ("battery-health", "ltft-trend", "light"):
+    # MOVED PIN (US-894-e): battery-health no longer owns a card -- its cell
+    # survives as the System page's UPS row (read by the system-status tick).
+    for state in ("ltft-trend", "light"):
         assert f'data-state="{state}"' in html, f"{state} lost its slot"
+    assert 'data-state="battery-health"' not in html
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
@@ -319,69 +334,101 @@ assert.strictEqual(c.systemStatusView(null), null, 'null -> no view');
 assert.strictEqual(c.systemStatusView('x'), null, 'string -> no view');
 assert.strictEqual(c.systemStatusView([]), null, 'array -> no view');
 
-// I-3: a reconnecting OBD link -> tile shows RECONNECTING (amber), retries
-// surfaced; the top-bar BT glyph flips amber.
-// MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+// I-3: a reconnect is visible -- the OBD row's BT step and the top-bar BT dot
+// are amber, and the row's sentence is the bt member's reason verbatim.
+// MOVED PIN (US-894-a): the BT glyph is the link chain; its BT dot is amber
+// because `bt` is a verdict member, read from link + verdict, not obdLink.
+// MOVED PIN (US-894-b): obdLink and the RECONNECTING tile are retired; the
+// System page's OBD row carries the reconnect (spec s4.2).
 const reconn = {
-  obdLink: {state: 'reconnecting', retries: 3},
+  link: {bt: {state: 'retrying'}, adapter: {state: null}, ecu: {state: null}},
+  verdict: {issueCount: 1, members: [{key: 'bt', reason: 'Link dropped. Retrying.'}]},
   sync: {lastOkTs: '2026-06-30T19:40:00Z', rows: 10, pending: 0, stale: false},
   power: {mode: 'car', source: 'external'},
   drive: {state: 'recording', driveId: 27},
   ts: '2026-06-30T19:42:00Z'
 };
 const rv = c.systemStatusView(reconn);
-assert.strictEqual(rv.tiles.obdLink.level, 'amber', 'reconnect tile amber');
-assert.ok(/RECONNECTING/i.test(rv.tiles.obdLink.value), 'tile says RECONNECTING');
-assert.ok(/3/.test(rv.tiles.obdLink.detail), 'retries surfaced');
-assert.strictEqual(rv.glyphs.bt, 'amber', 'BT glyph amber on reconnect');
+// MOVED PIN (US-894-f): no tiles at all -- the drill they fed is deleted.
+assert.strictEqual(rv.tiles, undefined, 'the OBD LINK tile is retired (no tiles left)');
+assert.strictEqual(rv.drill, undefined, 'the US-509 drill is deleted (US-759)');
+assert.strictEqual(rv.verdict.level, 'issues', 'the count names no one member (AC 7)');
+assert.strictEqual(rv.rows[0].steps[0], 'amber', 'OBD row BT step amber');
+assert.strictEqual(rv.rows[0].sentence, 'Link dropped. Retrying.', 'member reason verbatim');
+assert.strictEqual(rv.verdict.text, '1 ISSUE', 'the provider counted it');
+assert.strictEqual(rv.glyphs.bt.bt, 'amber', 'BT dot amber on a bt member');
 
-// I-4: a stale-while-driving sync -> sync tile amber + sync glyph amber.
+// I-4: a stale-while-driving sync is SHOWN, never counted.
+// MOVED PIN (US-894-c, spec s4.3 Iris I4, Atlas P9): the SYNC tile is retired
+// and `sync.stale` has no verdict member, so the glyph is neutral (amber only
+// with a `sync` member, US-917); the DATA row carries the stamp.
 const stale = JSON.parse(JSON.stringify(reconn));
-stale.obdLink = {state: 'linked', retries: 0};
 stale.sync.stale = true;
 const sv = c.systemStatusView(stale);
-assert.strictEqual(sv.tiles.sync.level, 'amber', 'stale sync tile amber');
-assert.strictEqual(sv.glyphs.sync, 'amber', 'sync glyph amber when stale');
+assert.strictEqual(sv.tiles, undefined, 'the SYNC tile is retired (no tiles left)');
+assert.strictEqual(sv.glyphs.sync, 'neutral', 'stale sync glyph neutral without a member');
+assert.ok(/synced /.test(sv.rows[1].value), 'the DATA row carries the stamp');
+const counted = JSON.parse(JSON.stringify(stale));
+counted.verdict.members.push({key: 'sync', reason: 'x'});
+assert.strictEqual(c.systemStatusView(counted).glyphs.sync, 'amber', 'amber with a sync member');
 
 // F-1 (honest-instrument): a fully-degraded underlying state NEVER renders a
 // green/ok tile or glyph.
 const degraded = {
-  obdLink: {state: 'down', retries: 0},
+  link: {bt: {state: 'down'}, adapter: {state: null}, ecu: {state: null}},
+  verdict: {issueCount: 1, members: [{key: 'bt', reason: 'x'}]},
   sync: {lastOkTs: null, rows: 0, pending: 12, stale: true},
   power: {mode: 'car', source: 'battery'},
   drive: {state: 'idle', driveId: null},
   ts: '2026-06-30T19:42:00Z'
 };
 const dv = c.systemStatusView(degraded);
-assert.strictEqual(dv.tiles.obdLink.level, 'down', 'down link not ok');
-assert.strictEqual(dv.tiles.sync.level, 'amber', 'stale sync not ok');
-assert.strictEqual(dv.tiles.power.level, 'amber', 'battery power not ok');
-// US-696 dropped `glyphs.power` -- the tile assertion directly above is now
-// where a degraded supply is caught, so F-1 keeps both of its halves.
-const dglyphs = [dv.glyphs.bt, dv.glyphs.sync];
+// MOVED PIN (US-894-b): the down link is the OBD row's amber BT step.
+assert.strictEqual(dv.rows[0].steps[0], 'amber', 'down link not ok');
+assert.notStrictEqual(dv.verdict.level, 'ok', 'a counted link is never ALL OK');
+// MOVED PIN (US-894-c): no SYNC tile; a never-stored sync is no green claim.
+assert.ok(/no sync on record$/.test(dv.rows[1].value), 'never stored -> no sync on record');
+// MOVED PIN (US-894-e): the POWER tile is retired. On battery is the UPS
+// row's words, NEUTRAL (spec s4.0/s4.5: no UPS verdict member, Atlas A4) --
+// never a green claim and never an uncounted amber.
+assert.strictEqual(dv.rows[3].sentence, 'on battery', 'battery power is said');
+assert.notStrictEqual(dv.rows[3].level, 'ok', 'battery power not ok');
+assert.notStrictEqual(dv.rows[3].level, 'amber', 'on battery is never amber');
+// US-696 dropped `glyphs.power`.
+// MOVED PIN (US-894-a): glyphs.bt is the chain {bt, adapter, ecu}.
+const dglyphs = [dv.glyphs.bt.bt, dv.glyphs.bt.adapter, dv.glyphs.bt.ecu, dv.glyphs.sync];
 assert.ok(dglyphs.indexOf('ok') === -1, 'no glyph is ok when degraded');
 assert.strictEqual(dv.glyphs.power, undefined, 'power glyph survived US-696');
 
 // A healthy state DOES render green (the positive control -- ok is reachable).
 const healthy = {
-  obdLink: {state: 'linked', retries: 0},
+  link: {bt: {state: 'up'}, adapter: {state: 'up'}, ecu: {state: 'up'}},
+  verdict: {issueCount: 0, members: []},
   sync: {lastOkTs: '2026-06-30T19:41:50Z', rows: 50, pending: 0, stale: false},
   power: {mode: 'car', source: 'external'},
   drive: {state: 'recording', driveId: 27},
   ts: '2026-06-30T19:42:00Z'
 };
 const hv = c.systemStatusView(healthy);
-assert.strictEqual(hv.tiles.obdLink.level, 'ok', 'linked -> ok');
-assert.strictEqual(hv.glyphs.bt, 'ok', 'BT glyph ok when linked');
+// MOVED PIN (US-894-b): the linked tile is the OBD row's three green steps.
+assert.deepStrictEqual(hv.rows[0].steps, ['ok', 'ok', 'ok'], 'all up -> ok');
+assert.deepStrictEqual(hv.verdict, {text: 'ALL OK', level: 'ok'}, 'ALL OK reachable');
+assert.deepStrictEqual(hv.glyphs.bt, {bt: 'ok', adapter: 'ok', ecu: 'ok'}, 'chain ok when all up');
 // US-696: `ok` is still reachable for external power, on the tile that outlived
 // the bolt. Re-pointed rather than deleted -- this is the positive control that
 // keeps the degraded assertion above from passing on an unreachable green.
-assert.strictEqual(hv.tiles.power.level, 'ok', 'external power tile ok');
+// MOVED PIN (US-894-e): the POWER tile is retired; the UPS row says it.
+assert.strictEqual(hv.rows[3].sentence, 'on external power', 'external power said');
 
 // A missing sub-object -> that tile is `unavailable`, never green.
 const partial = c.systemStatusView({ts: '2026-06-30T19:42:00Z'});
-assert.strictEqual(partial.tiles.obdLink.level, 'unavailable', 'missing link tile');
-assert.strictEqual(partial.glyphs.bt, 'neutral', 'missing link glyph neutral');
+// MOVED PIN (US-894-b): a missing link is three DASHED steps, and a missing
+// verdict is `--`, never ALL OK.
+assert.deepStrictEqual(partial.rows[0].steps, ['dashed', 'dashed', 'dashed'], 'missing link row');
+assert.strictEqual(partial.verdict.text, '--', 'missing verdict');
+// MOVED PIN (US-894-a): a missing link is three HOLLOW dots, not neutral.
+assert.deepStrictEqual(partial.glyphs.bt, {bt: 'hollow', adapter: 'hollow', ecu: 'hollow'},
+                       'missing link chain hollow');
 
 console.log('US400_OK');
 """
@@ -448,63 +495,54 @@ _US421_NODE_SCRIPT = r"""
 const assert = require('assert');
 const c = require(process.argv[1]);
 
-// --- the SENSED SOURCE is the value (US-668) --------------------------------
-const ext = c.powerTile({source: 'external'});
-assert.strictEqual(ext.value, 'EXTERNAL', 'external source -> EXTERNAL');
-assert.strictEqual(ext.level, 'ok', 'external -> ok');
-const bat = c.powerTile({source: 'battery'});
-assert.strictEqual(bat.value, 'BATTERY', 'battery source -> BATTERY');
-assert.strictEqual(bat.level, 'amber', 'battery -> amber');
-assert.ok(/UPS/.test(bat.detail), 'battery detail names the UPS');
+// MOVED PIN (US-894-e): powerTile is retired with the System POWER tile. The
+// SENSED source is now the UPS row's sentence (upsRowView, spec s4.5), read
+// from system-status power.source. Same promises, new words: external /
+// battery are said; an unresolved source NEVER guesses one; the retired mode
+// (and the words wall / car) never come back.
+function sentence(power) {
+  return c.upsRowView(power === undefined ? {} : {power: power}, null, null).sentence;
+}
 
-// --- US-668 REGRESSION GUARD: `mode` must NOT influence the value ------------
-// The retired pi.power.mode SSOT rendered CAR/WALL in this slot. If anything
-// ever re-reads an operator-declared mode, these assertions fail.
+// --- the SENSED SOURCE is said (US-668 / US-894-e) ---------------------------
+assert.strictEqual(sentence({source: 'external'}), 'on external power', 'external');
+assert.strictEqual(sentence({source: 'battery'}), 'on battery', 'battery');
+assert.strictEqual(c.upsRowView({power: {source: 'battery'}}, null, null).level, 'secondary',
+  'on battery is neutral (s4.0: no UPS member)');
+
+// --- US-668 REGRESSION GUARD: `mode` must NOT influence the words ------------
 ['car', 'wall', 'garage', '', 42, true, null, undefined].forEach(function (m) {
-  const t = c.powerTile({mode: m, source: 'external'});
-  assert.strictEqual(t.value, 'EXTERNAL',
-    'mode ' + JSON.stringify(m) + ' must not change the sensed value');
-  assert.ok(t.value !== 'CAR' && t.value !== 'WALL',
-    'the retired CAR/WALL vocabulary must never return');
+  const t = sentence({mode: m, source: 'external'});
+  assert.strictEqual(t, 'on external power',
+    'mode ' + JSON.stringify(m) + ' must not change the sensed source');
+  assert.ok(!/\bcar\b|\bwall\b/i.test(t), 'the retired car/wall vocabulary must never return');
 });
 
 // --- honest-instrument: an UNRESOLVED SOURCE never guesses -------------------
-// 'EXTERNAL' and 'Battery' are in this list deliberately: the match is
-// case-SENSITIVE, so a mis-cased source must fall through to unavailable
-// rather than quietly match.
+// case-SENSITIVE on purpose: a mis-cased source falls through to unknown.
 const badSources = ['unknown', 'garage', '', 'EXTERNAL', 'Battery', 42, true, null, undefined];
 badSources.forEach(function (s) {
-  const t = c.powerTile({source: s});
-  assert.strictEqual(t.level, 'unavailable',
-    'unresolved source ' + JSON.stringify(s) + ' -> unavailable');
-  assert.ok(t.value !== 'EXTERNAL' && t.value !== 'BATTERY',
-    'unresolved source ' + JSON.stringify(s) + ' NEVER a confident source');
+  assert.strictEqual(sentence({source: s}), 'power source unknown',
+    'unresolved source ' + JSON.stringify(s) + ' -> power source unknown');
 });
-// source key entirely absent -> unavailable (never fabricates a source).
-assert.strictEqual(c.powerTile({}).level, 'unavailable', 'absent source -> unavailable');
-assert.strictEqual(c.powerTile({mode: 'car'}).level, 'unavailable',
-  'a mode WITHOUT a source is still unavailable -- mode cannot stand in for it');
+assert.strictEqual(sentence({}), 'power source unknown', 'absent source -> unknown');
+assert.strictEqual(sentence({mode: 'car'}), 'power source unknown',
+  'a mode WITHOUT a source is still unknown -- mode cannot stand in for it');
 
-// --- non-object payload -> unavailable, never a crash (honest-instrument) -----
-assert.strictEqual(c.powerTile(null).level, 'unavailable', 'null -> unavailable');
-assert.strictEqual(c.powerTile('x').level, 'unavailable', 'string -> unavailable');
+// --- non-object payload -> unknown, never a crash (honest-instrument) ---------
+assert.strictEqual(c.upsRowView(null, null, null).sentence, 'power source unknown', 'null');
+assert.strictEqual(c.upsRowView('x', null, null).sentence, 'power source unknown', 'string');
 
-// --- the DOM render path (systemStatusView) carries the same honest badge -----
+// --- the DOM render path (systemStatusView) carries the same words ------------
 function state(source) {
-  return {
-    obdLink: {state: 'linked', retries: 0},
-    sync: {lastOkTs: '2026-07-01T19:41:50Z', rows: 1, pending: 0, stale: false},
-    power: {source: source},
-    drive: {state: 'idle', driveId: null},
-    ts: '2026-07-01T19:42:00Z'
-  };
+  return {power: {source: source}, ts: '2026-07-01T19:42:00Z'};
 }
-assert.strictEqual(c.systemStatusView(state('external')).tiles.power.value, 'EXTERNAL',
-  'DOM path: external -> EXTERNAL');
-assert.strictEqual(c.systemStatusView(state('battery')).tiles.power.value, 'BATTERY',
-  'DOM path: battery -> BATTERY');
-assert.strictEqual(c.systemStatusView(state('garage')).tiles.power.level, 'unavailable',
-  'DOM path: unresolved -> unavailable, never confident-wrong');
+assert.strictEqual(c.systemStatusView(state('external')).rows[3].sentence, 'on external power',
+  'DOM path: external');
+assert.strictEqual(c.systemStatusView(state('battery')).rows[3].sentence, 'on battery',
+  'DOM path: battery');
+assert.strictEqual(c.systemStatusView(state('garage')).rows[3].sentence, 'power source unknown',
+  'DOM path: unresolved -> unknown, never confident-wrong');
 
 console.log('US421_OK');
 """
@@ -512,9 +550,9 @@ console.log('US421_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_powerTile_modeBadgeHonestInstrument_us421():
-    """US-421 / US-668: the power tile renders the SENSED SOURCE as its value --
-    external -> EXTERNAL (ok), battery -> BATTERY (amber) -- and an UNRESOLVED
-    source renders `unavailable`, never a confident guess. Also guards that the
+    """US-421 / US-668: the SENSED SOURCE is rendered -- MOVED PIN (US-894-e):
+    as the UPS row's words, `on external power` / `on battery` (neutral) -- and
+    an UNRESOLVED source reads `power source unknown`, never a confident guess. Also guards that the
     retired pi.power.mode CAR/WALL vocabulary cannot resurface: `mode` must not
     influence the value.
 
@@ -540,13 +578,20 @@ _US401_NODE_SCRIPT = r"""
 const assert = require('assert');
 const c = require(process.argv[1]);
 
-// A non-object payload -> no view (the shell renders `unavailable`).
-assert.strictEqual(c.batteryHealthView(null), null, 'null -> no view');
-assert.strictEqual(c.batteryHealthView('x'), null, 'string -> no view');
-assert.strictEqual(c.batteryHealthView([]), null, 'array -> no view');
+// MOVED PIN (US-894-e): batteryHealthView is retired with the Battery card.
+// The same battery-health rules now render in the System page's UPS row
+// (upsRowView) and UPS detail (upsDetailView), spec s4.5 / s4.6.1.
+const SYS = {power: {source: 'external', reasons: {}}, ts: '2026-06-30T19:42:00Z'};
+const NOW = Date.parse('2026-06-30T19:42:00Z');
 
-// F-8 (voltage-is-not-percent): vcellV:3.44 with soc:null -> the card shows
-// "3.44 V" and OMITS the percent (soc.shown false); "3.44 %" must never appear.
+// A non-object payload -> no cell reading (never a fabricated one).
+[null, 'x', []].forEach(function (p) {
+  assert.strictEqual(c.upsRowView(SYS, p, NOW).word, '--', JSON.stringify(p) + ' -> --');
+  assert.strictEqual(c.upsDetailView(SYS, p, NOW).health, null, 'no verdict without a payload');
+});
+
+// F-8 (voltage-is-not-percent): vcellV:3.44 with soc:null -> "3.44 V" and NO
+// percent anywhere; "3.44 %" must never appear.
 const noPct = {
   vcellV: 3.44, soc: null, socCalibrated: false, crate: -2.0,
   charging: false, draining: false, restedVcellV: null, weakEvents30d: 0,
@@ -555,65 +600,54 @@ const noPct = {
   lastHealthCheckTs: '2026-05-16T00:00:00Z', ladder: null,
   ts: '2026-06-30T19:42:00Z'
 };
-const npv = c.batteryHealthView(noPct);
-assert.strictEqual(npv.vcell.value, '3.44 V', 'cell shown in volts');
-assert.strictEqual(npv.soc.shown, false, 'percent omitted when soc null');
-assert.ok(npv.vcell.value.indexOf('%') === -1, 'never a percent on the volts');
-assert.strictEqual(npv.label, 'Pi UPS battery', 'F-11: UPS cell, not vehicle');
-assert.ok(/UPS|Pi/i.test(npv.vcell.detail), 'F-11: cell labeled UPS/Pi');
+const row = c.upsRowView(SYS, noPct, NOW);
+const npd = c.upsDetailView(SYS, noPct, NOW);
+assert.strictEqual(row.word, '3.44 V', 'cell shown in volts');
+assert.ok((row.value + row.sentence).indexOf('%') === -1, 'never a percent on the row');
+assert.strictEqual(npd.soc, null, 'SOC line omitted when soc null');
+assert.ok(npd.cell.indexOf('%') === -1, 'never a percent on the volts');
+assert.strictEqual(npd.label, 'Pi UPS battery', 'F-11: UPS cell, not vehicle');
 
-// A real SoC renders the percent (positive control) tagged (uncalibrated).
+// A real SoC renders the SOC line (positive control) tagged uncalibrated.
 const withPct = JSON.parse(JSON.stringify(noPct));
 withPct.soc = 76; withPct.socCalibrated = false;
-const wpv = c.batteryHealthView(withPct);
-assert.strictEqual(wpv.soc.shown, true, 'percent shown when soc present');
-assert.strictEqual(wpv.soc.value, '76%', 'percent rendered');
-assert.ok(/uncalibrated/i.test(wpv.soc.detail), 'uncalibrated tag');
+assert.strictEqual(c.upsDetailView(SYS, withPct, NOW).soc, '\u2248 76 % (modelled, uncalibrated)',
+  'SOC line with the uncalibrated caveat');
+assert.ok(c.upsRowView(SYS, withPct, NOW).value.indexOf('%') === -1, 'SOC never on the row');
 
 // F-9 (stale-green guard): a 45-day-old health check -> a GOOD verdict carries
 // "last health check · <date> (<age>)"; GOOD is never shown without its age.
 const green = JSON.parse(JSON.stringify(noPct));
 green.health = 'good';
 green.lastHealthCheckTs = '2026-05-16T00:00:00Z'; // 45 days before ts
-const gv = c.batteryHealthView(green);
+const gv = c.upsDetailView(SYS, green, NOW);
 assert.strictEqual(gv.health.level, 'ok', 'good -> ok');
 assert.strictEqual(gv.health.value, 'GOOD', 'Spool verdict word carried');
-assert.ok(/last health check/.test(gv.health.detail), 'good carries data-age');
-assert.ok(/2026-05-16/.test(gv.health.detail), 'date present');
-assert.ok(/45 days ago/.test(gv.health.detail), 'age present');
-assert.strictEqual(gv.healthCheck.ageDays, 45, 'age computed from ts');
+assert.ok(/last health check/.test(gv.healthCheck), 'good carries data-age');
+assert.ok(/2026-05-16/.test(gv.healthCheck), 'date present');
+assert.ok(/45 days ago/.test(gv.healthCheck), 'age present');
 
 // US-504 severity: informational at EVERY state -- a `replace` verdict must
 // never reach the alarm tier, and the retired green/attn/low tiers are gone.
 const worn = JSON.parse(JSON.stringify(green));
 worn.health = 'replace';
-assert.strictEqual(c.batteryHealthView(worn).health.level, 'neutral', 'replace never red');
+assert.strictEqual(c.upsDetailView(SYS, worn, NOW).health.level, 'neutral', 'replace never red');
 worn.health = 'low';
-assert.strictEqual(c.batteryHealthView(worn).health.level, 'unavailable', 'retired tier');
+assert.strictEqual(c.upsDetailView(SYS, worn, NOW).health.level, 'unavailable', 'retired tier');
 
-// US-504: the TEMP tile is REMOVED -- the MAX17048 has no temperature register,
-// so the tile had no source it could ever read (the column stays for a BMP390).
-assert.strictEqual(gv.temp, undefined, 'no temp tile');
+// US-504: no TEMP line -- the MAX17048 has no temperature register.
 const warm = JSON.parse(JSON.stringify(green));
 warm.ambientTempC = 24;
-assert.strictEqual(c.batteryHealthView(warm).temp, undefined, 'temp stays gone');
+assert.strictEqual(c.upsDetailView(SYS, warm, NOW).temp, undefined, 'no temp line');
 
-// F-2 / A-6 (no false failsafe): draining:false -> NO ladder; draining:true ->
-// ladder present. A draining pack with no Spool runtime shows stage, no minutes.
-assert.strictEqual(gv.ladder, null, 'draining false -> no ladder DOM');
+// F-2 / A-6 RETIRED (spec s4.6.1): the drain ladder and `~N min to cutoff` are
+// dropped -- a banned runtime, the pack capacity is unmeasured. A draining pack
+// with a published ladder renders no ladder and no minutes anywhere.
 const drain = JSON.parse(JSON.stringify(green));
 drain.draining = true;
 drain.ladder = {stage: 'WARNING', thresholds: {warn: 3.70}, runtimeRemainingS: 360};
-const dv = c.batteryHealthView(drain);
-assert.ok(dv.ladder !== null, 'draining true -> ladder present');
-assert.strictEqual(dv.ladder.stage, 'WARNING', 'stage carried');
-assert.strictEqual(dv.ladder.runtimeRemainingS, 360, 'runtime carried (Spool S-2)');
-const drainNoSpool = JSON.parse(JSON.stringify(green));
-drainNoSpool.draining = true; drainNoSpool.ladder = null; // S-2 not delivered
-const dnv = c.batteryHealthView(drainNoSpool);
-assert.ok(dnv.ladder !== null, 'draining still renders a failsafe');
-assert.strictEqual(dnv.ladder.runtimeRemainingS, null, 'no fabricated minutes');
-assert.strictEqual(dnv.ladder.stage, 'DRAINING', 'stage defaults honestly');
+const flat = JSON.stringify([c.upsRowView(SYS, drain, NOW), c.upsDetailView(SYS, drain, NOW)]);
+assert.ok(!/ladder|min to cutoff|DRAINING|WARNING/.test(flat), 'no ladder, no runtime');
 
 console.log('US401_OK');
 """
@@ -621,9 +655,10 @@ console.log('US401_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_batteryHealthView_renderLogic_f8_f9_f10_f2():
-    """US-401: the Battery Health render logic maps emitter JSON -> an honest
-    card (volts-not-percent, stale-green data-age, no-temp-tile, ladder only
-    when draining, UPS-not-vehicle labeling)."""
+    """US-401: the battery-health render logic maps emitter JSON -> an honest
+    reading (volts-not-percent, stale-green data-age, no-temp-tile,
+    UPS-not-vehicle labeling). MOVED PIN (US-894-e): rendered by the UPS row
+    and UPS detail now; the ladder is retired (spec s4.6.1)."""
     result = subprocess.run(
         ["node", "-e", _US401_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
@@ -636,11 +671,12 @@ def test_batteryHealthView_renderLogic_f8_f9_f10_f2():
 
 
 def test_dashboardCss_carriesLadderFailsafeStyles_us401():
-    """US-401: the failsafe ladder block has styles (rendered only when draining);
-    the TRIGGER stage escalates to STOP-red."""
+    """US-401: the failsafe ladder block had styles (rendered only when draining).
+    MOVED PIN (US-894-e): the ladder is RETIRED (spec s4.6.1: `~N min to
+    cutoff` is a banned runtime), so its rules are gone -- no orphaned CSS."""
     css = _read(KIT_DIR, "dashboard.css")
-    assert ".ladder" in css
-    assert 'data-stage="TRIGGER"' in css
+    assert re.search(r"^\s*\.ladder", css, flags=re.M) is None
+    assert 'data-stage="TRIGGER"' not in css
 
 
 # ---------------------------------------------------------------------------
@@ -1562,44 +1598,35 @@ _US421_RENDER_NODE_SCRIPT = r"""
 const assert = require('assert');
 const c = require(process.argv[1]);
 
-function view(power) {
-  return c.systemStatusView({
-    obdLink: {state: 'linked', retries: 0},
-    sync: {lastOkTs: '2026-07-01T00:00:00Z', rows: 1, pending: 0, stale: false},
-    power: power,
-    drive: {state: 'idle', driveId: null},
-    ts: '2026-07-01T00:00:01Z'
-  });
+// MOVED PIN (US-894-e): the POWER tile is retired; the render path carries
+// the sensed source as the UPS row (rows[3]) of systemStatusView.
+function row(power) {
+  return c.systemStatusView({power: power, ts: '2026-07-01T00:00:01Z'}).rows[3];
 }
 
 // --- the render path carries the sensed source, with its level --------------
-const ext = view({source: 'external'}).tiles.power;
-assert.strictEqual(ext.value, 'EXTERNAL', 'render: external -> EXTERNAL');
-assert.strictEqual(ext.level, 'ok', 'render: external -> ok');
+const ext = row({source: 'external'});
+assert.strictEqual(ext.key, 'ups', 'render: the UPS row');
+assert.strictEqual(ext.sentence, 'on external power', 'render: external');
 
-const bat = view({source: 'battery'}).tiles.power;
-assert.strictEqual(bat.value, 'BATTERY', 'render: battery -> BATTERY');
-assert.strictEqual(bat.level, 'amber',
-  'render: BATTERY must be amber -- it is the state a lit panel cannot reveal');
+const bat = row({source: 'battery'});
+assert.strictEqual(bat.sentence, 'on battery',
+  'render: on battery is SAID -- it is the state a lit panel cannot reveal');
+assert.notStrictEqual(bat.level, 'amber', 'render: on battery is neutral (s4.0)');
 
 // --- honest-instrument through the render path ------------------------------
-// An unresolved source must not reach the DOM as a confident value.
 [{source: 'unknown'}, {source: 'garage'}, {source: ''}, {mode: 'car'}, {}].forEach(function (p) {
-  const t = view(p).tiles.power;
-  assert.strictEqual(t.level, 'unavailable',
-    'render: ' + JSON.stringify(p) + ' -> unavailable');
-  assert.ok(t.value !== 'EXTERNAL' && t.value !== 'BATTERY',
+  assert.strictEqual(row(p).sentence, 'power source unknown',
     'render: ' + JSON.stringify(p) + ' NEVER a confident source');
 });
 
 // --- US-668 regression guard on the render path -----------------------------
-// The retired mode must not resurface as a value anywhere downstream.
 ['car', 'wall', 'unknown'].forEach(function (m) {
-  const t = view({mode: m, source: 'external'}).tiles.power;
-  assert.strictEqual(t.value, 'EXTERNAL',
+  const t = row({mode: m, source: 'external'});
+  assert.strictEqual(t.sentence, 'on external power',
     'render: mode ' + JSON.stringify(m) + ' must not override the sensed source');
-  assert.ok(t.value !== 'CAR' && t.value !== 'WALL',
-    'render: the retired CAR/WALL vocabulary must never return');
+  assert.ok(!/\bcar\b|\bwall\b/i.test(t.sentence + t.value),
+    'render: the retired car/wall vocabulary must never return');
 });
 
 console.log('US421_OK');
@@ -1608,8 +1635,9 @@ console.log('US421_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_powerTile_renderLogic_carWallUnknown_us421():
-    """US-421 / US-668: the power tile's RENDER PATH (systemStatusView, what the
-    DOM consumes) carries the sensed source -- EXTERNAL ok / BATTERY amber -- and
+    """US-421 / US-668: the RENDER PATH (systemStatusView, what the DOM
+    consumes) carries the sensed source -- MOVED PIN (US-894-e): as the UPS
+    row's words, `on external power` / `on battery` (neutral) -- and
     never lets an unresolved source reach the DOM as a confident value. Also
     guards that the retired CAR/WALL mode vocabulary does not resurface.
 

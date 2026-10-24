@@ -53,6 +53,13 @@
 # 2026-09-03    | Ralph (Rex)  | Initial -- US-672: availability describes the
 #               |              | condition, and the reason stops claiming the
 #               |              | car is off.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-a): #glyph-bt is the link
+#               |              | chain, read from `link`; the obdLink retry
+#               |              | phase no longer reaches the top bar.
+# 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-b): obdLink and the OBD LINK
+#               |              | tile are retired. The panel reads the System
+#               |              | page's OBD row (from `link`); the retry phase is
+#               |              | read at _gatherObdLinkState, which still owns it.
 # ================================================================================
 ################################################################################
 
@@ -85,7 +92,6 @@ from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
 )
 from pi.splash.source_availability import REASON_OBD_OFF  # noqa: E402
 from pi.splash.system_status_emitter import (  # noqa: E402
-    OBD_LINKED,
     SYSTEM_STATUS_FILENAME,
     buildSystemStatusState,
 )
@@ -99,12 +105,9 @@ _needsNode = pytest.mark.skipif(
 # The shipped panel, not the harness default.
 PANEL = (480, 320)
 
-# The design tokens the shipped stylesheet resolves each glyph state to. Named
-# after the driver's reading, never asserted as a colour name -- resolved through
-# the real cascade by `_btGlyph`.
-GREEN = "var(--green-ok)"
-AMBER = "var(--amber-warn)"
-NEUTRAL = "var(--text-secondary)"
+# MOVED PIN (US-894-a): the BT glyph's GREEN / AMBER / NEUTRAL colour tokens
+# went with btGlyphState. The top-bar chain's looks are pinned, colour by
+# colour, in tests/ui/test_topbar_chain_glyph.py.
 
 _FRESH_SYNC = "2026-09-01T15:45:22Z"
 
@@ -265,24 +268,17 @@ def _surface(payload: Any):
     return rh.dashboardSurface(tree, viewport=PANEL)
 
 
-def _btGlyph(payload: Any) -> tuple[str, str]:
-    """The BT glyph as the driver sees it -> (data-state, resolved colour).
-
-    The COLOUR travels with the token because the shipped vocabulary has FOUR
-    tokens for THREE colours -- `down` and `amber` both resolve to
-    ``--amber-warn`` (dashboard.css:251/257, the deliberate US-488 call "a DOWN
-    link is DEGRADED, not dangerous"). An assertion on tokens alone would call a
-    stable colour unstable, and that distinction is load-bearing in this file.
-    """
+def _chain(payload: Any) -> dict[str, str]:
+    """MOVED PIN (US-894-a): #glyph-bt is the link chain -> {layer: data-state}."""
     surface = _surface(payload)
     path = surface.pathById("glyph-bt")
     assert path is not None, "no #glyph-bt in the rendered DOM"
     assert surface.rendered(path), "#glyph-bt is in the DOM but not displayed"
-    declaration = surface.winningDeclaration(path, "color")
-    return (
-        path[-1].get("attrs", {}).get("data-state"),
-        declaration[0] if declaration else "",
-    )
+    dots = surface.pathsByClass("chain-dot")
+    assert len(dots) == 3, f"the chain paints {len(dots)} dots, not 3"
+    return {
+        dot[-1]["attrs"]["data-layer"]: dot[-1]["attrs"].get("data-state") for dot in dots
+    }
 
 
 def _textOf(node: dict) -> list[str]:
@@ -295,26 +291,20 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _obdTile(payload: Any) -> dict:
-    """The OBD LINK tile as the operator sees it on the 480x320 panel."""
+def _obdRow(payload: Any) -> dict:
+    """The System page's OBD row as the operator sees it (MOVED PIN, US-894-b:
+    was the retired OBD LINK tile)."""
     surface = _surface(payload)
-    path = None
-    for candidate in surface.pathsByClass("tile"):
-        for child in candidate[-1].get("children", []):
-            if "OBD LINK" in _textOf({"children": [child]}):
-                path = candidate
-    assert path is not None, "no OBD LINK tile in the rendered DOM"
-    assert surface.rendered(path), "the OBD LINK tile is in the DOM but not displayed"
-
-    value = ""
-    detail = ""
-    for child in path[-1].get("children", []):
-        classes = (child.get("attrs", {}).get("class") or "").split()
-        if "tile-value" in classes:
-            value = " ".join(_textOf(child))
-        elif "tile-detail" in classes:
-            detail = " ".join(_textOf(child))
-    return {"value": value, "detail": detail}
+    # MOVED PIN (US-894-c): the DATA row follows; this reads the OBD row.
+    rows = [p for p in surface.pathsByClass("sys-row")
+            if p[-1]["attrs"].get("data-row") == "obd"]
+    assert len(rows) == 1, "no OBD row in the rendered DOM"
+    assert surface.rendered(rows[0]), "the OBD row is in the DOM but not displayed"
+    sentence = surface.pathsByClass("sys-row-sentence")[0]
+    return {
+        "sentence": " ".join(_textOf(sentence[-1])),
+        "card": " ".join(_textOf(rows[0][-1])),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -353,18 +343,22 @@ def test_theCalibrationFixtureReproducesTheCIOsMeasuredSplit():
 
 
 @_needsNode
-def test_theHarnessActuallyReadsTheBtGlyphAndTheTile_negativeControl(tmp_path):
+def test_theHarnessActuallyReadsTheChainAndTheRow_negativeControl(tmp_path):
     """
-    Given: every "holds one colour" assertion below fails open if the glyph is
-           unreadable
+    Given: every assertion below fails open if the panel is unreadable
     When: an unmistakably LINKED car is rendered
-    Then: the harness reads a real state, a real colour and a real tile.
+    Then: the harness reads a real OBD row and three real dot states.
+
+          MOVED PIN (US-894-a): this read the BT glyph `ok`/GREEN off obdLink.
+          The chain reads `link`, which this composing object never fills, so
+          its dots read hollow -- read, not absent.
+          MOVED PIN (US-894-b): the OBD LINK tile is retired; the OBD row reads
+          the same unread chain.
     """
     payload = _emit(tmp_path, _allCauses()["linked"])
-    state, colour = _btGlyph(payload)
-    assert state == "ok", f"harness read no glyph state: {state!r}"
-    assert colour == GREEN, f"harness read no glyph colour: {colour!r}"
-    assert _obdTile(payload)["value"] == "LINKED"
+    assert payload["source"]["obd"]["available"] is True
+    assert _chain(payload) == {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
+    assert _obdRow(payload)["sentence"] == "Bluetooth not read yet"
 
 
 # ---------------------------------------------------------------------------
@@ -556,18 +550,18 @@ def test_theDriverReadsNeverConnected_notThatTheCarIsOff(tmp_path):
     """
     Given: a car this Pi has never connected to, with the key ON
     When: the SHIPPED dashboard renders what the REAL producer wrote
-    Then: the OBD LINK tile prints "never connected" and never "OBD: off".
+    Then: the state file says "never connected", and nothing on the panel says
+          "OBD: off".
 
-          The driver's half of validationCriterion 2. `naTile` renders
-          `source.obd.reason` VERBATIM, so the producer's word IS the driver's
-          word -- which is why the claim is worth reading off the panel rather
-          than off the state file.
+          MOVED PIN (US-894-b): the OBD LINK tile that printed the reason is
+          retired; the OBD row reads `link` (not read here) and never claims
+          the car is off.
     """
     payload = _emit(tmp_path, connection=_connection(state="disconnected"))
-    tile = _obdTile(payload)
-    assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_NEVER_CONNECTED, tile
-    assert tile["detail"] != REASON_OBD_OFF, tile
+    assert payload["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
+    row = _obdRow(payload)
+    assert row["sentence"] == "Bluetooth not read yet", row
+    assert REASON_OBD_OFF not in row["card"], row
 
 
 def test_theNewWordIsPinnedAsALITERAL_notAsTheConstantItComesFrom(tmp_path):
@@ -643,138 +637,58 @@ def test_theFourUnavailableCausesStillCarryThreeDistinctWords(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# validationCriteria 3 and 4 -- BOTH cheap wrong answers are forbidden, and the
-# proof is that the two conditions land on DIFFERENT colours.
+# validationCriteria 3 and 4 -- MOVED PIN (US-894-a). Four tests here pinned the
+# BT glyph's COLOUR across the retry cycle off obdLink + source.obd: neutral for
+# a never-connected car, amber for a dropped one, one colour per condition.
+# btGlyphState is retired and the top bar is the three-layer chain, which reads
+# `link` and ignores both inputs (spec s4.2.1), so the retry phase has no path
+# to the top bar at all. The never-connected / dropped distinction now lives in
+# the provider's per-layer state (`connecting` vs `retrying`) and is pinned at
+# the chain in tests/ui/test_topbar_chain_glyph.py. The producer half of these
+# criteria -- one availability per condition -- is unchanged above.
 # ---------------------------------------------------------------------------
 
 
 @_needsNode
-def test_aGenuinelyAbsentSourceIsNeutralAndStaysNeutralThroughTheRetryCycle(tmp_path):
+def test_theObdLinkRetryPhaseNeverReachesTheTopBar(tmp_path):
     """
-    Given: a bench with no dongle paired -- nothing has ever connected
-    When: the glyph is read at BOTH instants of the retry cycle
-    Then: it is NEUTRAL at both.
-
-          validationCriterion 3, and the half that proves the fix did not simply
-          pin everything to amber. Read at both instants on purpose: a
-          single-sample assertion is exactly what let the flap ship.
-    """
-    midAttempt = _emit(
-        tmp_path / "mid",
-        connection=_connection(state="connecting", retryCount=1, totalConnections=0),
-    )
-    between = _emit(
-        tmp_path / "between",
-        connection=_connection(state="disconnected", retryCount=1, totalConnections=0),
-    )
-    assert _btGlyph(midAttempt) == ("neutral", NEUTRAL)
-    assert _btGlyph(between) == ("neutral", NEUTRAL)
-
-
-@_needsNode
-def test_aRealCarWithADroppedLinkIsAmberAndStaysAmberThroughTheRetryCycle(tmp_path):
-    """
-    Given: a car this Pi HAS connected to, whose link has dropped and is retrying
-    When: the glyph is read at both instants of the retry cycle
-    Then: the COLOUR is amber at both.
-
-          validationCriterion 4, and the half that proves the fix did not pin
-          everything to neutral and restore US-663's defect.
-
-          THE CLAIM IS ON THE COLOUR, NOT THE TOKEN, and here that distinction
-          does real work: the token genuinely differs across the cycle
-          (`reconnecting` mid-attempt, `down` between) because `obdLink.state`
-          still carries the retry PHASE -- which is where Atlas said a "trying
-          now" fact may live, as long as it does not ride on `available`. The
-          driver sees one colour because dashboard.css paints both with
-          `--amber-warn`. That coincidence is load-bearing for this story, so it
-          is asserted rather than relied upon: see the test below.
-    """
-    midAttempt = _emit(
-        tmp_path / "mid",
-        connection=_connection(state="reconnecting", retryCount=1, totalConnections=2),
-    )
-    between = _emit(
-        tmp_path / "between",
-        connection=_connection(state="disconnected", retryCount=3, totalConnections=2),
-    )
-    assert _btGlyph(midAttempt)[1] == AMBER
-    assert _btGlyph(between)[1] == AMBER
-
-
-@_needsNode
-def test_bothAvailableNotConnectedTokensResolveToOneColour_soThePhaseCannotStrobe(
-    tmp_path,
-):
-    """
-    Given: the two link-state tokens an AVAILABLE-but-not-connected link can
-           publish across the retry cycle
-    When: each is resolved through the SHIPPED stylesheet
-    Then: they land on the SAME colour.
-
-          THE PIN THAT MAKES THE PREVIOUS TEST HONEST. `obdLink.state` is left
-          carrying the retry phase deliberately -- the OBD LINK tile's
-          "RECONNECTING / retry 3" is a diagnostic a driver goes looking for, and
-          deleting it would cost US-658's three-state vocabulary its `down`
-          token. That is only safe while `down` and `amber` share a hue
-          (dashboard.css:251/257, US-488: "a DOWN link is DEGRADED, not
-          dangerous"). Give `down` its own colour and validationCriterion 4
-          re-opens for every previously-connected car -- so that change fails
-          HERE, with this docstring attached, instead of shipping as a fresh
-          strobe nobody connected to this story.
-    """
-    midAttempt = _emit(
-        tmp_path / "mid",
-        connection=_connection(state="reconnecting", totalConnections=2),
-    )
-    between = _emit(
-        tmp_path / "between",
-        connection=_connection(state="disconnected", totalConnections=2),
-    )
-    assert midAttempt["obdLink"]["state"] == "reconnecting"
-    assert between["obdLink"]["state"] == "down"
-    assert _btGlyph(midAttempt)[0] != _btGlyph(between)[0], "the tokens must differ"
-    assert _btGlyph(midAttempt)[1] == _btGlyph(between)[1]
-
-
-@_needsNode
-def test_theTwoConditionsAreDistinguishable_soNeitherCheapAnswerWasTaken(tmp_path):
-    """
-    Given: a never-connected link and a dropped-after-connecting link, each read
+    Given: a never-connected car and a dropped-after-connecting car, each read
            at BOTH instants of the retry cycle
-    When: all four glyphs are compared
-    Then: the two CONDITIONS differ in colour, and neither condition varies
-          across the cycle.
+    When: the top-bar chain is read on all four
+    Then: it is the same on all four -- what `link` publishes (here, not read).
 
-          THE LOAD-BEARING CLAIM OF THE STORY, stated as one composed assertion
-          because either half alone is satisfiable the wrong way: pinning
-          everything neutral gives perfect stability and destroys the
-          distinction, and so does pinning everything amber. Stability AND
-          distinguishability, or the fix is one of the two answers the story
-          forbids by name.
+          The flap's old route to the glyph was obdLink + source.obd. A chain
+          that varied here would be reading one of them again.
+          MOVED PIN (US-894-b): obdLink is retired, so the retry phase the
+          samples must vary in is read where it still lives -- the gather.
     """
-    never = [
-        _btGlyph(
-            _emit(
-                tmp_path / f"never-{token}",
-                connection=_connection(state=token, totalConnections=0),
-            )
+    samples = {
+        f"{name}-{token}": _emit(
+            tmp_path / f"{name}-{token}",
+            connection=_connection(state=token, totalConnections=total),
         )
-        for token in ("connecting", "disconnected")
-    ]
-    dropped = [
-        _btGlyph(
-            _emit(
-                tmp_path / f"dropped-{token}",
-                connection=_connection(state=token, totalConnections=2),
-            )
-        )[1]
-        for token in ("reconnecting", "disconnected")
-    ]
-
-    assert len({colour for _, colour in never}) == 1, never
-    assert len(set(dropped)) == 1, dropped
-    assert never[0][1] != dropped[0], (never, dropped)
+        for name, total, tokens in (
+            ("never", 0, ("connecting", "disconnected")),
+            ("dropped", 2, ("reconnecting", "disconnected")),
+        )
+        for token in tokens
+    }
+    phases = {
+        _Orch(
+            str(tmp_path / f"gather-{name}-{token}"),
+            connection=_connection(state=token, totalConnections=total),
+        )._gatherObdLinkState()[0]
+        for name, total, tokens in (
+            ("never", 0, ("connecting", "disconnected")),
+            ("dropped", 2, ("reconnecting", "disconnected")),
+        )
+        for token in tokens
+    }
+    assert phases >= {"reconnecting", "down"}
+    assert all("obdLink" not in p for p in samples.values())
+    chains = {key: _chain(payload) for key, payload in samples.items()}
+    hollow = {"bt": "hollow", "adapter": "hollow", "ecu": "hollow"}
+    assert all(chain == hollow for chain in chains.values()), chains
 
 
 # ---------------------------------------------------------------------------
@@ -782,14 +696,17 @@ def test_theTwoConditionsAreDistinguishable_soNeitherCheapAnswerWasTaken(tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_theFixIsInTheProducer_theGlyphStillReadsTheStateItIsGiven():
+def test_theFixIsInTheProducer_theChainStillReadsTheStateItIsGiven():
     """
+    MOVED PIN (US-894-a): re-pointed from the retired btGlyphState to its
+    successor, linkChainGlyph. The claim is unchanged.
+
     Given: the story forbids debouncing the GLYPH -- `system-status` is read by
            more than the glyph, and smoothing it at the renderer leaves every
            other consumer reading a value that flips
-    When: `btGlyphState` is read out of the shipped carousel.js
-    Then: it is still a pure `===` chain over `o.state` -- no timers, no history,
-          no previous-value memory.
+    When: `linkChainGlyph` is read out of the shipped carousel.js
+    Then: it is still a pure lookup over each layer's `state` -- no timers, no
+          history, no previous-value memory.
 
           An executable form of "fix the producer". A debounce would need STATE,
           and the names below are how state enters this function.
@@ -802,7 +719,7 @@ def test_theFixIsInTheProducer_theGlyphStillReadsTheStateItIsGiven():
           no static check, because it reads like one.
     """
     source = open(_CAROUSEL_JS, encoding="utf-8").read()
-    start = source.index("function btGlyphState(")
+    start = source.index("function linkChainGlyph(")
     body = source[start : source.index("\n  function ", start + 1)].lower()
     for smell in ("settimeout", "setinterval", "date.now", "last", "prev", "cache"):
         assert smell not in body, (smell, body)
@@ -837,12 +754,9 @@ def test_anAbsenceWithNoSuppliedReasonIsNotGivenTheCarOffClaimOnItsBehalf():
           orchestrator, so this is a live contract and not a hypothetical.
     """
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=_FRESH_SYNC,
-        syncRows=10,
-        syncPending=0,
+        # MOVED PIN (US-894-c): syncRows / syncPending dropped -- sync.rows / sync.pending retired (Atlas P7).
         syncStale=False,
         powerSource="external",
         driveState="idle",
@@ -870,11 +784,7 @@ def test_aSuppliedCarOffReasonIsStillHonoured_soThisWasNotABlanketBan():
           deleting the constant's last legitimate use as well.
     """
     state = buildSystemStatusState(
-        obdLinkState=OBD_LINKED,
-        obdRetries=0,
         syncLastOkTs=_FRESH_SYNC,
-        syncRows=10,
-        syncPending=0,
         syncStale=False,
         powerSource="external",
         driveState="idle",

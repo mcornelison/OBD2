@@ -1,0 +1,153 @@
+{
+  "description": "AC 8: states/gear unavailable (link_down) -> locked, '🔒 view only — gear unknown': no driver action is sure to unlock it.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "connecting",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "adapter": {
+          "state": "connecting",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "ecu": {
+          "state": "connecting",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        }
+      }
+    },
+    "gear": {
+      "available": false,
+      "gear": null,
+      "reason": "link_down"
+    },
+    "settings": {
+      "pi.display.carousel.autoRotateS": 0,
+      "pi.calibration.mode": false,
+      "pi.analysis.triggerAfterDrive": false
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "connecting",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "adapter": {
+          "state": "connecting",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        },
+        "ecu": {
+          "state": "connecting",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": null
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 0,
+        "members": []
+      }
+    },
+    "gear": {
+      "available": false,
+      "gear": null,
+      "reason": "link_down",
+      "ts": "2026-10-22T23:10:00Z"
+    },
+    "settings": {
+      "pi.display.carousel.autoRotateS": {
+        "found": true,
+        "value": 0
+      },
+      "pi.calibration.mode": {
+        "found": true,
+        "value": false
+      },
+      "pi.analysis.triggerAfterDrive": {
+        "found": true,
+        "value": false
+      }
+    }
+  }
+}

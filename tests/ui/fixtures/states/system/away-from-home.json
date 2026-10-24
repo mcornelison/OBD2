@@ -1,0 +1,176 @@
+{
+  "description": "Recording on another network, weak -> 'away from home', rows waiting, neutral and uncounted (ALL OK).",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T13:02:40Z",
+      "syncStale": false,
+      "syncRowsWaiting": 3880,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "recording",
+      "driveId": 212,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "Starbucks WiFi",
+      "wifiRssiDbm": -75,
+      "wifiHome": false,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      }
+    },
+    "capture-health": {
+      "lastRowSecondsAgo": 0.4,
+      "freshnessReason": null,
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": [
+          "2026-10-22T22:41:05Z",
+          0.4
+        ],
+        "light": [
+          "2026-10-22T22:41:05Z",
+          0.9
+        ],
+        "imu": [
+          "2026-10-22T22:41:05Z",
+          0.1
+        ],
+        "ups": [
+          "2026-10-22T22:41:05Z",
+          4.0
+        ]
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T13:02:40Z",
+        "stale": false,
+        "rowsWaiting": 3880,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "weak",
+        "ssid": "Starbucks WiFi",
+        "rssiDbm": -75,
+        "home": false,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "recording",
+        "driveId": 212,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 0,
+        "members": []
+      }
+    },
+    "capture-health": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.4,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-22T23:10:00Z",
+      "feeds": {
+        "obd": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.4
+        },
+        "imu": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.1
+        },
+        "light": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 0.9
+        },
+        "ups": {
+          "state": "ok",
+          "firstSampleTs": "2026-10-22T22:41:05Z",
+          "lastSampleSecondsAgo": 4.0
+        }
+      }
+    }
+  }
+}

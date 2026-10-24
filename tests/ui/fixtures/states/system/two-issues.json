@@ -1,0 +1,151 @@
+{
+  "description": "A drive recording, the link dropped (bt retrying) and the CPU hot -> bt + pi, 2 ISSUES; amber exactly on the BT step, its sentence, its top-bar dot and the Pi line -- the amber set equals the member set.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 0,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "recording",
+      "driveId": 212,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": {
+        "cpuTempC": 80.2,
+        "cpuTempTs": "2026-10-22T23:09:55Z",
+        "cpuTempLimitC": 80.0,
+        "throttled": false,
+        "throttledHex": "0x0",
+        "throttledSinceBoot": false,
+        "throttledTs": "2026-10-22T23:09:55Z",
+        "diskFreeBytes": 44345537331,
+        "diskThresholdBytes": 21474836480,
+        "diskVerdict": "healthy",
+        "diskTs": "2026-10-22T23:01:12Z",
+        "uptimeS": 10920,
+        "uptimeTs": "2026-10-22T23:09:55Z",
+        "overLimit": [
+          "cpuTemp"
+        ]
+      },
+      "link": {
+        "bt": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "adapter": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "ecu": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        }
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 0,
+        "edrRowsWaiting": 0,
+        "notCounted": []
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": 80.2,
+        "cpuTempTs": "2026-10-22T23:09:55Z",
+        "cpuTempLimitC": 80.0,
+        "throttled": false,
+        "throttledHex": "0x0",
+        "throttledSinceBoot": false,
+        "throttledTs": "2026-10-22T23:09:55Z",
+        "diskFreeBytes": 44345537331,
+        "diskThresholdBytes": 21474836480,
+        "diskVerdict": "healthy",
+        "diskTs": "2026-10-22T23:01:12Z",
+        "uptimeS": 10920,
+        "uptimeTs": "2026-10-22T23:09:55Z",
+        "overLimit": [
+          "cpuTemp"
+        ]
+      },
+      "link": {
+        "bt": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "adapter": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        },
+        "ecu": {
+          "state": "retrying",
+          "ts": "2026-10-22T23:08:30Z",
+          "lastOkTs": "2026-10-22T23:08:30Z"
+        }
+      },
+      "drive": {
+        "state": "recording",
+        "driveId": 212,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 2,
+        "members": [
+          {
+            "key": "bt",
+            "reason": "Link dropped. Retrying."
+          },
+          {
+            "key": "pi",
+            "reason": "CPU 80.2 °C, limit 80 °C."
+          }
+        ]
+      }
+    }
+  }
+}
