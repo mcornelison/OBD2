@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.13",
-  "theme": "V0.30 labwc switch groundwork + boot screen",
-  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 113 (#132): Plymouth Eclipse boot theme + quiet boot line (US-885), kiosk starts on a readiness event via a latch target, no sleep-polls (US-651-a), shutdown-state step + sync progress (US-883-a/b), sensor-absent and capture-health reasons (US-869-a/b). Pi stays x11."
+  "version": "V0.30.14",
+  "theme": "V0.30 boot and shutdown screens",
+  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 114 (#134) + Iris UIDEV-015 (#133): four-feed boot checklist + event-driven boot logo (US-869-c..g, US-785), full-frame WARNING (US-885-c), shutdown page with progress bar, reverse spin and dim-down, no timers (US-870-a/b/c, US-883-c), LOADING fit (US-760). Pi stays labwc."
 }
