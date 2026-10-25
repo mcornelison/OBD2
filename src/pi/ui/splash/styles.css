@@ -8,6 +8,9 @@
  *          src/pi/ui/tokens.css; the wordmark is Michroma (Atlas C-Atlas-3).
  * Changed: 2026-10-24 -- US-785: the phase-0b WARNING layer and the logo's
  *          cross-fade (both var(--t-fade)); #mark is an inline <svg> now.
+ * Changed: 2026-10-24 -- US-869-f: the spins. splash.svg's `spin` keyframes
+ *          live here now; spin 1 / 2 / 3 are body classes on #logo, one
+ *          rotation is var(--t-spin), and reduced motion runs none of it.
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -126,8 +129,52 @@ body.degraded #amber-ring {
 
 body.degraded #version-chip { color: var(--amber-warn); }
 
-/* Motion FREEZE: visual silence is the alarm. Stop every SVG animation by
-   pausing the embedded document's animations via the object element. */
-body.degraded #mark { animation-play-state: paused; }
+/* --- The spins (US-869-f, spec §1.1) ----------------------------------------
+   splash.svg's rotation, page-driven: boot-state-poll.js sets body.spin-N on the
+   previous step's own event (animationend / animationiteration), so spin 2 can
+   loop for as long as the boot takes and spin 3 starts on a turn boundary. One
+   rotation is var(--t-spin), declared here and nowhere in JS. */
+#logo {
+  transform-box: view-box;
+  transform-origin: 240px 160px;
+  filter: brightness(var(--bright-mid));   /* the cross-fade lands on spin 1's level */
+}
+body.spin-1 #logo {
+  animation: spin var(--t-spin) linear 1 both;
+  filter: brightness(var(--bright-mid));
+}
+body.spin-2 #logo {
+  animation: spin var(--t-spin) linear infinite both;
+  filter: brightness(var(--bright-hi));
+}
+body.spin-3 #logo {
+  animation: spin var(--t-spin) linear 1 both;
+  filter: brightness(var(--bright-max));
+}
+
+/* splash.svg's keyframes, verbatim: thirds, ease-in-out, to -360deg. */
+@keyframes spin {
+  0%     { transform: rotate(0deg);    animation-timing-function: ease-in-out; }
+  33.33% { transform: rotate(-120deg); animation-timing-function: ease-in-out; }
+  66.67% { transform: rotate(-240deg); animation-timing-function: ease-in-out; }
+  100%   { transform: rotate(-360deg); }
+}
+
+/* Motion FREEZE: visual silence is the alarm. The logo is inline now, so this
+   reaches its animation directly (through the <object> it never could). After
+   the spin rules: same specificity, so source order makes the pause win. */
+body.degraded #logo { animation-play-state: paused; }
+
+/* Reduced motion (Atlas C-Atlas-6): no spin, no cross-fade, no fade -- the logo
+   is static at var(--bright-mid) once 0b ends. motionGate reports no event, so
+   boot-state-poll.js advances on the healthy read itself. !important beats the
+   spin rules and the stage's inline fade. */
+@media (prefers-reduced-motion: reduce) {
+  #logo {
+    animation: none !important;
+    filter: brightness(var(--bright-mid)) !important;
+  }
+  #mark, #warning, #splash-stage { transition: none !important; }
+}
 
 @keyframes amber-fade-in { from { opacity: 0; } to { opacity: 1; } }

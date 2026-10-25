@@ -6007,6 +6007,38 @@ it. The kit's `install.sh` does not ship it. *Guarded by*
 `tests/ui/test_render_regression.py` (`TestSplashPhase0b`,
 `TestSplashWarningFrame`) and `tests/deploy/test_warning_png_single_copy.py`.
 
+**The spins: page CSS on their own events (US-869-f, Sprint 114 / V0.30; spec
+§1.1, Atlas A-tim 3, G2, C-Atlas-6, Iris C-Iris-3).** The inline logo's group
+`<g id="logo">` is what spins. splash.svg's `@keyframes spin` (thirds,
+ease-in-out, to -360deg) lives in `styles.css`, and one rotation is
+`var(--t-spin)`, declared once, with no JS twin. Spin 1 / 2 / 3 are body classes
+`boot-state-poll.js` sets, each started by the previous step's **own event**:
+`body.phase-1` (the cross-fade's `transitionend`, US-785) starts **spin 1**
+(`brightness(var(--bright-mid))`, one rotation); its `animationend` starts
+**spin 2** (`--bright-hi`, infinite); the first `animationiteration` once the
+boot-state is healthy starts **spin 3** (`--bright-max`, one rotation) -- so spin
+2 always turns at least once and finishes the rotation it is in, never snapping;
+spin 3's `animationend` starts the stage fade (`opacity var(--t-fade)`, inline
+via the token) and its `transitionend` calls `window.close()`. Each restart reads
+`#logo`'s computed style with no spin class on, so the shared keyframes start
+again from 0deg. Every wait first asks `motionGate.willFire` (`"animation"` for
+a spin, `"transition"` for the fade); false -- reduced motion, styles missing --
+advances that step on the event that started it, so a healthy read still reaches
+`window.close()` exactly once. **Reduced motion** (one code path, a branch on the
+media query): `@media (prefers-reduced-motion: reduce)` runs no animation and no
+transition (`!important` beats the spin rules and the stage's inline fade); the
+logo rests at `--bright-mid` once 0b ends and the window closes on the healthy
+read. **Degraded** is unchanged in meaning: `body.degraded #logo` sets
+`animation-play-state: paused`, which now reaches the animation directly (the
+`<object>` never let it). The bloom intro (the dot, `s-top` / `s-side`) is not
+carried. This **supersedes US-785's "the hand-off never waits for the
+cross-fade"**: the hand-off follows spin 3, and spin 1 follows 0b. No timer: the
+only `setTimeout` is the `POLL_MS` tick. In this story "ready" is boot-state
+healthy; US-869-g adds the feed gate. *Guarded by* `tests/ui/test_boot_spins.py`
+(the probe dispatches `#logo`'s `animationend` / `animationiteration` one
+rotation apart on virtual time; `render_harness.splashSurface(reducedMotion=)`
+evaluates the media query).
+
 **Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
 defect).** The sole production writer of `shutdown-state` is the powerwatch
 `ShutdownSequencer` grace path (`pi.power.power_watch.__main__` →

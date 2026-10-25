@@ -35,15 +35,28 @@
  *          dispatches the logo's `transitionend` -- unless
  *          `dispatchCrossFadeEnd` is false.
  *
+ *          US-869-f (the spins): `computedStyles.logo` is what #logo computes
+ *          WHILE a body.spin-N class is on (styles.css's `body.spin-N #logo`);
+ *          with no spin class, or under `reducedMotion` (the media block),
+ *          every element computes none / 0s. While a spin is live the probe is
+ *          the browser's half: one rotation (`spinEventMs`, else the computed
+ *          animationDuration) after a spin starts it dispatches #logo's
+ *          `animationend` (spins 1 and 3) or one `animationiteration` per
+ *          rotation (spin 2) -- unless `dispatchSpinEvents` is false.
+ *          `spinEventMs` 0 dispatches at zero elapsed time.
+ *
  *          Invoked as:  node splash_probe.js <inputJsonPath>
  *          Input:  {pollJsPath, motionGatePath, tree, bootStates, rounds,
  *                   computedStyles, dispatchTransitionEnd, reducedMotion,
  *                   domContentLoadedMs, warningDecodeMs, warningError,
- *                   fontsReadyMs, dispatchCrossFadeEnd}
+ *                   fontsReadyMs, dispatchCrossFadeEnd, dispatchSpinEvents,
+ *                   spinEventMs}
  *          Output: {handoff, closeCalls, timeoutsQueued, degraded,
  *                   degradedMsg, polls, elapsedMs, crossFadeStartedAtMs,
  *                   crossFadeEndedAtMs, crossFadeEndDispatched,
- *                   warningDecodeCalls, tree}
+ *                   warningDecodeCalls, spinLog, animationEvents,
+ *                   fadeStartedAtMs, spinAtHandoff, animationLiveAtHandoff,
+ *                   tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
  * ==========================================================================*/
@@ -78,6 +91,22 @@ async function main() {
   // independent cadences is the real system, and getting it wrong would decide
   // which emission a poll sees. The final entry repeats (a steady state); a
   // `null` entry models an unreadable file.
+  // US-869-f: the spin the page is in, read off body.spin-N (0 = none).
+  let spinAtHandoff = null;
+  let animationLiveAtHandoff = null;
+  function currentSpin() {
+    for (let n = 1; n <= 3; n++) {
+      if (doc.body.classList.contains("spin-" + n)) return n;
+    }
+    return 0;
+  }
+  function logoAnimationLive() {
+    const logo = doc.getElementById("logo");
+    if (!logo) return false;
+    const cs = win.getComputedStyle(logo);
+    return cs.animationName !== "none" && parseFloat(cs.animationDuration) > 0;
+  }
+
   const states = input.bootStates || [];
   const emitIntervalMs = input.emitIntervalMs || 500;
   const computedStyles = input.computedStyles || {};
@@ -94,12 +123,20 @@ async function main() {
     close: function () {
       handoff = true;
       closeCalls += 1;
-      if (handoffAtMs === null) handoffAtMs = virtualMs;
+      if (handoffAtMs === null) {
+        handoffAtMs = virtualMs;
+        spinAtHandoff = currentSpin();
+        animationLiveAtHandoff = logoAnimationLive();
+      }
     },
     addEventListener: function () {},
     getComputedStyle: function (el) {
       const id = el && el.getAttribute ? el.getAttribute("id") : null;
-      const entry = (id && computedStyles[id]) || {};
+      let entry = (id && computedStyles[id]) || {};
+      // styles.css: #logo animates only under body.spin-N, and the
+      // reduced-motion block turns every animation and transition off.
+      if (id === "logo" && currentSpin() === 0) entry = {};
+      if (input.reducedMotion) entry = {};
       return {
         transitionDuration: entry.transitionDuration || "0s",
         animationName: entry.animationName || "none",
@@ -237,11 +274,61 @@ async function main() {
     }
   }
 
+  // The browser's half of the spins (US-869-f). A spin is a new run each time
+  // the body's spin class changes; while it is live, its events fall due one
+  // rotation apart from the moment it started.
+  const dispatchSpinEvents = input.dispatchSpinEvents !== false;
+  const spinLog = [];
+  const animationEvents = [];
+  let spinRun = null;
+  function rotationMs() {
+    if (typeof input.spinEventMs === "number") return input.spinEventMs;
+    const logo = doc.getElementById("logo");
+    const raw = logo ? win.getComputedStyle(logo).animationDuration : "0s";
+    const n = parseFloat(raw);
+    return /ms$/.test(raw) ? n : n * 1000;
+  }
+  // Every spin the page STARTS is logged at the moment its class goes on --
+  // including one that advances synchronously because no event will fire.
+  const bodyClassAdd = doc.body.classList.add.bind(doc.body.classList);
+  doc.body.classList.add = function (name) {
+    bodyClassAdd(name);
+    const m = /^spin-([123])$/.exec(name);
+    if (!m) return;
+    spinRun = { spin: Number(m[1]), startedAtMs: virtualMs, live: logoAnimationLive(), events: 0 };
+    spinLog.push({ spin: spinRun.spin, atMs: virtualMs, live: spinRun.live });
+  };
+  function maybeAdvanceSpin() {
+    const n = currentSpin();
+    if (n === 0 || !spinRun || spinRun.spin !== n) return false;
+    if (!dispatchSpinEvents || !spinRun.live || spinRun.done) return false;
+    const due = spinRun.startedAtMs + (spinRun.events + 1) * rotationMs();
+    if (virtualMs < due) return false;
+    const logo = doc.getElementById("logo");
+    const type = n === 2 ? "animationiteration" : "animationend";
+    spinRun.events += 1;
+    if (type === "animationend") spinRun.done = true;
+    animationEvents.push({ type: type, spin: n, atMs: virtualMs });
+    logo.dispatchAnimationEvent(type, "spin", (spinRun.events * rotationMs()) / 1000);
+    return true;
+  }
+
+  let fadeStartedAtMs = null;
   async function settle() {
     await dom.drainMicrotasks();
-    maybeEndTransition();
-    maybeEndCrossFade();
-    await dom.drainMicrotasks();
+    // Bounded: each pass lets at most one spin event land and the page answer
+    // it, so a zero-length rotation cascades spin 1 -> 2 -> 3 -> fade at once.
+    for (let pass = 0; pass < 16; pass++) {
+      maybeEndCrossFade();
+      const spun = maybeAdvanceSpin();
+      const stage = doc.getElementById("splash-stage");
+      if (fadeStartedAtMs === null && stage && stage.style.opacity === "0") {
+        fadeStartedAtMs = virtualMs;
+      }
+      maybeEndTransition();
+      await dom.drainMicrotasks();
+      if (!spun && pass > 0) break;
+    }
     maybeEndCrossFade();
   }
 
@@ -281,6 +368,11 @@ async function main() {
       crossFadeEndedAtMs: crossFadeEndedAtMs,
       crossFadeEndDispatched: crossFadeEndDispatched,
       warningDecodeCalls: warningDecodeCalls,
+      spinLog: spinLog,
+      animationEvents: animationEvents,
+      fadeStartedAtMs: fadeStartedAtMs,
+      spinAtHandoff: spinAtHandoff,
+      animationLiveAtHandoff: animationLiveAtHandoff,
       tree: dom.serialize(doc.body),
     })
   );

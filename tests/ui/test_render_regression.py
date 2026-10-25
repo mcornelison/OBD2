@@ -58,6 +58,9 @@
 # 2026-10-24    | Rex (US-785) | Phase 0b: the WARNING frame + cross-fade to the
 #               |              | inline logo on DOMContentLoaded, decode and
 #               |              | fonts.ready (TestSplashPhase0b, -WarningFrame).
+# 2026-10-24    | Rex (US-869-f)| MOVED PIN (US-869-f): healthy before 0b ends now
+#               |              | hands off after 0b and spins 1-2-3, not before
+#               |              | the cross-fade (spin 1 starts on its end).
 # ================================================================================
 ################################################################################
 
@@ -792,14 +795,18 @@ class TestSplashPhase0b:
         assert result["crossFadeStartedAtMs"] == 0
         assert result["crossFadeEndedAtMs"] is None
 
-    def test_healthyBefore0bEnds_theHandOffFadeStillRunsAtOnce(self):
+    def test_healthyBefore0bEnds_theHandOffFollowsTheSpins(self):
         """
+        MOVED PIN (US-869-f): spin 1 starts on the cross-fade's end, so the
+        hand-off now follows 0b instead of running before it.
+
         Given: boot-state healthy at the first poll, the 0b events 5 s later
-        Then: the hand-off fades and closes now -- it never waits for the cross-fade
+        Then: nothing closes before 5 s; at 5 s spins 1 -> 2 -> 3 run (no logo
+              animation computed, so each advances at once) and the window closes
         """
         result = rh.runSplash(
             [_HEALTHY_STATE],
-            rounds=8,
+            rounds=24,
             domContentLoadedMs=5_000,
             warningDecodeMs=5_000,
             fontsReadyMs=5_000,
@@ -807,8 +814,9 @@ class TestSplashPhase0b:
 
         assert result["handoff"]
         assert result["closeCalls"] == 1
-        assert result["handoffAtMs"] < 5_000
-        assert result["crossFadeStartedAtMs"] is None
+        assert result["crossFadeStartedAtMs"] == 5_000
+        assert result["handoffAtMs"] == 5_000
+        assert [entry["spin"] for entry in result["spinLog"]] == [1, 2, 3]
 
     def test_noTimerGatesTheCrossFade(self):
         """The only setTimeout ever queued is the POLL_MS tick (CIO no-timer rule).

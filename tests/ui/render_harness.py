@@ -52,6 +52,11 @@
 # 2026-10-24    | Ralph (Rex)  | US-785: runSplash models phase 0b's three end
 #                                events; brandLoadMs retires with the <object>;
 #                                Surface.lengthPx resolves px / vw / vh.
+# 2026-10-24    | Ralph (Rex)  | US-869-f: runSplash drives the spins
+#                                (dispatchSpinEvents, spinEventMs); a Surface
+#                                can evaluate prefers-reduced-motion (opt-in,
+#                                splashSurface answers it; the dashboard's
+#                                callers keep every block applying).
 # ================================================================================
 ################################################################################
 
@@ -573,10 +578,21 @@ def specificity(selector: str) -> tuple[int, int, int]:
 # --- cascade -----------------------------------------------------------------
 
 
-def _mediaApplies(media: str, viewport: tuple[int, int]) -> bool:
-    """Evaluate the min/max-width|height features the kits actually use."""
+def _mediaApplies(
+    media: str, viewport: tuple[int, int], reducedMotion: bool | None = None
+) -> bool:
+    """Evaluate the min/max-width|height features the kits actually use.
+
+    ``prefers-reduced-motion`` is evaluated only when ``reducedMotion`` is a
+    bool (US-869-f); None keeps the historical behaviour, where the feature is
+    not read and its block applies.
+    """
     if not media:
         return True
+    if reducedMotion is not None:
+        for value in re.findall(r"\(\s*prefers-reduced-motion\s*:\s*([\w-]+)\s*\)", media):
+            if (value == "reduce") != reducedMotion:
+                return False
     width, height = viewport
     for feature, value in re.findall(r"\(\s*([\w-]+)\s*:\s*(\d+)px\s*\)", media):
         num = int(value)
@@ -603,10 +619,12 @@ class Surface:
         tree: dict[str, Any],
         css: str,
         viewport: tuple[int, int] = (1920, 1080),
+        reducedMotion: bool | None = None,
     ) -> None:
         self.tree = tree
         self.rules = parseCss(css)
         self.viewport = viewport
+        self.reducedMotion = reducedMotion
         self._paths: list[list[dict[str, Any]]] = []
         self._collect(tree, [])
 
@@ -657,7 +675,7 @@ class Surface:
             bestKey = (1 if important else 0, 1, (0, 0, 0), 10**9)
 
         for rule in self.rules:
-            if not _mediaApplies(rule.media, self.viewport):
+            if not _mediaApplies(rule.media, self.viewport, self.reducedMotion):
                 continue
             if not isResolvable(rule.selector):
                 continue
@@ -823,7 +841,8 @@ def runDashboard(
 
 
 # What getComputedStyle reports for the boot stage once boot-state-poll.js sets
-# its inline `transition: opacity 0.5s` (US-869-d): the fade WILL end. The logo
+# its inline `transition: opacity var(--t-fade)` (US-869-d; the token since
+# US-869-f): the fade WILL end. The logo
 # (#mark) carries styles.css's `transition: opacity var(--t-fade)` (US-785), so
 # the phase-0b cross-fade will end too.
 _SPLASH_STAGE_FADE: dict[str, dict[str, str]] = {
@@ -846,6 +865,8 @@ def runSplash(
     warningError: bool = False,
     fontsReadyMs: int = 0,
     dispatchCrossFadeEnd: bool = True,
+    dispatchSpinEvents: bool = True,
+    spinEventMs: int | None = None,
 ) -> dict[str, Any]:
     """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
 
@@ -868,6 +889,14 @@ def runSplash(
     document.fonts.ready (``fontsReadyMs``). ``dispatchCrossFadeEnd`` False
     models no ``transitionend`` on the logo. (The US-525 ``brandLoadMs``, the
     ``<object>``'s load, retired with the ``<object>``.)
+
+    The spins (US-869-f): ``computedStyles["logo"]`` is what #logo computes
+    while a ``body.spin-N`` class is on. When that is a live animation the
+    probe dispatches #logo's ``animationend`` (spins 1 and 3) or one
+    ``animationiteration`` per rotation (spin 2), one rotation -- ``spinEventMs``,
+    else the computed duration -- after each spin starts; ``spinEventMs=0`` is
+    zero elapsed time, ``dispatchSpinEvents`` False models no event. The
+    default computes no logo animation, so the spins advance at once.
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
     return _runProbe(
@@ -889,6 +918,8 @@ def runSplash(
             "warningError": warningError,
             "fontsReadyMs": fontsReadyMs,
             "dispatchCrossFadeEnd": dispatchCrossFadeEnd,
+            "dispatchSpinEvents": dispatchSpinEvents,
+            "spinEventMs": spinEventMs,
         },
     )
 
@@ -941,7 +972,12 @@ def splashSurface(
     domTree: dict[str, Any],
     cssPath: str | None = None,
     viewport: tuple[int, int] = (480, 320),
+    reducedMotion: bool = False,
 ) -> Surface:
-    """Resolve the shipped splash stylesheet over a post-JS DOM tree."""
+    """Resolve the shipped splash stylesheet over a post-JS DOM tree.
+
+    ``reducedMotion`` answers ``prefers-reduced-motion`` (US-869-f): False is
+    normal motion, so the reduced block does not apply.
+    """
     with open(cssPath or os.path.join(SPLASH_DIR, "styles.css"), encoding="utf-8") as fh:
-        return Surface(domTree, fh.read(), viewport)
+        return Surface(domTree, fh.read(), viewport, reducedMotion)

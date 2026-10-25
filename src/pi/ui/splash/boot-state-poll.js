@@ -18,6 +18,14 @@
  *          cross-fades it to the logo, and the logo's transitionend sets
  *          body.phase-1 (spin 1 starts there, US-869-f). No timer, no hold;
  *          the hand-off never waits for the cross-fade.
+ * Updated: 2026-10-24 -- US-869-f: the spins. phase-1 starts spin 1 (one
+ *          rotation); its animationend starts spin 2 (loops); the first
+ *          animationiteration after the healthy read starts spin 3 (one
+ *          rotation); its animationend starts the fade. Every wait asks
+ *          motionGate.willFire first and, on false, advances on the event
+ *          that started it (reduced motion, styles missing). The rotation's
+ *          length lives once, in styles.css (--t-spin); the hand-off now
+ *          follows 0b, because spin 1 does.
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -72,9 +80,13 @@
     try { window.close(); } catch (e) {}
   }
 
-  function transitionWillEnd(el) {
+  function willFire(el, kind) {
     var gate = window.motionGate;
-    return !!(gate && typeof gate.willFire === "function" && gate.willFire(el, "transition"));
+    return !!(el && gate && typeof gate.willFire === "function" && gate.willFire(el, kind));
+  }
+
+  function transitionWillEnd(el) {
+    return willFire(el, "transition");
   }
 
   // --- Phase 0b (US-785, Atlas C-Atlas-5) -----------------------------------
@@ -120,6 +132,7 @@
     if (crossFadeEnded) return;
     crossFadeEnded = true;
     document.body.classList.add("phase-1");
+    enterSpin(1);
   }
 
   function startCrossFade() {
@@ -137,16 +150,67 @@
     if (!willEnd) endCrossFade();
   }
 
-  function enterHealthyYield() {
-    if (settled) return;
-    settled = true;
+  // --- The spins (US-869-f, spec §1.1) --------------------------------------
+  // spin 1 once -> spin 2 loops -> spin 3 once -> the fade. Each step is
+  // started by the previous step's OWN event; the one rotation is --t-spin in
+  // styles.css and nowhere here. `ready` is the healthy boot-state.
+
+  var SPIN_CLASSES = ["spin-1", "spin-2", "spin-3"];
+  var spin = 0;             // 0 = before spin 1; 4 = the fade has begun
+  var spinLive = false;     // the current spin's animation event will fire
+  var ready = false;
+  var spinListening = false;
+
+  function listenToTheLogo(logo) {
+    if (spinListening) return;
+    spinListening = true;
+    logo.addEventListener("animationend", function (ev) {
+      if (ev && ev.target && ev.target !== logo) return;
+      if (spin === 1) enterSpin(2);
+      else if (spin === 3) enterFade();
+    });
+    logo.addEventListener("animationiteration", function (ev) {
+      if (ev && ev.target && ev.target !== logo) return;
+      // Spin 2 finishes the rotation it is in: spin 3 starts on the
+      // iteration boundary, never mid-turn, so the logo never snaps.
+      if (spin === 2 && ready) enterSpin(3);
+    });
+  }
+
+  function enterSpin(n) {
+    spin = n;
+    var logo = document.getElementById("logo");
+    var body = document.body;
+    SPIN_CLASSES.forEach(function (c) { body.classList.remove(c); });
+    // Every spin is the same @keyframes spin, so the browser would carry the
+    // finished animation on instead of starting a new one: read the style
+    // once with no spin class, and the next class starts it from 0deg.
+    if (logo && typeof window.getComputedStyle === "function") {
+      void window.getComputedStyle(logo).animationName;
+    }
+    body.classList.add("spin-" + n);
+    spinLive = willFire(logo, "animation");
+    if (spinLive) {
+      listenToTheLogo(logo);
+      return;
+    }
+    // No animation event will fire (reduced motion, styles missing): the
+    // step advances on the event that started it (Atlas G2, C-Atlas-6).
+    if (n === 1) enterSpin(2);
+    else if (n === 2 && ready) enterSpin(3);
+    else if (n === 3) enterFade();
+  }
+
+  function enterFade() {
+    if (spin === 4) return;
+    spin = 4;
     // Fade out + hand off to the post-boot UI. Chromium kiosk closes itself
     // (D-3: JS-driven exit, no external pkill) on the fade's OWN end event.
     var stage = document.getElementById("splash-stage");
-    stage.style.transition = "opacity 0.5s";
+    stage.style.transition = "opacity var(--t-fade)";   // the length lives in styles.css
     if (!transitionWillEnd(stage)) {
       // No transitionend will fire (styles missing, reduced motion, no
-      // motion-gate): advance on the healthy verdict itself (Atlas G2).
+      // motion-gate): advance on spin 3's end itself (Atlas G2).
       stage.style.opacity = "0";
       closeWindow();
       return;
@@ -156,6 +220,16 @@
       closeWindow();
     });
     stage.style.opacity = "0";
+  }
+
+  function enterHealthyYield() {
+    if (settled) return;
+    settled = true;
+    ready = true;
+    // The readiness event advances only a spin 2 with no animation event to
+    // wait for; a live spin 2 turns on to its next animationiteration, and a
+    // page still in 0b or spin 1 reaches spin 2 with `ready` already set.
+    if (spin === 2 && !spinLive) enterSpin(3);
   }
 
   async function tick() {
