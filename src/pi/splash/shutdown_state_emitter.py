@@ -25,6 +25,8 @@
 #                               for grace and cancelled. VALID_PHASES unchanged.
 # 2026-10-23    | Rex (US-883-b) | sync {waitingAtKeyOff, confirmed}: the shutdown
 #                               sync's progress, null until a drain pass.
+# 2026-10-25    | Rex (US-883-c) | sync gains state + outcome (docstring only:
+#                               the builder copies sync as given).
 # ================================================================================
 ################################################################################
 
@@ -104,10 +106,14 @@ def buildShutdownState(
         step: US-883-a -- the ceremony step ``{index, of, name}`` (names from
             ``CEREMONY_ORDER`` plus ``monthly_test_hold``; ``of`` is the steps
             this path runs), or None (``grace``, ``cancelled``).
-        sync: US-883-b -- the shutdown sync's progress
-            ``{waitingAtKeyOff, confirmed}`` from the acked marks
-            (``src/pi/sync/shutdown_progress.py``), or None before the first
-            drain pass and on a path with no drain (away from home).
+        sync: US-883-b/c -- the shutdown sync
+            ``{state, outcome, waitingAtKeyOff, confirmed}``
+            (``src/pi/sync/shutdown_progress.syncPayload``): ``state`` one of
+            away / joining / syncing / ended, ``outcome`` the ``OutcomeKind``
+            value once ended (or ``away``), the counts from the acked marks
+            (null in away and joining, and when unreadable). None means only
+            that the sync task has not started (grace, shed, before smoothing
+            confirms) or the VCELL fast path, which never runs it (Atlas D-3).
 
     Returns:
         The shutdown-state dict with exactly the spec §6 keys plus ``step``

@@ -17,6 +17,8 @@
  * Changed: 2026-10-25 -- US-870-b: the shutdown progress bar (ticks 0-100 %,
  *          the 75 % marker) and its two-line step label; --surface, --line,
  *          --accent and --text-primary join the mirror.
+ * Changed: 2026-10-25 -- US-883-c: #bar-kept, the rows a sync that ended kept,
+ *          drawn --amber-warn up to the 75 % marker.
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -184,6 +186,14 @@ body.logo-up #mark { opacity: 1; }
 #bar-fill {
   position: absolute; top: 0; bottom: 0; left: 0; width: 0%;
   background: var(--accent);
+}
+
+/* US-883-c: a sync that ended with rows left -- the unfilled stretch of the
+   sync part, ending at the 75 % marker, amber (spec §2 / §2.1). The page
+   script writes its left and width; it is empty until then. */
+#bar-kept {
+  position: absolute; top: 0; bottom: 0; left: 75%; width: 0%;
+  background: var(--amber-warn);
 }
 
 .bar-tick {

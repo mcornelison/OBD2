@@ -25,6 +25,13 @@
  *          its two-line label are drawn from step{index, of, name} alone
  *          (fill = index / of, never less than already drawn; line 1 the
  *          §2.2 step word, line 2 `step <index> of <of>`).
+ *          US-883-c: at home (sync.state joining / syncing / ended) the bar is
+ *          0-75 % the drain by confirmed / waitingAtKeyOff and 75-100 % the
+ *          steps after it; during the drain the sync words (sync.state, then
+ *          sync.outcome once ended) take over the label, and a sync that ended
+ *          with rows kept draws them as an amber stretch below the 75 % marker.
+ *          Away (sync.state away) and the VCELL fast path (sync null) stay
+ *          index / of.
  *          The splash is a pure CONSUMER -- ShutdownSequencer is the SSOT of
  *          shutdown phase; this script only renders what it reads.
  *
@@ -45,6 +52,7 @@
  * Updated: 2026-10-25 -- Sprint 114 US-870-a (paint on flushing, 404 vs
  *          refused, no timer)
  * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress bar + step words)
+ * Updated: 2026-10-25 -- Sprint 114 US-883-c (the at-home sync part + words)
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -71,7 +79,8 @@
   // US-870-b: line 1 of the label, per step.name (spec §2.2, verbatim). The
   // keys are power_watch.ceremony's CEREMONY_ORDER plus STEP_MONTHLY_TEST_HOLD,
   // pinned by tests/ui/test_shutdown_progress_page.py. `drain` says
-  // WORD_OTHER until US-883-c hands the drain's label to the sync words.
+  // WORD_OTHER only while sync is null (the sync task has not started); once
+  // a sync is read the sync words below take the drain's label (US-883-c).
   var STEP_WORDS = {
     "shed": "closing the dashboard",
     "drain": "shutting down",
@@ -82,6 +91,41 @@
   };
   var WORD_OTHER = "shutting down";          // any other name, or step{} absent
   var WORD_STEPS_NOT_READ = "steps not read"; // line 2 when step{} is absent
+
+  // US-883-c: the at-home bar (spec §2, Iris C-Iris-4). DRAIN_INDEX is the
+  // 1-based position of "drain" in CEREMONY_ORDER (the guard pins it); 0-75 %
+  // is the drain by sync, 75-100 % the steps after it, evenly.
+  var DRAIN_INDEX = 2;
+  var SYNC_PART = 0.75;
+
+  // US-883-c: the label during the drain, per sync.state (spec §2.2,
+  // verbatim). The keys are sync_with_server.SYNC_STATES, pinned by the guard.
+  // A null line is filled in by renderSyncWords: syncing shows the counts,
+  // ended the outcome words.
+  var SYNC_STATE_WORDS = {
+    "away": ["away from home", "not syncing"],
+    "joining": ["joining home WiFi", ""],
+    "syncing": ["syncing", null],
+    "ended": [null, null],
+  };
+  var WORD_NOTHING_TO_SYNC = "nothing to sync";  // syncing with waitingAtKeyOff 0
+  var WORD_SYNC_NOT_READ = "sync not read";      // sync{} absent or unreadable
+
+  // US-883-c: line 1 once the sync has ended, per sync.outcome (spec §2.2,
+  // verbatim). Every key is an OutcomeKind value (the guard pins it); any
+  // other value says WORD_SYNC_ENDED. `interrupted` is provisional and never
+  // published.
+  var OUTCOME_WORDS = {
+    "delivered": "synced",
+    "stalled": "sync stalled",
+    "at_home_server_down": "server not answering",
+    "unknown_network": "home network not confirmed",
+    "at_home_joining_timeout": "home WiFi not joined",
+    "probe_misconfigured": "server check refused",
+    "reserve_floor": "stopped at battery reserve",
+  };
+  var WORD_SYNC_ENDED = "sync ended";
+  var WORD_ALL_CONFIRMED = "all rows confirmed";
 
   var token = window.SPLASH_TOKEN || "";
   var T_START = (window.performance && performance.now) ? performance.now() : Date.now();
@@ -97,6 +141,11 @@
   var stepOf = null;
   var stepName = null;
   var drawnFraction = 0;
+
+  // US-883-c: at home once a joining / syncing / ended state is read -- the
+  // path does not go back to away. The kept stretch, once drawn, stays.
+  var atHome = false;
+  var keptDrawn = false;
 
   // REPORT-ONLY (Atlas C-Atlas-7): read by reportTerminal for the US-549 record
   // and by nothing else -- no condition in this file may consult it.
@@ -228,6 +277,104 @@
     return typeof value === "number" && isFinite(value) && Math.floor(value) === value && value >= 1;
   }
 
+  function isWhole(value) {
+    return typeof value === "number" && isFinite(value) && Math.floor(value) === value && value >= 0;
+  }
+
+  // "1240" -> "1,240" (spec §2.2: comma thousands separators).
+  function commas(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  /**
+   * US-883-c: read shutdown-state.sync. null is its own answer -- the sync
+   * task has not started, or the fast path never runs it. Absent, not an
+   * object, or a state outside SYNC_STATE_WORDS is unreadable. The counts are
+   * one reading, taken only as whole numbers with confirmed <= waitingAtKeyOff;
+   * otherwise they are null and the bar holds.
+   */
+  function readSync(sync) {
+    if (sync === null) return { kind: "none" };
+    if (!sync || typeof sync !== "object" || !SYNC_STATE_WORDS.hasOwnProperty(sync.state)) {
+      return { kind: "unread" };
+    }
+    var counts = null;
+    if (isWhole(sync.waitingAtKeyOff) && isWhole(sync.confirmed) &&
+        sync.confirmed <= sync.waitingAtKeyOff) {
+      counts = { waiting: sync.waitingAtKeyOff, confirmed: sync.confirmed };
+    }
+    return {
+      kind: "sync",
+      state: sync.state,
+      outcome: typeof sync.outcome === "string" ? sync.outcome : null,
+      counts: counts,
+    };
+  }
+
+  /**
+   * US-883-c: the fraction this read asks for, or null to hold. Away and the
+   * fast path: index / of. At home: before the drain 0; the drain itself
+   * 75 % x confirmed / waitingAtKeyOff (75 % at once when nothing was owed,
+   * and at ended, where the rows left are drawn amber instead); after it
+   * 75 % + 25 % x (index - DRAIN_INDEX) / (of - DRAIN_INDEX). Joining, or
+   * counts that are null, hold.
+   */
+  function targetFraction(read) {
+    if (!atHome) return stepIndex / stepOf;
+    if (stepIndex < DRAIN_INDEX) return 0;
+    if (stepIndex > DRAIN_INDEX) {
+      return SYNC_PART + (1 - SYNC_PART) * (stepIndex - DRAIN_INDEX) / (stepOf - DRAIN_INDEX);
+    }
+    if (read.kind !== "sync" || read.state === "joining" || read.counts === null) return null;
+    if (read.state === "ended" || read.counts.waiting === 0) return SYNC_PART;
+    return SYNC_PART * read.counts.confirmed / read.counts.waiting;
+  }
+
+  // US-883-c: a sync that ended with rows kept draws them as a length -- the
+  // unfilled stretch of the sync part, ending at the 75 % marker, in amber.
+  function drawKept(read) {
+    if (keptDrawn || read.kind !== "sync" || read.state !== "ended" || read.counts === null) return;
+    var kept = read.counts.waiting - read.counts.confirmed;
+    if (kept <= 0) return;
+    var el = document.getElementById("bar-kept");
+    if (!el) return;
+    var width = SYNC_PART * kept / read.counts.waiting * 100;
+    el.style.left = SYNC_PART * 100 - width + "%";
+    el.style.width = width + "%";
+    keptDrawn = true;
+  }
+
+  // US-883-c: the label while the drain step runs (spec §2.2).
+  function renderSyncWords(read) {
+    if (read.kind === "unread") {
+      setText("label-1", WORD_SYNC_NOT_READ);
+      setText("label-2", "");
+      return;
+    }
+    var words = SYNC_STATE_WORDS[read.state];
+    var line1 = words[0];
+    var line2 = words[1];
+    var counts = read.counts;
+    if (read.state === "syncing") {
+      if (counts !== null && counts.waiting === 0) {
+        line1 = WORD_NOTHING_TO_SYNC;
+        line2 = "";
+      } else {
+        line2 = counts === null ? "" : commas(counts.confirmed) + " of " + commas(counts.waiting) + " rows";
+      }
+    } else if (read.state === "ended") {
+      line1 = OUTCOME_WORDS.hasOwnProperty(read.outcome) ? OUTCOME_WORDS[read.outcome] : WORD_SYNC_ENDED;
+      line2 = "";
+      if (counts !== null && counts.waiting - counts.confirmed > 0) {
+        line2 = commas(counts.waiting - counts.confirmed) + " rows kept";
+      } else if (counts !== null && read.outcome === "delivered") {
+        line2 = WORD_ALL_CONFIRMED;
+      }
+    }
+    setText("label-1", line1);
+    setText("label-2", line2);
+  }
+
   /**
    * US-870-b: draw the bar and the two-line label from shutdown-state step{}.
    *
@@ -239,8 +386,15 @@
    * never goes back. A recomputed `of` that would draw less holds the bar:
    * the page never draws less than it has already drawn. step{} absent ->
    * 'shutting down' / 'steps not read' and the bar holds (spec §2.2).
+   *
+   * US-883-c: sync{} decides the path (away / at home) and, during the drain
+   * step, the words; see targetFraction and renderSyncWords.
    */
-  function renderStep(step) {
+  function renderStep(step, sync) {
+    var read = readSync(sync);
+    if (read.kind === "sync" && read.state !== "away") atHome = true;
+    drawKept(read);
+
     if (!step || typeof step !== "object") {
       setText("label-1", WORD_OTHER);
       setText("label-2", WORD_STEPS_NOT_READ);
@@ -254,14 +408,17 @@
     }
     if (typeof step.name === "string") stepName = step.name;
 
-    var words = STEP_WORDS.hasOwnProperty(stepName) ? STEP_WORDS[stepName] : WORD_OTHER;
-    setText("label-1", words);
-    if (stepIndex === null) {
-      setText("label-2", WORD_STEPS_NOT_READ);
-      return;
+    if (stepName === "drain" && read.kind !== "none") {
+      renderSyncWords(read);
+    } else {
+      setText("label-1", STEP_WORDS.hasOwnProperty(stepName) ? STEP_WORDS[stepName] : WORD_OTHER);
+      setText("label-2", stepIndex === null ? WORD_STEPS_NOT_READ : "step " + stepIndex + " of " + stepOf);
     }
-    setText("label-2", "step " + stepIndex + " of " + stepOf);
-    drawnFraction = Math.max(drawnFraction, stepIndex / stepOf);
+    if (stepIndex === null) return;
+
+    var target = targetFraction(read);
+    if (target === null) return;
+    drawnFraction = Math.max(drawnFraction, target);
     var fill = document.getElementById("bar-fill");
     if (fill) fill.style.width = drawnFraction * 100 + "%";
   }
@@ -302,7 +459,7 @@
     if (phase === "flushing" || phase === "powering_off") {
       // The power loss is real: paint on this read (Atlas A-sd 1).
       beginAnimating();
-      renderStep(state.step);
+      renderStep(state.step, state.sync);
       schedule();
       return;
     }

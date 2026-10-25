@@ -1,0 +1,210 @@
+{
+  "description": "At home with nothing owed at key-off (an EDR-only backlog): waiting 0.",
+  "inputs": [
+    [
+      "grace"
+    ],
+    [
+      "plan",
+      false,
+      false
+    ],
+    [
+      "enter",
+      "shed",
+      "flushing"
+    ],
+    [
+      "enter",
+      "drain",
+      "flushing"
+    ],
+    [
+      "sync",
+      "syncing",
+      null,
+      0,
+      0
+    ],
+    [
+      "sync",
+      "ended",
+      "delivered",
+      0,
+      0
+    ],
+    [
+      "phase",
+      "powering_off"
+    ],
+    [
+      "enter",
+      "drain close",
+      null
+    ],
+    [
+      "enter",
+      "custody",
+      null
+    ],
+    [
+      "enter",
+      "poweroff",
+      null
+    ]
+  ],
+  "sequence": [
+    {
+      "phase": "grace",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 7.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:00Z",
+      "step": null,
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:01Z",
+      "step": {
+        "index": 1,
+        "of": 5,
+        "name": "shed"
+      },
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:02Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:03Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": {
+        "state": "syncing",
+        "outcome": null,
+        "waitingAtKeyOff": 0,
+        "confirmed": 0
+      }
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:04Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 0,
+        "confirmed": 0
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:05Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 0,
+        "confirmed": 0
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:06Z",
+      "step": {
+        "index": 3,
+        "of": 5,
+        "name": "drain close"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 0,
+        "confirmed": 0
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:07Z",
+      "step": {
+        "index": 4,
+        "of": 5,
+        "name": "custody"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 0,
+        "confirmed": 0
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:08Z",
+      "step": {
+        "index": 5,
+        "of": 5,
+        "name": "poweroff"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 0,
+        "confirmed": 0
+      }
+    }
+  ]
+}

@@ -37,6 +37,10 @@
  *          `progressLog` is every CHANGE of those three, in order, each with
  *          the virtual ms and poll count it was first seen at.
  *
+ *          US-883-c: `progress.kept` is #bar-kept's inline {left, width} (the
+ *          amber rows-kept stretch; nulls until drawn), and a change of it is
+ *          a change of the frame.
+ *
  *          Invoked as:  node shutdown_probe.js <inputJsonPath>
  *          Input:  {pollJsPath, motionGatePath, tree, shutdownStates, rounds,
  *                   emitIntervalMs, computedStyles, reducedMotion}
@@ -46,6 +50,7 @@
  * Author:  Ralph Agent (Rex)
  * Created: 2026-08-10 -- Sprint 73 US-549 (I-043 observable terminal reason)
  * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress + progressLog)
+ * Updated: 2026-10-25 -- Sprint 114 US-883-c (progress.kept)
  * ==========================================================================*/
 "use strict";
 
@@ -180,18 +185,26 @@ async function main() {
   };
   const readProgress = function () {
     const fill = doc.getElementById("bar-fill");
+    const kept = doc.getElementById("bar-kept");
     return {
       fill: fill && fill.style ? fill.style.width || null : null,
       line1: textOf("label-1"),
       line2: textOf("label-2"),
+      kept: {
+        left: kept && kept.style ? kept.style.left || null : null,
+        width: kept && kept.style ? kept.style.width || null : null,
+      },
     };
   };
   const progressLog = [];
   const noteProgress = function () {
     const now = readProgress();
     const last = progressLog.length ? progressLog[progressLog.length - 1] : null;
-    if (last && last.fill === now.fill && last.line1 === now.line1 && last.line2 === now.line2) return;
-    progressLog.push({ atMs: virtualMs, poll: polls, fill: now.fill, line1: now.line1, line2: now.line2 });
+    if (last && last.fill === now.fill && last.line1 === now.line1 && last.line2 === now.line2 &&
+        last.kept.left === now.kept.left && last.kept.width === now.kept.width) return;
+    progressLog.push({
+      atMs: virtualMs, poll: polls, fill: now.fill, line1: now.line1, line2: now.line2, kept: now.kept,
+    });
   };
 
   noteProgress();

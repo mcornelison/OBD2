@@ -3066,6 +3066,38 @@ snapshot row UPDATEd again during the drain is re-stamped past `keyOffModified`,
 bounded set and reads as confirmed early; no OBD read runs during a key-off drain, so the
 dtc_log `last_seen` bump that would cause it does not occur. No wait, timer or budget.
 
+**sync.state and sync.outcome (US-883-c, Sprint 114 / V0.30, Atlas C-Atlas-2 / D-3,
+Iris C-Iris-4).** `shutdown-state.sync` is `{state, outcome, waitingAtKeyOff,
+confirmed}`, ONE shape (`shutdown_progress.syncPayload`). `state` is one of
+`sync_with_server.SYNC_STATES` -- `away`, `joining`, `syncing`, `ended`; `outcome` is the
+`OutcomeKind` value the sync ended with (`away` for the away skip), null while it runs.
+**Emit points:** `SyncWithServerTask`'s optional `syncStateFn(state, outcome)` (production:
+`ShutdownSyncProgress.state`, wired in `power_watch/__main__.py`) is called entering the
+`AT_HOME_JOINING` wait (`joining`), entering the drain on `AT_HOME_SERVER_*` or `UNKNOWN`
+(`syncing`), and from `_record` -- `OutcomeKind.AWAY` -> (`away`, `away`), any other kind ->
+(`ended`, `kind.value`). `_recordProvisional` never calls it, so `interrupted` is never
+published; a raising hook is logged and the run goes on. Each pass's `publish()` carries
+`syncing` / null. Counts are null in `away` and `joining`; in `syncing` and `ended` they
+are read exactly as a pass reads them (no snapshot or unreadable marks -> null, never 0).
+Every write goes through `ShutdownSequencer.publishSync`, the one writer. **sync null**
+now means only: the task has not started (grace, shed, before smoothing confirms) or
+the VCELL fast path, which never runs it -- this supersedes the US-883-b sentence that
+sync stays null away from home. **The page** (`shutdown-state-poll.js`): away (`state
+away`) and the fast path (sync null) stay index ÷ of; at home (`joining` / `syncing` /
+`ended`, latched) the bar is 0 % before the drain, `75 × confirmed ÷ waitingAtKeyOff` at
+the drain (`DRAIN_INDEX` 2, pinned to `CEREMONY_ORDER`), and `75 + 25 × (index − 2) ÷
+(of − 2)` after it; joining or null counts hold, and it never draws less than drawn.
+`waitingAtKeyOff` 0 fills the sync part at once (`nothing to sync`). During the drain the
+§2.2 words take the label from `SYNC_STATE_WORDS` and, once ended, `OUTCOME_WORDS` (any
+other value `sync ended`); a sync ended with rows left jumps the fill to 75 % and draws
+the rows kept as `#bar-kept`, a `--amber-warn` stretch ending at the marker; the rows
+stay queued. A sync{} absent or without a known state says `sync not read`. No new
+timeout: `pi.homeNetwork.stallSec` stays the one number (CIO option A). *Guarded by*
+`tests/pi/power/power_watch/test_sync_with_server_progress.py`,
+`tests/pi/sync/test_shutdown_progress.py` and `tests/ui/test_shutdown_progress_page.py`
+(the cross-language guards pin the page's state keys to `SYNC_STATES`, its outcome
+keys to `OutcomeKind` values, and `DRAIN_INDEX`).
+
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
 A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately

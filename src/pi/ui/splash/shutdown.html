@@ -23,10 +23,14 @@
     <!-- The progress bar + its two-line label (US-870-b, spec §2 / §2.2).
          shutdown-state-poll.js draws both from shutdown-state step{index, of,
          name} and nothing else: the fill is #bar-fill's width, the words are
-         #label-1 / #label-2. Empty until a real step is read. -->
+         #label-1 / #label-2. Empty until a real step is read. US-883-c: at
+         home sync{state, outcome, waitingAtKeyOff, confirmed} drives the
+         0-75 % part and the drain's words; #bar-kept is the rows a sync
+         that ended kept, drawn as an amber length up to the 75 % marker. -->
     <div id="progress">
       <div id="bar-track">
         <div id="bar-fill"></div>
+        <div id="bar-kept"></div>
         <div class="bar-tick tick-0"></div>
         <div class="bar-tick tick-25"></div>
         <div class="bar-tick tick-50"></div>

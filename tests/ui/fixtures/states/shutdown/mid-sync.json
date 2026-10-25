@@ -1,0 +1,115 @@
+{
+  "description": "At home, mid-drain: one pass of 1,240 rows confirms 620 (the page stops here, the drain still running).",
+  "inputs": [
+    [
+      "grace"
+    ],
+    [
+      "plan",
+      false,
+      false
+    ],
+    [
+      "enter",
+      "shed",
+      "flushing"
+    ],
+    [
+      "enter",
+      "drain",
+      "flushing"
+    ],
+    [
+      "sync",
+      "syncing",
+      null,
+      1240,
+      0
+    ],
+    [
+      "sync",
+      "syncing",
+      null,
+      1240,
+      620
+    ]
+  ],
+  "sequence": [
+    {
+      "phase": "grace",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 7.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:00Z",
+      "step": null,
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:01Z",
+      "step": {
+        "index": 1,
+        "of": 5,
+        "name": "shed"
+      },
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:02Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:03Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": {
+        "state": "syncing",
+        "outcome": null,
+        "waitingAtKeyOff": 1240,
+        "confirmed": 0
+      }
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:04Z",
+      "step": {
+        "index": 2,
+        "of": 5,
+        "name": "drain"
+      },
+      "sync": {
+        "state": "syncing",
+        "outcome": null,
+        "waitingAtKeyOff": 1240,
+        "confirmed": 620
+      }
+    }
+  ]
+}

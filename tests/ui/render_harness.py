@@ -60,6 +60,8 @@
 # 2026-10-25    | Ralph (Rex)  | US-869-g: runSplash serves capture-health +
 #                                system-status; captureHealth defaults to the
 #                                BUILT all-three-ready payload (Atlas R4).
+# 2026-10-25    | Ralph (Rex)  | US-883-c: runShutdownSplash reports
+#                                progress.kept (the amber rows-kept stretch).
 # ================================================================================
 ################################################################################
 
@@ -1001,7 +1003,9 @@ def runShutdownSplash(
     ``paintedOnPoll`` (the poll whose read revealed the stage, or None).
     US-870-b: ``progress`` ({fill, line1, line2}: #bar-fill's inline width and
     the two label lines at the end) and ``progressLog`` (each change of those
-    three, in order, with ``atMs`` / ``poll``).
+    three, in order, with ``atMs`` / ``poll``). US-883-c: ``progress`` and
+    each log entry also carry ``kept`` ({left, width}: #bar-kept's inline
+    style, the amber rows-kept stretch; nulls until drawn).
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
     return _runProbe(

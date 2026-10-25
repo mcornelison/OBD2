@@ -15,6 +15,9 @@
 # ================================================================================
 # 2026-10-23    | Rex (US-883-b) | Initial -- key-off snapshot + confirmed from
 #                                  the acked marks (Atlas O3, E1, Rule 13 gaps 2-3).
+# 2026-10-25    | Rex (US-883-c) | sync.state + sync.outcome: state() publishes
+#                                  each sync-task transition; publish() is
+#                                  state 'syncing'.
 # ================================================================================
 ################################################################################
 """Shutdown sync progress: ``{waitingAtKeyOff, confirmed}`` from the acked marks.
@@ -34,7 +37,8 @@ confirmed early. No OBD read runs during a key-off drain, so the dtc_log
 ``last_seen`` bump that would cause it does not occur.
 
 Built on stdlib ``sqlite3`` and :mod:`src.pi.data.sync_log` only, like
-:mod:`src.pi.sync.backlog`, so the powerwatch import graph stays small.
+:mod:`src.pi.sync.backlog`, so the powerwatch import graph stays small; the
+US-883-c state names come from the sync task that emits them.
 """
 from __future__ import annotations
 
@@ -46,6 +50,10 @@ from typing import Any
 
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
 from src.pi.data import sync_log
+from src.pi.power.power_watch.tasks.sync_with_server import (
+    SYNC_STATE_ENDED,
+    SYNC_STATE_SYNCING,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +63,39 @@ __all__ = [
     "TableKeyOff",
     "countRemaining",
     "countedTables",
+    "syncPayload",
     "takeKeyOffSnapshot",
 ]
+
+#: The states whose counts are read from the snapshot; away and joining carry
+#: null counts (no drain pass has run, nothing has been confirmed).
+_COUNTED_STATES = frozenset({SYNC_STATE_SYNCING, SYNC_STATE_ENDED})
+
+
+def syncPayload(
+    state: str,
+    outcome: str | None,
+    waitingAtKeyOff: int | None,
+    confirmed: int | None,
+) -> dict[str, Any]:
+    """The one shape of shutdown-state.sync (US-883-c).
+
+    Args:
+        state: One of ``sync_with_server.SYNC_STATES``.
+        outcome: The ``OutcomeKind`` value the sync ended with, or None while it
+            runs.
+        waitingAtKeyOff: Rows owed at key-off, or None when not read.
+        confirmed: Of those, rows the acked marks say the server holds, or None.
+
+    Returns:
+        ``{state, outcome, waitingAtKeyOff, confirmed}``.
+    """
+    return {
+        "state": state,
+        "outcome": outcome,
+        "waitingAtKeyOff": waitingAtKeyOff,
+        "confirmed": confirmed,
+    }
 
 
 def countedTables() -> tuple[str, ...]:
@@ -221,9 +260,10 @@ class ShutdownSyncProgress:
 
     ``snapshot`` is called once at the start of each shutdown sync run (after
     smoothing, so a blip never snapshots); ``publish`` after each drain pass
-    hands ``{waitingAtKeyOff, confirmed}`` to ``publishFn``. Away from home no
-    pass runs, so nothing is published and the shutdown-state keeps sync null.
-    Neither method raises.
+    hands ``{state: syncing, outcome: None, waitingAtKeyOff, confirmed}`` to
+    ``publishFn``. US-883-c: ``state`` is called by the sync task at each of its
+    transitions (joining, syncing, ended / away), so the page can tell away from
+    at home and name how the sync ended. No method raises.
     """
 
     def __init__(
@@ -236,7 +276,7 @@ class ShutdownSyncProgress:
         """Args:
         dbPath: The Pi database (``pi.database.path``).
         busyTimeoutSec: SQLite busy timeout for each read-only open.
-        publishFn: Receives each ``{waitingAtKeyOff, confirmed}``; production
+        publishFn: Receives each :func:`syncPayload` dict; production
             passes ``ShutdownSequencer.publishSync`` (the one shutdown-state
             writer).
         """
@@ -255,19 +295,44 @@ class ShutdownSyncProgress:
             )
 
     def publish(self) -> None:
-        """Publish ``{waitingAtKeyOff, confirmed}`` for this pass. Never raises.
+        """Publish this pass's counts, state ``syncing``. Never raises.
 
         Nothing is published without a snapshot or when the marks cannot be
         read: an unread count is never sent as 0.
         """
+        counts = self._counts()
+        if counts is None:
+            return
+        self._send(syncPayload(SYNC_STATE_SYNCING, None, *counts))
+
+    def state(self, state: str, outcome: str | None) -> None:
+        """Publish a sync-task transition (US-883-c). Never raises.
+
+        ``away`` and ``joining`` carry null counts. ``syncing`` and ``ended``
+        carry the counts exactly as :meth:`publish` reads them; with no snapshot
+        or unreadable marks they are null, never 0.
+
+        Args:
+            state: One of ``sync_with_server.SYNC_STATES``.
+            outcome: The ``OutcomeKind`` value at ``ended`` / ``away``, else None.
+        """
+        counts = self._counts() if state in _COUNTED_STATES else None
+        waiting, confirmed = counts if counts is not None else (None, None)
+        self._send(syncPayload(state, outcome, waiting, confirmed))
+
+    def _counts(self) -> tuple[int, int] | None:
+        """``(waitingAtKeyOff, confirmed)`` now, or None (no snapshot, unread marks)."""
         snapshot = self._snapshot
         if snapshot is None:
-            return
+            return None
         remaining = countRemaining(self._dbPath, snapshot, busyTimeoutSec=self._busyTimeoutSec)
         if remaining is None:
-            return
+            return None
         waiting = snapshot.waitingAtKeyOff
-        sync = {"waitingAtKeyOff": waiting, "confirmed": max(0, waiting - remaining)}
+        return waiting, max(0, waiting - remaining)
+
+    def _send(self, sync: dict[str, Any]) -> None:
+        """Hand one payload to ``publishFn``; a raise is logged, never re-raised."""
         try:
             self._publishFn(sync)
         except Exception as exc:  # noqa: BLE001 -- progress is never worth a stalled drain

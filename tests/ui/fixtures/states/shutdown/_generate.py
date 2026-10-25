@@ -16,6 +16,9 @@
 #       phase always, without one only when the step was entered), a phase
 #       change, and publishSync. A reroute writes nothing (controller.py :563-567:
 #       the new `of` rides with the next step entered).
+#     - US-883-c: sync is src/pi/sync/shutdown_progress.syncPayload -- the one
+#       shape ShutdownSyncProgress hands publishSync -- with the state and
+#       outcome the sync task emits (joining / syncing / ended / away).
 #
 #   Usage: python tests/ui/fixtures/states/shutdown/_generate.py
 #   (tests/ui/test_shutdown_progress_page.py asserts every file on disk equals
@@ -29,10 +32,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-25    | Ralph (Rex)  | Initial -- US-870-b shutdown-progress fixtures.
+# 2026-10-25    | Ralph (Rex)  | US-883-c: sync carries state + outcome; one
+#                                fixture per outcome word, joining, mid-sync,
+#                                nothing to sync.
 # ================================================================================
 ################################################################################
 
-"""Generate the US-870-b shutdown-progress fixtures from the real producers."""
+"""Generate the US-870-b / US-883-c shutdown-progress fixtures from the real producers."""
 
 from __future__ import annotations
 
@@ -58,6 +64,13 @@ from pi.power.power_watch.ceremony import (  # noqa: E402
     CeremonyProgress,
     ceremonySteps,
 )
+from pi.power.power_watch.contract import OutcomeKind  # noqa: E402
+from pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
+    SYNC_STATE_AWAY,
+    SYNC_STATE_ENDED,
+    SYNC_STATE_JOINING,
+    SYNC_STATE_SYNCING,
+)
 from pi.splash.shutdown_state_emitter import (  # noqa: E402
     DEFAULT_REASON,
     PHASE_CANCELLED,
@@ -66,13 +79,17 @@ from pi.splash.shutdown_state_emitter import (  # noqa: E402
     PHASE_POWERING_OFF,
     buildShutdownState,
 )
+from pi.sync.shutdown_progress import syncPayload  # noqa: E402
 
 _GRACE_STARTED = "2026-10-25T12:00:00Z"
 #: controller.py's default smoothing window (its header: smoothingSec=7).
 _GRACE_TOTAL_S = 7.0
-#: Rows waiting at key-off in the at-home fixtures (any positive count will do:
-#: the page draws index / of in this story and does not read sync{}).
-_WAITING = 1240
+#: Rows waiting at key-off in the at-home fixtures: the story's example (400
+#: waiting, pass 1 confirms 250 -> 46.9 %).
+_WAITING = 400
+_PASS_1 = 250
+#: A count past a thousand, for the comma separators.
+_WAITING_LARGE = 1240
 
 # A script is a list of operations, each a list (JSON-friendly, kept in inputs):
 #   ["grace"]                        smoothing begun: phase grace, no step
@@ -80,7 +97,9 @@ _WAITING = 1240
 #   ["enter", name, phase|None]      _enterStep(name, phase=phase)
 #   ["phase", phase]                 _emitPhase(phase)
 #   ["reroute", fastPath, holdDue]   CeremonyProgress.reroute(...) -- no write
-#   ["sync", waiting, confirmed]     publishSync({waitingAtKeyOff, confirmed})
+#   ["sync", state, outcome, waiting, confirmed]
+#                                    publishSync(syncPayload(...)) -- a
+#                                    ShutdownSyncProgress state() / publish()
 _NORMAL_OPENING: list[list[Any]] = [
     ["grace"],
     ["plan", False, False],
@@ -94,12 +113,46 @@ _NORMAL_CLOSE: list[list[Any]] = [
     ["enter", STEP_POWEROFF, None],
 ]
 
+
+def _syncing(waiting: int, confirmed: int) -> list[Any]:
+    return ["sync", SYNC_STATE_SYNCING, None, waiting, confirmed]
+
+
+def _ended(outcome: OutcomeKind, waiting: int | None, confirmed: int | None) -> list[Any]:
+    return ["sync", SYNC_STATE_ENDED, outcome.value, waiting, confirmed]
+
+
+#: A drain at home that ends with ``outcome`` after one pass confirmed _PASS_1.
+def _endedAfterOnePass(outcome: OutcomeKind) -> list[list[Any]]:
+    return (
+        _NORMAL_OPENING
+        + [_syncing(_WAITING, 0), _syncing(_WAITING, _PASS_1), _ended(outcome, _WAITING, _PASS_1)]
+        + _NORMAL_CLOSE
+    )
+
+
+#: The OutcomeKind values with a fixture of their own (spec s2.2 rows), plus
+#: one the page has no specific word for (the generic 'sync ended').
+OUTCOME_FIXTURE_KINDS = (
+    OutcomeKind.STALLED,
+    OutcomeKind.AT_HOME_SERVER_DOWN,
+    OutcomeKind.UNKNOWN_NETWORK,
+    OutcomeKind.PROBE_MISCONFIGURED,
+    OutcomeKind.RESERVE_FLOOR,
+    OutcomeKind.REAL_ERROR,
+)
+
 FIXTURES: dict[str, tuple[str, list[list[Any]]]] = {
     "normal-home": (
-        "At home, the normal path of 5: shed, drain (two sync passes), drain "
-        "close, custody, poweroff.",
+        "At home, the normal path of 5: shed, drain (syncing, two passes, ended "
+        "delivered), drain close, custody, poweroff -- the story's example.",
         _NORMAL_OPENING
-        + [["sync", _WAITING, 620], ["sync", _WAITING, _WAITING]]
+        + [
+            _syncing(_WAITING, 0),
+            _syncing(_WAITING, _PASS_1),
+            _syncing(_WAITING, _WAITING),
+            _ended(OutcomeKind.DELIVERED, _WAITING, _WAITING),
+        ]
         + _NORMAL_CLOSE,
     ),
     "hold-due": (
@@ -109,8 +162,43 @@ FIXTURES: dict[str, tuple[str, list[list[Any]]]] = {
             ["plan", False, True],
             ["enter", STEP_SHED, PHASE_FLUSHING],
             ["enter", STEP_DRAIN, PHASE_FLUSHING],
-            ["sync", _WAITING, _WAITING],
+            _syncing(_WAITING, 0),
+            _syncing(_WAITING, _WAITING),
+            _ended(OutcomeKind.DELIVERED, _WAITING, _WAITING),
             ["enter", STEP_MONTHLY_TEST_HOLD, None],
+        ]
+        + _NORMAL_CLOSE,
+    ),
+    "joining": (
+        "At home, the WiFi not yet joined: joining (null counts), then the join "
+        "resolves and the drain runs.",
+        _NORMAL_OPENING
+        + [
+            ["sync", SYNC_STATE_JOINING, None, None, None],
+            _syncing(_WAITING, 0),
+            _syncing(_WAITING, _WAITING),
+            _ended(OutcomeKind.DELIVERED, _WAITING, _WAITING),
+        ]
+        + _NORMAL_CLOSE,
+    ),
+    "mid-sync": (
+        "At home, mid-drain: one pass of 1,240 rows confirms 620 (the page stops "
+        "here, the drain still running).",
+        _NORMAL_OPENING + [_syncing(_WAITING_LARGE, 0), _syncing(_WAITING_LARGE, 620)],
+    ),
+    "nothing-to-sync": (
+        "At home with nothing owed at key-off (an EDR-only backlog): waiting 0.",
+        _NORMAL_OPENING
+        + [_syncing(0, 0), _ended(OutcomeKind.DELIVERED, 0, 0)]
+        + _NORMAL_CLOSE,
+    ),
+    "outcome-at_home_joining_timeout": (
+        "At home, the WiFi never joined: joining, then ended at_home_joining_timeout "
+        "with every row kept.",
+        _NORMAL_OPENING
+        + [
+            ["sync", SYNC_STATE_JOINING, None, None, None],
+            _ended(OutcomeKind.AT_HOME_JOINING_TIMEOUT, _WAITING, 0),
         ]
         + _NORMAL_CLOSE,
     ),
@@ -127,15 +215,19 @@ FIXTURES: dict[str, tuple[str, list[list[Any]]]] = {
         ],
     ),
     "away": (
-        "Away from home, the normal path of 5 with no sync{}: 20, 40, 60, 80, 100 %.",
-        _NORMAL_OPENING + _NORMAL_CLOSE,
+        "Away from home, the normal path of 5: the task publishes state away "
+        "(null counts); the bar is index / of, 20, 40, 60, 80, 100 %.",
+        _NORMAL_OPENING
+        + [["sync", SYNC_STATE_AWAY, OutcomeKind.AWAY.value, None, None]]
+        + _NORMAL_CLOSE,
     ),
     "mid-drain-switch": (
         "The drain floor forces the fast path mid-drain: shed and drain stay "
         "entered, `of` becomes 4 (entered + remaining), the drain close is skipped.",
         _NORMAL_OPENING
         + [
-            ["sync", _WAITING, 310],
+            _syncing(_WAITING, 0),
+            _syncing(_WAITING, 310),
             ["phase", PHASE_POWERING_OFF],
             ["reroute", True, False],
             ["enter", STEP_DRAIN_CLOSE, None],
@@ -144,6 +236,16 @@ FIXTURES: dict[str, tuple[str, list[list[Any]]]] = {
         ],
     ),
 }
+FIXTURES.update(
+    {
+        f"outcome-{kind.value}": (
+            f"At home, one pass confirms {_PASS_1} of {_WAITING}, then the sync ends "
+            f"{kind.value} with the rest kept.",
+            _endedAfterOnePass(kind),
+        )
+        for kind in OUTCOME_FIXTURE_KINDS
+    }
+)
 
 
 def _nowIso(seq: int) -> str:
@@ -155,7 +257,7 @@ def buildSequence(script: list[list[Any]]) -> list[dict[str, Any]]:
     """Run one script through CeremonyProgress and buildShutdownState."""
     progress = CeremonyProgress()
     phase: str | None = None
-    sync: dict[str, int] | None = None
+    sync: dict[str, Any] | None = None
     out: list[dict[str, Any]] = []
 
     def write(newPhase: str) -> None:
@@ -193,7 +295,7 @@ def buildSequence(script: list[list[Any]]) -> list[dict[str, Any]]:
         elif kind == "reroute":
             progress.reroute(ceremonySteps(fastPath=op[1], holdDue=op[2]))
         elif kind == "sync":
-            sync = {"waitingAtKeyOff": op[1], "confirmed": op[2]}
+            sync = syncPayload(op[1], op[2], op[3], op[4])
             if phase is not None:
                 write(phase)
         else:

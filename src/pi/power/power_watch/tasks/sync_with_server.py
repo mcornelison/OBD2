@@ -55,6 +55,8 @@
 #               |         | UNKNOWN, which drains) or joinWaitSec ends it.
 # 2026-10-23    | Rex (US-883-b) | keyOffSnapshotFn: called once at run start,
 #               |         | the sync bar's key-off snapshot.
+# 2026-10-25    | Rex (US-883-c) | syncStateFn: (state, outcome) at each
+#               |         | transition -- joining, syncing, ended / away.
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -74,6 +76,11 @@ __all__ = [
     "JOIN_POLL_SEC",
     "RETRY_FIRST_WAIT_SEC",
     "RETRY_WAIT_GROWTH",
+    "SYNC_STATES",
+    "SYNC_STATE_AWAY",
+    "SYNC_STATE_ENDED",
+    "SYNC_STATE_JOINING",
+    "SYNC_STATE_SYNCING",
     "SyncOutcomeRecord",
     "SyncWithServerTask",
 ]
@@ -89,6 +96,19 @@ RETRY_WAIT_GROWTH = 2.0
 #: of the rejoin. The shortest wait this task already makes, and the nmcli
 #: read behind each poll is itself bounded at 2 s.
 JOIN_POLL_SEC = RETRY_FIRST_WAIT_SEC
+
+#: US-883-c (Atlas names, spec s3): where the shutdown sync is, as published in
+#: shutdown-state.sync.state. ``away`` -- a positive AWAY, no drain; ``joining``
+#: -- waiting for the home WiFi association; ``syncing`` -- the drain is
+#: running; ``ended`` -- the drain (or the join wait) is over and
+#: ``sync.outcome`` names how. The page's word table is pinned to this set.
+SYNC_STATE_AWAY = "away"
+SYNC_STATE_JOINING = "joining"
+SYNC_STATE_SYNCING = "syncing"
+SYNC_STATE_ENDED = "ended"
+SYNC_STATES = frozenset(
+    {SYNC_STATE_AWAY, SYNC_STATE_JOINING, SYNC_STATE_SYNCING, SYNC_STATE_ENDED}
+)
 
 #: Log level of the one outcome line each run() emits. A positive AWAY and a
 #: delivery are the expected cases; an unconfirmed home is the dead-instrument
@@ -200,6 +220,7 @@ class SyncWithServerTask:
         lossGeneration: Callable[[], int] | None = None,
         writeProvisional: Callable[[SyncOutcomeRecord], None] | None = None,
         keyOffSnapshotFn: Callable[[], None] | None = None,
+        syncStateFn: Callable[[str, str | None], None] | None = None,
     ):
         """Args:
         homeState: Zero-arg home-network read, called once per ``run()``,
@@ -245,6 +266,13 @@ class SyncWithServerTask:
             blip never snapshots). Production passes
             ``ShutdownSyncProgress.snapshot``: the rows owed at key-off that
             the sync bar counts down. A raise is logged and the run goes on.
+        syncStateFn: US-883-c -- optional ``(state, outcome)`` hook called at
+            each transition: ``('joining', None)`` entering the AT_HOME_JOINING
+            wait, ``('syncing', None)`` entering the drain, and from
+            ``_record`` ``('away', 'away')`` or ``('ended', kind.value)``. The
+            provisional record never calls it, so ``interrupted`` is never
+            published. Production passes ``ShutdownSyncProgress.state``. A raise
+            is logged and the run goes on.
         """
         self._homeState = homeState
         self._runSync = runSync
@@ -263,6 +291,7 @@ class SyncWithServerTask:
         self._lossGeneration = lossGeneration
         self._writeProvisional = writeProvisional
         self._keyOffSnapshotFn = keyOffSnapshotFn
+        self._syncStateFn = syncStateFn
 
     def run(self) -> OutcomeKind:
         """Run the CIO sync state machine and record its outcome. Never raises."""
@@ -280,6 +309,7 @@ class SyncWithServerTask:
         if state is HomeNetworkState.AT_HOME_JOINING:
             # US-776-e: the join wait is bounded on its own (joinWaitSec); the
             # drain's stall clock starts when the drain starts, at association.
+            self._publishSyncState(SYNC_STATE_JOINING, None)
             state = self._awaitAssociation(self._monotonic())
             if state is HomeNetworkState.AT_HOME_JOINING:
                 return self._record(
@@ -308,6 +338,7 @@ class SyncWithServerTask:
         # ARCH-065: the drain's own span -- the JOINING wait above is not sync time.
         startedAt = self._stamp()
         self._recordProvisional(backlogStart, startedAt, generation)
+        self._publishSyncState(SYNC_STATE_SYNCING, None)
         kind, detail = self._drain(state)
         endedAt = self._stamp()
         return self._record(
@@ -520,6 +551,17 @@ class SyncWithServerTask:
         except Exception as exc:  # noqa: BLE001 -- never raise; progress is not the drain
             logger.warning("powerwatch sync_with_server: key-off snapshot failed (%s)", exc)
 
+    def _publishSyncState(self, state: str, outcome: str | None) -> None:
+        """Run the sync-state hook, if wired. Never raises."""
+        if self._syncStateFn is None:
+            return
+        try:
+            self._syncStateFn(state, outcome)
+        except Exception as exc:  # noqa: BLE001 -- never raise; progress is not the drain
+            logger.warning(
+                "powerwatch sync_with_server: sync-state hook failed (%s) -- ignored", exc
+            )
+
     def _readLossGeneration(self) -> int | None:
         """The current loss generation, or None (no source, or it raised). Never raises."""
         if self._lossGeneration is None:
@@ -597,4 +639,9 @@ class SyncWithServerTask:
                 kind.name,
                 exc,
             )
+        # US-883-c: the page names how the sync ended. AWAY is its own state.
+        if kind is OutcomeKind.AWAY:
+            self._publishSyncState(SYNC_STATE_AWAY, kind.value)
+        else:
+            self._publishSyncState(SYNC_STATE_ENDED, kind.value)
         return kind

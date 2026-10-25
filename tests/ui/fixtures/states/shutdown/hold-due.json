@@ -21,8 +21,24 @@
     ],
     [
       "sync",
-      1240,
-      1240
+      "syncing",
+      null,
+      400,
+      0
+    ],
+    [
+      "sync",
+      "syncing",
+      null,
+      400,
+      400
+    ],
+    [
+      "sync",
+      "ended",
+      "delivered",
+      400,
+      400
     ],
     [
       "enter",
@@ -101,8 +117,10 @@
         "name": "drain"
       },
       "sync": {
-        "waitingAtKeyOff": 1240,
-        "confirmed": 1240
+        "state": "syncing",
+        "outcome": null,
+        "waitingAtKeyOff": 400,
+        "confirmed": 0
       }
     },
     {
@@ -113,47 +131,53 @@
       "reason": "ignition_off",
       "ts": "2026-10-25T12:00:04Z",
       "step": {
-        "index": 3,
+        "index": 2,
         "of": 6,
-        "name": "monthly_test_hold"
+        "name": "drain"
       },
       "sync": {
-        "waitingAtKeyOff": 1240,
-        "confirmed": 1240
+        "state": "syncing",
+        "outcome": null,
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
       }
     },
     {
-      "phase": "powering_off",
+      "phase": "flushing",
       "tGraceStartedAt": "2026-10-25T12:00:00Z",
       "tGraceTotalS": 7.0,
       "tRemainingS": 0.0,
       "reason": "ignition_off",
       "ts": "2026-10-25T12:00:05Z",
       "step": {
-        "index": 3,
+        "index": 2,
         "of": 6,
-        "name": "monthly_test_hold"
+        "name": "drain"
       },
       "sync": {
-        "waitingAtKeyOff": 1240,
-        "confirmed": 1240
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
       }
     },
     {
-      "phase": "powering_off",
+      "phase": "flushing",
       "tGraceStartedAt": "2026-10-25T12:00:00Z",
       "tGraceTotalS": 7.0,
       "tRemainingS": 0.0,
       "reason": "ignition_off",
       "ts": "2026-10-25T12:00:06Z",
       "step": {
-        "index": 4,
+        "index": 3,
         "of": 6,
-        "name": "drain close"
+        "name": "monthly_test_hold"
       },
       "sync": {
-        "waitingAtKeyOff": 1240,
-        "confirmed": 1240
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
       }
     },
     {
@@ -164,13 +188,15 @@
       "reason": "ignition_off",
       "ts": "2026-10-25T12:00:07Z",
       "step": {
-        "index": 5,
+        "index": 3,
         "of": 6,
-        "name": "custody"
+        "name": "monthly_test_hold"
       },
       "sync": {
-        "waitingAtKeyOff": 1240,
-        "confirmed": 1240
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
       }
     },
     {
@@ -181,13 +207,53 @@
       "reason": "ignition_off",
       "ts": "2026-10-25T12:00:08Z",
       "step": {
+        "index": 4,
+        "of": 6,
+        "name": "drain close"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:09Z",
+      "step": {
+        "index": 5,
+        "of": 6,
+        "name": "custody"
+      },
+      "sync": {
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:10Z",
+      "step": {
         "index": 6,
         "of": 6,
         "name": "poweroff"
       },
       "sync": {
-        "waitingAtKeyOff": 1240,
-        "confirmed": 1240
+        "state": "ended",
+        "outcome": "delivered",
+        "waitingAtKeyOff": 400,
+        "confirmed": 400
       }
     }
   ]
