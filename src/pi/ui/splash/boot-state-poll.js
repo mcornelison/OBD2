@@ -12,6 +12,12 @@
  *          WAITING. The hand-off closes on the fade's transitionend, or at once
  *          when motionGate says that event will not fire (Atlas G2). The only
  *          setTimeout left is the POLL_MS tick.
+ * Updated: 2026-10-24 -- US-785: phase 0b. The page opens on the WARNING
+ *          image; once DOMContentLoaded has fired, the image has decoded (or
+ *          failed) and document.fonts.ready has resolved, body.logo-up
+ *          cross-fades it to the logo, and the logo's transitionend sets
+ *          body.phase-1 (spin 1 starts there, US-869-f). No timer, no hold;
+ *          the hand-off never waits for the cross-fade.
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -66,9 +72,69 @@
     try { window.close(); } catch (e) {}
   }
 
-  function fadeWillEnd(stage) {
+  function transitionWillEnd(el) {
     var gate = window.motionGate;
-    return !!(gate && typeof gate.willFire === "function" && gate.willFire(stage, "transition"));
+    return !!(gate && typeof gate.willFire === "function" && gate.willFire(el, "transition"));
+  }
+
+  // --- Phase 0b (US-785, Atlas C-Atlas-5) -----------------------------------
+  // Three EVENTS end it; none of them is a clock. Each promise below settles
+  // and never rejects, so a failure is a visual degrade, never a stall.
+
+  function noop() {}
+
+  function domContentLoaded() {
+    return new Promise(function (resolve) {
+      if (document.readyState !== "loading") {
+        resolve();
+        return;
+      }
+      document.addEventListener("DOMContentLoaded", function () { resolve(); });
+    });
+  }
+
+  // decode() resolves once the image is decoded and rejects on an image
+  // error; both end the wait. No decode() means nothing to wait on.
+  function warningDecoded() {
+    var img = document.getElementById("warning");
+    if (!img || typeof img.decode !== "function") return Promise.resolve();
+    try {
+      return Promise.resolve(img.decode()).then(noop, noop);
+    } catch (e) {
+      return Promise.resolve();
+    }
+  }
+
+  // The wordmark is Michroma (US-869-e): cross-fade onto a settled face.
+  function fontsReady() {
+    var fonts = document.fonts;
+    if (!fonts || !fonts.ready || typeof fonts.ready.then !== "function") {
+      return Promise.resolve();
+    }
+    return fonts.ready.then(noop, noop);
+  }
+
+  var crossFadeEnded = false;
+
+  function endCrossFade() {
+    if (crossFadeEnded) return;
+    crossFadeEnded = true;
+    document.body.classList.add("phase-1");
+  }
+
+  function startCrossFade() {
+    var logo = document.getElementById("mark");
+    // Atlas G2: ask before waiting. No transitionend will fire (styles
+    // missing, reduced motion) -> the cross-fade ends on the 0b event itself.
+    var willEnd = !!logo && transitionWillEnd(logo);
+    if (willEnd) {
+      logo.addEventListener("transitionend", function (ev) {
+        if (ev && ev.target && ev.target !== logo) return;   // a child's transition
+        endCrossFade();
+      });
+    }
+    document.body.classList.add("logo-up");     // warning out, logo in (styles.css)
+    if (!willEnd) endCrossFade();
   }
 
   function enterHealthyYield() {
@@ -78,7 +144,7 @@
     // (D-3: JS-driven exit, no external pkill) on the fade's OWN end event.
     var stage = document.getElementById("splash-stage");
     stage.style.transition = "opacity 0.5s";
-    if (!fadeWillEnd(stage)) {
+    if (!transitionWillEnd(stage)) {
       // No transitionend will fire (styles missing, reduced motion, no
       // motion-gate): advance on the healthy verdict itself (Atlas G2).
       stage.style.opacity = "0";
@@ -132,5 +198,6 @@
   }
 
   loadVersionChip();
+  Promise.all([domContentLoaded(), warningDecoded(), fontsReady()]).then(startCrossFade);
   schedule();
 })();

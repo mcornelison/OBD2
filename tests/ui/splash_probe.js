@@ -25,11 +25,25 @@
  *          `transitionend` on it -- unless `dispatchTransitionEnd` is false,
  *          modelling a browser that fires nothing because nothing animates.
  *
+ *          US-785 (phase 0b): the page's three end events are modelled at
+ *          given virtual ms -- DOMContentLoaded (`domContentLoadedMs`), the
+ *          WARNING image's decode() resolving or, with `warningError`, failing
+ *          (`warningDecodeMs`), and document.fonts.ready (`fontsReadyMs`); each
+ *          defaults to 0. Events inside a poll round fire in time order, at
+ *          their own virtual ms, so "the cross-fade starts at the last event"
+ *          is measurable below POLL_MS. Once body.logo-up is set the probe
+ *          dispatches the logo's `transitionend` -- unless
+ *          `dispatchCrossFadeEnd` is false.
+ *
  *          Invoked as:  node splash_probe.js <inputJsonPath>
  *          Input:  {pollJsPath, motionGatePath, tree, bootStates, rounds,
- *                   computedStyles, dispatchTransitionEnd, reducedMotion}
+ *                   computedStyles, dispatchTransitionEnd, reducedMotion,
+ *                   domContentLoadedMs, warningDecodeMs, warningError,
+ *                   fontsReadyMs, dispatchCrossFadeEnd}
  *          Output: {handoff, closeCalls, timeoutsQueued, degraded,
- *                   degradedMsg, polls, elapsedMs, tree}
+ *                   degradedMsg, polls, elapsedMs, crossFadeStartedAtMs,
+ *                   crossFadeEndedAtMs, crossFadeEndDispatched,
+ *                   warningDecodeCalls, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
  * ==========================================================================*/
@@ -136,6 +150,61 @@ async function main() {
     return clock.clearTimeout(id);
   };
 
+  // --- Phase 0b (US-785): the three end events, each a promise or an event the
+  // probe settles at its own virtual ms. The scripts sit at the end of <body>,
+  // so they run while the document is still "loading".
+  doc.readyState = "loading";
+  function deferred() {
+    const d = {};
+    d.promise = new Promise(function (resolve, reject) {
+      d.resolve = resolve;
+      d.reject = reject;
+    });
+    return d;
+  }
+  const decoded = deferred();
+  const fontsReady = deferred();
+  doc.fonts = { ready: fontsReady.promise };
+  let warningDecodeCalls = 0;
+  const warningImg = doc.getElementById("warning");
+  if (warningImg) {
+    warningImg.decode = function () {
+      warningDecodeCalls += 1;
+      return decoded.promise;
+    };
+  }
+  const pageEvents = [
+    {
+      atMs: input.domContentLoadedMs || 0,
+      fire: function () {
+        doc.readyState = "interactive";
+        doc.dispatch("DOMContentLoaded", { target: doc });
+      },
+    },
+    {
+      atMs: input.warningDecodeMs || 0,
+      fire: function () {
+        if (input.warningError) decoded.reject(new Error("EncodingError"));
+        else decoded.resolve();
+      },
+    },
+    {
+      atMs: input.fontsReadyMs || 0,
+      fire: function () {
+        fontsReady.resolve(doc.fonts);
+      },
+    },
+  ].sort(function (a, b) {
+    return a.atMs - b.atMs;
+  });
+  // A rejection nobody awaits yet must not crash node before the page attaches.
+  decoded.promise.catch(function () {});
+
+  const dispatchCrossFadeEnd = input.dispatchCrossFadeEnd !== false;
+  let crossFadeEndDispatched = false;
+  let crossFadeStartedAtMs = null;
+  let crossFadeEndedAtMs = null;
+
   if (input.motionGatePath) require(path.resolve(input.motionGatePath));
   require(path.resolve(input.pollJsPath));
 
@@ -149,15 +218,52 @@ async function main() {
     stage.dispatch("transitionend", { target: stage, propertyName: "opacity" });
   }
 
-  for (let i = 0; i < (input.rounds || 80); i++) {
+  // The browser's half of the cross-fade: body.logo-up starts the logo's
+  // opacity transition, which ends with a `transitionend` on the logo itself.
+  function maybeEndCrossFade() {
+    const body = doc.body;
+    if (crossFadeStartedAtMs === null && body.classList.contains("logo-up")) {
+      crossFadeStartedAtMs = virtualMs;
+    }
+    if (dispatchCrossFadeEnd && !crossFadeEndDispatched && crossFadeStartedAtMs !== null) {
+      const logo = doc.getElementById("mark");
+      if (logo) {
+        crossFadeEndDispatched = true;
+        logo.dispatch("transitionend", { target: logo, propertyName: "opacity" });
+      }
+    }
+    if (crossFadeEndedAtMs === null && body.classList.contains("phase-1")) {
+      crossFadeEndedAtMs = virtualMs;
+    }
+  }
+
+  async function settle() {
     await dom.drainMicrotasks();
     maybeEndTransition();
+    maybeEndCrossFade();
+    await dom.drainMicrotasks();
+    maybeEndCrossFade();
+  }
+
+  // Fire every page event due before `limitMs`, each at its own virtual ms.
+  async function fireEventsBefore(limitMs) {
+    while (pageEvents.length && pageEvents[0].atMs < limitMs) {
+      const ev = pageEvents.shift();
+      virtualMs = Math.max(virtualMs, ev.atMs);
+      ev.fire();
+      await settle();
+    }
+  }
+
+  for (let i = 0; i < (input.rounds || 80); i++) {
+    const roundStartMs = virtualMs;
+    await settle();
     clock.flushRound();
-    virtualMs += POLL_MS;
+    await fireEventsBefore(roundStartMs + POLL_MS);
+    virtualMs = roundStartMs + POLL_MS;
     if (handoff) break;
   }
-  await dom.drainMicrotasks();
-  maybeEndTransition();
+  await settle();
 
   const msg = doc.getElementById("degraded-msg");
   process.stdout.write(
@@ -171,6 +277,10 @@ async function main() {
       degradedMsg: msg ? msg.textContent : "",
       polls: polls,
       elapsedMs: virtualMs,
+      crossFadeStartedAtMs: crossFadeStartedAtMs,
+      crossFadeEndedAtMs: crossFadeEndedAtMs,
+      crossFadeEndDispatched: crossFadeEndDispatched,
+      warningDecodeCalls: warningDecodeCalls,
       tree: dom.serialize(doc.body),
     })
   );

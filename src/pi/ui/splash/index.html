@@ -6,14 +6,42 @@
 <title>Eclipse OBD-II Boot Splash</title>
 <!-- F-103 boot splash (US-393). Served same-origin by eclipse-states-http at
      http://127.0.0.1:9899/ so the auth token is injected below (the token SSOT
-     never lands on disk). Text layers are HTML overlays above the embedded SVG
-     (spec §4) so the version chip + degraded message are trivially data-bound. -->
+     never lands on disk). Text layers are HTML overlays above the inline logo
+     (spec §4) so the version chip + degraded message are trivially data-bound.
+     US-785 (phase 0b): the first frame is the WARNING image Plymouth showed;
+     boot-state-poll.js cross-fades it to the logo on DOMContentLoaded + the
+     image's decode + document.fonts.ready. -->
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
   <div id="splash-stage">
-    <!-- 3-rhombus brand animation; geometry unchanged (spec §4 center mark). -->
-    <object id="mark" type="image/svg+xml" data="splash.svg" aria-label="boot splash"></object>
+    <!-- 3-rhombus brand mark, INLINE (US-785): splash.svg's gradient and three
+         rhombus paths verbatim, with no <style> -- the page's CSS drives it.
+         The bloom intro (the dot) and splash.svg's own black rect stay out. -->
+    <svg id="mark" viewBox="0 0 480 320" aria-label="boot splash">
+      <defs>
+    <linearGradient id="g" x1="0" y1="0.5" x2="1" y2="0.5">
+      <stop offset="0%"   stop-color="#F61D2D"/>
+      <stop offset="50%"  stop-color="#E60012"/>
+      <stop offset="100%" stop-color="#BF000F"/>
+    </linearGradient>
+      </defs>
+      <g class="logo">
+    <g class="scaler s-top">
+      <path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#g)"/>
+    </g>
+    <g transform="rotate(-120 240 160)">
+      <g class="scaler s-side">
+        <path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#g)"/>
+      </g>
+    </g>
+    <g transform="rotate(-240 240 160)">
+      <g class="scaler s-side">
+        <path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#g)"/>
+      </g>
+    </g>
+      </g>
+    </svg>
 
     <!-- HTML text overlays (absolute-positioned via styles.css). -->
     <div id="wordmark" class="overlay">ECLIPSE OBD-II<span id="warn-glyph"></span></div>
@@ -22,6 +50,12 @@
 
     <!-- Amber degraded outer ring (hidden until boot-state.degraded). -->
     <div id="amber-ring" hidden></div>
+
+    <!-- Phase 0b WARNING (US-785, spec §1.2): the same PNG Plymouth drew, up
+         from the first frame, full-frame. LAST in the stage so nothing paints
+         over it; no button, no text (R5). The deploy copies it here from
+         deploy/plymouth/eclipse/warning.png -- the one deployed copy. -->
+    <img id="warning" src="warning.png" alt=""/>
   </div>
 
   <script>

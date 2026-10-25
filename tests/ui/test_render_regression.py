@@ -55,6 +55,9 @@
 #               |              | the NEW emitter without hardCapSeconds (the
 #               |              | parameter is gone). TestSplashGuardIsRed is
 #               |              | unchanged: its cap is the pre-US-494 emitter's.
+# 2026-10-24    | Rex (US-785) | Phase 0b: the WARNING frame + cross-fade to the
+#               |              | inline logo on DOMContentLoaded, decode and
+#               |              | fonts.ready (TestSplashPhase0b, -WarningFrame).
 # ================================================================================
 ################################################################################
 
@@ -65,6 +68,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -669,6 +673,219 @@ class TestSplashGuardIsRed:
             "the pre-fix splash should degrade naming the OBD tier -- got "
             f"{result['degradedMsg']!r}"
         )
+
+
+# --- phase 0b: the WARNING image, then the cross-fade to the logo (US-785) ---
+
+_WAITING = {"healthy": False, "degraded": False}
+_HEALTHY_STATE = {"healthy": True, "degraded": False}
+# The stage's fade is live but the logo's cross-fade computes to 0s: what a
+# missing or non-matching #mark rule leaves (Atlas G2).
+_STAGE_FADE_ONLY = {"splash-stage": {"transitionDuration": "0.5s"}}
+
+
+def _splashSvgText() -> str:
+    with open(os.path.join(rh.SPLASH_DIR, "splash.svg"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _indexHtmlText() -> str:
+    with open(os.path.join(rh.SPLASH_DIR, "index.html"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _walk(node: dict) -> list[dict]:
+    found = [node]
+    for child in node.get("children", []):
+        if "tag" in child:
+            found.extend(_walk(child))
+    return found
+
+
+def _byId(tree: dict, elementId: str) -> dict:
+    for node in _walk(tree):
+        if node.get("attrs", {}).get("id") == elementId:
+            return node
+    raise AssertionError(f"no #{elementId} in the splash markup")
+
+
+@_NODE_ONLY
+class TestSplashPhase0b:
+    """Phase 0b ends on its three events; the hand-off never waits for it."""
+
+    def test_crossFadeStartsAtTheLastOfTheThreeEvents(self):
+        """
+        Given: DOMContentLoaded at 100 ms, the decode at 300 ms, fonts.ready at 350 ms
+        Then: the cross-fade starts at 350 ms -- the last event -- and not before
+        """
+        result = rh.runSplash(
+            [_WAITING], rounds=8, domContentLoadedMs=100, warningDecodeMs=300, fontsReadyMs=350
+        )
+
+        assert result["crossFadeStartedAtMs"] == 350
+        assert result["crossFadeEndDispatched"]
+        assert result["crossFadeEndedAtMs"] == 350
+        assert result["warningDecodeCalls"] == 1
+
+    @pytest.mark.parametrize(
+        ("dcl", "decode", "fonts", "last"),
+        [(400, 100, 200, 400), (100, 450, 200, 450), (0, 0, 0, 0)],
+    )
+    def test_whicheverEventIsLastStartsTheCrossFade(self, dcl, decode, fonts, last):
+        result = rh.runSplash(
+            [_WAITING], rounds=8, domContentLoadedMs=dcl, warningDecodeMs=decode, fontsReadyMs=fonts
+        )
+
+        assert result["crossFadeStartedAtMs"] == last
+
+    def test_beforeTheEvents_theWarningIsUp_andTheLogoIsNot(self):
+        """Events never fire inside the run: body stays in phase 0b."""
+        result = rh.runSplash([_WAITING], rounds=4, fontsReadyMs=10_000)
+
+        body = result["tree"]
+        classes = (body["attrs"].get("class") or "").split()
+        assert "logo-up" not in classes and "phase-1" not in classes
+        assert result["crossFadeStartedAtMs"] is None
+
+    def test_imageError_endsOnDomContentLoadedAndFontsReady_noStall(self):
+        """
+        Given: the WARNING image fails to decode (an image error)
+        Then: phase 0b ends on DOMContentLoaded + fonts.ready -- a visual degrade
+        """
+        result = rh.runSplash(
+            [_WAITING],
+            rounds=8,
+            domContentLoadedMs=100,
+            warningDecodeMs=50,
+            warningError=True,
+            fontsReadyMs=300,
+        )
+
+        assert result["crossFadeStartedAtMs"] == 300
+        assert result["crossFadeEndedAtMs"] == 300
+
+    def test_durationsZero_noTransitionEnd_crossFadeCountsAsEnded(self):
+        """Atlas G2: motionGate says no transitionend will fire -> ended on the 0b event."""
+        result = rh.runSplash(
+            [_WAITING],
+            rounds=8,
+            computedStyles=_STAGE_FADE_ONLY,
+            dispatchCrossFadeEnd=False,
+            fontsReadyMs=300,
+        )
+
+        assert not result["crossFadeEndDispatched"]
+        assert result["crossFadeStartedAtMs"] == 300
+        assert result["crossFadeEndedAtMs"] == 300
+
+    def test_reducedMotion_crossFadeCountsAsEnded(self):
+        result = rh.runSplash(
+            [_WAITING], rounds=8, reducedMotion=True, dispatchCrossFadeEnd=False, fontsReadyMs=300
+        )
+
+        assert result["crossFadeEndedAtMs"] == 300
+
+    def test_liveCrossFade_waitsForItsOwnTransitionEnd(self):
+        """The control: with the transition live and no event, phase 1 is not entered."""
+        result = rh.runSplash([_WAITING], rounds=8, dispatchCrossFadeEnd=False)
+
+        assert result["crossFadeStartedAtMs"] == 0
+        assert result["crossFadeEndedAtMs"] is None
+
+    def test_healthyBefore0bEnds_theHandOffFadeStillRunsAtOnce(self):
+        """
+        Given: boot-state healthy at the first poll, the 0b events 5 s later
+        Then: the hand-off fades and closes now -- it never waits for the cross-fade
+        """
+        result = rh.runSplash(
+            [_HEALTHY_STATE],
+            rounds=8,
+            domContentLoadedMs=5_000,
+            warningDecodeMs=5_000,
+            fontsReadyMs=5_000,
+        )
+
+        assert result["handoff"]
+        assert result["closeCalls"] == 1
+        assert result["handoffAtMs"] < 5_000
+        assert result["crossFadeStartedAtMs"] is None
+
+    def test_noTimerGatesTheCrossFade(self):
+        """The only setTimeout ever queued is the POLL_MS tick (CIO no-timer rule).
+
+        A page still waiting queues the initial tick plus one per poll (the
+        next round's), so it is polls + 1 -- with or without the cross-fade.
+        """
+        crossFaded = rh.runSplash(
+            [_WAITING], rounds=8, domContentLoadedMs=100, warningDecodeMs=300, fontsReadyMs=350
+        )
+        still0b = rh.runSplash([_WAITING], rounds=8, fontsReadyMs=10_000)
+
+        assert crossFaded["crossFadeEndedAtMs"] == 350
+        assert still0b["crossFadeStartedAtMs"] is None
+        assert crossFaded["timeoutsQueued"] == crossFaded["polls"] + 1
+        assert crossFaded["timeoutsQueued"] == still0b["timeoutsQueued"]
+
+
+class TestSplashWarningFrame:
+    """The page's first frame is the WARNING image, full-frame; the logo is inline."""
+
+    def test_theLogoIsAnInlineSvg_notAnObject(self):
+        html = _indexHtmlText()
+        mark = _byId(rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")), "mark")
+
+        assert "<object" not in html
+        assert mark["tag"] == "svg"
+        assert mark["attrs"].get("viewbox") == "0 0 480 320"
+        assert "style" not in {node["tag"] for node in _walk(mark)}
+
+    def test_theInlineLogoCarriesSplashSvgsGeometryVerbatim(self):
+        """The gradient stops and the three rhombus paths, byte for byte."""
+        svg, html = _splashSvgText(), _indexHtmlText()
+        gradient = re.search(r"<linearGradient\b.*?</linearGradient>", svg, re.S).group(0)
+        paths = re.findall(r"<path\b[^>]*/>", svg)
+        rotations = re.findall(r'<g transform="rotate\([^"]*\)">', svg)
+
+        assert len(paths) == 3
+        assert gradient in html
+        assert re.findall(r"<path\b[^>]*/>", html) == paths
+        assert re.findall(r'<g transform="rotate\([^"]*\)">', html) == rotations
+
+    def test_theWarningImageIsThePagesTopLayer_withNothingOverIt(self):
+        """Spec §1.1 R5: no touch target, button or text node over the warning."""
+        stage = _byId(rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")), "splash-stage")
+        warning = _byId(stage, "warning")
+        elements = [child for child in stage["children"] if "tag" in child]
+
+        assert warning["tag"] == "img"
+        assert warning["attrs"].get("src") == "warning.png"
+        assert warning["attrs"].get("alt") == ""
+        assert elements[-1] is warning, "an element after #warning would paint over it"
+        assert warning["children"] == []
+        assert "<button" not in _indexHtmlText()
+
+    @pytest.mark.parametrize("viewport", [(1280, 720), (480, 320)])
+    def test_theWarningFillsTheViewport_aspectNotPreserved(self, viewport):
+        """
+        Given: the OSOYOO scaler panel driven at 1280x720, and its native 480x320
+        Then: #warning's computed width x height equals the viewport in both
+        """
+        surface = rh.splashSurface(
+            rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")), viewport=viewport
+        )
+        path = surface.pathById("warning")
+
+        assert (surface.lengthPx(path, "width"), surface.lengthPx(path, "height")) == viewport
+        assert surface.winningDeclaration(path, "object-fit")[0] == "fill"
+        assert surface.winningDeclaration(path, "background")[0] == "var(--bg)"
+        assert surface.rendered(path)
+
+    def test_theCrossFadeIsTheFadeToken_onBothLayers(self):
+        """The cross-fade's length lives once, in --t-fade; no JS twin."""
+        surface = rh.splashSurface(rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")))
+        for elementId in ("warning", "mark"):
+            transition = surface.winningDeclaration(surface.pathById(elementId), "transition")
+            assert transition[0] == "opacity var(--t-fade)", elementId
 
 
 # --- the harness's own honesty ----------------------------------------------

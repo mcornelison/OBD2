@@ -49,6 +49,9 @@
 #                                stylesheet section slicing, so a guard can name
 #                                its REGION structurally instead of by a fixed
 #                                character window. RAISES, never returns "".
+# 2026-10-24    | Ralph (Rex)  | US-785: runSplash models phase 0b's three end
+#                                events; brandLoadMs retires with the <object>;
+#                                Surface.lengthPx resolves px / vw / vh.
 # ================================================================================
 ################################################################################
 
@@ -669,6 +672,27 @@ class Surface:
                 bestKey, best = key, (value, rule.selector)
         return best
 
+    def lengthPx(self, path: list[dict[str, Any]], prop: str) -> float:
+        """Resolve a ``width``/``height``-style length to px against the viewport.
+
+        Only the absolute units the splash kit uses: ``px``, ``vw`` and ``vh``.
+        Anything else (``%``, ``calc()``, ``auto``, no declaration) RAISES, so a
+        stylesheet change this cannot measure goes red instead of passing.
+        """
+        winner = self.winningDeclaration(path, prop)
+        if winner is None:
+            raise ValueError(f"no author declaration of {prop!r}")
+        match = re.fullmatch(r"(-?\d+(?:\.\d+)?)(px|vw|vh)", winner[0].strip())
+        if match is None:
+            raise ValueError(f"{prop}: {winner[0]!r} is not a px / vw / vh length")
+        number, unit = float(match.group(1)), match.group(2)
+        width, height = self.viewport
+        if unit == "vw":
+            return number * width / 100
+        if unit == "vh":
+            return number * height / 100
+        return number
+
     def displayOf(self, path: list[dict[str, Any]]) -> tuple[str, str]:
         """The element's effective ``display`` as (value, whoDecidedIt)."""
         node = path[-1]
@@ -799,9 +823,12 @@ def runDashboard(
 
 
 # What getComputedStyle reports for the boot stage once boot-state-poll.js sets
-# its inline `transition: opacity 0.5s` (US-869-d): the fade WILL end.
+# its inline `transition: opacity 0.5s` (US-869-d): the fade WILL end. The logo
+# (#mark) carries styles.css's `transition: opacity var(--t-fade)` (US-785), so
+# the phase-0b cross-fade will end too.
 _SPLASH_STAGE_FADE: dict[str, dict[str, str]] = {
-    "splash-stage": {"transitionDuration": "0.5s"}
+    "splash-stage": {"transitionDuration": "0.5s"},
+    "mark": {"transitionDuration": "0.5s"},
 }
 
 
@@ -811,10 +838,14 @@ def runSplash(
     markupPath: str | None = None,
     rounds: int = 80,
     emitIntervalMs: int = 500,
-    brandLoadMs: int | None = 0,
     computedStyles: dict[str, dict[str, str]] | None = None,
     dispatchTransitionEnd: bool = True,
     reducedMotion: bool = False,
+    domContentLoadedMs: int = 0,
+    warningDecodeMs: int = 0,
+    warningError: bool = False,
+    fontsReadyMs: int = 0,
+    dispatchCrossFadeEnd: bool = True,
 ) -> dict[str, Any]:
     """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
 
@@ -824,15 +855,19 @@ def runSplash(
     entry, exactly as it would on the Pi. The final entry repeats. Returns the
     settled outcome plus the resulting DOM tree.
 
-    ``brandLoadMs`` is kept for its callers until US-785 and is no longer read:
-    the US-525 brand floor it modelled went with the page's clocks (US-869-d).
-
     The shipped ``motion-gate.js`` is loaded before the poller, as index.html
     loads it. ``computedStyles`` is what ``getComputedStyle`` reports per
-    element id; the default is the stage's inline 0.5 s fade.
-    ``dispatchTransitionEnd`` False models a browser that fires no
-    ``transitionend`` because nothing animates; ``reducedMotion`` answers
-    ``prefers-reduced-motion: reduce``.
+    element id; the default is the stage's inline 0.5 s fade and the logo's
+    0.5 s cross-fade. ``dispatchTransitionEnd`` False models a browser that
+    fires no ``transitionend`` on the stage because nothing animates;
+    ``reducedMotion`` answers ``prefers-reduced-motion: reduce``.
+
+    Phase 0b (US-785) ends on three events, each fired at its own virtual ms:
+    DOMContentLoaded (``domContentLoadedMs``), the WARNING image's decode()
+    settling (``warningDecodeMs``; rejected when ``warningError``) and
+    document.fonts.ready (``fontsReadyMs``). ``dispatchCrossFadeEnd`` False
+    models no ``transitionend`` on the logo. (The US-525 ``brandLoadMs``, the
+    ``<object>``'s load, retired with the ``<object>``.)
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
     return _runProbe(
@@ -844,12 +879,16 @@ def runSplash(
             "bootStates": bootStates,
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
-            "brandLoadMs": brandLoadMs,
             "computedStyles": (
                 _SPLASH_STAGE_FADE if computedStyles is None else computedStyles
             ),
             "dispatchTransitionEnd": dispatchTransitionEnd,
             "reducedMotion": reducedMotion,
+            "domContentLoadedMs": domContentLoadedMs,
+            "warningDecodeMs": warningDecodeMs,
+            "warningError": warningError,
+            "fontsReadyMs": fontsReadyMs,
+            "dispatchCrossFadeEnd": dispatchCrossFadeEnd,
         },
     )
 

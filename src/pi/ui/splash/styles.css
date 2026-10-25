@@ -6,6 +6,8 @@
  * Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
  * Changed: 2026-10-24 -- US-869-e: every value is a token mirrored from
  *          src/pi/ui/tokens.css; the wordmark is Michroma (Atlas C-Atlas-3).
+ * Changed: 2026-10-24 -- US-785: the phase-0b WARNING layer and the logo's
+ *          cross-fade (both var(--t-fade)); #mark is an inline <svg> now.
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -68,10 +70,30 @@ html, body {
   position: relative; width: 100vw; height: 100vh; background: var(--bg);
 }
 
+/* The inline logo (US-785) is invisible through phase 0b and fades in as the
+   WARNING fades out; its opacity transitionend ends the cross-fade. */
 #mark {
-  width: 100vw; height: 100vh; object-fit: contain;
+  width: 100vw; height: 100vh;
   background: var(--bg); border: 0; display: block;
+  opacity: 0; transition: opacity var(--t-fade);
 }
+
+/* --- Phase 0b WARNING (US-785, spec §1.2) ------------------------------------
+   Full-frame, aspect NOT preserved -- the Plymouth theme's rule (US-885-c): the
+   OSOYOO HDMI35 is a scaler panel driven at 1280x720 that shrinks the frame back
+   to its 480x320 native pixels, so a full-frame image lands 1:1 at its designed
+   geometry. No hold: body.logo-up is set by boot-state-poll.js on the 0b end
+   events, never by a timer. */
+#warning {
+  position: absolute; top: 0; left: 0;
+  width: 100vw; height: 100vh; object-fit: fill;
+  background: var(--bg); border: 0; display: block;
+  pointer-events: none;
+  opacity: 1; transition: opacity var(--t-fade);
+}
+
+body.logo-up #warning { opacity: 0; }
+body.logo-up #mark { opacity: 1; }
 
 /* Data text is system mono; the brand face is the wordmark's alone. */
 .overlay {
