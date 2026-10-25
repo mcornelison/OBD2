@@ -98,7 +98,23 @@
 
 ### 1.3 Boot words (exact strings)
 
-The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` order. **Label** in Michroma `--fs-label` `--text-secondary`; **word** in `--font-mono` `--fs-label`. The longest word, `waiting for Bluetooth` (21 characters), is about 253 px; the 432 px line holds 35.
+The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` order. **Label** in Michroma `--fs-label` `--text-secondary`, weight 400, `font-synthesis: none`; **word** in `--font-mono` `--fs-label`. The longest word, `waiting for Bluetooth` (21 characters), is about 253 px (21 × 12.04).
+
+**Font (US-869-g R1, 2026-10-25):** the labels stay in Michroma, the label voice of every V0.30 page. US-869-e already ships the face to the splash for `#wordmark`, so this adds no font file and no licence. All four labels are inside the 38-glyph subset. The splash token guard allows the display face on **exactly two selectors**, `#wordmark` and the checklist label; every other rule stays `var(--font-mono)`.
+
+**Layout (US-869-g R2, 2026-10-25; the 60 % logo is the CIO's: "Yes, 60% logo").** The stage is 480 × 320 CSS px.
+
+- **The logo spins while the checklist shows,** so what has to fit is the circle it sweeps, not its rest pose. Each tip is 110 px from the centre (240, 160): at full size a turn covers y 50 to 270, and nothing fits under it. Its rest pose reaches only y 215, which is where the shortfall hid.
+- **So the boot page draws the logo at 0.6,** for the whole boot page. Its geometry and animations are unchanged (§1.1); only the box of `#mark` changes:
+  - `#mark { position: absolute; top: 24px; left: 0; width: 100%; height: 192px; }`. The viewBox is 480 × 320 with `meet`, so the scale is 192 / 320 = 0.6 and the centre lands at y 120.
+  - The swept circle is then r 66, **y 54 to 186**. The wordmark (`top: 18px`) ends near y 42.
+- **`#checklist`:** `position: absolute; top: 194px; left: 52px; width: 376px; display: grid; grid-template-columns: 96px 264px; column-gap: 16px; line-height: 22px;`. The four rows run **y 194 to 282**.
+  - Label cell right-aligned, word cell left-aligned.
+  - **Fixed column widths, never `max-content`:** a centred block sized to its content would move sideways each time a word changes length (`waiting` → `waiting for Bluetooth`).
+  - Measured at 20 px (`specs/assets/fonts/michroma/michroma-advances.json`): `LIGHT` 83 px (the widest), `OBD` 63, `UPS` 61, `IMU` 54. The 96 px column holds `LIGHT` with letter-spacing up to 0.15 em. The 264 px word column holds the 253 px longest word.
+- **Version chip:** `bottom: 12px`, as shipped. At `--fs-meta` its line is about y 290 to 308, which leaves 8 px under the last row.
+- **`#degraded-msg`:** `top: 194px; line-height: 22px;` (was 200 px). It shows only under degraded, so it takes the checklist's slot.
+- **`body.degraded #checklist { display: none; }`: hidden, not drawn under.** Degraded lasts until reboot and means a core unit failed or the assets are missing. Rows left reading `waiting` would promise a ready that isn't coming, and the reason is the one line the driver acts on. The rule holds however degraded-after-healthy is ruled (Atlas R3).
 
 | Label | Shows when |
 |---|---|
@@ -124,7 +140,7 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 - **`not read` finishes nothing:** with no `capture-health` the page cannot know any feed finished, so it holds. That is honest, and never a reason for a timer.
 - **The same words, one meaning, on three surfaces:** this checklist, the System page's `sensor` member (its own spec) and the Light page's `sensor_absent` reason all say `sensor not found` / `read failed`.
 - **No promise words** (no `yet`, no `soon`): `waiting` describes the software, and promises nothing about the car.
-- The wordmark `ECLIPSE OBD-II` (Michroma `--fs-label`, `--text-secondary`) and the version chip (`--font-mono` `--fs-meta`, `--text-tertiary`) stay, as shipped.
+- The wordmark `ECLIPSE OBD-II` (Michroma `--fs-label`, `--text-secondary`) and the version chip (`--font-mono` `--fs-meta`, `--text-tertiary`) stay, at the positions above.
 
 ## 2. Shutdown sequence (CIO)
 > *"Show a progress bar 0-25-50-75-100 %. Away from home the progress bar is quick and represents the soft shutdown progress. At home it is the data sync + the soft shutdown progress. The middle spinning logo will always spin once but can spin more if there is < 100 % of the progress meter. Always one last spin of the dim logo and the close-out animation, then fade to black and then off."*
@@ -135,7 +151,7 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 | **At home** | **0–75 % = the `drain` step, by sync**: `confirmed ÷ waitingAtKeyOff` (§3) · **75–100 % = the steps after the drain**, evenly (`drain close`, `custody`, `monthly_test_hold` when due, `poweroff`). Steps before the drain (`shed`) fill nothing. A marker at 75 %. |
 | **Away**, or the VCELL fast path (no drain) | **0–100 % = `index ÷ of`** (quick). **Never a 0 % sync bar** (F-155 at-home sync). |
 | **Sync ended with rows left** (stall, server down, the fast path cutting the drain, …) | the fill jumps to the 75 % marker, and the **unfilled stretch of the sync part is drawn amber**: the rows kept, shown as a length. The label says why and how many (§2.2); the steps continue from 75 %. `index` never goes backwards (Atlas D1). Unsent rows stay queued. **No new timeout:** `pi.homeNetwork.stallSec` (60 s) is the one number (Atlas S-2) |
-| Close-out | at 100 %: one last **dim** spin (0.25, `--bright-low`), the shipped reverse dim-down (`splash-shutdown.svg`) → **fade to black** → power off |
+| Close-out | at 100 %: one last **dim** spin (0.25, `--bright-low`) → the **dim-down** → **fade to black** → power off. The dim-down is page CSS (US-870-c, 2026-10-25; `splash-shutdown.svg` is deleted): `@keyframes dim-down { from { filter: brightness(var(--bright-low)) } to { filter: brightness(0) } }`, one run of `var(--t-fade)`, linear, fill-mode both, on the logo. It starts on the dim spin's `animationend`, and its own `animationend` starts the stage fade (`var(--t-fade)`). The logo does not rotate during it (it rests at the dim spin's end pose). No reversed light ramp (it would flash up to `--bright-max`) and no rhombus collapse (the bloom is retired, C-Iris-3). `#mark` is shown on `body.animating` **on the shutdown page only**; the boot page's phase 0b opacity-0 rule is unchanged |
 | **Key back on** | `phase: cancelled`: the page exits on that poll, as shipped, and the dashboard underneath returns without a reboot |
 
 ### 2.1 Rules
@@ -233,6 +249,12 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 1. **Key-on from fully off, n ≥ 5, on labwc:** the first pixels are the WARNING image; until spin 1 every frame is the WARNING image or `--bg` black. **No firmware rainbow, no Linux text, no cursor, no desktop** at any frame (phone video, the DoD 1 method).
 2. Spin 1 completes exactly one rotation; spin 2 loops until ready and finishes its rotation; spin 3 completes exactly one rotation, then the Driving page.
 3. Each checklist row reads `ready` only when its feed's `firstSampleTs` is non-null (fixture: hold one feed null and its row stays `waiting`; a `restart-rearmed` fixture returns it to `waiting`).
+3a. **Checklist layout (§1.3, at 480 × 320):**
+   - `#mark` computes 192 px tall at top 24 px;
+   - `#checklist`'s box starts at y 194, below the swept circle (y ≤ 186), and doesn't intersect the version chip;
+   - the label column computes 96 px wide for all four labels, so no row shifts;
+   - under `body.degraded`, `#checklist` computes `display: none` and `#degraded-msg` sits at top 194 px;
+   - the splash token guard allows `var(--font-display)` on `#wordmark` and the checklist label only.
 4. **Hand-off fixtures (no clock in any of them):**
    - IMU + LIGHT + UPS ready, ECU silent, BT + adapter up ⇒ spin 3 plays at once; the dashboard opens with OBD `waiting for ECU` and the link chain grey at ECU;
    - BT down ⇒ `waiting for Bluetooth`; adapter silent ⇒ `waiting for adapter`; link chain unread ⇒ `waiting`; none of them delays the hand-off;
