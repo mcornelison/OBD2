@@ -1,0 +1,194 @@
+{
+  "description": "At home with the monthly test due: 6 steps, the hold after the drain.",
+  "inputs": [
+    [
+      "grace"
+    ],
+    [
+      "plan",
+      false,
+      true
+    ],
+    [
+      "enter",
+      "shed",
+      "flushing"
+    ],
+    [
+      "enter",
+      "drain",
+      "flushing"
+    ],
+    [
+      "sync",
+      1240,
+      1240
+    ],
+    [
+      "enter",
+      "monthly_test_hold",
+      null
+    ],
+    [
+      "phase",
+      "powering_off"
+    ],
+    [
+      "enter",
+      "drain close",
+      null
+    ],
+    [
+      "enter",
+      "custody",
+      null
+    ],
+    [
+      "enter",
+      "poweroff",
+      null
+    ]
+  ],
+  "sequence": [
+    {
+      "phase": "grace",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 7.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:00Z",
+      "step": null,
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:01Z",
+      "step": {
+        "index": 1,
+        "of": 6,
+        "name": "shed"
+      },
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:02Z",
+      "step": {
+        "index": 2,
+        "of": 6,
+        "name": "drain"
+      },
+      "sync": null
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:03Z",
+      "step": {
+        "index": 2,
+        "of": 6,
+        "name": "drain"
+      },
+      "sync": {
+        "waitingAtKeyOff": 1240,
+        "confirmed": 1240
+      }
+    },
+    {
+      "phase": "flushing",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:04Z",
+      "step": {
+        "index": 3,
+        "of": 6,
+        "name": "monthly_test_hold"
+      },
+      "sync": {
+        "waitingAtKeyOff": 1240,
+        "confirmed": 1240
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:05Z",
+      "step": {
+        "index": 3,
+        "of": 6,
+        "name": "monthly_test_hold"
+      },
+      "sync": {
+        "waitingAtKeyOff": 1240,
+        "confirmed": 1240
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:06Z",
+      "step": {
+        "index": 4,
+        "of": 6,
+        "name": "drain close"
+      },
+      "sync": {
+        "waitingAtKeyOff": 1240,
+        "confirmed": 1240
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:07Z",
+      "step": {
+        "index": 5,
+        "of": 6,
+        "name": "custody"
+      },
+      "sync": {
+        "waitingAtKeyOff": 1240,
+        "confirmed": 1240
+      }
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:08Z",
+      "step": {
+        "index": 6,
+        "of": 6,
+        "name": "poweroff"
+      },
+      "sync": {
+        "waitingAtKeyOff": 1240,
+        "confirmed": 1240
+      }
+    }
+  ]
+}

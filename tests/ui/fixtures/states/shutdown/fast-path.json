@@ -1,0 +1,87 @@
+{
+  "description": "The VCELL fast path: 3 steps (shed, custody, poweroff), straight to powering_off; the drain close is not on this path and writes nothing.",
+  "inputs": [
+    [
+      "grace"
+    ],
+    [
+      "plan",
+      true,
+      false
+    ],
+    [
+      "enter",
+      "shed",
+      "powering_off"
+    ],
+    [
+      "enter",
+      "drain close",
+      null
+    ],
+    [
+      "enter",
+      "custody",
+      null
+    ],
+    [
+      "enter",
+      "poweroff",
+      null
+    ]
+  ],
+  "sequence": [
+    {
+      "phase": "grace",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 7.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:00Z",
+      "step": null,
+      "sync": null
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:01Z",
+      "step": {
+        "index": 1,
+        "of": 3,
+        "name": "shed"
+      },
+      "sync": null
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:02Z",
+      "step": {
+        "index": 2,
+        "of": 3,
+        "name": "custody"
+      },
+      "sync": null
+    },
+    {
+      "phase": "powering_off",
+      "tGraceStartedAt": "2026-10-25T12:00:00Z",
+      "tGraceTotalS": 7.0,
+      "tRemainingS": 0.0,
+      "reason": "ignition_off",
+      "ts": "2026-10-25T12:00:03Z",
+      "step": {
+        "index": 3,
+        "of": 3,
+        "name": "poweroff"
+      },
+      "sync": null
+    }
+  ]
+}

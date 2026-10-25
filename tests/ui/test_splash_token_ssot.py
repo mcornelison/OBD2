@@ -31,6 +31,8 @@
 #               |              | R1): the brand face is allowed on exactly the
 #               |              | named _BRAND_FACE_SELECTORS (#wordmark + the
 #               |              | checklist labels); --green-ok joins _MIRRORED.
+# 2026-10-25    | Ralph (Rex)  | US-870-b: --surface, --line, --accent and
+#               |              | --text-primary join _MIRRORED (shutdown bar).
 # ================================================================================
 ################################################################################
 
@@ -65,6 +67,12 @@ _KIT_OFL = os.path.join(_ROOT, "specs", "assets", "fonts", "michroma", "OFL-mich
 _MOTION_TOKENS = ("t-spin", "t-fade", "bright-low", "bright-mid", "bright-hi", "bright-max")
 _MIRRORED = (
     "bg",
+    # US-870-b: the shutdown progress bar (track, ticks + marker, fill) and
+    # its label line 1 (spec s2 / s2.2).
+    "surface",
+    "line",
+    "accent",
+    "text-primary",
     "text-secondary",
     "text-tertiary",
     "amber-warn",

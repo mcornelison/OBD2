@@ -21,6 +21,10 @@
  *          (CIO 2026-10-23: keep it); the 1s pre-roll, the 60s cap and the
  *          three-miss count are gone. POLL_MS is the sampling cadence of a loop
  *          that READS state, never a wait (Atlas C-Atlas-8).
+ *          US-870-b: on each flushing/powering_off read the progress bar and
+ *          its two-line label are drawn from step{index, of, name} alone
+ *          (fill = index / of, never less than already drawn; line 1 the
+ *          §2.2 step word, line 2 `step <index> of <of>`).
  *          The splash is a pure CONSUMER -- ShutdownSequencer is the SSOT of
  *          shutdown phase; this script only renders what it reads.
  *
@@ -40,6 +44,7 @@
  * Updated: 2026-08-10 -- Sprint 73 US-549 (I-043 observable terminal reason)
  * Updated: 2026-10-25 -- Sprint 114 US-870-a (paint on flushing, 404 vs
  *          refused, no timer)
+ * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress bar + step words)
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -63,6 +68,21 @@
   var FETCH_MISSING = "missing";   // HTTP 404 -> exit state-missing
   var FETCH_HOLD = "hold";         // refused / thrown / any other failure -> hold
 
+  // US-870-b: line 1 of the label, per step.name (spec §2.2, verbatim). The
+  // keys are power_watch.ceremony's CEREMONY_ORDER plus STEP_MONTHLY_TEST_HOLD,
+  // pinned by tests/ui/test_shutdown_progress_page.py. `drain` says
+  // WORD_OTHER until US-883-c hands the drain's label to the sync words.
+  var STEP_WORDS = {
+    "shed": "closing the dashboard",
+    "drain": "shutting down",
+    "drain close": "saving the battery record",
+    "custody": "recording what synced",
+    "monthly_test_hold": "monthly battery test",
+    "poweroff": "powering off",
+  };
+  var WORD_OTHER = "shutting down";          // any other name, or step{} absent
+  var WORD_STEPS_NOT_READ = "steps not read"; // line 2 when step{} is absent
+
   var token = window.SPLASH_TOKEN || "";
   var T_START = (window.performance && performance.now) ? performance.now() : Date.now();
 
@@ -70,6 +90,13 @@
   var aborted = false;        // terminal: ABORT or EXIT reached
   var pollCount = 0;          // shutdown-state reads attempted (0 => never polled)
   var lastState = null;       // last shutdown-state payload actually READ (never faked)
+
+  // US-870-b: the last REAL step values read (null until one is), and the
+  // fraction already drawn. The bar only ever grows from what it has drawn.
+  var stepIndex = null;
+  var stepOf = null;
+  var stepName = null;
+  var drawnFraction = 0;
 
   // REPORT-ONLY (Atlas C-Atlas-7): read by reportTerminal for the US-549 record
   // and by nothing else -- no condition in this file may consult it.
@@ -192,6 +219,53 @@
     document.body.classList.add("animating");
   }
 
+  function setText(id, text) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  function isCount(value) {
+    return typeof value === "number" && isFinite(value) && Math.floor(value) === value && value >= 1;
+  }
+
+  /**
+   * US-870-b: draw the bar and the two-line label from shutdown-state step{}.
+   *
+   * The fill is index / of, a step counting when it is ENTERED (Iris
+   * C-Iris-4). index and of are one reading -- an index is a position in THAT
+   * of -- so the pair is taken only when both are whole counts >= 1 with
+   * index <= of; otherwise the last real pair holds (spec §2.1). A step whose
+   * index is behind the last one drawn is stale and changes nothing: index
+   * never goes back. A recomputed `of` that would draw less holds the bar:
+   * the page never draws less than it has already drawn. step{} absent ->
+   * 'shutting down' / 'steps not read' and the bar holds (spec §2.2).
+   */
+  function renderStep(step) {
+    if (!step || typeof step !== "object") {
+      setText("label-1", WORD_OTHER);
+      setText("label-2", WORD_STEPS_NOT_READ);
+      return;
+    }
+    if (isCount(step.index) && stepIndex !== null && step.index < stepIndex) return;
+
+    if (isCount(step.index) && isCount(step.of) && step.index <= step.of) {
+      stepIndex = step.index;
+      stepOf = step.of;
+    }
+    if (typeof step.name === "string") stepName = step.name;
+
+    var words = STEP_WORDS.hasOwnProperty(stepName) ? STEP_WORDS[stepName] : WORD_OTHER;
+    setText("label-1", words);
+    if (stepIndex === null) {
+      setText("label-2", WORD_STEPS_NOT_READ);
+      return;
+    }
+    setText("label-2", "step " + stepIndex + " of " + stepOf);
+    drawnFraction = Math.max(drawnFraction, stepIndex / stepOf);
+    var fill = document.getElementById("bar-fill");
+    if (fill) fill.style.width = drawnFraction * 100 + "%";
+  }
+
   async function tick() {
     if (aborted) return;
 
@@ -213,6 +287,9 @@
 
     var phase = state.phase;
     if (phase === "cancelled") {
+      // Key back on: no words (spec §2.2) -- the dashboard is underneath.
+      setText("label-1", "");
+      setText("label-2", "");
       abort(CAUSE_CANCELLED);
       return;
     }
@@ -225,6 +302,7 @@
     if (phase === "flushing" || phase === "powering_off") {
       // The power loss is real: paint on this read (Atlas A-sd 1).
       beginAnimating();
+      renderStep(state.step);
       schedule();
       return;
     }

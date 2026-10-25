@@ -32,14 +32,20 @@
  *          {transitionDuration, animationName, animationDuration}}; an unlisted
  *          element computes 0s / none).
  *
+ *          US-870-b: `progress` is the bar's fill (#bar-fill's inline width) and
+ *          the label's two lines (#label-1 / #label-2) when the run ends;
+ *          `progressLog` is every CHANGE of those three, in order, each with
+ *          the virtual ms and poll count it was first seen at.
+ *
  *          Invoked as:  node shutdown_probe.js <inputJsonPath>
  *          Input:  {pollJsPath, motionGatePath, tree, shutdownStates, rounds,
  *                   emitIntervalMs, computedStyles, reducedMotion}
  *          Output: {closed, closedAtMs, terminalCause, terminalRecord,
  *                   consoleLines, painted, paintedOnPoll, stageVisibility,
- *                   polls, elapsedMs, tree}
+ *                   polls, elapsedMs, progress, progressLog, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-08-10 -- Sprint 73 US-549 (I-043 observable terminal reason)
+ * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress + progressLog)
  * ==========================================================================*/
 "use strict";
 
@@ -164,15 +170,42 @@ async function main() {
   const notePaint = function () {
     if (paintedOnPoll === null && doc.body.classList.contains("animating")) paintedOnPoll = polls;
   };
+
+  // US-870-b: the bar and its two-line label, read off the DOM after every
+  // round. An entry is logged only when one of the three CHANGES, so the log is
+  // the succession of frames the driver would see, in order.
+  const textOf = function (id) {
+    const el = doc.getElementById(id);
+    return el ? el.textContent : null;
+  };
+  const readProgress = function () {
+    const fill = doc.getElementById("bar-fill");
+    return {
+      fill: fill && fill.style ? fill.style.width || null : null,
+      line1: textOf("label-1"),
+      line2: textOf("label-2"),
+    };
+  };
+  const progressLog = [];
+  const noteProgress = function () {
+    const now = readProgress();
+    const last = progressLog.length ? progressLog[progressLog.length - 1] : null;
+    if (last && last.fill === now.fill && last.line1 === now.line1 && last.line2 === now.line2) return;
+    progressLog.push({ atMs: virtualMs, poll: polls, fill: now.fill, line1: now.line1, line2: now.line2 });
+  };
+
+  noteProgress();
   for (let i = 0; i < (input.rounds || 80); i++) {
     await dom.drainMicrotasks();
     notePaint();
+    noteProgress();
     clock.flushRound();
     virtualMs += POLL_MS;
     if (closed) break;
   }
   await dom.drainMicrotasks();
   notePaint();
+  noteProgress();
 
   const stage = doc.getElementById("splash-stage");
   const recordJson = doc.body.getAttribute("data-terminal-record");
@@ -189,6 +222,8 @@ async function main() {
       stageVisibility: stage && stage.style ? stage.style.visibility || null : null,
       polls: polls,
       elapsedMs: virtualMs,
+      progress: readProgress(),
+      progressLog: progressLog,
       tree: dom.serialize(doc.body),
     })
   );

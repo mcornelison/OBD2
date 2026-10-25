@@ -999,6 +999,9 @@ def runShutdownSplash(
     ``terminalRecord`` (the US-549 report), the raw ``consoleLines``, which
     are the same bytes that reach ``journalctl -u splash-grace.service``, and
     ``paintedOnPoll`` (the poll whose read revealed the stage, or None).
+    US-870-b: ``progress`` ({fill, line1, line2}: #bar-fill's inline width and
+    the two label lines at the end) and ``progressLog`` (each change of those
+    three, in order, with ``atMs`` / ``poll``).
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
     return _runProbe(
