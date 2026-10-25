@@ -26,6 +26,13 @@
  *          that started it (reduced motion, styles missing). The rotation's
  *          length lives once, in styles.css (--t-spin); the hand-off now
  *          follows 0b, because spin 1 does.
+ * Updated: 2026-10-25 -- US-869-g: the four-feed checklist and gate R1. Each
+ *          tick reads /boot-state, /capture-health and /system-status
+ *          together. Spin 3 waits for healthy AND IMU, LIGHT and UPS FINISHED
+ *          (ready or faulted, latched for this boot); OBD never holds it.
+ *          healthy latches, and degraded is honoured only before the first
+ *          healthy read (Atlas R3). A failed eclipse-obd finishes the three as
+ *          fault (Atlas G1). Polling ends when the window closes.
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -33,11 +40,34 @@
   var POLL_MS = 250;        // 4 Hz tmpfs read (Atlas A-5)
 
   var token = window.SPLASH_TOKEN || "";
-  var settled = false;      // true once HEALTHY_YIELD or DEGRADED is reached
+  var degraded = false;     // DEGRADED reached: a dead end, polling stops
+  var healthy = false;      // latched on the first healthy read (Atlas R3)
 
-  async function fetchBootState() {
+  // --- Producer vocabulary (US-869-g) ---------------------------------------
+  // Copies, never twins: tests/ui/test_boot_checklist.py pins each one to its
+  // source, so a producer rename turns that suite red.
+  // carousel.js CAPTURE_FEEDS, in its order (Iris C-Iris-5: one feed order on
+  // every surface); as a set, capture_health.FEED_NAMES.
+  var FEEDS = ["obd", "light", "imu", "ups"];
+  var NOT_WAITED_FOR = "obd";                   // capture_health.FEED_OBD (R1)
+  var STATE_FAULTED = "faulted";                // capture_health.STATE_FAULTED
+  var REASON_SENSOR_ABSENT = "sensor_absent";   // FEED_REASON_SENSOR_ABSENT
+  var REASON_READ_FAILED = "read_failed";       // FEED_REASON_READ_FAILED
+  var LINK_UP = "up";                           // system_status_emitter.LINK_UP
+  // system_status_emitter.LINK_LAYERS, chain order, with the spec §1.3 words.
+  var LINK_WORDS = [
+    ["bt", "waiting for Bluetooth"],
+    ["adapter", "waiting for adapter"],
+    ["ecu", "waiting for ECU"],
+  ];
+  // Atlas G1: boot_state_emitter INFORMATIONAL_SERVICES_DEFAULT, the only
+  // producer of capture-health, and its terminal systemctl failure word.
+  var OBD_SERVICE = "eclipse-obd";
+  var SERVICE_FAILED = "failed";
+
+  async function fetchState(route) {
     try {
-      var r = await fetch("/boot-state", {
+      var r = await fetch(route, {
         cache: "no-store",
         headers: token ? { "X-Splash-Token": token } : {},
       });
@@ -62,8 +92,8 @@
   }
 
   function enterDegraded(reason) {
-    if (settled) return;
-    settled = true;
+    if (degraded || healthy) return;    // Atlas R3: never after healthy
+    degraded = true;
     document.body.classList.add("degraded");        // amber ring + chip + freeze
     document.getElementById("warn-glyph").textContent = " ⚠"; // wordmark glyph
     var msg = document.getElementById("degraded-msg");
@@ -153,7 +183,7 @@
   // --- The spins (US-869-f, spec §1.1) --------------------------------------
   // spin 1 once -> spin 2 loops -> spin 3 once -> the fade. Each step is
   // started by the previous step's OWN event; the one rotation is --t-spin in
-  // styles.css and nowhere here. `ready` is the healthy boot-state.
+  // styles.css and nowhere here. `ready` is gate R1 met (US-869-g).
 
   var SPIN_CLASSES = ["spin-1", "spin-2", "spin-3"];
   var spin = 0;             // 0 = before spin 1; 4 = the fade has begun
@@ -222,37 +252,121 @@
     stage.style.opacity = "0";
   }
 
-  function enterHealthyYield() {
-    if (settled) return;
-    settled = true;
+  function enterReady() {
+    if (ready) return;
     ready = true;
+    document.body.classList.add("r1-met");     // reduced motion: --bright-max
     // The readiness event advances only a spin 2 with no animation event to
     // wait for; a live spin 2 turns on to its next animationiteration, and a
     // page still in 0b or spin 1 reaches spin 2 with `ready` already set.
     if (spin === 2 && !spinLive) enterSpin(3);
   }
 
+  // --- The checklist (US-869-g, spec §1.3) ----------------------------------
+  // A row's WORD is the feed's current state; its STEP latches. The first
+  // ready-or-fault read finishes the step for this boot, and nothing after
+  // un-finishes it (Iris C-Iris-6).
+
+  var finished = {};        // feed -> true once its step has finished
+  var obdServiceFailed = false;
+
+  function isObject(v) {
+    return v !== null && typeof v === "object";
+  }
+
+  // OBD's cause is the first link layer that is not up (ARCH-061's chain);
+  // an unread layer, or no system-status at all, is plain `waiting`.
+  function linkWord(status) {
+    var link = isObject(status) ? status.link : null;
+    if (!isObject(link)) return "waiting";
+    for (var i = 0; i < LINK_WORDS.length; i++) {
+      var layer = link[LINK_WORDS[i][0]];
+      var state = isObject(layer) ? layer.state : null;
+      if (state === LINK_UP) continue;
+      if (state === null || state === undefined) return "waiting";
+      return LINK_WORDS[i][1];
+    }
+    return "waiting";
+  }
+
+  function faultWord(reason) {
+    if (reason === REASON_SENSOR_ABSENT) return "sensor not found";
+    if (reason === REASON_READ_FAILED) return "read failed";
+    return "fault";
+  }
+
+  // -> {word, tone, finished}. tone is the row's colour class (styles.css).
+  function feedRow(name, capture, status) {
+    var isObd = name === NOT_WAITED_FOR;
+    // Atlas G1: eclipse-obd failed for good -- nothing will ever publish these
+    // feeds, so their steps finish as fault and the car reaches the dashboard.
+    if (obdServiceFailed) {
+      if (isObd) return { word: linkWord(status), tone: "w-wait", finished: false };
+      return { word: "fault", tone: "w-warn", finished: true };
+    }
+    var feeds = isObject(capture) ? capture.feeds : null;
+    var feed = isObject(feeds) ? feeds[name] : null;
+    if (!isObject(feed)) return { word: "not read", tone: "w-unread", finished: false };
+    if (feed.state === STATE_FAULTED) {
+      return { word: faultWord(feed.reason), tone: "w-warn", finished: true };
+    }
+    if (feed.firstSampleTs !== null && feed.firstSampleTs !== undefined) {
+      return { word: "ready", tone: "w-ok", finished: true };
+    }
+    return { word: isObd ? linkWord(status) : "waiting", tone: "w-wait", finished: false };
+  }
+
+  function renderChecklist(capture, status) {
+    FEEDS.forEach(function (name) {
+      var row = feedRow(name, capture, status);
+      if (row.finished) finished[name] = true;
+      var el = document.getElementById("feed-" + name);
+      if (!el) return;
+      el.textContent = row.word;
+      el.className = "cl-word " + row.tone;
+    });
+  }
+
+  function gateFeeds() {
+    return FEEDS.filter(function (name) { return name !== NOT_WAITED_FOR; });
+  }
+
+  function anyGateFeedFinished() {
+    return gateFeeds().some(function (name) { return finished[name] === true; });
+  }
+
+  // Gate R1: healthy AND IMU, LIGHT and UPS finished. OBD is never waited for.
+  function r1Met() {
+    return healthy && gateFeeds().every(function (name) { return finished[name] === true; });
+  }
+
   async function tick() {
-    if (settled) return;
-    var state = await fetchBootState();
+    if (degraded || closed) return;
+    var reads = await Promise.all([
+      fetchState("/boot-state"),
+      fetchState("/capture-health"),
+      fetchState("/system-status"),
+    ]);
+    var state = reads[0];
 
     // A null boot-state (404, refused, thrown) is WAITING: the emitter has not
-    // written yet. Keep polling and paint nothing new -- only the emitter's two
-    // events (a core unit failed, assets missing) ever degrade the splash.
-    if (state === null) {
-      schedule();
-      return;
+    // written yet. Only the emitter's two events (a core unit failed, assets
+    // missing) ever degrade the splash, and only before healthy (Atlas R3):
+    // after it, boot-state is read for services['eclipse-obd'] alone.
+    if (state !== null) {
+      if (!healthy && state.degraded === true) {
+        enterDegraded(state.degradedReason);
+        return;
+      }
+      if (state.healthy === true) healthy = true;
+      var services = isObject(state.services) ? state.services : {};
+      obdServiceFailed = services[OBD_SERVICE] === SERVICE_FAILED;
     }
 
-    if (state.degraded === true) {
-      enterDegraded(state.degradedReason);
-      return;
-    }
-    if (state.healthy === true) {
-      enterHealthyYield();
-      return;
-    }
-    schedule();
+    renderChecklist(reads[1], reads[2]);
+    if (anyGateFeedFinished()) document.body.classList.add("feed-finished");
+    if (r1Met()) enterReady();
+    if (!closed) schedule();
   }
 
   function schedule() {

@@ -61,6 +61,10 @@
 # 2026-10-24    | Rex (US-869-f)| MOVED PIN (US-869-f): healthy before 0b ends now
 #               |              | hands off after 0b and spins 1-2-3, not before
 #               |              | the cross-fade (spin 1 starts on its end).
+# 2026-10-25    | Rex (US-869-g)| Atlas C-Atlas-9: TestSplashGuardIsRed restated
+#               |              | against gate R1 -- IMU, LIGHT and UPS served
+#               |              | ready, EXPLICITLY (Atlas R4); the hold is the
+#               |              | never-healthy boot-state, not a feed.
 # ================================================================================
 ################################################################################
 
@@ -626,13 +630,18 @@ class TestSplashGuardIsRed:
     def test_preFixEmitter_pinsTheSplashOnTheBench(self, tmp_path, monkeypatch):
         """
         Given: the REAL pre-US-494 emitter from git, wired the way its own
-               systemd entry point wired it (no obdProbeFn injected)
+               systemd entry point wired it (no obdProbeFn injected), and
+               capture-health with IMU, LIGHT and UPS ready
         When: a bench boot with every core unit active and NO vehicle
         Then: the splash never hands off, and the reason names eclipse-obd
 
         AC-2's literal discharge for S1. This reproduces the exact panel the CIO
         was looking at: "eclipse-obd: not ready (starting)", held until reboot,
         on a Pi whose core services were all perfectly healthy.
+
+        Restated against gate R1 (US-869-g, Atlas C-Atlas-9): the three feeds
+        R1 waits for are FINISHED, so the only thing holding the splash is the
+        boot-state, which this emitter never lets reach healthy.
         """
         source = _gitShow(f"{_US494_FIX_COMMIT}^:src/pi/splash/boot_state_emitter.py")
         if source is None:
@@ -657,8 +666,8 @@ class TestSplashGuardIsRed:
         )
         # The pre-fix production wiring: states dir + hard cap, and NOTHING
         # else. That omission -- no obdProbeFn -- IS the bug.
-        # 30 emissions x 500 ms = 15 s of boot -- past BOTH the emitter's 12 s
-        # hard cap and the splash's, so the verdict is settled, not still open.
+        # 30 emissions x 500 ms = 15 s of boot -- past that emitter's own 12 s
+        # hard cap, so its verdict is settled, not still open.
         states = _emitSequence(
             module,
             lambda: module.BootStateEmitter(
@@ -667,11 +676,19 @@ class TestSplashGuardIsRed:
             30,
         )
 
-        result = rh.runSplash(states)
+        # Atlas R4: passed EXPLICITLY, never left to the harness default.
+        threeReady = rh.bootFixtureGenerator().captureHealthPayload(
+            rh.bootFixtureGenerator().ALL_THREE_READY
+        )
+        result = rh.runSplash(states, captureHealth=threeReady)
         assert not result["handoff"], (
             "the pre-US-494 emitter must pin the splash; this harness let it "
             "hand off, so it would not have caught S1"
         )
+        # The R1 reason: the feeds R1 waits for are finished -- not the hold.
+        tree = result["tree"]
+        for feed in ("imu", "light", "ups"):
+            assert _textOfId(tree, f"feed-{feed}") == "ready", feed
         assert "eclipse-obd" in result["degradedMsg"], (
             "the pre-fix splash should degrade naming the OBD tier -- got "
             f"{result['degradedMsg']!r}"
@@ -710,6 +727,10 @@ def _byId(tree: dict, elementId: str) -> dict:
         if node.get("attrs", {}).get("id") == elementId:
             return node
     raise AssertionError(f"no #{elementId} in the splash markup")
+
+
+def _textOfId(tree: dict, elementId: str) -> str:
+    return "".join(c.get("text", "") for c in _byId(tree, elementId)["children"])
 
 
 @_NODE_ONLY

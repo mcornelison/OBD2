@@ -27,6 +27,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-24    | Ralph (Rex)  | Initial -- US-869-e splash token mirror + Michroma.
+# 2026-10-25    | Ralph (Rex)  | RULED GUARD CHANGE (Atlas 2026-10-25, US-869-g
+#               |              | R1): the brand face is allowed on exactly the
+#               |              | named _BRAND_FACE_SELECTORS (#wordmark + the
+#               |              | checklist labels); --green-ok joins _MIRRORED.
 # ================================================================================
 ################################################################################
 
@@ -64,11 +68,17 @@ _MIRRORED = (
     "text-secondary",
     "text-tertiary",
     "amber-warn",
+    "green-ok",
     "fs-label",
     "fs-meta",
     "font-mono",
     "font-display",
 ) + _MOTION_TOKENS
+# RULED GUARD CHANGE (Atlas 2026-10-25, US-869-g R1): the only rules that may
+# bind the brand face -- the wordmark and the checklist labels ("labels
+# Michroma, values mono"). Each is its own exact selector: no group selector,
+# no `font:` shorthand (the guard's regex does not read the shorthand).
+_BRAND_FACE_SELECTORS = ("#wordmark", "#checklist .cl-label")
 # The properties whose value must be a token, never a literal (AC 12).
 _TOKEN_ONLY_PROPS = ("color", "background", "background-color", "font-size", "font-family")
 
@@ -266,20 +276,24 @@ def test_theSplashCarriesOneFace_byteEqualToTokensCss_c():
 
 
 def test_theWordmarkIsTheBrandFace_andEveryOtherTextIsMono():
-    """#wordmark binds var(--font-display) at the subset's one weight with
-    synthesis off; every other text rule binds var(--font-mono)."""
+    """Each _BRAND_FACE_SELECTORS rule binds var(--font-display) at the subset's
+    one weight with synthesis off; every other text rule binds var(--font-mono).
+
+    RULED GUARD CHANGE (Atlas 2026-10-25, US-869-g R1): was `#wordmark` alone."""
     css = _outsideRoot(_read(_STYLES))
     rules = re.findall(r"([^{}]+)\{([^{}]*font-family[^{}]*)\}", css)
     assert rules, "no rule sets a font-family"
     for selector, body in rules:
         family = re.search(r"font-family:\s*([^;]+)", body).group(1).strip()
-        if selector.strip() == "#wordmark":
-            assert family == "var(--font-display)"
-            assert re.search(r"font-weight:\s*400\s*;", body), "the wordmark must ask for 400"
-            assert re.search(r"font-synthesis:\s*none\s*;", body)
+        if selector.strip() in _BRAND_FACE_SELECTORS:
+            assert family == "var(--font-display)", selector.strip()
+            assert re.search(r"font-weight:\s*400\s*;", body), f"{selector.strip()} must ask for 400"
+            assert re.search(r"font-synthesis:\s*none\s*;", body), selector.strip()
         else:
             assert family == "var(--font-mono)", selector.strip()
-    assert "#wordmark" in [selector.strip() for selector, _ in rules]
+    present = [selector.strip() for selector, _ in rules]
+    for member in _BRAND_FACE_SELECTORS:
+        assert member in present, f"{member} no longer binds a font-family"
 
 
 # ---------------------------------------------------------------------------

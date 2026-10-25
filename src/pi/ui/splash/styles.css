@@ -11,6 +11,9 @@
  * Changed: 2026-10-24 -- US-869-f: the spins. splash.svg's `spin` keyframes
  *          live here now; spin 1 / 2 / 3 are body classes on #logo, one
  *          rotation is var(--t-spin), and reduced motion runs none of it.
+ * Changed: 2026-10-25 -- US-869-g: the four-feed checklist under a 0.6 logo
+ *          (Iris R2, CIO-approved); Michroma labels (Atlas/Iris R1); the
+ *          reduced-motion brightness steps follow the feeds (C-Atlas-6).
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -45,8 +48,9 @@
   --text-secondary: #A8A296;   /* wordmark                                    */
   --text-tertiary:  #5F5A52;   /* version chip                                */
   --amber-warn:     #FFC400;   /* degraded escalation; project-wide warn token */
+  --green-ok:       #35C46A;   /* checklist `ready`                           */
 
-  --fs-label:       20px;      /* wordmark, degraded message                  */
+  --fs-label:       20px;      /* wordmark, degraded message, checklist       */
   --fs-meta:        15px;      /* version chip                                */
 
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
@@ -74,9 +78,12 @@ html, body {
 }
 
 /* The inline logo (US-785) is invisible through phase 0b and fades in as the
-   WARNING fades out; its opacity transitionend ends the cross-fade. */
+   WARNING fades out; its opacity transitionend ends the cross-fade.
+   US-869-g (Iris R2): the boot page draws it at 0.6 -- the 480x320 viewBox
+   meets a 192 px box, centre at y 120 -- so the disc spin 2 sweeps (y 54-186)
+   clears the checklist below it. The geometry is unchanged. */
 #mark {
-  width: 100vw; height: 100vh;
+  position: absolute; top: 24px; left: 0; width: 100%; height: 192px;
   background: var(--bg); border: 0; display: block;
   opacity: 0; transition: opacity var(--t-fade);
 }
@@ -98,7 +105,8 @@ html, body {
 body.logo-up #warning { opacity: 0; }
 body.logo-up #mark { opacity: 1; }
 
-/* Data text is system mono; the brand face is the wordmark's alone. */
+/* Data text is system mono; the brand face is the wordmark's and the
+   checklist labels' alone (test_splash_token_ssot.py _BRAND_FACE_SELECTORS). */
 .overlay {
   position: absolute; left: 0; right: 0; text-align: center;
   font-family: var(--font-mono);
@@ -117,9 +125,42 @@ body.logo-up #mark { opacity: 1; }
 }
 
 #degraded-msg {
-  top: 200px; font-size: var(--fs-label); font-weight: 500;
+  top: 194px; line-height: 22px; font-size: var(--fs-label); font-weight: 500;
   color: var(--amber-warn); letter-spacing: 0.06em;
 }
+
+/* --- The checklist (US-869-g, spec §1.3; Iris R2) -----------------------------
+   Rows y 194-282, FIXED columns: a max-content block would shift sideways each
+   time a word changes length (`waiting` -> `waiting for Bluetooth`). Labels are
+   the frame's label voice (Michroma, right-aligned); words are data (mono). */
+#checklist {
+  position: absolute; top: 194px; left: 52px; width: 376px;
+  display: grid; grid-template-columns: 96px 264px; column-gap: 16px;
+  line-height: 22px; font-family: var(--font-mono); font-size: var(--fs-label);
+  pointer-events: none;
+}
+
+#checklist .cl-label {
+  text-align: right; white-space: nowrap;
+  font-family: var(--font-display); font-size: var(--fs-label);
+  font-weight: 400; font-synthesis: none;
+  color: var(--text-secondary);
+}
+
+#checklist .cl-word {
+  text-align: left; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--fs-label);
+}
+
+/* The word colours (spec §1.3): amber only for a fault the feed published. */
+#checklist .w-ok     { color: var(--green-ok); }
+#checklist .w-warn   { color: var(--amber-warn); }
+#checklist .w-wait   { color: var(--text-secondary); }
+#checklist .w-unread { color: var(--text-tertiary); }
+
+/* Degraded HIDES the checklist (Iris R2): rows left reading `waiting` would
+   promise a ready that is not coming; #degraded-msg takes the slot. */
+body.degraded #checklist { display: none; }
 
 /* Degraded escalation (spec §5): three reinforcing channels. */
 body.degraded #amber-ring {
@@ -166,14 +207,19 @@ body.spin-3 #logo {
 body.degraded #logo { animation-play-state: paused; }
 
 /* Reduced motion (Atlas C-Atlas-6): no spin, no cross-fade, no fade -- the logo
-   is static at var(--bright-mid) once 0b ends. motionGate reports no event, so
-   boot-state-poll.js advances on the healthy read itself. !important beats the
-   spin rules and the stage's inline fade. */
+   is static at var(--bright-mid) once 0b ends, var(--bright-hi) once any of
+   IMU / LIGHT / UPS has finished (body.feed-finished), var(--bright-max) when
+   gate R1 is met (body.r1-met). The steps are instant: no transition (Iris
+   2026-10-24 call 2). motionGate reports no event, so boot-state-poll.js
+   advances on the R1 read itself. !important beats the spin rules and the
+   stage's inline fade; the class rules outrank #logo on specificity. */
 @media (prefers-reduced-motion: reduce) {
   #logo {
     animation: none !important;
     filter: brightness(var(--bright-mid)) !important;
   }
+  body.feed-finished #logo { filter: brightness(var(--bright-hi)) !important; }
+  body.r1-met #logo { filter: brightness(var(--bright-max)) !important; }
   #mark, #warning, #splash-stage { transition: none !important; }
 }
 

@@ -57,6 +57,9 @@
 #                                can evaluate prefers-reduced-motion (opt-in,
 #                                splashSurface answers it; the dashboard's
 #                                callers keep every block applying).
+# 2026-10-25    | Ralph (Rex)  | US-869-g: runSplash serves capture-health +
+#                                system-status; captureHealth defaults to the
+#                                BUILT all-three-ready payload (Atlas R4).
 # ================================================================================
 ################################################################################
 
@@ -64,12 +67,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import tempfile
 from html.parser import HTMLParser
+from types import ModuleType
 from typing import Any
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -850,6 +855,34 @@ _SPLASH_STAGE_FADE: dict[str, dict[str, str]] = {
     "mark": {"transitionDuration": "0.5s"},
 }
 
+# US-869-g (Atlas R4): "not passed" and "missing" are different facts. Leaving
+# captureHealth out serves the BUILT all-three-ready default; None serves a 404.
+NOT_PASSED: Any = object()
+
+_BOOT_FIXTURE_GENERATOR = os.path.join(
+    _HERE, "fixtures", "states", "boot", "_generate.py"
+)
+_bootGenerator: ModuleType | None = None
+
+
+def bootFixtureGenerator() -> ModuleType:
+    """tests/ui/fixtures/states/boot/_generate.py, loaded once by path."""
+    global _bootGenerator
+    if _bootGenerator is None:
+        spec = importlib.util.spec_from_file_location(
+            "boot_fixture_generator", _BOOT_FIXTURE_GENERATOR
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _bootGenerator = module
+    return _bootGenerator
+
+
+def _stateSequence(value: Any) -> list[Any]:
+    """A state file's written sequence: a list as given, else one steady entry."""
+    return list(value) if isinstance(value, list) else [value]
+
 
 def runSplash(
     bootStates: list[Any],
@@ -867,6 +900,8 @@ def runSplash(
     dispatchCrossFadeEnd: bool = True,
     dispatchSpinEvents: bool = True,
     spinEventMs: int | None = None,
+    captureHealth: Any = NOT_PASSED,
+    systemStatus: Any = None,
 ) -> dict[str, Any]:
     """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
 
@@ -897,8 +932,18 @@ def runSplash(
     else the computed duration -- after each spin starts; ``spinEventMs=0`` is
     zero elapsed time, ``dispatchSpinEvents`` False models no event. The
     default computes no logo animation, so the spins advance at once.
+
+    The checklist (US-869-g): ``captureHealth`` and ``systemStatus`` are the
+    payloads written to those two state files -- one payload (steady), or a
+    list indexed by time like ``bootStates``; a ``None`` entry is a 404. Left
+    out, ``captureHealth`` is IMU, LIGHT and UPS ready, BUILT by the boot
+    fixture generator (Atlas R4), so a test about the spins or the clock still
+    hands off; ``captureHealth=None`` is the file missing. ``systemStatus``
+    defaults to missing (OBD reads plain ``waiting``).
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
+    if captureHealth is NOT_PASSED:
+        captureHealth = bootFixtureGenerator().harnessDefaultCaptureHealth()
     return _runProbe(
         "splash_probe.js",
         {
@@ -906,6 +951,8 @@ def runSplash(
             "motionGatePath": os.path.join(SPLASH_DIR, "motion-gate.js"),
             "tree": bodyChildren(tree),
             "bootStates": bootStates,
+            "captureHealthStates": _stateSequence(captureHealth),
+            "systemStatusStates": _stateSequence(systemStatus),
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
             "computedStyles": (

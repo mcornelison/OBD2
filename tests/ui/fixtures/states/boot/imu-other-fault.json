@@ -1,0 +1,160 @@
+{
+  "description": "IMU faulted with a reason outside the two codes -> 'fault' amber.",
+  "now": "2026-10-25T12:00:48Z",
+  "inputs": {
+    "feeds": {
+      "obd": null,
+      "light": "ready",
+      "imu": "bus_error",
+      "ups": "ready"
+    },
+    "system-status": {
+      "syncLastOkTs": null,
+      "syncStale": false,
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-25T12:00:48Z",
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-25T12:00:00Z",
+          "lastOkTs": "2026-10-25T12:00:48Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-25T12:00:00Z",
+          "lastOkTs": "2026-10-25T12:00:48Z"
+        },
+        "ecu": {
+          "state": "connecting",
+          "ts": "2026-10-25T12:00:00Z",
+          "lastOkTs": null
+        }
+      }
+    }
+  },
+  "payloads": {
+    "capture-health": {
+      "state": "stalled",
+      "lastRowSecondsAgo": null,
+      "stallSeconds": 60.0,
+      "reason": "never_written",
+      "ts": "2026-10-25T12:00:48Z",
+      "feeds": {
+        "obd": {
+          "state": "unknown",
+          "reason": null,
+          "firstSampleTs": null,
+          "lastSampleSecondsAgo": null
+        },
+        "imu": {
+          "state": "faulted",
+          "reason": "bus_error",
+          "firstSampleTs": null,
+          "lastSampleSecondsAgo": null
+        },
+        "light": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-25T12:00:44Z",
+          "lastSampleSecondsAgo": 0.5
+        },
+        "ups": {
+          "state": "ok",
+          "reason": null,
+          "firstSampleTs": "2026-10-25T12:00:44Z",
+          "lastSampleSecondsAgo": 0.5
+        }
+      }
+    },
+    "system-status": {
+      "sync": {
+        "lastOkTs": null,
+        "stale": false,
+        "rowsWaiting": null,
+        "edrRowsWaiting": null,
+        "notCounted": null
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": null,
+        "ssid": null,
+        "rssiDbm": null,
+        "home": null,
+        "ts": null
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-25T12:00:00Z",
+          "lastOkTs": "2026-10-25T12:00:48Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-25T12:00:00Z",
+          "lastOkTs": "2026-10-25T12:00:48Z"
+        },
+        "ecu": {
+          "state": "connecting",
+          "ts": "2026-10-25T12:00:00Z",
+          "lastOkTs": null
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": false,
+          "reason": "not_read"
+        }
+      },
+      "ts": "2026-10-25T12:00:48Z",
+      "verdict": {
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "sensor",
+            "reason": "IMU sensor fault.",
+            "feeds": [
+              "imu"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

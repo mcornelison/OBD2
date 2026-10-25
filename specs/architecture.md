@@ -6039,6 +6039,50 @@ healthy; US-869-g adds the feed gate. *Guarded by* `tests/ui/test_boot_spins.py`
 rotation apart on virtual time; `render_harness.splashSurface(reducedMotion=)`
 evaluates the media query).
 
+**The four-feed checklist and gate R1 (US-869-g, Sprint 114 / V0.30; spec §1.1
+R1/R2 + §1.3, Atlas G1 / R1 / R3 / R4 / C-Atlas-6 / C-Atlas-9, Iris R2 /
+C-Iris-5 / C-Iris-6).** Each `POLL_MS` tick of `boot-state-poll.js` reads
+`/boot-state`, `/capture-health` and `/system-status` together, all with the
+`X-Splash-Token` header. Under the logo the page shows four rows in carousel.js
+`CAPTURE_FEEDS` order -- OBD, LIGHT, IMU, UPS -- labels in `var(--font-display)`
+(the frame's label voice), words in `var(--font-mono)`. **Word sources:**
+`capture-health.feeds.<feed>`: `faulted` with `sensor_absent` -> `sensor not
+found`, with `read_failed` -> `read failed`, with any other or no reason ->
+`fault` (all `--amber-warn`); a non-null `firstSampleTs` -> `ready`
+(`--green-ok`); otherwise `waiting` (`--text-secondary`). OBD's waiting word is
+the first `system-status.link.{bt, adapter, ecu}` layer that is not `up`
+(`waiting for Bluetooth` / `waiting for adapter` / `waiting for ECU`), plain
+`waiting` when that layer, or the whole file, is unread. No capture-health, or no
+`feeds` block -> `not read` (`--text-tertiary`). **The step latch:** a feed's
+first ready-or-fault read finishes its step for this boot and nothing after
+un-finishes it; the row word always shows the current state. **Gate R1:** spin 3
+starts on spin 2's `animationiteration` once boot-state is healthy AND IMU, LIGHT
+and UPS are all finished; **OBD is never waited for** (the dashboard opens with
+OBD `waiting for ECU` on a normal car boot, Atlas O5). **Atlas G1:** when the
+boot-state's `services['eclipse-obd']` is `failed` -- the only producer of
+capture-health has stopped for good -- IMU, LIGHT and UPS finish as `fault`, so
+the car still reaches its dashboard and the System page that explains it.
+**healthy latches, and degraded is honoured only before the first healthy
+read** (Atlas R3): after healthy the poller keeps reading boot-state only for
+`services['eclipse-obd']`, plus the two feed files, until the window closes.
+**Layout (Iris R2, CIO-approved):** `#mark` draws the logo at 0.6 (top 24 px,
+192 px tall; the swept disc is y 54-186); `#checklist` is a fixed-column grid
+(96 px + 264 px, gap 16 px, 22 px rows) at y 194-282; `#degraded-msg` shares
+that slot (top 194 px) and `body.degraded #checklist` is `display: none`.
+**Reduced motion:** the logo is `--bright-mid` from 0b's end,
+`--bright-hi` once any of IMU / LIGHT / UPS has finished (`body.feed-finished`),
+`--bright-max` when R1 is met (`body.r1-met`), then `window.close()` on that R1
+read with zero animations; the steps are instant. **The brand face** is allowed
+on exactly `#wordmark` and `#checklist .cl-label` (RULED GUARD CHANGE, Atlas
+2026-10-25). No timer: the only `setTimeout` is still the `POLL_MS` tick, and a
+feed that never reports holds the splash -- that is honest, never a reason for a
+ceiling. *Guarded by* `tests/ui/test_boot_checklist.py` (the page's vocabulary
+copies pinned to capture_health / system_status_emitter / boot_state_emitter /
+carousel.js; fixtures built by `tests/ui/fixtures/states/boot/_generate.py`;
+`render_harness.runSplash` serves the generator's IMU/LIGHT/UPS-ready
+capture-health when a test passes none, and a 404 for `captureHealth=None`),
+`tests/ui/test_splash_token_ssot.py` and `TestSplashGuardIsRed`.
+
 **Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
 defect).** The sole production writer of `shutdown-state` is the powerwatch
 `ShutdownSequencer` grace path (`pi.power.power_watch.__main__` →

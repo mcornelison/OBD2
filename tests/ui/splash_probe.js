@@ -45,8 +45,16 @@
  *          rotation (spin 2) -- unless `dispatchSpinEvents` is false.
  *          `spinEventMs` 0 dispatches at zero elapsed time.
  *
+ *          US-869-g (the checklist): /capture-health and /system-status are
+ *          served from `captureHealthStates` and `systemStatusStates`, each
+ *          indexed by time exactly as `bootStates` is (the final entry repeats;
+ *          a null entry, or an empty list, is a 404). Every state-file read is
+ *          logged in `stateFetches` as {route, atMs, token}, so "one tick
+ *          reads all three, with the token" is measurable.
+ *
  *          Invoked as:  node splash_probe.js <inputJsonPath>
- *          Input:  {pollJsPath, motionGatePath, tree, bootStates, rounds,
+ *          Input:  {pollJsPath, motionGatePath, tree, bootStates,
+ *                   captureHealthStates, systemStatusStates, rounds,
  *                   computedStyles, dispatchTransitionEnd, reducedMotion,
  *                   domContentLoadedMs, warningDecodeMs, warningError,
  *                   fontsReadyMs, dispatchCrossFadeEnd, dispatchSpinEvents,
@@ -56,7 +64,7 @@
  *                   crossFadeEndedAtMs, crossFadeEndDispatched,
  *                   warningDecodeCalls, spinLog, animationEvents,
  *                   fadeStartedAtMs, spinAtHandoff, animationLiveAtHandoff,
- *                   tree}
+ *                   stateFetches, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
  * ==========================================================================*/
@@ -151,13 +159,27 @@ async function main() {
   global.window = win;
   global.performance = win.performance;
   global.document = doc;
-  global.fetch = function (url) {
+  // The last-written entry of a time-indexed sequence; null when none.
+  function writtenAt(sequence) {
+    if (!sequence || !sequence.length) return null;
+    const idx = Math.min(Math.floor(virtualMs / emitIntervalMs), sequence.length - 1);
+    const body = sequence[idx];
+    return body === undefined ? null : body;
+  }
+  const stateRoutes = {
+    "/boot-state": states,
+    "/capture-health": input.captureHealthStates || [],
+    "/system-status": input.systemStatusStates || [],
+  };
+  const stateFetches = [];
+  global.fetch = function (url, options) {
     const route = String(url).split("?")[0];
-    if (route === "/boot-state") {
-      const idx = Math.min(Math.floor(virtualMs / emitIntervalMs), states.length - 1);
-      polls += 1;
-      const body = states.length ? states[idx] : null;
-      if (body === null || body === undefined) {
+    if (Object.prototype.hasOwnProperty.call(stateRoutes, route)) {
+      if (route === "/boot-state") polls += 1;
+      const headers = (options && options.headers) || {};
+      stateFetches.push({ route: route, atMs: virtualMs, token: headers["X-Splash-Token"] || null });
+      const body = writtenAt(stateRoutes[route]);
+      if (body === null) {
         return Promise.resolve({ ok: false, status: 404 });
       }
       return Promise.resolve({
@@ -373,6 +395,7 @@ async function main() {
       fadeStartedAtMs: fadeStartedAtMs,
       spinAtHandoff: spinAtHandoff,
       animationLiveAtHandoff: animationLiveAtHandoff,
+      stateFetches: stateFetches,
       tree: dom.serialize(doc.body),
     })
   );

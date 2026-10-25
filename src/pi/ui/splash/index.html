@@ -50,6 +50,18 @@
     <div id="degraded-msg" class="overlay" hidden></div>
     <div id="version-chip" class="overlay">V?.?.?</div>
 
+    <!-- The four-feed checklist (US-869-g, spec §1.3), under the logo, in the
+         System page's feed order (carousel.js CAPTURE_FEEDS). Labels are the
+         frame's label voice (Michroma); boot-state-poll.js writes each word
+         and its colour class from capture-health and the link chain. Nothing
+         is read before the first poll, so every row starts `not read`. -->
+    <div id="checklist">
+      <span class="cl-label">OBD</span><span id="feed-obd" class="cl-word w-unread">not read</span>
+      <span class="cl-label">LIGHT</span><span id="feed-light" class="cl-word w-unread">not read</span>
+      <span class="cl-label">IMU</span><span id="feed-imu" class="cl-word w-unread">not read</span>
+      <span class="cl-label">UPS</span><span id="feed-ups" class="cl-word w-unread">not read</span>
+    </div>
+
     <!-- Amber degraded outer ring (hidden until boot-state.degraded). -->
     <div id="amber-ring" hidden></div>
 
