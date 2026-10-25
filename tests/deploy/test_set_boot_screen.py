@@ -16,6 +16,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-24    | Rex          | Initial implementation (Sprint 113 US-885-b)
+# 2026-10-25    | Rex          | US-885-c: full-frame scale pin
 # ================================================================================
 ################################################################################
 
@@ -112,6 +113,24 @@ def test_theme_isAScriptThemeInstalledUnderItsOwnName():
         "eclipse.script",
         "warning.png",
     ]
+
+
+def test_theme_stretchesTheWarningToTheFullFrame():
+    """
+    Given: the Pi scans out 1280x720 to a 480x320 scaler panel (US-885-c)
+    When: the theme script's code lines are read
+    Then: the warning image is scaled to Window.GetWidth() x Window.GetHeight()
+          and placed at the window origin; no half-window centring remains
+    """
+    themeLines = _codeLines((THEME_DIR / "eclipse.script").read_text(encoding="utf-8"))
+    assert any(
+        ln.startswith("warning.image")
+        and 'Image("warning.png").Scale(Window.GetWidth(), Window.GetHeight())' in ln
+        for ln in themeLines
+    ), themeLines
+    assert "warning.sprite.SetX(Window.GetX());" in themeLines
+    assert "warning.sprite.SetY(Window.GetY());" in themeLines
+    assert not [ln for ln in themeLines if re.search(r"Get(Width|Height)\(\)\s*/\s*2", ln)]
 
 
 def test_setBootScreen_hasNoTimedWait():

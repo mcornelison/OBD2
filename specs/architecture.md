@@ -2469,7 +2469,15 @@ rainbow, no kernel text. **Owner: `deploy/set-boot-screen.sh`**, run by deploy-p
 Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
 
 - **The theme** `deploy/plymouth/eclipse/` (`eclipse.plymouth`, a script-module
-  `eclipse.script` that draws `warning.png` centred on black once, no animation),
+  `eclipse.script` that draws `warning.png` stretched to the full frame on black
+  once, no animation -- US-885-c: `Image("warning.png").Scale(Window.GetWidth(),
+  Window.GetHeight())` placed at `Window.GetX(), Window.GetY()`, aspect NOT
+  preserved (Atlas, 2026-10-24). The reason is the scaler panel: the Pi scans out
+  1280x720 and the 480x320 panel shrinks that frame to fit, so the unscaled
+  480x320 image filled about a third of the glass; stretched to the window it
+  lands 1:1 at its designed geometry, and under a pinned 480x320 mode the scale is
+  a no-op (no resolution is named in the script). The kiosk splash follows the
+  same full-frame rule for its `<img id=warning>` layer (US-785)),
   installed to `/usr/share/plymouth/themes/eclipse/` and made the default with
   `plymouth-set-default-theme -R eclipse`. With `auto_initramfs=1` the `-R`
   rebuilds the initramfs and the z50-raspi-firmware hook copies it to
