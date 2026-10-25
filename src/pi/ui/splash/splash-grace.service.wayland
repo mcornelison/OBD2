@@ -50,8 +50,8 @@
 #   THE EXPOSURE HERE IS LATENT, and saying so is the point rather than
 #   overselling the fix: the measured gcr-prompter prompts (2026-08-03 05:43:09 /
 #   08:33:52 / 08:52:23) all tracked the long-running DASHBOARD chromium, none a
-#   splash. This unit's window is the shutdown grace period, capped by BLACK_TAIL
-#   at 60s, so it is normally far too short to be prompted -- but a dialog
+#   splash. This unit lives from the key-off to the poweroff (no timer caps it
+#   since US-870-a), so it is normally far too short to be prompted -- but a dialog
 #   painted over THIS splash would obscure the cancel/poweroff state the operator
 #   is watching for, and the flag costs nothing.
 #
@@ -91,7 +91,8 @@ ExecStart=__CHROMIUM_BIN__ \
   --password-store=basic \
   --user-data-dir=/tmp/splash-chromium-shutdown \
   http://127.0.0.1:9899/shutdown.html
-# Splash exits via its own JS calling window.close() on cancelled / poweroff /
-# the BLACK_TAIL 60s safety cap. No hardcoded sleep or external kill (D-3 lesson).
+# Splash exits via its own JS calling window.close() on cancelled / a 404 for
+# shutdown-state / an unrecognized phase, or dies with the power at poweroff; no
+# timer ends it (US-870-a). No hardcoded sleep or external kill (D-3 lesson).
 # WHICH of those fired is logged -- grep `journalctl -u splash-grace.service` for
 # `[shutdown-splash] terminal` (US-549 / I-043).

@@ -15,10 +15,16 @@
  *          journal line and this probe's `consoleLines` are the same bytes, so a
  *          test asserting the grep string is asserting what the operator types.
  *
- *          TIME IS VIRTUAL and advances POLL_MS per round, so the shipped
- *          PRE_ROLL_MS (1s) and BLACK_TAIL_CAP_MS (60s) thresholds are exercised
- *          for real in milliseconds of wall clock. `performance.now` is the seam
- *          the shipped JS already reads.
+ *          TIME IS VIRTUAL and advances POLL_MS per round, so a long shutdown
+ *          (US-870-a: a 120 s at-home drain) runs in milliseconds of wall clock.
+ *          `performance.now` is the seam the shipped JS reads for its
+ *          report-only elapsedMs.
+ *
+ *          US-870-a: a `shutdownStates` entry may also be a fetch OUTCOME rather
+ *          than a payload -- {"__fetch": "throw"} rejects the fetch (a refused
+ *          connection) and {"__status": n} answers HTTP n with no body; `null`
+ *          stays the 404. `paintedOnPoll` is the poll whose read revealed the
+ *          stage (null = never painted).
  *
  *          US-869-d: motion-gate.js (the ONE event-will-fire helper, Atlas G2)
  *          is loaded BEFORE the poller when `motionGatePath` is given, and
@@ -30,7 +36,8 @@
  *          Input:  {pollJsPath, motionGatePath, tree, shutdownStates, rounds,
  *                   emitIntervalMs, computedStyles, reducedMotion}
  *          Output: {closed, closedAtMs, terminalCause, terminalRecord,
- *                   consoleLines, painted, polls, elapsedMs, tree}
+ *                   consoleLines, painted, paintedOnPoll, stageVisibility,
+ *                   polls, elapsedMs, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-08-10 -- Sprint 73 US-549 (I-043 observable terminal reason)
  * ==========================================================================*/
@@ -118,6 +125,12 @@ async function main() {
       if (body === null || body === undefined) {
         return Promise.resolve({ ok: false, status: 404 });
       }
+      if (body.__fetch === "throw") {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+      if (body.__status !== undefined) {
+        return Promise.resolve({ ok: body.__status >= 200 && body.__status < 300, status: body.__status });
+      }
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -147,14 +160,21 @@ async function main() {
   if (input.motionGatePath) require(path.resolve(input.motionGatePath));
   require(path.resolve(input.pollJsPath));
 
+  let paintedOnPoll = null;
+  const notePaint = function () {
+    if (paintedOnPoll === null && doc.body.classList.contains("animating")) paintedOnPoll = polls;
+  };
   for (let i = 0; i < (input.rounds || 80); i++) {
     await dom.drainMicrotasks();
+    notePaint();
     clock.flushRound();
     virtualMs += POLL_MS;
     if (closed) break;
   }
   await dom.drainMicrotasks();
+  notePaint();
 
+  const stage = doc.getElementById("splash-stage");
   const recordJson = doc.body.getAttribute("data-terminal-record");
 
   process.stdout.write(
@@ -165,6 +185,8 @@ async function main() {
       terminalRecord: recordJson === null ? null : JSON.parse(recordJson),
       consoleLines: consoleLines,
       painted: doc.body.classList.contains("animating"),
+      paintedOnPoll: paintedOnPoll,
+      stageVisibility: stage && stage.style ? stage.style.visibility || null : null,
       polls: polls,
       elapsedMs: virtualMs,
       tree: dom.serialize(doc.body),

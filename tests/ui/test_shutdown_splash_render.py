@@ -47,10 +47,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
 CONFIG_PATH = REPO_ROOT / "config.json"
 
-# The PRE_ROLL no-paint window shutdown-state-poll.js enforces before it reveals
-# the stage (spec §6). Nothing before this instant is ever seen; everything from
-# this instant on is (shutdown-state-poll.js PRE_ROLL_MS = 1000).
-PRE_ROLL_S = 1.0
+# MOVED PIN (US-870-a): this was the 1 s PRE_ROLL instant at which
+# shutdown-state-poll.js revealed the stage. The pre-roll is gone -- the page now
+# reveals on the first flushing read, ~smoothingSec after key-off -- so this is
+# only the EARLIEST instant the reveal can happen (one second into the SVG
+# timeline), and the sweeps below run from it through the whole grace window,
+# which covers the real reveal. US-870-c retires these SVG timelines.
+EARLIEST_REVEAL_S = 1.0
 
 # Sample cadence for the "is anything on screen?" sweep -- finer than a human
 # can perceive a gap, coarse enough to keep the test instant.
@@ -338,21 +341,23 @@ ANIMATED_CLASSES = (".logo", ".dot", ".s-top", ".s-side")
 
 def test_shutdownSplash_markIsVisibleTheInstantTheStageIsRevealed(shutdownCss):
     """
-    Given: shutdown-state-poll.js reveals the stage at PRE_ROLL (1s)
+    Given: shutdown-state-poll.js reveals the stage no earlier than 1s in
     When: the operator first sees the surface
     Then: the mark is at FULL opacity -- not mid-fade, not blank
 
     The reveal is a hard cut (visibility:hidden -> visible), so whatever the
-    animation is doing at 1.0s is the first frame the operator gets. A closeout
-    that is still fading IN at that instant reads as a boot, not a shutdown.
+    animation is doing at the reveal is the first frame the operator gets. A
+    closeout that is still fading IN at that instant reads as a boot, not a
+    shutdown.
     """
-    assert valueAt(shutdownCss, ".logo", "opacity", PRE_ROLL_S, default=1.0) == pytest.approx(1.0)
+    opacity = valueAt(shutdownCss, ".logo", "opacity", EARLIEST_REVEAL_S, default=1.0)
+    assert opacity == pytest.approx(1.0)
 
 
 def test_shutdownSplash_neverGoesBlankDuringTheGraceWindow(shutdownCss, graceWindowS):
     """
     Given: the 7s grace window (pi.powerWatch.smoothingSec)
-    When: sampled every 250ms from the PRE_ROLL reveal to the end of grace
+    When: sampled every 250ms from the earliest reveal to the end of grace
     Then: the mark is never fully transparent
 
     This is the Iris-flagged trap measured directly. With only
@@ -361,7 +366,7 @@ def test_shutdownSplash_neverGoesBlankDuringTheGraceWindow(shutdownCss, graceWin
     for six of those seconds: a black screen for almost the entire shutdown.
     """
     blank = []
-    t = PRE_ROLL_S
+    t = EARLIEST_REVEAL_S
     while t <= graceWindowS + 1e-9:
         if valueAt(shutdownCss, ".logo", "opacity", t, default=1.0) <= 0.0:
             blank.append(round(t, 2))
@@ -479,5 +484,6 @@ def test_bootSplash_stillFadesOutAtTheEnd(bootCss):
     The control. Both surfaces share splash.svg's keyframes, so a fix applied to
     the wrong file would land here as a boot that starts blank.
     """
-    assert valueAt(bootCss, ".logo", "opacity", PRE_ROLL_S, default=1.0) == pytest.approx(1.0)
+    opening = valueAt(bootCss, ".logo", "opacity", EARLIEST_REVEAL_S, default=1.0)
+    assert opening == pytest.approx(1.0)
     assert valueAt(bootCss, ".logo", "opacity", 6.5, default=1.0) == pytest.approx(0.0)

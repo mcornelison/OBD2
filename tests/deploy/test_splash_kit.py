@@ -115,6 +115,19 @@ def test_shutdownStatePollJs_present_and_handlesPhases():
     assert "/shutdown-state" in js
 
 
+def test_shutdownStage_shipsHidden_untilTheFirstFlushingRead_us870a():
+    """shutdown.html's stage starts visibility:hidden; only the poller reveals it.
+
+    US-870-a moves the reveal from a 1 s pre-roll to the first flushing read,
+    but the hidden start is what keeps a blip (grace then cancelled) from
+    flashing a frame over the dashboard.
+    """
+    html = _read("shutdown.html")
+    assert re.search(r'<div id="splash-stage" style="visibility:hidden">', html)
+    assert "PRE_ROLL" not in html
+    assert 'stage.style.visibility = "visible"' in _read("shutdown-state-poll.js")
+
+
 def test_motionGateJs_presentAndShippedByBothInstallers_us869d():
     """motion-gate.js (the ONE event-will-fire helper) reaches /opt/splash.
 

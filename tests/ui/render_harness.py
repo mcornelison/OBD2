@@ -971,6 +971,11 @@ def runSplash(
     )
 
 
+#: A shutdownStates entry that makes the probe's fetch REJECT (US-870-a): the
+#: refused connection a dying states server gives, distinct from a 404.
+REFUSED: dict[str, Any] = {"__fetch": "throw"}
+
+
 def runShutdownSplash(
     shutdownStates: list[Any],
     pollJsPath: str | None = None,
@@ -984,12 +989,16 @@ def runShutdownSplash(
     emit hook WRITES, one every ``emitIntervalMs``, while the closeout splash
     reads on its own 250 ms cadence -- so a poll sees the last-written entry,
     exactly as it would on the Pi. The final entry repeats. A ``None`` entry
-    models the state file being ABSENT, which is a materially different outcome
-    from a ``cancelled`` phase and is the pair I-043 could not tell apart.
+    models the state file being ABSENT (HTTP 404), which is a materially
+    different outcome from a ``cancelled`` phase and is the pair I-043 could not
+    tell apart. US-870-a: ``REFUSED`` (``{"__fetch": "throw"}``) models a refused
+    connection / thrown fetch, and ``{"__status": n}`` an HTTP n with no body --
+    both of which the page HOLDS on, where a 404 exits.
 
     Returns the settled outcome including ``terminalCause`` /
-    ``terminalRecord`` (the US-549 report) and the raw ``consoleLines``, which
-    are the same bytes that reach ``journalctl -u splash-grace.service``.
+    ``terminalRecord`` (the US-549 report), the raw ``consoleLines``, which
+    are the same bytes that reach ``journalctl -u splash-grace.service``, and
+    ``paintedOnPoll`` (the poll whose read revealed the stage, or None).
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
     return _runProbe(

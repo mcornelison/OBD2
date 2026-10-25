@@ -550,7 +550,7 @@ class ShutdownSequencer:
                 "shutdown-sequencer: power returned during window -- abort, resume normal op"
             )
             # Power came back mid-window: tell the splash to abort too so it does
-            # not sit in BLACK_TAIL waiting for a poweroff that will not come.
+            # not sit painted waiting for a poweroff that will not come.
             self._emitPhase(PHASE_CANCELLED)
             self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
             return

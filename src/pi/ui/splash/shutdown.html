@@ -12,9 +12,10 @@
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
-  <!-- PRE_ROLL safety (spec §6): nothing paints for the first 1s. The stage
-       starts hidden; shutdown-state-poll.js reveals it only after the debounce
-       window clears, so a grace that cancels in ~500ms never flashes a frame. -->
+  <!-- Hidden until the first flushing (or powering_off) read (US-870-a): the
+       sequencer's smoothing window is the one debounce, so during grace the
+       dashboard stays up and a blip that ends in cancelled paints nothing. The
+       page holds no timer of its own. -->
   <div id="splash-stage" style="visibility:hidden">
     <!-- Reverse 3-rhombus dim-down (spec §6 ANIMATING). -->
     <object id="mark" type="image/svg+xml" data="splash-shutdown.svg" aria-label="shutdown splash"></object>

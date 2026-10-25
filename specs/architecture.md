@@ -2974,11 +2974,11 @@ the splash** — it calls a generic callback and stays ignorant of the splash sc
 
 | Transition point in `handleOnBattery` | Phase | Splash response |
 |---|---|---|
-| Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash; play PRE_ROLL + ANIMATING (the animation *is* the grace countdown) |
+| Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash (the page loads with its stage hidden and paints nothing: US-870-a) |
 | Smoothing window failed (power returned mid-smoothing) | `cancelled` | ABORT splash (kill chromium, no fadeout) |
-| Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | CONTINUE (no state change) |
-| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | CONTINUE → enters BLACK_TAIL |
-| Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit in BLACK_TAIL awaiting a poweroff that will not fire) |
+| Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | PAINT on the first read (US-870-a) |
+| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | PAINT on the first read if not already; dies with the power |
+| Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit painted awaiting a poweroff that will not fire) |
 
 The VCELL-floor fast-path skips the pipeline, so it emits `powering_off` **without**
 a preceding `flushing` (honest instrument — no flush happened).
@@ -6082,6 +6082,28 @@ carousel.js; fixtures built by `tests/ui/fixtures/states/boot/_generate.py`;
 `render_harness.runSplash` serves the generator's IMU/LIGHT/UPS-ready
 capture-health when a test passes none, and a 404 for `captureHealth=None`),
 `tests/ui/test_splash_token_ssot.py` and `TestSplashGuardIsRed`.
+
+**The shutdown page paints on flushing and holds no timer (US-870-a, Sprint 114 /
+V0.30; spec §2.1, Atlas A-sd 1-3 / C-Atlas-7 / C-Atlas-8; CIO 2026-10-23 "Remove
+it").** `shutdown.html`'s stage ships `visibility:hidden`. `shutdown-state-poll.js`
+reveals it on the **first `flushing` or `powering_off` read**, never on `grace`: the
+sequencer's smoothing window (`grace` -> `flushing` | `cancelled`) is the one
+debounce (CIO: keep it), so a blip that writes `grace` then `cancelled` paints
+nothing and the dashboard never left. **404 vs refused:** `fetchShutdownState` returns
+three distinct results. An HTTP **404** exits `state-missing` on the FIRST one --
+`shutdown-state` is written atomically (`writeStateAtomic`) and never deleted, so a
+404 means it was never written. A **thrown fetch / refused connection** (and any
+other non-OK status or an unparseable body) **holds**: no exit, the last paint stays,
+and the page dies with the power. An unrecognized phase still exits
+`unrecognized-phase`. **No cap:** the 1 s `PRE_ROLL_MS`, the 60 s
+`BLACK_TAIL_CAP_MS` (and its `black-tail-cap` cause) and the three-miss count are
+gone, so a 120 s at-home drain keeps the page up throughout; the page exits only on
+`cancelled`, a 404 or an unknown phase. `elapsedMs` stays in the US-549 terminal
+record as **report-only**: `elapsed()` is called only inside `reportTerminal` and no
+condition reads it. The only `setTimeout` is the `POLL_MS` read cadence. *Guarded
+by* `tests/ui/test_shutdown_splash_terminal_reason.py` (the probe models a refused
+fetch as `render_harness.REFUSED` and reports `paintedOnPoll`) and
+`tests/ui/test_shutdown_phase_list_guard.py`.
 
 **Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
 defect).** The sole production writer of `shutdown-state` is the powerwatch
