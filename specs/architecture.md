@@ -2315,7 +2315,8 @@ tidying an async body.
 ### Kiosk Display Stack: X11 or Wayland (US-649-a, F-139, Sprint 102)
 
 **`/etc/eclipse/display-mode` is the SSOT for which kiosk stack the car runs.** It
-holds exactly `x11` or `wayland`; an ABSENT file means `x11`. Nothing chooses by
+holds exactly `x11` or `wayland`; an ABSENT file means `x11` (the default's one
+home is `deploy/lib/display-mode-default.sh`, below). Nothing chooses by
 detecting the running session any more: the deploy used to pick the `.x11` /
 `.wayland` kiosk units from the active seat0 session, so a deploy run while X11
 was up re-installed X11 over a Wayland choice (Atlas, measured trap).
@@ -2325,6 +2326,23 @@ was up re-installed X11 over a Wayland choice (Atlas, measured trap).
 | `deploy-pi.sh` `step_install_ui_kiosk_units` | `kiosk_mode_resolver` reads it and forces that type into both kit installers via `{SPLASH,DASHBOARD}_FORCE_SESSION`. Any other content -> one WARN, kiosk install skipped (A-9). A running seat0 session that disagrees -> one WARN; it never chooses. |
 | `src/pi/ui/{splash,dashboard}/install.sh` (V-2) | Unforced, they read it (absent -> x11, other -> abort). A forced `_FORCE_SESSION` still wins. Their own session detection only WARNs. |
 | `eclipse-display-mode status` | Reports file mode, enabled display manager and installed dashboard variant; non-zero on any mismatch. |
+| `eclipse-capture-panel` (US-650) | Picks grim (wayland) or scrot (x11) from it; read-only. |
+
+**The absent-file default has ONE home: `deploy/lib/display-mode-default.sh`**
+(US-652-a). It defines `DISPLAY_MODE_DEFAULT` (`x11` today; US-652-b flips it)
+and nothing else that runs. All FIVE shell readers -- `eclipse-display-mode.sh`
+`read_mode`, `eclipse-capture-panel.sh` `read_mode`, `deploy-pi.sh`
+`kiosk_mode_resolver`, and both kit installers' `read_display_mode` -- source it
+and use `$DISPLAY_MODE_DEFAULT` for the absent case; none carries its own. Each
+finds it in the tree it runs from: the two deploy/ commands beside themselves
+(`deploy/lib/`), the kits from `$SCRIPT_DIR` (as they find their unit templates),
+the resolver from the path deploy-pi.sh hands it (the synced tree on the Pi,
+`$REPO_ROOT` for the dry-run). It ships inside `./deploy` (rsync whitelist and tar
+fallback alike). A missing or unreadable lib is a loud non-zero exit naming it,
+with nothing changed -- never a silent x11 (the `cmdline-tokens.sh` pattern). A
+grep gate in `tests/deploy/test_display_mode.py` fails any absent-file default
+outside the lib (`installed_dashboard_variant`'s `printf 'x11'` is a unit-variant
+DETECTION, exempt by name).
 
 **The one command:** `sudo eclipse-display-mode x11|wayland|status [--no-reboot]`
 (`deploy/eclipse-display-mode.sh`, installed by deploy-pi.sh as a wrapper at

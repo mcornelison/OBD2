@@ -2247,19 +2247,30 @@ step_install_kiosk_session() {
 
 kiosk_mode_resolver() {
     # US-649-a: print the shell that sets SESS from /etc/eclipse/display-mode --
-    # the ONLY authority for x11 vs wayland (absent => x11).  Anything else leaves
-    # SESS empty after one WARN, so the caller skips rather than guesses (A-9).
+    # the ONLY authority for x11 vs wayland.  Anything else leaves SESS empty
+    # after one WARN, so the caller skips rather than guesses (A-9).
     # The running seat0 session is still detected, but only to WARN when it
     # disagrees; it never chooses.  ONE definition, run on the Pi by
     # step_install_ui_kiosk_units and locally by its --dry-run preview, where
     # KIOSK_MODE_FILE / KIOSK_DETECTED_SESSION stand in for the Pi's state.
     # NAME CLASH: unrelated to set-display-mode.sh, which pins the HDMI resolution.
+    #
+    # US-652-a: an ABSENT file means $DISPLAY_MODE_DEFAULT, sourced from $1 --
+    # deploy/lib/display-mode-default.sh in the tree the shell runs against
+    # (the synced tree on the Pi, $REPO_ROOT for the preview).  A missing lib
+    # exits 1 before anything is read or installed; never a silent x11.
+    printf "        DISPLAY_MODE_DEFAULT_LIB='%s'\n" "$1"
     cat <<'KIOSK_MODE_RESOLVER'
+        if [ ! -r "$DISPLAY_MODE_DEFAULT_LIB" ]; then
+            echo "ERROR: display-mode default lib not found at '$DISPLAY_MODE_DEFAULT_LIB' -- nothing changed." >&2
+            exit 1
+        fi
+        . "$DISPLAY_MODE_DEFAULT_LIB"
         MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
         if [ -f "$MODE_FILE" ]; then
             SESS=$(tr -d '[:space:]' < "$MODE_FILE")
         else
-            SESS=x11
+            SESS="$DISPLAY_MODE_DEFAULT"
         fi
         case "$SESS" in
             x11|wayland) ;;
@@ -2347,7 +2358,8 @@ step_install_ui_kiosk_units() {
     # rendered into the units.  The three units are then checked on the Pi.
     #
     # US-649-a: /etc/eclipse/display-mode is the ONLY authority for the session
-    # forced into the installers (kiosk_mode_resolver; absent => x11).  Detecting
+    # forced into the installers (kiosk_mode_resolver; absent => the default in
+    # deploy/lib/display-mode-default.sh, US-652-a).  Detecting
     # the running session used to CHOOSE it, so a deploy run under X11 re-installed
     # X11 over a Wayland choice (Atlas, measured trap).  The seat0 detection
     # survives only as a WARN when the running session disagrees with the file.
@@ -2365,9 +2377,9 @@ step_install_ui_kiosk_units() {
         # Unset, the stand-in session is EMPTY: probing this workstation's own
         # seat0 would WARN about the wrong machine.
         local resolved
-        resolved="$(KIOSK_DETECTED_SESSION="${KIOSK_DETECTED_SESSION-}" bash -c "$(kiosk_mode_resolver)
+        resolved="$(KIOSK_DETECTED_SESSION="${KIOSK_DETECTED_SESSION-}" bash -c "$(kiosk_mode_resolver "$REPO_ROOT/deploy/lib/display-mode-default.sh")
 printf '%s' \"\$SESS\"")"
-        echo "DRY-RUN would: read the session from ${KIOSK_MODE_FILE:-/etc/eclipse/display-mode} (absent => x11; local preview) -- a disagreeing seat0 session never chooses"
+        echo "DRY-RUN would: read the session from ${KIOSK_MODE_FILE:-/etc/eclipse/display-mode} (absent => the default in deploy/lib/display-mode-default.sh; local preview) -- a disagreeing seat0 session never chooses"
         if [ -z "$resolved" ]; then
             echo "DRY-RUN would: skip the kiosk-unit install (the display-mode file is not x11|wayland)"
             return 0
@@ -2380,7 +2392,7 @@ printf '%s' \"\$SESS\"")"
     remote "
         # (1) The session type comes from the display-mode file (US-649-a); a
         #     disagreeing running seat0 session only WARNs.
-        $(kiosk_mode_resolver)
+        $(kiosk_mode_resolver "${PI_PATH}/deploy/lib/display-mode-default.sh")
         if [ -z \"\$SESS\" ]; then
             exit 0
         fi

@@ -4,8 +4,9 @@
 #                            (US-649-a / F-139)
 #
 # /etc/eclipse/display-mode holds exactly `x11` or `wayland` and is the ONLY
-# authority for which kiosk variants are installed. An ABSENT file means x11.
-# The deploy and both kit installers read it; nothing chooses by detecting the
+# authority for which kiosk variants are installed. An ABSENT file means
+# $DISPLAY_MODE_DEFAULT, defined ONLY in deploy/lib/display-mode-default.sh
+# (x11 today; US-652-a). The deploy and both kit installers read it; nothing chooses by detecting the
 # running session any more (a deploy run while X11 was up used to re-install
 # X11 over a Wayland choice -- Atlas, measured trap).
 #
@@ -76,6 +77,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+# US-652-a: what an absent mode file means lives in ONE file, beside this one
+# in the deployed tree (deploy/lib/display-mode-default.sh). Missing => every
+# verb refuses before anything is read or changed; never a silent x11.
+DISPLAY_MODE_DEFAULT_LIB="$SCRIPT_DIR/lib/display-mode-default.sh"
+if [ ! -r "$DISPLAY_MODE_DEFAULT_LIB" ]; then
+    echo "ERROR: display-mode default lib not found at '$DISPLAY_MODE_DEFAULT_LIB' -- nothing changed." >&2
+    exit 1
+fi
+# shellcheck source=lib/display-mode-default.sh
+. "$DISPLAY_MODE_DEFAULT_LIB"
+
 MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
 TREE="${KIOSK_TREE:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 SYSTEMD_DIR="${KIOSK_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -109,13 +122,14 @@ usage() {
     exit 2
 }
 
-# The mode the file declares. Absent => x11; any other content is printed
-# as-is so the caller can reject it rather than default it.
+# The mode the file declares. Absent => $DISPLAY_MODE_DEFAULT (the lib); any
+# other content is printed as-is so the caller can reject it rather than
+# default it.
 read_mode() {
     if [ -f "$MODE_FILE" ]; then
         tr -d '[:space:]' < "$MODE_FILE"
     else
-        printf 'x11'
+        printf '%s' "$DISPLAY_MODE_DEFAULT"
     fi
 }
 

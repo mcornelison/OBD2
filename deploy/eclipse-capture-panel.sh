@@ -3,7 +3,8 @@
 # eclipse-capture-panel.sh -- screenshot the running panel in either display
 #                             mode (US-650 / F-139)
 #
-# Reads /etc/eclipse/display-mode (absent => x11; US-649-a) and captures with
+# Reads /etc/eclipse/display-mode (absent => $DISPLAY_MODE_DEFAULT from
+# deploy/lib/display-mode-default.sh, x11 today; US-649-a, US-652-a) and captures with
 # the tool for that stack, run as the kiosk user:
 #   wayland -> grim  with XDG_RUNTIME_DIR=/run/user/<uid> WAYLAND_DISPLAY=wayland-0
 #              (labwc's wlr-screencopy; scrot cannot see a Wayland panel)
@@ -20,6 +21,7 @@
 #   no_mode_tool    the mode has no capture tool, or its tool is not installed
 #   no_socket       wayland mode but /run/user/<uid>/wayland-0 does not exist
 #   capture_failed  the tool failed, or left no non-empty image behind
+#   no_default_lib  deploy/lib/display-mode-default.sh is missing beside this file
 #
 # Overrides (desk tests only):
 #   KIOSK_MODE_FILE     the mode file   (default /etc/eclipse/display-mode)
@@ -38,12 +40,21 @@ fail() {
     exit 1
 }
 
-# Same reading as eclipse-display-mode: absent => x11, anything else as-is.
+# US-652-a: what an absent mode file means lives in ONE file, beside this one
+# in the deployed tree. Missing => refuse before reading anything.
+DISPLAY_MODE_DEFAULT_LIB="$(dirname -- "${BASH_SOURCE[0]}")/lib/display-mode-default.sh"
+[ -r "$DISPLAY_MODE_DEFAULT_LIB" ] \
+    || fail no_default_lib "display-mode default lib not found at '$DISPLAY_MODE_DEFAULT_LIB' (deploy/lib/display-mode-default.sh) -- nothing captured"
+# shellcheck source=lib/display-mode-default.sh
+. "$DISPLAY_MODE_DEFAULT_LIB"
+
+# Same reading as eclipse-display-mode: absent => $DISPLAY_MODE_DEFAULT (the
+# lib), anything else as-is.
 read_mode() {
     if [ -f "$MODE_FILE" ]; then
         tr -d '[:space:]' < "$MODE_FILE"
     else
-        printf 'x11'
+        printf '%s' "$DISPLAY_MODE_DEFAULT"
     fi
 }
 

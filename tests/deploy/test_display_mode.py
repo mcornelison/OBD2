@@ -1075,3 +1075,203 @@ def test_kitInstaller_forcedSession_stillWinsOverTheFile(tmp_path, script, prefi
 
     assert result.returncode == 0, result.stderr
     assert re.search(r"session type:\s+x11\b", result.stdout), result.stdout
+
+
+# ----------------------------------------------------------------------------
+# US-652-a: the absent-mode-file default lives in deploy/lib/display-mode-default.sh
+# ----------------------------------------------------------------------------
+
+DEFAULT_LIB_REL = "deploy/lib/display-mode-default.sh"
+DEFAULT_LIB = REPO_ROOT / DEFAULT_LIB_REL
+CAPTURE_CMD = REPO_ROOT / "deploy" / "eclipse-capture-panel.sh"
+
+# The FIVE shell readers of /etc/eclipse/display-mode; each sources the lib.
+SHELL_READERS = (MODE_CMD, DEPLOY_SCRIPT, SPLASH_INSTALL, DASH_INSTALL, CAPTURE_CMD)
+
+# A read_mode-style branch: an `-f "$MODE_FILE"` test whose else-branch is a
+# literal x11 (`printf 'x11'`, or an assignment such as `SESS=x11`).
+_MODE_FILE_TEST = re.compile(r'\[\[?\s+-f\s+"\$MODE_FILE"\s+\]\]?')
+_LITERAL_X11_ELSE = re.compile(r"\belse\b\s*\n\s*(printf\s+['\"]?x11['\"]?|\w+=['\"]?x11['\"]?)\s*\n")
+_FI_LINE = re.compile(r"\n[ \t]*fi\b[^\n]*\n")
+_PRINTF_X11 = re.compile(r"printf\s+['\"]x11['\"]")
+
+
+def _shellFiles() -> list[Path]:
+    files = []
+    for root in (REPO_ROOT / "deploy", REPO_ROOT / "src" / "pi" / "ui"):
+        files.extend(p for p in root.rglob("*") if p.is_file() and p.suffix == ".sh")
+    return sorted(p for p in files if p != DEFAULT_LIB)
+
+
+def _shellFunctionBody(text: str, name: str) -> str:
+    start = text.index(f"{name}() {{")
+    return text[start : text.index("\n}\n", start)]
+
+
+def test_defaultLib_definesX11AndNothingElseRuns():
+    """
+    Given: deploy/lib/display-mode-default.sh
+    When:  it is sourced under set -euo pipefail
+    Then:  DISPLAY_MODE_DEFAULT is x11 and its only statement is that assignment.
+    """
+    statements = [
+        ln.strip() for ln in DEFAULT_LIB.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    assert statements == ["DISPLAY_MODE_DEFAULT=x11"], statements
+
+    result = subprocess.run(
+        ["bash", "-c", 'set -euo pipefail; . "$1"; printf "%s" "$DISPLAY_MODE_DEFAULT"',
+         "_", _posix(DEFAULT_LIB)],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "x11"
+    assert result.stderr == ""
+
+
+def test_grepGate_noAbsentFileDefaultOutsideTheLib():
+    """
+    Given: every shell file in deploy/ and src/pi/ui/ except the lib
+    When:  scanned for a read_mode-style absent-file default
+    Then:  none remains; the only printf 'x11' is installed_dashboard_variant's
+           (a unit-variant DETECTION, exempt by name); each of the FIVE shell
+           readers names deploy/lib/display-mode-default.sh.
+    """
+    branches = []
+    for path in _shellFiles():
+        text = path.read_text(encoding="utf-8")
+        for match in _MODE_FILE_TEST.finditer(text):
+            # The if-block the test opens: up to its first `fi` line.
+            end = _FI_LINE.search(text, match.end())
+            block = text[match.start() : end.end() if end else len(text)]
+            if _LITERAL_X11_ELSE.search(block):
+                branches.append(f"{path.relative_to(REPO_ROOT).as_posix()}: {block.strip()[:80]}")
+    assert branches == [], branches
+
+    printfs = []
+    for path in _shellFiles():
+        text = path.read_text(encoding="utf-8")
+        exempt = ""
+        if path == MODE_CMD:
+            exempt = _shellFunctionBody(text, "installed_dashboard_variant")
+        rest = text.replace(exempt, "") if exempt else text
+        printfs.extend(f"{path.relative_to(REPO_ROOT).as_posix()}: {m.group(0)}"
+                       for m in _PRINTF_X11.finditer(rest))
+    assert printfs == [], printfs
+
+    for reader in SHELL_READERS:
+        assert DEFAULT_LIB_REL in reader.read_text(encoding="utf-8"), (
+            f"{reader.relative_to(REPO_ROOT).as_posix()} does not name {DEFAULT_LIB_REL}"
+        )
+
+
+def test_grepGate_catchesTheOldReadModeBranch():
+    """The gate's own pattern matches the pre-US-652-a read_mode shape."""
+    old = ('    if [ -f "$MODE_FILE" ]; then\n'
+           "        tr -d '[:space:]' < \"$MODE_FILE\"\n"
+           "    else\n"
+           "        printf 'x11'\n"
+           "    fi\n")
+    assert _MODE_FILE_TEST.search(old)
+    assert _LITERAL_X11_ELSE.search(old)
+    assert _LITERAL_X11_ELSE.search("        else\n            SESS=x11\n        fi\n")
+
+
+@pytest.mark.parametrize("args", [("status",), ("trigger",), ("wayland", "--no-reboot")],
+                         ids=["status", "trigger", "wayland"])
+def test_modeCommand_libAbsent_exitsNonZeroNamingTheLib_nothingChanged(rig, args):
+    """
+    Given: eclipse-display-mode.sh in a tree with no deploy/lib/display-mode-default.sh
+    When:  any verb runs
+    Then:  non-zero, stderr names the lib; no unit, mode file or lightdm.conf is
+           touched and systemctl is never called.
+    """
+    lonely = rig["root"] / "lonely" / "deploy" / "eclipse-display-mode.sh"
+    lonely.parent.mkdir(parents=True)
+    shutil.copyfile(MODE_CMD, lonely)
+    before = _snapshot(rig)
+
+    env = dict(os.environ)
+    env["PATH"] = _posix(rig["bin"]) + os.pathsep + env.get("PATH", "")
+    env.update({
+        "FAKE_STATE": _posix(rig["state"]),
+        "KIOSK_MODE_FILE": _posix(rig["modeFile"]),
+        "KIOSK_TREE": _posix(rig["tree"]),
+        "KIOSK_SYSTEMD_DIR": _posix(rig["systemd"]),
+        "KIOSK_USER": "mcornelison",
+        "KIOSK_AUTOSTART_DIR": _posix(rig["autostart"]),
+        "KIOSK_LIGHTDM_CONF": _posix(rig["conf"]),
+        "KIOSK_SESSION_FILE": _posix(rig["sessionFile"]),
+        "KIOSK_LABWC_BIN": _posix(rig["labwc"]),
+        "KIOSK_STATE_DIR": _posix(rig["obdState"]),
+    })
+    result = subprocess.run(["bash", _posix(lonely), *args], capture_output=True,
+                            text=True, encoding="utf-8", timeout=60, env=env)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "lib/display-mode-default.sh" in result.stderr, result.stderr
+    assert "nothing changed" in result.stderr, result.stderr
+    assert _snapshot(rig) == before
+    assert _systemctlLog(rig) == []
+    assert not rig["modeFile"].exists()
+
+
+@pytest.mark.parametrize("script,prefix", KITS)
+def test_kitInstaller_libAbsent_exitsNonZeroNamingTheLib(tmp_path, script, prefix):
+    """A kit outside a tree that carries deploy/lib refuses loudly, never a silent x11."""
+    kitDir = tmp_path / "tree" / script.relative_to(REPO_ROOT).parent
+    kitDir.mkdir(parents=True)
+    lonely = kitDir / "install.sh"
+    shutil.copyfile(script, lonely)
+
+    result = _runKit(lonely, prefix, tmp_path, mode=None)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "lib/display-mode-default.sh" in result.stderr, result.stderr
+    assert "nothing changed" in result.stderr, result.stderr
+    assert "session type" not in result.stdout
+
+
+def _resolverShell(libPath: str) -> str:
+    """deploy-pi.sh's kiosk_mode_resolver, defined and called with libPath."""
+    func = _shellFunctionBody(DEPLOY_SCRIPT.read_text(encoding="utf-8"), "kiosk_mode_resolver")
+    return f"{func}\n}}\nkiosk_mode_resolver '{libPath}'\n"
+
+
+def _runResolver(tmp_path: Path, libPath: str, modeFile: Path) -> subprocess.CompletedProcess:
+    script = tmp_path / "resolver.sh"
+    script.write_text(_resolverShell(libPath), encoding="utf-8", newline="\n")
+    emitted = subprocess.run(["bash", _posix(script)], capture_output=True, text=True,
+                             encoding="utf-8", timeout=30)
+    assert emitted.returncode == 0, emitted.stderr
+    env = dict(os.environ)
+    env["KIOSK_MODE_FILE"] = _posix(modeFile)
+    env["KIOSK_DETECTED_SESSION"] = ""
+    return subprocess.run(["bash", "-c", emitted.stdout + '\nprintf "SESS=%s" "$SESS"\n'],
+                          capture_output=True, text=True, encoding="utf-8", timeout=30, env=env)
+
+
+def test_deployResolver_absentFile_readsTheLibDefault(tmp_path):
+    result = _runResolver(tmp_path, _posix(DEFAULT_LIB), tmp_path / "display-mode")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith("SESS=x11"), result.stdout
+
+
+def test_deployResolver_libAbsent_exitsNonZeroNamingTheLib(tmp_path):
+    missing = tmp_path / "deploy" / "lib" / "display-mode-default.sh"
+
+    result = _runResolver(tmp_path, _posix(missing), tmp_path / "display-mode")
+
+    assert result.returncode != 0, result.stdout
+    assert "lib/display-mode-default.sh" in result.stderr, result.stderr
+    assert "nothing changed" in result.stderr, result.stderr
+    assert "SESS=" not in result.stdout
+
+
+def test_deployKioskStep_passesTheDeployedLibToTheResolver():
+    """On the Pi the resolver sources the SYNCED tree's lib; the dry-run the local one."""
+    body = _stepBody("step_install_ui_kiosk_units")
+    assert '$(kiosk_mode_resolver "${PI_PATH}/' + DEFAULT_LIB_REL + '")' in body
+    assert '$(kiosk_mode_resolver "$REPO_ROOT/' + DEFAULT_LIB_REL + '")' in body
