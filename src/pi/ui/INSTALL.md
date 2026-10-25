@@ -5,20 +5,22 @@ A two-second-long version of the brief, then the steps.
 ## What this is
 
 An animated boot/shutdown splash for a Raspberry Pi 3.5" 480×320
-automotive display. Pure CSS animation inside two SVG files, displayed
-through Chromium in kiosk mode and wired into systemd so it plays on
-boot and on shutdown.
+automotive display. The logo is an inline SVG in each page, animated by
+`styles.css` on its own events (US-869-f / US-870-c), displayed through
+Chromium in kiosk mode and wired into systemd so it plays on boot and on
+shutdown.
 
-- `splash.svg` — 6.5-second boot animation (emerge → 3× rotation →
-  saturation throb → fade)
-- `splash-shutdown.svg` — same file with `animation-direction:
-  reverse` applied to every animation; plays as a graceful dim-down
-- `index.html` / `shutdown.html` — full-bleed black wrappers that
-  embed the SVGs at native 480×320
+- `styles.css` — the pages' stylesheet and ALL the logo motion: the boot
+  spins (spin 1 / 2 / 3) and the shutdown close-out (reverse spin, dim
+  spin, dim-down, fade). Its timings mirror `src/pi/ui/tokens.css`.
+  (`splash.svg` / `splash-shutdown.svg`, the old fixed SVG timelines,
+  were retired in US-870-c.)
+- `motion-gate.js` — asks whether an animation/transition end event will
+  fire, so no step waits on an event that never comes
+- `index.html` / `shutdown.html` — full-bleed black pages that
+  carry the same inline logo at native 480×320
 - `splash-boot.service` / `splash-shutdown.service` — systemd units
 - `install.sh` / `uninstall.sh` — one-shot installer / remover
-- `preview.html` — open this in any desktop browser to preview both
-  animations side-by-side without touching a Pi
 
 ## Requirements
 
@@ -79,15 +81,16 @@ boot).
 
 ## Test on your laptop first
 
-You can sanity-check the animation on any computer before touching the
-Pi: just open `preview.html` in a normal browser (Chrome / Firefox /
-Safari). Both boot and shutdown SVGs play side-by-side at native
-480×320 with a Replay button each.
+`preview.html` (a side-by-side player for the two SVG timelines) was
+retired with them in US-870-c. The pages are state-driven now, so the
+motion is checked by the render harness: `pytest tests/ui/test_boot_spins.py
+tests/ui/test_shutdown_spins.py`.
 
 ## Tuning
 
-All timing and colors are exposed as CSS custom properties at the top
-of `splash.svg` (and copied into `splash-shutdown.svg`):
+The motion tokens (`--t-spin`, `--t-fade`, `--bright-*`) live ONCE in
+`src/pi/ui/tokens.css`; `styles.css` mirrors them in its `:root`. The
+table below is the retired SVG's variable set, kept for reference:
 
 | Variable          | Default      | What it does                          |
 |-------------------|--------------|---------------------------------------|
@@ -101,9 +104,8 @@ of `splash.svg` (and copied into `splash-shutdown.svg`):
 | `--throb-low`     | `0.60`       | Low point of the throb pulses         |
 | `--spin-end`      | `-360deg`    | Total spin (negative = CCW)           |
 
-To change the boot animation duration: edit `splash-boot.service`'s
-`ExecStartPost` sleep value AND the keyframe percentages in
-`splash.svg` proportionally — total must stay synced.
+To change the rotation length: edit `--t-spin` in `src/pi/ui/tokens.css`
+and its `splash/styles.css` mirror.
 
 If the panel's narrow gamut washes out the gradient crease, bump
 `--red-light` / `--red-dark` to 10–12% deltas instead of 7%.
@@ -143,7 +145,7 @@ sudo ./uninstall.sh
 If the Pi has no X / Wayland session running, Chromium kiosk won't
 work. Two fallback options:
 
-1. **Plymouth** with a pre-rendered video. Convert `splash.svg` to an
+1. **Plymouth** with a pre-rendered video. Record the boot page's logo to an
    MP4 using a desktop tool (Inkscape → PNG sequence → ffmpeg), then
    install Plymouth and use the `plymouth-set-default-theme`
    pipeline with a custom theme. This is more involved; happy to
@@ -165,8 +167,8 @@ Bookworm).
 **Splash plays but is sideways / clipped.** See "Display orientation"
 above.
 
-**Splash plays but is too dim/dark.** Bump `--bright-low` and
-`--throb-low` in `splash.svg`. Some panels have very limited dynamic
+**Splash plays but is too dim/dark.** Bump `--bright-low` in
+`src/pi/ui/tokens.css` (and its `styles.css` mirror). Some panels have very limited dynamic
 range and 25% brightness reads as black.
 
 **Shutdown splash doesn't appear.** The shutdown service races

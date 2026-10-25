@@ -271,7 +271,9 @@ install_unit() {
 
 echo "==> Installing splash assets to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
-for asset in splash.svg splash-shutdown.svg index.html shutdown.html \
+# US-870-c: splash.svg / splash-shutdown.svg are retired (both pages inline the
+# logo); the deploy's refresh_asset_dir prunes any stale /opt/splash copy.
+for asset in index.html shutdown.html \
              motion-gate.js boot-state-poll.js shutdown-state-poll.js styles.css \
              OFL.txt; do
   if [[ -f "$SCRIPT_DIR/$asset" ]]; then

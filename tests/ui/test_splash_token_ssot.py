@@ -33,6 +33,9 @@
 #               |              | checklist labels); --green-ok joins _MIRRORED.
 # 2026-10-25    | Ralph (Rex)  | US-870-b: --surface, --line, --accent and
 #               |              | --text-primary join _MIRRORED (shutdown bar).
+# 2026-10-25    | Ralph (Rex)  | RULED GUARD CHANGE (Atlas 2026-10-25, US-870-c
+#               |              | R-guard): splash.svg is retired, so the motion
+#               |              | test keeps only declared-once; _SPLASH_SVG gone.
 # ================================================================================
 ################################################################################
 
@@ -57,13 +60,13 @@ _UI = os.path.join(_ROOT, "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
 _SPLASH = os.path.join(_UI, "splash")
 _STYLES = os.path.join(_SPLASH, "styles.css")
-_SPLASH_SVG = os.path.join(_SPLASH, "splash.svg")
 _PAGES = ("index.html", "shutdown.html")
 _SPLASH_OFL = os.path.join(_SPLASH, "OFL.txt")
 _KIT_OFL = os.path.join(_ROOT, "specs", "assets", "fonts", "michroma", "OFL-michroma.txt")
 
 # The tokens the splash renders against (spec AC 12 as Atlas reworded it). The
-# motion six are splash.svg's own timings, promoted into the SSOT (C-Atlas-3).
+# motion six were promoted from the retired splash.svg (C-Atlas-3); tokens.css
+# is now their only home (US-870-c).
 _MOTION_TOKENS = ("t-spin", "t-fade", "bright-low", "bright-mid", "bright-hi", "bright-max")
 _MIRRORED = (
     "bg",
@@ -176,15 +179,13 @@ def _michromaStrings(page: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_tokensCss_declaresTheMotionTokensOnce_atSplashSvgsValues():
-    """The six motion tokens are splash.svg's timings (:4-15), promoted into
-    tokens.css once -- the SVG keeps its own copy (an <object> document cannot
-    read the page's custom properties), so the two must agree."""
+def test_tokensCss_declaresEachMotionTokenOnce():
+    """The six motion tokens (promoted from the retired splash.svg) are declared
+    exactly once in the tokens.css :root -- their only copy since US-870-c.
+    The splash mirror's agreement with them is the (a) MIRROR test's job."""
     tokensRoot = _rootBlock(_read(_TOKENS))
-    svgVars = _declarations(_read(_SPLASH_SVG))
     for name in _MOTION_TOKENS:
         assert len(re.findall(rf"^\s*--{name}:", tokensRoot, re.M)) == 1, name
-        assert _declarations(tokensRoot)[name] == svgVars[name], name
 
 
 # ---------------------------------------------------------------------------

@@ -2049,7 +2049,10 @@ step_install_splash_assets() {
     # assets forever.
     #
     # US-498 (S5/F-103): the manifest now covers the WHOLE served surface --
-    # boot AND closeout (shutdown.html, shutdown-state-poll.js) plus both SVGs.
+    # boot AND closeout (shutdown.html, shutdown-state-poll.js). (US-870-c: the
+    # two SVG timelines, splash.svg + splash-shutdown.svg, are retired -- both
+    # pages inline the logo -- so they leave this list and the refresh PRUNES
+    # the stale /opt/splash copies.)
     # They were previously keep-listed as "the kit's install.sh owns those", but
     # a keep-listed asset is never installed, never pruned and never verified
     # here; its only refresh path was the kiosk-unit step, which is an A-9 step
@@ -2074,7 +2077,7 @@ step_install_splash_assets() {
     # VOUCHED here (never keep-listed) so refresh_asset_dir installs and
     # verifies it instead of pruning it. Served first from /opt/splash
     # (assets-dir order); byte-equal to the dashboard's copy.
-    local assets="index.html styles.css motion-gate.js boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg OFL.txt"
+    local assets="index.html styles.css motion-gate.js boot-state-poll.js shutdown.html shutdown-state-poll.js OFL.txt"
     # warning.png (US-785, Atlas C-Atlas-4): the phase-0b WARNING image is the
     # Plymouth theme's own PNG -- deploy/plymouth/eclipse/warning.png is the
     # ONLY deployed copy (one image, two consumers, no twin; spec §1.2). The kit

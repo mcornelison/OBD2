@@ -42,6 +42,8 @@
 #               |              | is not gitignored, and both installers carry it.
 # 2026-10-24    | Rex (US-869-e) | New: OFL.txt (the Michroma licence) ships in the
 #               |              | kit, is not gitignored, and both installers carry it.
+# 2026-10-25    | Rex (US-870-c) | MOVED PIN (US-870-c): shutdown.html inlines the
+#               |              | logo (no <object>); the SVGs leave the vouched list.
 # ================================================================================
 ################################################################################
 
@@ -89,15 +91,19 @@ def _bashAvailable() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# D-1 / S-1 -- shutdown.html must load the REVERSE svg, not the boot svg.
+# D-1 / S-1 -- shutdown.html must not play the forward boot animation.
+# MOVED PIN (US-870-c): the logo is INLINE now (index.html's markup) and both
+# SVG timelines are retired, so the page embeds no <object> and no .svg at all;
+# its reverse motion is styles.css (tests/ui/test_shutdown_spins.py).
 # ---------------------------------------------------------------------------
 
 
-def test_shutdownHtml_loadsShutdownSvg_d1():
-    """S-1/D-1: shutdown.html embeds splash-shutdown.svg, never splash.svg."""
-    html = _read("shutdown.html")
-    assert "splash-shutdown.svg" in html
-    assert 'data="splash.svg"' not in html
+def test_shutdownHtml_inlinesTheLogo_noObject_d1():
+    """S-1/D-1: shutdown.html inlines the logo; no <object>, no SVG file."""
+    html = re.sub(r"<!--.*?-->", "", _read("shutdown.html"), flags=re.DOTALL)
+    assert '<svg id="mark"' in html
+    assert "<object" not in html
+    assert "splash.svg" not in html and "splash-shutdown.svg" not in html
 
 
 def test_shutdownHtml_wiresStateMachine_renderSide():
@@ -160,7 +166,8 @@ def test_oflLicenceShipsWithTheKitAndBothInstallers_us869e():
     )
     assert loop and "OFL.txt" in loop.group(1).replace("\\\n", " ").split()
     deploySh = (REPO_ROOT / "deploy" / "deploy-pi.sh").read_text(encoding="utf-8")
-    assert re.search(r'local assets="[^"]*splash-shutdown\.svg[^"]*OFL\.txt', deploySh)
+    # MOVED PIN (US-870-c): the vouched list no longer carries the retired SVGs.
+    assert re.search(r'local assets="[^"]*shutdown-state-poll\.js[^"]*OFL\.txt', deploySh)
     ignored = subprocess.run(
         ["git", "check-ignore", "-q", str(KIT_DIR / "OFL.txt")],
         cwd=REPO_ROOT,

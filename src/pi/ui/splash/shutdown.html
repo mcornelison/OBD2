@@ -7,8 +7,8 @@
 <!-- F-103 shutdown splash (US-396). Served same-origin by eclipse-states-http at
      http://127.0.0.1:9899/shutdown.html so the auth token is injected below (the
      token SSOT never lands on disk -- the HTTP server token-injects .html assets).
-     D-1 fix: this embeds splash-shutdown.svg (the REVERSE dim-down animation), NOT
-     splash.svg -- the prior kit loaded the forward boot animation here. -->
+     US-870-c: the logo is inline, the same markup as index.html's (US-785), and
+     styles.css drives it on its own events; splash-shutdown.svg is retired. -->
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
@@ -17,8 +17,35 @@
        dashboard stays up and a blip that ends in cancelled paints nothing. The
        page holds no timer of its own. -->
   <div id="splash-stage" style="visibility:hidden">
-    <!-- Reverse 3-rhombus dim-down (spec §6 ANIMATING). -->
-    <object id="mark" type="image/svg+xml" data="splash-shutdown.svg" aria-label="shutdown splash"></object>
+    <!-- 3-rhombus brand mark, INLINE (US-870-c): index.html's logo markup
+         verbatim, with no <style> (pinned by tests/ui/test_shutdown_spins.py).
+         #logo is the group styles.css turns: the reverse spin loops while the
+         bar is under 100 %, then the dim spin, the dim-down and the fade --
+         body classes shutdown-state-poll.js sets on the animation's own events. -->
+    <svg id="mark" viewBox="0 0 480 320" aria-label="shutdown splash">
+      <defs>
+    <linearGradient id="g" x1="0" y1="0.5" x2="1" y2="0.5">
+      <stop offset="0%"   stop-color="#F61D2D"/>
+      <stop offset="50%"  stop-color="#E60012"/>
+      <stop offset="100%" stop-color="#BF000F"/>
+    </linearGradient>
+      </defs>
+      <g id="logo" class="logo">
+    <g class="scaler s-top">
+      <path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#g)"/>
+    </g>
+    <g transform="rotate(-120 240 160)">
+      <g class="scaler s-side">
+        <path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#g)"/>
+      </g>
+    </g>
+    <g transform="rotate(-240 240 160)">
+      <g class="scaler s-side">
+        <path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#g)"/>
+      </g>
+    </g>
+      </g>
+    </svg>
 
     <!-- The progress bar + its two-line label (US-870-b, spec §2 / §2.2).
          shutdown-state-poll.js draws both from shutdown-state step{index, of,
@@ -57,9 +84,12 @@
   <script>
     // Token injected by the state server at serve time (token SSOT). When
     // previewed from file:// the placeholder stays as-is and the shutdown-state
-    // polls fail closed -- the preview still renders the reverse animation.
+    // polls fail closed and the stage stays hidden.
     window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
   </script>
+  <!-- motion-gate.js BEFORE the poller: every close-out wait asks it whether
+       the animation's (or the fade's) end event will fire at all (Atlas G2). -->
+  <script src="motion-gate.js"></script>
   <script src="shutdown-state-poll.js"></script>
 </body>
 </html>

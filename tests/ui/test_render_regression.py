@@ -65,6 +65,8 @@
 #               |              | against gate R1 -- IMU, LIGHT and UPS served
 #               |              | ready, EXPLICITLY (Atlas R4); the hold is the
 #               |              | never-healthy boot-state, not a feed.
+# 2026-10-25    | Rex (US-870-c)| MOVED PIN (US-870-c): splash.svg is retired;
+#               |              | the logo geometry pin re-anchors on index.html.
 # ================================================================================
 ################################################################################
 
@@ -704,11 +706,6 @@ _HEALTHY_STATE = {"healthy": True, "degraded": False}
 _STAGE_FADE_ONLY = {"splash-stage": {"transitionDuration": "0.5s"}}
 
 
-def _splashSvgText() -> str:
-    with open(os.path.join(rh.SPLASH_DIR, "splash.svg"), encoding="utf-8") as fh:
-        return fh.read()
-
-
 def _indexHtmlText() -> str:
     with open(os.path.join(rh.SPLASH_DIR, "index.html"), encoding="utf-8") as fh:
         return fh.read()
@@ -868,17 +865,24 @@ class TestSplashWarningFrame:
         assert mark["attrs"].get("viewbox") == "0 0 480 320"
         assert "style" not in {node["tag"] for node in _walk(mark)}
 
-    def test_theInlineLogoCarriesSplashSvgsGeometryVerbatim(self):
-        """The gradient stops and the three rhombus paths, byte for byte."""
-        svg, html = _splashSvgText(), _indexHtmlText()
-        gradient = re.search(r"<linearGradient\b.*?</linearGradient>", svg, re.S).group(0)
-        paths = re.findall(r"<path\b[^>]*/>", svg)
-        rotations = re.findall(r'<g transform="rotate\([^"]*\)">', svg)
+    def test_theInlineLogoCarriesTheBrandGeometry(self):
+        """One gradient, three rhombus paths, two rotated copies (-120 / -240).
 
-        assert len(paths) == 3
-        assert gradient in html
-        assert re.findall(r"<path\b[^>]*/>", html) == paths
-        assert re.findall(r'<g transform="rotate\([^"]*\)">', html) == rotations
+        MOVED PIN (US-870-c): splash.svg is retired, so index.html is the logo's
+        only home; this was an equality with the SVG and is re-anchored on the
+        page (Atlas 2026-10-25). tests/ui/test_shutdown_spins.py pins shutdown.html's
+        logo to this one byte for byte.
+        """
+        logo = re.search(r'<svg id="mark"[^>]*>(.*?)</svg>', _indexHtmlText(), re.S)
+        assert logo is not None, "no inline <svg id=mark> in index.html"
+        markup = logo.group(1)
+
+        assert len(re.findall(r"<linearGradient\b.*?</linearGradient>", markup, re.S)) == 1
+        assert len(re.findall(r"<path\b[^>]*/>", markup)) == 3
+        assert re.findall(r'<g transform="rotate\(([^"]*)\)">', markup) == [
+            "-120 240 160",
+            "-240 240 160",
+        ]
 
     def test_theWarningImageIsThePagesTopLayer_withNothingOverIt(self):
         """Spec §1.1 R5: no touch target, button or text node over the warning."""

@@ -32,6 +32,13 @@
  *          with rows kept draws them as an amber stretch below the 75 % marker.
  *          Away (sync.state away) and the VCELL fast path (sync null) stay
  *          index / of.
+ *          US-870-c: the logo is page-driven. Painted, it reverse-spins at
+ *          --bright-hi and loops; once the fill is 100 % its next
+ *          animationiteration starts one dim spin (--bright-low), whose
+ *          animationend starts the dim-down, whose animationend starts the
+ *          stage fade; the page then stays black and dies with the power.
+ *          Every wait asks motionGate.willFire first; false advances that part
+ *          at once. cancelled exits at any point with no close-out.
  *          The splash is a pure CONSUMER -- ShutdownSequencer is the SSOT of
  *          shutdown phase; this script only renders what it reads.
  *
@@ -53,6 +60,7 @@
  *          refused, no timer)
  * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress bar + step words)
  * Updated: 2026-10-25 -- Sprint 114 US-883-c (the at-home sync part + words)
+ * Updated: 2026-10-25 -- Sprint 114 US-870-c (the logo's spins + close-out)
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -266,6 +274,107 @@
     var stage = document.getElementById("splash-stage");
     if (stage) stage.style.visibility = "visible";
     document.body.classList.add("animating");
+    enterLogoStep(STEP_SPIN);
+  }
+
+  // --- The logo (US-870-c, spec §2 Close-out) --------------------------------
+  // reverse spin (loops while the bar is under 100 %) -> dim spin (once) ->
+  // dim-down (once) -> the stage fade -> black. Each part is started by the
+  // previous part's OWN event; every length lives in styles.css. The page then
+  // stays black and dies with the power: no window.close() here.
+
+  var STEP_NONE = 0;
+  var STEP_SPIN = 1;       // body.spin-rev: --bright-hi, infinite
+  var STEP_DIM = 2;        // body.spin-dim: --bright-low, one rotation
+  var STEP_DIM_DOWN = 3;   // body.dim-down: one run
+  var STEP_FADE = 4;       // the stage's opacity transition
+  var STEP_BLACK = 5;      // body.black: the stage is at opacity 0
+  var LOGO_CLASSES = ["spin-rev", "spin-dim", "dim-down"];
+
+  var logoStep = STEP_NONE;
+  var logoLive = false;      // the current part's animation event will fire
+  var full = false;          // the bar has been drawn to 100 %
+  var logoListening = false;
+
+  function willFire(el, kind) {
+    var gate = window.motionGate;
+    return !!(el && gate && typeof gate.willFire === "function" && gate.willFire(el, kind));
+  }
+
+  function listenToTheLogo(logo) {
+    if (logoListening) return;
+    logoListening = true;
+    logo.addEventListener("animationiteration", function (ev) {
+      if (aborted || (ev && ev.target && ev.target !== logo)) return;
+      // The reverse spin finishes the rotation it is in: the dim spin starts
+      // on the iteration boundary after the 100 % read, never mid-turn.
+      if (logoStep === STEP_SPIN && full) enterLogoStep(STEP_DIM);
+    });
+    logo.addEventListener("animationend", function (ev) {
+      if (aborted || (ev && ev.target && ev.target !== logo)) return;
+      if (logoStep === STEP_DIM) enterLogoStep(STEP_DIM_DOWN);
+      else if (logoStep === STEP_DIM_DOWN) enterFade();
+    });
+  }
+
+  function enterLogoStep(step) {
+    if (aborted) return;
+    logoStep = step;
+    var logo = document.getElementById("logo");
+    var body = document.body;
+    LOGO_CLASSES.forEach(function (c) { body.classList.remove(c); });
+    // The two spins share @keyframes spin: read the style once with no class
+    // on, so the next class starts a new run from its first keyframe.
+    if (logo && typeof window.getComputedStyle === "function") {
+      void window.getComputedStyle(logo).animationName;
+    }
+    body.classList.add(LOGO_CLASSES[step - 1]);
+    logoLive = willFire(logo, "animation");
+    if (logoLive) {
+      listenToTheLogo(logo);
+      return;
+    }
+    // No animation event will fire (reduced motion, styles missing): the part
+    // advances on the read that started it (Atlas G2, C-Atlas-6).
+    if (step === STEP_SPIN && full) enterLogoStep(STEP_DIM);
+    else if (step === STEP_DIM) enterLogoStep(STEP_DIM_DOWN);
+    else if (step === STEP_DIM_DOWN) enterFade();
+  }
+
+  function enterBlack() {
+    if (logoStep === STEP_BLACK) return;
+    logoStep = STEP_BLACK;
+    document.body.classList.add("black");
+  }
+
+  function enterFade() {
+    if (aborted || logoStep >= STEP_FADE) return;
+    logoStep = STEP_FADE;
+    var stage = document.getElementById("splash-stage");
+    if (!stage) {
+      enterBlack();
+      return;
+    }
+    stage.style.transition = "opacity var(--t-fade)";   // the length lives in styles.css
+    if (!willFire(stage, "transition")) {
+      // No transitionend will fire: black on the dim-down's end itself.
+      stage.style.opacity = "0";
+      enterBlack();
+      return;
+    }
+    stage.addEventListener("transitionend", function (ev) {
+      if (ev && ev.target && ev.target !== stage) return;   // a child's transition
+      enterBlack();
+    });
+    stage.style.opacity = "0";
+  }
+
+  // The 100 % read. A live reverse spin turns on to its next
+  // animationiteration; one with no event to wait for advances now.
+  function noteFull() {
+    if (full) return;
+    full = true;
+    if (logoStep === STEP_SPIN && !logoLive) enterLogoStep(STEP_DIM);
   }
 
   function setText(id, text) {
@@ -421,6 +530,7 @@
     drawnFraction = Math.max(drawnFraction, target);
     var fill = document.getElementById("bar-fill");
     if (fill) fill.style.width = drawnFraction * 100 + "%";
+    if (drawnFraction >= 1) noteFull();    // US-870-c: the close-out's start
   }
 
   async function tick() {

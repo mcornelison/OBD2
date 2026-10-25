@@ -5993,9 +5993,9 @@ link **only `splash/styles.css`**, so that sheet's `:root` is a hand-kept
 `--bg`, `--text-secondary`, `--text-tertiary`, `--amber-warn`, `--fs-label`,
 `--fs-meta`, `--font-mono`, `--font-display` and the six motion tokens
 `--t-spin` / `--t-fade` / `--bright-low|mid|hi|max`. The motion tokens are
-splash.svg's own timings (`:4-15`), promoted into `tokens.css` once; the SVG keeps
-its copy because an `<object>` document cannot read the page's custom
-properties. Outside the mirror every colour, font-size and font-family is a
+the retired splash.svg's own timings, promoted into `tokens.css` once; since
+US-870-c retired the SVG, `tokens.css` is their **only** copy (the inline logos
+read them through the `styles.css` mirror). Outside the mirror every colour, font-size and font-family is a
 `var(--...)` (layout offsets and border widths may stay px), and the stale
 `#888888` / `#666666` / `#000` literals and the unused `--amber-soft` are gone.
 The wordmark is **Michroma** (`--font-display`, 400, `font-synthesis: none`),
@@ -6021,8 +6021,8 @@ preserved -- the Plymouth theme's rule: the OSOYOO HDMI35 is a scaler panel driv
 at 1280x720 that shrinks the frame back to 480x320, so a full-frame image lands
 1:1), on `var(--bg)`. The logo is now an **inline `<svg id="mark">`** carrying
 splash.svg's gradient and three rhombus paths verbatim, with no `<style>`; the
-`<object>` and its `load` event are gone (`splash.svg` stays in the kit until
-US-870-c). **Phase 0b ends on three events, none a clock:** `DOMContentLoaded`,
+`<object>` and its `load` event are gone (`splash.svg` itself was retired by
+US-870-c; `index.html` is now the logo's home). **Phase 0b ends on three events, none a clock:** `DOMContentLoaded`,
 the warning's `decode()` settling (resolved, or rejected on an image error -- a
 visual degrade, never a stall) and `document.fonts.ready` (the wordmark is
 Michroma). Then `body.logo-up` fades the warning out and the logo in, both over
@@ -6161,6 +6161,46 @@ checklist's slot (y 194-282, four 22 px rows); the four colour tokens join the
 `CeremonyProgress`; the probe reports `progress` / `progressLog`) and
 `tests/ui/test_splash_token_ssot.py`.
 
+**The shutdown logo is inline and event-driven; both SVG timelines are retired
+(US-870-c, Sprint 114 / V0.30; spec §2 Close-out, Iris C-Iris-3 + the
+2026-10-25 dim-down ruling, Atlas G2 / C-Atlas-6 / C-Atlas-8).** `shutdown.html`'s
+`<object data="splash-shutdown.svg">` is replaced by an inline `<svg id="mark">`
+whose markup is `index.html`'s logo byte for byte (no `<style>`), and the page
+loads `motion-gate.js` before `shutdown-state-poll.js`. The motion is body
+classes on `#logo` in `styles.css`, each set on the previous part's **own
+event**: on paint, `body.spin-rev` -- the one `@keyframes spin` reversed, one
+rotation `var(--t-spin)`, `infinite`, at `var(--bright-hi)` -- loops for as
+long as the bar is under 100 % (a monthly hold that stands the bar still just
+keeps it looping). The 100 % read waits for the next `animationiteration`, so
+the turn in progress finishes; then `body.spin-dim` (one reverse rotation at
+`var(--bright-low)`); its `animationend` starts `body.dim-down`
+(`@keyframes dim-down { from { filter: brightness(var(--bright-low)) } to {
+filter: brightness(0) } }`, ONE linear run of `var(--t-fade)`, fill-mode both,
+no transform: the logo holds the dim spin's end pose -- not the old SVG light
+ramp reversed, which flashed up, and not the rhombus collapse, the retired
+bloom); its `animationend` starts the stage's opacity fade (`var(--t-fade)`),
+whose `transitionend` sets `body.black`. The page then stays black and dies
+with the power -- it never closes itself. Every wait first asks
+`motionGate.willFire`; `false` (durations 0, styles missing) advances that
+part at once on the read that started it. Reduced motion runs no animation
+and goes black at once on the 100 % read. `cancelled` at any point exits with
+no close-out. No `animation-delay` exists anywhere and no timer is added: the
+250 ms poll is the only `setTimeout` (C-Atlas-8). The shutdown `#mark` is
+visible on `body.animating` (a class only the shutdown poller sets), so the
+boot page's phase-0b opacity-0 rule and its cross-fade are unchanged.
+**Retired:** `src/pi/ui/splash/splash.svg`, `splash-shutdown.svg` and the
+dev-only `preview.html` (it previewed only those two); both leave the
+`step_install_splash_assets` manifest and the `install.sh` loop, so
+`refresh_asset_dir` prunes the stale `/opt/splash` copies. The six motion
+tokens now live only in `tokens.css` (RULED GUARD CHANGE, Atlas 2026-10-25:
+`test_tokensCss_declaresEachMotionTokenOnce`). *Guarded by*
+`tests/ui/test_shutdown_spins.py` (the chain, the negatives, the styles, the
+logo == index.html pin), `tests/ui/test_shutdown_splash_render.py` (the mark
+is visible on paint, no logo keyframe touches opacity, the close-out only
+dims), `tests/ui/test_render_regression.py` (the logo geometry, on
+`index.html`) and `tests/deploy/test_asset_refresh.py` (the SVGs are neither
+vouched nor kept).
+
 **Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
 defect).** The sole production writer of `shutdown-state` is the powerwatch
 `ShutdownSequencer` grace path (`pi.power.power_watch.__main__` →
@@ -6222,8 +6262,9 @@ idempotent):
    `/opt/splash/version.txt` (the bare SemVer string the kiosk version chip
    fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?` fallback). The
    manifest covers **both** surfaces — boot (`index.html`, `styles.css`,
-   `boot-state-poll.js`, `splash.svg`) *and* closeout (`shutdown.html`,
-   `shutdown-state-poll.js`, `splash-shutdown.svg`) — force-refreshed and
+   `motion-gate.js`, `boot-state-poll.js`) *and* closeout (`shutdown.html`,
+   `shutdown-state-poll.js`) plus `OFL.txt` (the retired `splash.svg` /
+   `splash-shutdown.svg` are pruned, US-870-c) — force-refreshed and
    byte-verified (US-498; see the `/opt` asset-ownership contract below).
    **A-9:** a missing splash kit **WARNs and the deploy continues** — it
    never blocks.
@@ -6239,7 +6280,10 @@ US-394.
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
 > documented in **§10.6.1** (landed by US-394, same sprint).
 
-**Closeout (shutdown) surface — the reversal contract (US-498).** The closeout
+**Closeout (shutdown) surface — the reversal contract (US-498; HISTORY: both SVG
+timelines were retired by US-870-c, and the close-out is now the page-driven
+chain described under "The shutdown logo is inline and event-driven"; the
+trap below is kept because it is why the logo has no opacity keyframe).** The closeout
 splash is the boot splash **played backwards**: one kit, one set of keyframes,
 `splash-shutdown.svg` differing from `splash.svg` only by a trailing override
 block. Two things have to be reversed there, and shipping only the first is a
@@ -7876,7 +7920,7 @@ exact mirror of what the repo vouches for:
 
 | Dir | Manifest (installed + owned) | Keep-list (another installer owns) |
 |---|---|---|
-| `/opt/splash` | `index.html`, `styles.css`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `splash.svg`, `splash-shutdown.svg`, `OFL.txt` (US-869-e) | `version.txt` (generated by the same step, after); `warning.png` (US-785: copied from `deploy/plymouth/eclipse/` by the same step, after, cmp-verified) |
+| `/opt/splash` | `index.html`, `styles.css`, `motion-gate.js`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `OFL.txt` (US-869-e); `splash.svg` / `splash-shutdown.svg` retired and pruned (US-870-c) | `version.txt` (generated by the same step, after); `warning.png` (US-785: copied from `deploy/plymouth/eclipse/` by the same step, after, cmp-verified) |
 | `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js` | *(none -- single installer)* |
 
 `/opt/<kit>` is **deploy-owned, not hand-edited**: anything dropped there

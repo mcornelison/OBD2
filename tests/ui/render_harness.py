@@ -984,6 +984,11 @@ def runShutdownSplash(
     markupPath: str | None = None,
     rounds: int = 80,
     emitIntervalMs: int = 500,
+    computedStyles: dict[str, Any] | None = None,
+    reducedMotion: bool = False,
+    dispatchLogoEvents: bool = True,
+    logoEventMs: int | None = None,
+    dispatchTransitionEnd: bool = True,
 ) -> dict[str, Any]:
     """Run the SHIPPED shutdown-state-poll.js against a shutdown-state sequence.
 
@@ -1006,6 +1011,16 @@ def runShutdownSplash(
     three, in order, with ``atMs`` / ``poll``). US-883-c: ``progress`` and
     each log entry also carry ``kept`` ({left, width}: #bar-kept's inline
     style, the amber rows-kept stretch; nulls until drawn).
+
+    US-870-c (the logo): ``computedStyles`` is what the browser computes
+    ({elementId: {...}}, with ``logo`` keyed by the logo class -- spin-rev /
+    spin-dim / dim-down); None computes 0s / none everywhere, so no event
+    will fire and the close-out advances on the reads alone. The probe
+    dispatches the logo's events one run (``logoEventMs``, else the computed
+    duration) apart unless ``dispatchLogoEvents`` is False, and the stage's
+    transitionend unless ``dispatchTransitionEnd`` is False. Adds
+    ``logoLog``, ``animationEvents``, ``fadeStartedAtMs``,
+    ``transitionEndDispatched``, ``blackAtMs`` and ``stageOpacity``.
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
     return _runProbe(
@@ -1017,6 +1032,11 @@ def runShutdownSplash(
             "shutdownStates": shutdownStates,
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
+            "computedStyles": computedStyles or {},
+            "reducedMotion": reducedMotion,
+            "dispatchLogoEvents": dispatchLogoEvents,
+            "logoEventMs": logoEventMs,
+            "dispatchTransitionEnd": dispatchTransitionEnd,
         },
     )
 

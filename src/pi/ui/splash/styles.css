@@ -19,6 +19,9 @@
  *          --accent and --text-primary join the mirror.
  * Changed: 2026-10-25 -- US-883-c: #bar-kept, the rows a sync that ended kept,
  *          drawn --amber-warn up to the 75 % marker.
+ * Changed: 2026-10-25 -- US-870-c: the shutdown logo -- reverse spin, dim spin,
+ *          dim-down -- as body classes on #logo; splash.svg and
+ *          splash-shutdown.svg are retired, so these rules are the only motion.
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -65,7 +68,7 @@
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
   --font-display: "Michroma", "Arial Narrow", system-ui, sans-serif;
 
-  /* Motion: splash.svg's timings, promoted into tokens.css (C-Atlas-3). */
+  /* Motion: the retired splash.svg's timings, promoted into tokens.css (C-Atlas-3). */
   --t-spin:         3.0s;
   --t-fade:         0.5s;
   --bright-low:     0.25;
@@ -250,7 +253,7 @@ body.degraded #amber-ring {
 body.degraded #version-chip { color: var(--amber-warn); }
 
 /* --- The spins (US-869-f, spec §1.1) ----------------------------------------
-   splash.svg's rotation, page-driven: boot-state-poll.js sets body.spin-N on the
+   the retired splash.svg's rotation, page-driven: boot-state-poll.js sets body.spin-N on the
    previous step's own event (animationend / animationiteration), so spin 2 can
    loop for as long as the boot takes and spin 3 starts on a turn boundary. One
    rotation is var(--t-spin), declared here and nowhere in JS. */
@@ -272,12 +275,42 @@ body.spin-3 #logo {
   filter: brightness(var(--bright-max));
 }
 
-/* splash.svg's keyframes, verbatim: thirds, ease-in-out, to -360deg. */
+/* The retired splash.svg's keyframes, verbatim: thirds, ease-in-out, to -360deg. */
 @keyframes spin {
   0%     { transform: rotate(0deg);    animation-timing-function: ease-in-out; }
   33.33% { transform: rotate(-120deg); animation-timing-function: ease-in-out; }
   66.67% { transform: rotate(-240deg); animation-timing-function: ease-in-out; }
   100%   { transform: rotate(-360deg); }
+}
+
+/* --- The shutdown logo (US-870-c, spec §2 Close-out) ------------------------
+   the retired splash-shutdown.svg's fixed timeline, page-driven: shutdown-state-poll.js sets
+   each class on the previous part's own event. The reverse spin loops while the
+   bar is under 100 %; the 100 % read waits for its next animationiteration, so
+   the dim spin starts on a turn boundary; the dim spin's animationend starts the
+   dim-down, whose animationend starts the stage fade (var(--t-fade), inline).
+   No animation-delay: nothing here is placed on a clock. The shutdown page has
+   no WARNING to cross-fade from, so its logo is up the moment the stage paints. */
+body.animating #mark { opacity: 1; transition: none; }
+body.spin-rev #logo {
+  animation: spin var(--t-spin) linear infinite reverse both;
+  filter: brightness(var(--bright-hi));
+}
+body.spin-dim #logo {
+  animation: spin var(--t-spin) linear 1 reverse both;
+  filter: brightness(var(--bright-low));
+}
+/* The dim-down (Iris 2026-10-25; spec §2 Close-out): ONE linear run of
+   var(--t-fade), --bright-low to black. No transform: the logo holds the dim
+   spin's end pose. NOT the old SVG light ramp reversed (it flashes up) and NOT
+   the rhombus collapse (the bloom stays retired, C-Iris-3). */
+body.dim-down #logo {
+  animation: dim-down var(--t-fade) linear 1 both;
+  filter: brightness(var(--bright-low));
+}
+@keyframes dim-down {
+  from { filter: brightness(var(--bright-low)); }
+  to   { filter: brightness(0); }
 }
 
 /* Motion FREEZE: visual silence is the alarm. The logo is inline now, so this

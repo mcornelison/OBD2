@@ -41,16 +41,30 @@
  *          amber rows-kept stretch; nulls until drawn), and a change of it is
  *          a change of the frame.
  *
+ *          US-870-c (the logo): `computedStyles.logo` is keyed by the logo
+ *          class ({"spin-rev": {...}, "spin-dim": {...}, "dim-down": {...}}),
+ *          what #logo computes while that body class is on; with none on, or
+ *          under `reducedMotion`, it computes none / 0s. The probe dispatches
+ *          #logo's animationiteration (reverse spin, per rotation) and
+ *          animationend (dim spin, dim-down) one run apart, and the stage's
+ *          transitionend once its opacity is 0. `logoLog` is every part the
+ *          page started ({part, atMs, live}); `blackAtMs` is when body.black
+ *          went on.
+ *
  *          Invoked as:  node shutdown_probe.js <inputJsonPath>
  *          Input:  {pollJsPath, motionGatePath, tree, shutdownStates, rounds,
- *                   emitIntervalMs, computedStyles, reducedMotion}
+ *                   emitIntervalMs, computedStyles, reducedMotion,
+ *                   dispatchLogoEvents, logoEventMs, dispatchTransitionEnd}
  *          Output: {closed, closedAtMs, terminalCause, terminalRecord,
  *                   consoleLines, painted, paintedOnPoll, stageVisibility,
- *                   polls, elapsedMs, progress, progressLog, tree}
+ *                   polls, elapsedMs, progress, progressLog, logoLog,
+ *                   animationEvents, fadeStartedAtMs, transitionEndDispatched,
+ *                   blackAtMs, stageOpacity, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-08-10 -- Sprint 73 US-549 (I-043 observable terminal reason)
  * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress + progressLog)
  * Updated: 2026-10-25 -- Sprint 114 US-883-c (progress.kept)
+ * Updated: 2026-10-25 -- Sprint 114 US-870-c (the logo's events)
  * ==========================================================================*/
 "use strict";
 
@@ -98,6 +112,15 @@ async function main() {
   };
   global.console = { log: capture, error: capture, warn: capture, info: capture };
 
+  // US-870-c: the logo part the page is in, read off the body class.
+  const LOGO_CLASSES = ["spin-rev", "spin-dim", "dim-down"];
+  function currentLogoClass() {
+    for (let i = 0; i < LOGO_CLASSES.length; i++) {
+      if (doc.body.classList.contains(LOGO_CLASSES[i])) return LOGO_CLASSES[i];
+    }
+    return null;
+  }
+
   const win = {
     SPLASH_TOKEN: "test-token",
     performance: {
@@ -112,7 +135,15 @@ async function main() {
     addEventListener: function () {},
     getComputedStyle: function (el) {
       const id = el && el.getAttribute ? el.getAttribute("id") : null;
-      const entry = (id && computedStyles[id]) || {};
+      let entry = (id && computedStyles[id]) || {};
+      // US-870-c: styles.css animates #logo only under a logo class, and
+      // `computedStyles.logo` is keyed by that class; the reduced-motion block
+      // turns every animation and transition off.
+      if (id === "logo") {
+        const cls = currentLogoClass();
+        entry = cls && entry[cls] ? entry[cls] : {};
+      }
+      if (input.reducedMotion) entry = {};
       return {
         transitionDuration: entry.transitionDuration || "0s",
         animationName: entry.animationName || "none",
@@ -207,16 +238,90 @@ async function main() {
     });
   };
 
+  // US-870-c: the browser's half of the logo. A part is a new run each time the
+  // body's logo class changes; while it is live its events fall due one run
+  // (`logoEventMs`, else the computed animationDuration) apart from its start:
+  // one `animationiteration` per rotation for the looping reverse spin, one
+  // `animationend` for the dim spin and the dim-down -- unless
+  // `dispatchLogoEvents` is false. Once the stage's opacity is 0 the stage's
+  // `transitionend` follows -- unless `dispatchTransitionEnd` is false.
+  const dispatchLogoEvents = input.dispatchLogoEvents !== false;
+  const dispatchTransitionEnd = input.dispatchTransitionEnd !== false;
+  const logoLog = [];
+  const animationEvents = [];
+  let logoRun = null;
+  let transitionEndDispatched = false;
+  let fadeStartedAtMs = null;
+  let blackAtMs = null;
+  function logoLive() {
+    const logo = doc.getElementById("logo");
+    if (!logo) return false;
+    const cs = win.getComputedStyle(logo);
+    return cs.animationName !== "none" && parseFloat(cs.animationDuration) > 0;
+  }
+  function runMs() {
+    if (typeof input.logoEventMs === "number") return input.logoEventMs;
+    const logo = doc.getElementById("logo");
+    const raw = logo ? win.getComputedStyle(logo).animationDuration : "0s";
+    const n = parseFloat(raw);
+    return /ms$/.test(raw) ? n : n * 1000;
+  }
+  // Every part the page STARTS is logged when its class goes on -- including
+  // one that advances synchronously because no event will fire.
+  const bodyClassAdd = doc.body.classList.add.bind(doc.body.classList);
+  doc.body.classList.add = function (name) {
+    bodyClassAdd(name);
+    if (LOGO_CLASSES.indexOf(name) !== -1) {
+      logoRun = { part: name, startedAtMs: virtualMs, live: logoLive(), events: 0, done: false };
+      logoLog.push({ part: name, atMs: virtualMs, live: logoRun.live });
+    }
+    if (name === "black" && blackAtMs === null) blackAtMs = virtualMs;
+  };
+  function maybeAdvanceLogo() {
+    const cls = currentLogoClass();
+    if (!cls || !logoRun || logoRun.part !== cls) return false;
+    if (!dispatchLogoEvents || !logoRun.live || logoRun.done) return false;
+    const due = logoRun.startedAtMs + (logoRun.events + 1) * runMs();
+    if (virtualMs < due) return false;
+    const logo = doc.getElementById("logo");
+    const type = cls === "spin-rev" ? "animationiteration" : "animationend";
+    const name = cls === "dim-down" ? "dim-down" : "spin";
+    logoRun.events += 1;
+    if (type === "animationend") logoRun.done = true;
+    animationEvents.push({ type: type, part: cls, atMs: virtualMs });
+    logo.dispatchAnimationEvent(type, name, (logoRun.events * runMs()) / 1000);
+    return true;
+  }
+  function maybeEndFade() {
+    const stage = doc.getElementById("splash-stage");
+    if (!stage || stage.style.opacity !== "0") return;
+    if (fadeStartedAtMs === null) fadeStartedAtMs = virtualMs;
+    if (!dispatchTransitionEnd || transitionEndDispatched) return;
+    transitionEndDispatched = true;
+    stage.dispatch("transitionend", { target: stage, propertyName: "opacity" });
+  }
+  async function settle() {
+    await dom.drainMicrotasks();
+    // Bounded: each pass lets at most one logo event land and the page answer
+    // it, so a zero-length run cascades dim spin -> dim-down -> fade at once.
+    for (let pass = 0; pass < 16; pass++) {
+      const advanced = maybeAdvanceLogo();
+      maybeEndFade();
+      await dom.drainMicrotasks();
+      if (!advanced && pass > 0) break;
+    }
+  }
+
   noteProgress();
   for (let i = 0; i < (input.rounds || 80); i++) {
-    await dom.drainMicrotasks();
+    await settle();
     notePaint();
     noteProgress();
     clock.flushRound();
     virtualMs += POLL_MS;
     if (closed) break;
   }
-  await dom.drainMicrotasks();
+  await settle();
   notePaint();
   noteProgress();
 
@@ -237,6 +342,12 @@ async function main() {
       elapsedMs: virtualMs,
       progress: readProgress(),
       progressLog: progressLog,
+      logoLog: logoLog,
+      animationEvents: animationEvents,
+      fadeStartedAtMs: fadeStartedAtMs,
+      transitionEndDispatched: transitionEndDispatched,
+      blackAtMs: blackAtMs,
+      stageOpacity: stage && stage.style ? stage.style.opacity || null : null,
       tree: dom.serialize(doc.body),
     })
   );

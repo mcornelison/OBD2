@@ -30,6 +30,8 @@
 #               |              | the vouched splash manifest too.
 # 2026-10-24    | Ralph (Rex)  | US-785: MOVED PIN -- keep == {version.txt,
 #               |              | warning.png}; the dry run prints the PNG copy.
+# 2026-10-25    | Ralph (Rex)  | US-870-c: MOVED PIN -- the retired SVGs leave
+#               |              | SHUTDOWN_SURFACE and the manifest (pruned).
 # ================================================================================
 ################################################################################
 
@@ -274,7 +276,8 @@ def splashRefreshArgs(splashDryRunStdout: str) -> tuple[set[str], set[str]]:
     return set(match.group(1).split()), set(match.group(2).split())
 
 
-SHUTDOWN_SURFACE = ("shutdown.html", "shutdown-state-poll.js", "splash-shutdown.svg")
+# MOVED PIN (US-870-c): splash-shutdown.svg is retired (the logo is inline).
+SHUTDOWN_SURFACE = ("shutdown.html", "shutdown-state-poll.js")
 
 
 def test_deployPiSh_splashStep_forceRefreshesTheShutdownSurface(splashRefreshArgs):
@@ -294,6 +297,19 @@ def test_deployPiSh_splashStep_forceRefreshesTheShutdownSurface(splashRefreshArg
     for asset in SHUTDOWN_SURFACE:
         assert asset in manifest, f"{asset} is not force-refreshed by the deploy"
         assert asset not in keep, f"{asset} is keep-listed -- it will never be verified"
+
+
+def test_deployPiSh_splashStep_retiredSvgsAreNeitherVouchedNorKept_us870c(splashRefreshArgs):
+    """
+    Given: US-870-c retired splash.svg and splash-shutdown.svg (both pages
+           inline the logo)
+    Then: neither is in the dry run's manifest or keep-list, so refresh_asset_dir
+          PRUNES the stale /opt/splash copies instead of verifying or keeping them
+    """
+    manifest, keep = splashRefreshArgs
+    for retired in ("splash.svg", "splash-shutdown.svg"):
+        assert retired not in manifest, f"{retired} is still installed by the deploy"
+        assert retired not in keep, f"{retired} is keep-listed -- it would never be pruned"
 
 
 def test_deployPiSh_splashStep_vouchesForMotionGate_us869d(splashRefreshArgs):
