@@ -159,6 +159,19 @@
   --dots-h:         16px;      /* #dots height -- read by #carousel bottom    */
   --card-pad-y:      8px;      /* .card vertical padding                      */
 
+  /* --- Motion (US-869-e, Atlas C-Atlas-3) ----------------------------------
+     The F-103 splash animation's timings and brightness steps, PROMOTED from
+     splash.svg's own <style> block (:4-15) at their shipped values. The SVG
+     keeps its copy -- an <object> document cannot read the page's custom
+     properties -- and splash/styles.css mirrors these by hand. Pinned by
+     tests/ui/test_splash_token_ssot.py. */
+  --t-spin:         3.0s;      /* one logo rotation                           */
+  --t-fade:         0.5s;      /* the hand-off fade                           */
+  --bright-low:     0.25;      /* logo brightness steps                       */
+  --bright-mid:     0.50;
+  --bright-hi:      0.75;
+  --bright-max:     1.00;
+
   /* --- Base surfaces ------------------------------------------------------ */
   /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
      dashboard.css:27-28 literals at their shipped values (#000000 / #111111).

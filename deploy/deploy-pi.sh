@@ -2067,7 +2067,13 @@ step_install_splash_assets() {
     echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
     local assetSrc="$REPO_ROOT/src/pi/ui/splash"
     local installDir="/opt/splash"
-    local assets="index.html styles.css motion-gate.js boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
+    # OFL.txt (US-869-e, Atlas 2026-10-24): styles.css now carries the Michroma
+    # face inline, and SIL OFL 1.1 requires the licence to travel with every
+    # copy of the font -- the same rule as the dashboard kit's OFL.txt. It is
+    # VOUCHED here (never keep-listed) so refresh_asset_dir installs and
+    # verifies it instead of pruning it. Served first from /opt/splash
+    # (assets-dir order); byte-equal to the dashboard's copy.
+    local assets="index.html styles.css motion-gate.js boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg OFL.txt"
     local keepAssets="version.txt"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2

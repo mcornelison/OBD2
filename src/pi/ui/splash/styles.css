@@ -4,13 +4,56 @@
  *          Externalized from index.html so the HTML overlay bindings stay clean.
  * Author:  Ralph Agent (Rex)
  * Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+ * Changed: 2026-10-24 -- US-869-e: every value is a token mirrored from
+ *          src/pi/ui/tokens.css; the wordmark is Michroma (Atlas C-Atlas-3).
  * ==========================================================================*/
 
+/* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
+   Michroma Regular 400, the 38-glyph subset (A-Z / 0-9 / space / hyphen) Iris
+   cut, inlined as a data: URI -- the SAME payload as tokens.css and
+   dashboard.css, byte for byte. The kiosk is offline in the car, so the face
+   travels inside this sheet and is never fetched.
+
+   Licence: SIL Open Font License 1.1 -- src/pi/ui/splash/OFL.txt ships with
+   this kit (the face travels inside the stylesheet, so the licence travels
+   with the stylesheet), byte-equal to src/pi/ui/dashboard/OFL.txt.
+
+   Weight 400 ONLY: the rule that binds --font-display asks for 400 and sets
+   font-synthesis: none, so the single-weight subset is never faux-bolded.
+   Pinned by tests/ui/test_splash_token_ssot.py. */
+@font-face {
+  font-family: "Michroma";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(data:font/woff2;base64,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) format("woff2");
+}
+
+/* --- Token MIRROR -------------------------------------------------------------
+   tokens.css is a document, not an import (src/pi/ui/README.md): index.html and
+   shutdown.html link ONLY this sheet. Every value below is tokens.css's, at
+   tokens.css's value, and tests/ui/test_splash_token_ssot.py pins each one --
+   change a token in tokens.css and not here and that suite goes red. Outside
+   this block every colour, font-size and font-family is a var(--...). */
 :root {
-  --text-secondary: #888888;   /* wordmark */
-  --text-tertiary:  #666666;   /* version chip */
+  --bg:             #0A0A0A;   /* matte black field                           */
+  --text-secondary: #A8A296;   /* wordmark                                    */
+  --text-tertiary:  #5F5A52;   /* version chip                                */
   --amber-warn:     #FFC400;   /* degraded escalation; project-wide warn token */
-  --amber-soft:     #FFC40033; /* 20% alpha amber for soft backdrops */
+
+  --fs-label:       20px;      /* wordmark, degraded message                  */
+  --fs-meta:        15px;      /* version chip                                */
+
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --font-display: "Michroma", "Arial Narrow", system-ui, sans-serif;
+
+  /* Motion: splash.svg's timings, promoted into tokens.css (C-Atlas-3). */
+  --t-spin:         3.0s;
+  --t-fade:         0.5s;
+  --bright-low:     0.25;
+  --bright-mid:     0.50;
+  --bright-hi:      0.75;
+  --bright-max:     1.00;
   /* Future tuning-instrument reservations (Spool S-2; NOT used in splash v1):
      --critical-red and --neutral-blue are declared in the spec only -- the
      splash never renders them, and brand reds are never reused as critical red. */
@@ -18,37 +61,38 @@
 
 html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
-  background: #000; overflow: hidden; cursor: none;
+  background: var(--bg); overflow: hidden; cursor: none;
 }
 
 #splash-stage {
-  position: relative; width: 100vw; height: 100vh; background: #000;
+  position: relative; width: 100vw; height: 100vh; background: var(--bg);
 }
 
 #mark {
   width: 100vw; height: 100vh; object-fit: contain;
-  background: #000; border: 0; display: block;
+  background: var(--bg); border: 0; display: block;
 }
 
-/* Single font family: system mono only -- no web fonts, no CDN dependency. */
+/* Data text is system mono; the brand face is the wordmark's alone. */
 .overlay {
   position: absolute; left: 0; right: 0; text-align: center;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   pointer-events: none;
 }
 
 #wordmark {
-  top: 18px; font-size: 14px; font-weight: 500;
+  top: 18px; font-family: var(--font-display); font-size: var(--fs-label);
+  font-weight: 400; font-synthesis: none;
   color: var(--text-secondary); letter-spacing: 0.12em; text-transform: uppercase;
 }
 
 #version-chip {
-  bottom: 12px; font-size: 10px; font-weight: 400;
+  bottom: 12px; font-size: var(--fs-meta); font-weight: 400;
   color: var(--text-tertiary); letter-spacing: 0.06em;
 }
 
 #degraded-msg {
-  top: 200px; font-size: 11px; font-weight: 500;
+  top: 200px; font-size: var(--fs-label); font-weight: 500;
   color: var(--amber-warn); letter-spacing: 0.06em;
 }
 

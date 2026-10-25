@@ -40,6 +40,8 @@
 #               |              | `xset q`. The socket check runs with no fake sleep.
 # 2026-10-24    | Rex (US-869-d) | New: motion-gate.js (Atlas G2) ships in the kit,
 #               |              | is not gitignored, and both installers carry it.
+# 2026-10-24    | Rex (US-869-e) | New: OFL.txt (the Michroma licence) ships in the
+#               |              | kit, is not gitignored, and both installers carry it.
 # ================================================================================
 ################################################################################
 
@@ -131,6 +133,28 @@ def test_motionGateJs_presentAndShippedByBothInstallers_us869d():
         check=False,
     )
     assert ignored.returncode == 1, "motion-gate.js is gitignored -- it would never ship"
+
+
+def test_oflLicenceShipsWithTheKitAndBothInstallers_us869e():
+    """OFL.txt reaches /opt/splash beside the stylesheet that carries the face.
+
+    styles.css inlines Michroma (US-869-e), and SIL OFL 1.1 requires the licence
+    to accompany every copy of the font -- one pattern with the dashboard kit.
+    """
+    assert (KIT_DIR / "OFL.txt").read_bytes() == (DASHBOARD_DIR / "OFL.txt").read_bytes()
+    loop = re.search(
+        r"for asset in (.*?); do", INSTALL_SH.read_text(encoding="utf-8"), flags=re.DOTALL
+    )
+    assert loop and "OFL.txt" in loop.group(1).replace("\\\n", " ").split()
+    deploySh = (REPO_ROOT / "deploy" / "deploy-pi.sh").read_text(encoding="utf-8")
+    assert re.search(r'local assets="[^"]*splash-shutdown\.svg[^"]*OFL\.txt', deploySh)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", str(KIT_DIR / "OFL.txt")],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert ignored.returncode == 1, "splash OFL.txt is gitignored -- it would never ship"
 
 
 # ---------------------------------------------------------------------------

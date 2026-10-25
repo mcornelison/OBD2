@@ -272,7 +272,8 @@ install_unit() {
 echo "==> Installing splash assets to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 for asset in splash.svg splash-shutdown.svg index.html shutdown.html \
-             motion-gate.js boot-state-poll.js shutdown-state-poll.js styles.css; do
+             motion-gate.js boot-state-poll.js shutdown-state-poll.js styles.css \
+             OFL.txt; do
   if [[ -f "$SCRIPT_DIR/$asset" ]]; then
     install -m 0644 "$SCRIPT_DIR/$asset" "$INSTALL_DIR/$asset"
   else

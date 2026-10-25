@@ -26,6 +26,8 @@
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-495 /opt force-refresh guard.
 # 2026-10-24    | Ralph (Rex)  | US-869-d: motion-gate.js is in the vouched
 #               |              | splash manifest, so the refresh never prunes it.
+# 2026-10-24    | Ralph (Rex)  | US-869-e: OFL.txt (the Michroma licence) is in
+#               |              | the vouched splash manifest too.
 # ================================================================================
 ################################################################################
 
@@ -294,6 +296,17 @@ def test_deployPiSh_splashStep_vouchesForMotionGate_us869d(splashRefreshArgs):
     manifest, keep = splashRefreshArgs
     assert "motion-gate.js" in manifest
     assert "motion-gate.js" not in keep
+
+
+def test_deployPiSh_splashStep_vouchesForTheFontLicence_us869e(splashRefreshArgs):
+    """
+    Given: styles.css carries the Michroma face inline (US-869-e)
+    Then: the refresh OWNS OFL.txt -- SIL OFL 1.1 travels with every copy of the
+          font, and a keep-listed or unlisted licence is never verified or is pruned
+    """
+    manifest, keep = splashRefreshArgs
+    assert "OFL.txt" in manifest
+    assert "OFL.txt" not in keep
 
 
 def test_deployPiSh_splashStep_accountsForEveryAssetTheKitShips(splashRefreshArgs):
