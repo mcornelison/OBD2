@@ -59,6 +59,10 @@
 #               |              | minLevel 0.75 and for a config without one).
 # 2026-10-23    | Ralph (Rex)  | US-895-b: settings-lux-cross-rejected (a stale
 #               |              | band stub; the recorded real cross-key 400).
+# 2026-10-24    | Rex (US-869-c)| feedFaults pass through to buildCaptureFeedsState;
+#               |              | ups-gauge-unreadable gains its UPS read_failed
+#               |              | feed; imu-faulted, imu-ups-faulted and
+#               |              | imu-faulted-ecu-down (the `sensor` member).
 # ================================================================================
 ################################################################################
 
@@ -96,6 +100,8 @@ from pi.network.wifi_reader import (  # noqa: E402
 from pi.obdii import gear_derivation as gd  # noqa: E402
 from pi.obdii.capture_health import (  # noqa: E402
     DEFAULT_STALL_SECONDS,
+    FEED_REASON_READ_FAILED,
+    FEED_REASON_SENSOR_ABSENT,
     REASON_NEVER_WRITTEN,
     buildCaptureFeedsState,
     buildCaptureHealthState,
@@ -248,20 +254,25 @@ def _capture(
     light: float | None = 0.9,
     imu: float | None = 0.1,
     ups: float | None = 4.0,
+    feedFaults: dict[str, str] | None = None,
 ) -> dict:
     """Capture-health emit inputs on external power; each feed's last-sample
-    age is given (None = the feed produced nothing this process)."""
+    age is given (None = the feed produced nothing this process). US-869-c:
+    ``feedFaults`` is the emit's feed fault map, stored only when given."""
     samples = {
         name: (_FIRST_UP if age is not None else None, age)
         for name, age in (("obd", obd), ("light", light), ("imu", imu), ("ups", ups))
     }
-    return {
+    inputs = {
         "lastRowSecondsAgo": lastRowSecondsAgo,
         "freshnessReason": freshnessReason,
         "powerSource": "external",
         "stallSeconds": DEFAULT_STALL_SECONDS,
         "feedSamples": samples,
     }
+    if feedFaults is not None:
+        inputs["feedFaults"] = feedFaults
+    return inputs
 
 
 # fixture name -> (description, {state name: inputs}). Capture-health inputs
@@ -532,14 +543,67 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     "ups-gauge-unreadable": (
         "The MAX17048 read failed: battery-health source.ups unavailable "
         "('gauge unreadable') on external power -> UPS '--' plus the typed "
-        "reason, 'on external power', no health or SOC line beside the NA.",
+        "reason, 'on external power', no health or SOC line beside the NA. "
+        "US-869-c: the same read fault is the UPS feed's read_failed -> the "
+        "sensor member 'UPS gauge read failed.', amber on the DATA row only, "
+        "never on the UPS row (Atlas R7).",
         {
             "system-status": _systemInputs(
                 _upChain(), priorShutdown=_priorShutdown(1, "clean_poweroff"),
             ),
+            "capture-health": _capture(
+                0.4, ups=None, feedFaults={"ups": FEED_REASON_READ_FAILED},
+            ),
             "battery-health": _battery(
                 vcellV=None, soc=None, restedVcellV=None,
                 upsAvailable=False, upsUnavailableReason=REASON_UPS_UNREADABLE,
+            ),
+        },
+    ),
+    # --- US-869-c: a faulted feed is ONE `sensor` member (Atlas R1-R8) -----
+    "imu-faulted": (
+        "Recording, every layer up; the IMU is not found (sensor_absent) and "
+        "the light feed has stalled -> two members: capture 'Light feed "
+        "stalled.' and sensor 'IMU sensor not found.' (feeds [imu]); the DATA "
+        "row's stalled part is capture's, its faulted part sensor's.",
+        {
+            "system-status": _systemInputs(_upChain(), driveState="recording", driveId=212),
+            "capture-health": _capture(
+                0.4, light=140.0, imu=None,
+                feedFaults={"imu": FEED_REASON_SENSOR_ABSENT},
+            ),
+        },
+    ),
+    "imu-ups-faulted": (
+        "Recording, every layer up; the IMU is not found and the UPS gauge "
+        "read raised -> ONE sensor member naming both, 'IMU sensor not found. "
+        "UPS gauge read failed.' (feeds [imu, ups]); the UPS row's '--' stays "
+        "neutral (Atlas R7).",
+        {
+            "system-status": _systemInputs(_upChain(), driveState="recording", driveId=212),
+            "capture-health": _capture(
+                0.4, imu=None, ups=None,
+                feedFaults={"imu": FEED_REASON_SENSOR_ABSENT, "ups": FEED_REASON_READ_FAILED},
+            ),
+            "battery-health": _battery(
+                vcellV=None, soc=None, restedVcellV=None,
+                upsAvailable=False, upsUnavailableReason=REASON_UPS_UNREADABLE,
+            ),
+        },
+    ),
+    "imu-faulted-ecu-down": (
+        "Parked, BT and adapter up, the ECU down, no OBD row this process; the "
+        "IMU is not found -> the sensor member is present (UNGATED, Atlas R3) "
+        "and capture is not (gated on the ECU up).",
+        {
+            "system-status": _systemInputs(_link(
+                _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
+                _layer("up", ts=_FIRST_UP, lastOkTs=NOW),
+                _layer("down", lastOkTs=_EARLIER),
+            )),
+            "capture-health": _capture(
+                None, freshnessReason=REASON_NEVER_WRITTEN, obd=None, imu=None,
+                feedFaults={"imu": FEED_REASON_SENSOR_ABSENT},
             ),
         },
     ),
@@ -809,6 +873,7 @@ def _captureHealth(inputs: dict[str, Any]) -> dict[str, Any]:
             feedSamples=samples,
             powerSource=inputs["powerSource"],
             stallSeconds=inputs["stallSeconds"],
+            feedFaults=inputs.get("feedFaults"),
         )
     return payload
 

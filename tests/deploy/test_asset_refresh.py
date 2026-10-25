@@ -24,6 +24,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-495 /opt force-refresh guard.
+# 2026-10-24    | Ralph (Rex)  | US-869-d: motion-gate.js is in the vouched
+#               |              | splash manifest, so the refresh never prunes it.
+# 2026-10-24    | Ralph (Rex)  | US-869-e: OFL.txt (the Michroma licence) is in
+#               |              | the vouched splash manifest too.
+# 2026-10-24    | Ralph (Rex)  | US-785: MOVED PIN -- keep == {version.txt,
+#               |              | warning.png}; the dry run prints the PNG copy.
+# 2026-10-25    | Ralph (Rex)  | US-870-c: MOVED PIN -- the retired SVGs leave
+#               |              | SHUTDOWN_SURFACE and the manifest (pruned).
 # ================================================================================
 ################################################################################
 
@@ -239,14 +247,8 @@ def test_deployPiSh_assetStep_callsTheRefreshGuard(step, kitDir):
 
 
 @pytest.fixture(scope="module")
-def splashRefreshArgs() -> tuple[set[str], set[str]]:
-    """The manifest + keep-list the splash step ACTUALLY passes, from a dry run.
-
-    Drives the shipped `deploy-pi.sh --dry-run` (offline, no SSH) and reads the
-    resolved arguments off its own preview line, rather than re-implementing the
-    step's variable expansion in the test. What the deploy says it would do is
-    the thing under test.
-    """
+def splashDryRunStdout() -> str:
+    """The shipped `deploy-pi.sh --dry-run` output (offline, no SSH), run once."""
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "deploy" / "deploy-pi.sh"), "--dry-run"],
         capture_output=True,
@@ -255,14 +257,27 @@ def splashRefreshArgs() -> tuple[set[str], set[str]]:
         timeout=180,
     )
     assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.fixture(scope="module")
+def splashRefreshArgs(splashDryRunStdout: str) -> tuple[set[str], set[str]]:
+    """The manifest + keep-list the splash step ACTUALLY passes, from a dry run.
+
+    Drives the shipped `deploy-pi.sh --dry-run` (offline, no SSH) and reads the
+    resolved arguments off its own preview line, rather than re-implementing the
+    step's variable expansion in the test. What the deploy says it would do is
+    the thing under test.
+    """
     match = re.search(
-        r"refresh_asset_dir \S*ui/splash \S+ '([^']*)' '([^']*)'", result.stdout
+        r"refresh_asset_dir \S*ui/splash \S+ '([^']*)' '([^']*)'", splashDryRunStdout
     )
     assert match, "no splash refresh_asset_dir preview in the dry-run output"
     return set(match.group(1).split()), set(match.group(2).split())
 
 
-SHUTDOWN_SURFACE = ("shutdown.html", "shutdown-state-poll.js", "splash-shutdown.svg")
+# MOVED PIN (US-870-c): splash-shutdown.svg is retired (the logo is inline).
+SHUTDOWN_SURFACE = ("shutdown.html", "shutdown-state-poll.js")
 
 
 def test_deployPiSh_splashStep_forceRefreshesTheShutdownSurface(splashRefreshArgs):
@@ -282,6 +297,40 @@ def test_deployPiSh_splashStep_forceRefreshesTheShutdownSurface(splashRefreshArg
     for asset in SHUTDOWN_SURFACE:
         assert asset in manifest, f"{asset} is not force-refreshed by the deploy"
         assert asset not in keep, f"{asset} is keep-listed -- it will never be verified"
+
+
+def test_deployPiSh_splashStep_retiredSvgsAreNeitherVouchedNorKept_us870c(splashRefreshArgs):
+    """
+    Given: US-870-c retired splash.svg and splash-shutdown.svg (both pages
+           inline the logo)
+    Then: neither is in the dry run's manifest or keep-list, so refresh_asset_dir
+          PRUNES the stale /opt/splash copies instead of verifying or keeping them
+    """
+    manifest, keep = splashRefreshArgs
+    for retired in ("splash.svg", "splash-shutdown.svg"):
+        assert retired not in manifest, f"{retired} is still installed by the deploy"
+        assert retired not in keep, f"{retired} is keep-listed -- it would never be pruned"
+
+
+def test_deployPiSh_splashStep_vouchesForMotionGate_us869d(splashRefreshArgs):
+    """
+    Given: index.html loads motion-gate.js before the boot poller (US-869-d)
+    Then: the deploy refresh OWNS it -- installed, never pruned, byte-verified
+    """
+    manifest, keep = splashRefreshArgs
+    assert "motion-gate.js" in manifest
+    assert "motion-gate.js" not in keep
+
+
+def test_deployPiSh_splashStep_vouchesForTheFontLicence_us869e(splashRefreshArgs):
+    """
+    Given: styles.css carries the Michroma face inline (US-869-e)
+    Then: the refresh OWNS OFL.txt -- SIL OFL 1.1 travels with every copy of the
+          font, and a keep-listed or unlisted licence is never verified or is pruned
+    """
+    manifest, keep = splashRefreshArgs
+    assert "OFL.txt" in manifest
+    assert "OFL.txt" not in keep
 
 
 def test_deployPiSh_splashStep_accountsForEveryAssetTheKitShips(splashRefreshArgs):
@@ -312,15 +361,44 @@ def test_deployPiSh_splashStep_accountsForEveryAssetTheKitShips(splashRefreshArg
 def test_deployPiSh_splashStep_keepListsOnlyWhatItCannotOwn(splashRefreshArgs):
     """
     Given: the keep-list suppresses both the prune AND the byte-verify
-    Then: nothing sits on it but version.txt, which the deploy writes itself
+    Then: nothing sits on it but version.txt and warning.png, which the deploy
+          writes itself after the refresh
 
     A keep-list entry is an asset the guard cannot vouch for, so it is a cost,
     not a safety net -- the smaller it is, the more of /opt/splash the deploy
     actually verifies. version.txt earns its place: it is generated from
     deploy/RELEASE_VERSION after the refresh, not copied from the kit.
+    warning.png too (US-785): it is copied from deploy/plymouth/eclipse/, not the
+    kit, and cmp-verified by its own copy step.
     """
+    # MOVED PIN (US-785): keep == {version.txt} -> {version.txt, warning.png}.
     _, keep = splashRefreshArgs
-    assert keep == {"version.txt"}, f"unexpected unverified assets in /opt/splash: {keep}"
+    assert keep == {"version.txt", "warning.png"}, (
+        f"unexpected unverified assets in /opt/splash: {keep}"
+    )
+
+
+def test_deployPiSh_splashStep_copiesTheWarningPngAfterTheRefresh_us785(splashDryRunStdout):
+    """
+    Given: the WARNING PNG's one deployed copy is the Plymouth theme's (C-Atlas-4)
+    Then: the dry run prints its copy into /opt/splash AFTER the refresh, and the
+          kit does not ship it (the kit has no copy)
+    """
+    lines = splashDryRunStdout.splitlines()
+    refresh = next(i for i, line in enumerate(lines) if "refresh_asset_dir" in line and "splash" in line)
+    copy = [
+        i
+        for i, line in enumerate(lines)
+        if "deploy/plymouth/eclipse/warning.png" in line and "/opt/splash/warning.png" in line
+    ]
+    assert copy, "the dry run does not print the warning.png copy"
+    assert copy[0] > refresh, "warning.png must be copied AFTER the refresh, or it is pruned"
+    assert "cmp" in lines[copy[0]], "the copy must be byte-verified"
+
+    installSh = (REPO_ROOT / "src" / "pi" / "ui" / "splash" / "install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "warning.png" not in installSh
 
 
 def test_assetRefreshLibrary_isShippedToThePi():

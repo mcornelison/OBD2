@@ -628,7 +628,7 @@ class TestAFeedCanBeFaulted:
         When: the feeds block is built before and after
         Then: faulted, then ok with reason null -- nothing latches here
         """
-        before = _feeds({}, feedFaults={"ups": "gauge unreadable"})
+        before = _feeds({}, feedFaults={"ups": ch.FEED_REASON_READ_FAILED})
         after = _feeds({"ups": ("2026-10-13T12:00:20Z", 1.0)}, feedFaults={"ups": None})
 
         assert before["ups"]["state"] == ch.STATE_FAULTED
@@ -676,14 +676,27 @@ class TestAFeedCanBeFaulted:
             powerSource="external",
             stallSeconds=_STALL_S,
             feedSamples={},
-            feedFaults={"ups": "gauge unreadable"},
+            feedFaults={"ups": ch.FEED_REASON_READ_FAILED},
         )
         onDisk = json.loads((tmp_path / ch.CAPTURE_HEALTH_FILENAME).read_text())
 
         assert onDisk == written
         assert onDisk["feeds"]["ups"]["state"] == ch.STATE_FAULTED
-        assert onDisk["feeds"]["ups"]["reason"] == "gauge unreadable"
+        assert onDisk["feeds"]["ups"]["reason"] == ch.FEED_REASON_READ_FAILED
         assert onDisk["state"] == ch.STATE_OK
+
+    def test_feedReasonTokens_matchTheBridgesOwnAbsentToken(self) -> None:
+        """
+        Given: the two feed fault tokens (US-869-c, Atlas C-Atlas-1)
+        When: compared with the IMU and light bridges' absent token
+        Then: one word for one fact -- the bridges' token IS sensor_absent
+        """
+        from pi.sensors import imu_state_bridge, light_state_bridge
+
+        assert ch.FEED_REASON_SENSOR_ABSENT == "sensor_absent"
+        assert ch.FEED_REASON_READ_FAILED == "read_failed"
+        assert imu_state_bridge.REASON_SENSOR_ABSENT == ch.FEED_REASON_SENSOR_ABSENT
+        assert light_state_bridge.LIGHT_REASON_SENSOR_ABSENT == ch.FEED_REASON_SENSOR_ABSENT
 
     def test_faulted_isAFeedStateOnly_neverTheVerdict(self) -> None:
         """
@@ -708,6 +721,8 @@ class TestTheFixtureContract:
     _CASES = (
         "cold-boot-obd-null", "all-ok", "one-feed-stalled", "restart-rearmed", "ups-sentinel",
         "imu-absent", "light-absent", "ups-unreadable",
+        # MOVED PIN (US-869-c): no monitor at all is its own token.
+        "ups-absent",
     )
 
     def _load(self) -> dict:
@@ -744,3 +759,18 @@ class TestTheFixtureContract:
 
         assert built == entry["payload"]["feeds"]
         assert set(entry["payload"]) == _TOP_LEVEL_KEYS | {"feeds"}
+
+    def test_fixture_upsCasesCarryTheTwoFeedTokens(self) -> None:
+        """
+        Given: the two UPS fault cases (US-869-c)
+        When: their feeds.ups is read
+        Then: read raised -> read_failed; no monitor -> sensor_absent
+        """
+        cases = self._load()
+
+        assert cases["ups-unreadable"]["payload"]["feeds"]["ups"]["reason"] == (
+            ch.FEED_REASON_READ_FAILED
+        )
+        assert cases["ups-absent"]["payload"]["feeds"]["ups"]["reason"] == (
+            ch.FEED_REASON_SENSOR_ABSENT
+        )

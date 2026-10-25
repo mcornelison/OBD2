@@ -13,6 +13,8 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-10-23    | Rex (US-883-b) | Initial.
+# 2026-10-25    | Rex (US-883-c) | MOVED PIN (US-883-c): publish() payloads carry
+#                                  state 'syncing' + outcome null; state() tests.
 # ================================================================================
 ################################################################################
 """Tests for ``src.pi.sync.shutdown_progress``."""
@@ -25,10 +27,12 @@ import pytest
 
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
 from src.pi.data import sync_log
+from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.sync.shutdown_progress import (
     ShutdownSyncProgress,
     countedTables,
     countRemaining,
+    syncPayload,
     takeKeyOffSnapshot,
 )
 
@@ -73,6 +77,12 @@ def _ack(dbPath: str, table: str, lastId: int, lastModifiedAt: str | None = None
     conn.close()
 
 
+def _syncing(waiting: int, confirmed: int) -> dict:
+    """MOVED PIN (US-883-c): a pass's payload is state syncing, outcome null."""
+    return {"state": "syncing", "outcome": None,
+            "waitingAtKeyOff": waiting, "confirmed": confirmed}
+
+
 def _progress(dbPath: str) -> tuple[ShutdownSyncProgress, list[dict]]:
     published: list[dict] = []
     progress = ShutdownSyncProgress(dbPath, busyTimeoutSec=_TIMEOUT, publishFn=published.append)
@@ -113,7 +123,7 @@ def test_insertTable_100Waiting_onePassAcks60_confirms60(dbPath: str) -> None:
     _ack(dbPath, "realtime_data", 60)
     progress.publish()
 
-    assert published == [{"waitingAtKeyOff": 100, "confirmed": 60}]
+    assert published == [_syncing(100, 60)]
 
 
 def test_reSentBatch_leavesConfirmedUnchanged(dbPath: str) -> None:
@@ -159,8 +169,8 @@ def test_updateTable_3New2Modified_ackInsertsThenUpdates(dbPath: str) -> None:
     progress.publish()
 
     assert published == [
-        {"waitingAtKeyOff": 5, "confirmed": 3},
-        {"waitingAtKeyOff": 5, "confirmed": 5},
+        _syncing(5, 3),
+        _syncing(5, 5),
     ]
 
 
@@ -172,7 +182,7 @@ def test_idGaps_countRowsNotTheIdSpan(dbPath: str) -> None:
 
     progress.publish()
 
-    assert published == [{"waitingAtKeyOff": 6, "confirmed": 0}]
+    assert published == [_syncing(6, 0)]
 
 
 def test_driveSummaryInsertedBeforeTheSnapshot_isCountedUntilAcked(dbPath: str) -> None:
@@ -189,8 +199,8 @@ def test_driveSummaryInsertedBeforeTheSnapshot_isCountedUntilAcked(dbPath: str) 
     progress.publish()
 
     assert published == [
-        {"waitingAtKeyOff": 4, "confirmed": 3},
-        {"waitingAtKeyOff": 4, "confirmed": 4},
+        _syncing(4, 3),
+        _syncing(4, 4),
     ]
 
 
@@ -209,7 +219,7 @@ def test_rowsWrittenAfterTheSnapshot_neverEnterEitherCount(dbPath: str) -> None:
     _ack(dbPath, "drive_summary", 2)
     progress.publish()
 
-    assert published == [{"waitingAtKeyOff": 10, "confirmed": 10}]
+    assert published == [_syncing(10, 10)]
 
 
 def test_edrOnlyBacklog_waitsZero(dbPath: str) -> None:
@@ -223,7 +233,7 @@ def test_edrOnlyBacklog_waitsZero(dbPath: str) -> None:
 
     progress.publish()
 
-    assert published == [{"waitingAtKeyOff": 0, "confirmed": 0}]
+    assert published == [_syncing(0, 0)]
 
 
 # --------------------------------------------------------------------------- #
@@ -288,3 +298,82 @@ def test_confirmed_isFlooredAtZero_andNeverExceedsWaiting(dbPath: str) -> None:
 
     assert [p["confirmed"] for p in published] == [0, 5, 20]
     assert all(0 <= p["confirmed"] <= p["waitingAtKeyOff"] for p in published)
+
+
+# --------------------------------------------------------------------------- #
+# US-883-c: state(state, outcome) -- the sync task's transitions
+# --------------------------------------------------------------------------- #
+
+
+def test_syncPayload_isTheOneShape() -> None:
+    assert syncPayload("ended", "stalled", 400, 250) == {
+        "state": "ended", "outcome": "stalled", "waitingAtKeyOff": 400, "confirmed": 250,
+    }
+
+
+@pytest.mark.parametrize("state", ["away", "joining"])
+def test_state_awayAndJoining_carryNullCounts(dbPath: str, state: str) -> None:
+    """Away and joining: no pass has run, so the counts are null even with a snapshot."""
+    _insertRealtime(dbPath, range(1, 11))
+    progress, published = _progress(dbPath)
+    progress.snapshot()
+
+    progress.state(state, "away" if state == "away" else None)
+
+    assert published == [syncPayload(state, "away" if state == "away" else None, None, None)]
+
+
+def test_state_syncingAtDrainStart_carriesTheSnapshotsCounts(dbPath: str) -> None:
+    """Entering the drain: waiting from the snapshot, confirmed 0 before any pass."""
+    _insertRealtime(dbPath, range(1, 401))
+    progress, published = _progress(dbPath)
+    progress.snapshot()
+
+    progress.state("syncing", None)
+
+    assert published == [_syncing(400, 0)]
+
+
+def test_state_ended_carriesTheCountsAndTheOutcome(dbPath: str) -> None:
+    """Ended: the outcome value and the counts exactly as a pass reads them."""
+    _insertRealtime(dbPath, range(1, 401))
+    progress, published = _progress(dbPath)
+    progress.snapshot()
+    _ack(dbPath, "realtime_data", 250)
+
+    progress.state("ended", OutcomeKind.AT_HOME_SERVER_DOWN.value)
+
+    assert published == [syncPayload("ended", "at_home_server_down", 400, 250)]
+
+
+def test_state_ended_withUnreadableMarks_hasNullCounts_neverZero(tmp_path: Path) -> None:
+    """No snapshot (an unreadable database): ended still publishes, counts null."""
+    progress, published = _progress(str(tmp_path / "absent.db"))
+    progress.snapshot()
+
+    progress.state("ended", "delivered")
+
+    assert published == [syncPayload("ended", "delivered", None, None)]
+
+
+def test_state_replayedBatch_leavesConfirmedUnchanged(dbPath: str) -> None:
+    """Negative case (spec AC 7): the same ack twice -> the same confirmed."""
+    _insertRealtime(dbPath, range(1, 101))
+    progress, published = _progress(dbPath)
+    progress.snapshot()
+    _ack(dbPath, "realtime_data", 60)
+    progress.publish()
+    _ack(dbPath, "realtime_data", 60)
+    progress.publish()
+    progress.state("ended", "stalled")
+
+    assert [p["confirmed"] for p in published] == [60, 60, 60]
+
+
+def test_state_aRaisingPublishFn_neverRaises(dbPath: str) -> None:
+    def _boom(_sync: dict) -> None:
+        raise RuntimeError("writer down")
+
+    progress = ShutdownSyncProgress(dbPath, busyTimeoutSec=_TIMEOUT, publishFn=_boom)
+
+    progress.state("joining", None)  # must not raise

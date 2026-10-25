@@ -26,6 +26,8 @@
 # 2026-10-22    | Rex (US-877-b)| emit returns the payload it wrote (Atlas P6).
 # 2026-10-23    | Rex (US-869-b)| feeds: state `faulted` + `reason` from the
 #               |              | in-process feed faults (Atlas B1).
+# 2026-10-24    | Rex (US-869-c)| FEED_REASON_SENSOR_ABSENT / _READ_FAILED: the
+#               |              | two feed fault tokens (Atlas C-Atlas-1).
 # ================================================================================
 ################################################################################
 
@@ -80,6 +82,8 @@ __all__ = [
     "FEED_LIGHT",
     "FEED_NAMES",
     "FEED_OBD",
+    "FEED_REASON_READ_FAILED",
+    "FEED_REASON_SENSOR_ABSENT",
     "FEED_UPS",
     "REASON_LOGGER_ABSENT",
     "REASON_NEVER_WRITTEN",
@@ -120,6 +124,15 @@ STATE_UNKNOWN = "unknown"
 #: source clears its fault on the next good read and the feed returns to its
 #: normal state; nothing here latches.
 STATE_FAULTED = "faulted"
+#: US-869-c (Atlas C-Atlas-1): the two feed fault REASONS a source may hold.
+#: The FEED_ prefix keeps them out of the top-level REASON_* vocabulary, which
+#: describes the OBD verdict, not a feed. The bridges' own absent token equals
+#: FEED_REASON_SENSOR_ABSENT (pinned in tests/pi/obdii/test_capture_health.py).
+#: The chip, gauge or monitor is not there at all.
+FEED_REASON_SENSOR_ABSENT = "sensor_absent"
+#: The gauge is there and its read raised. UPS only: an IMU or light chip that
+#: is present but not reading is already `stalled`.
+FEED_REASON_READ_FAILED = "read_failed"
 
 #: The logger exists and has written no row since the process started. This is a
 #: MEASUREMENT, and it is the literal state the Pi logged for two days.

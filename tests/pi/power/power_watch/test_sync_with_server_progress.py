@@ -15,6 +15,9 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-10-23    | Rex (US-883-b) | Initial.
+# 2026-10-25    | Rex (US-883-c) | sync.state / sync.outcome from the task's
+#                                  syncStateFn; MOVED PINs: the away key-off and
+#                                  the per-pass payloads.
 # ================================================================================
 ################################################################################
 """US-883-b: shutdown sync progress, from the task and drain to shutdown-state."""
@@ -29,6 +32,7 @@ from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
 from src.pi.data import sync_log
 from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch import __main__ as m
+from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.controller import ShutdownSequencer
 from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
 from src.pi.splash.shutdown_state_emitter import (
@@ -85,20 +89,39 @@ def _backlog(dbPath: str):
     return countOutstandingRows(dbPath, excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES)
 
 
-def _task(*, homeState, runSync, keyOffSnapshotFn=None, backlogReader=None):
+def _task(
+    *, homeState, runSync, keyOffSnapshotFn=None, backlogReader=None, syncStateFn=None,
+    writeProvisional=None, joinWaitSec=0.0,
+):
+    # A list of states is read one per call, the last repeating (a JOINING wait).
+    states = list(homeState) if isinstance(homeState, list) else [homeState]
+
+    def _read() -> HomeNetworkState:
+        return states.pop(0) if len(states) > 1 else states[0]
+
     return SyncWithServerTask(
-        homeState=lambda: homeState,
+        homeState=_read,
         runSync=runSync,
         writeRecord=lambda _r: None,
-        joinWaitSec=0.0,
+        joinWaitSec=joinWaitSec,
         stallSec=0.0,
         sleepFn=lambda _s: None,
         backlogReader=backlogReader,
         keyOffSnapshotFn=keyOffSnapshotFn,
+        syncStateFn=syncStateFn,
+        writeProvisional=writeProvisional,
     )
 
 
-def _sequencer(statesDir: Path, runPipelineFn, isOnBattery=lambda: True, written=None):
+def _syncing(waiting, confirmed) -> dict:
+    """A per-pass payload (US-883-c): state syncing, outcome null."""
+    return {"state": "syncing", "outcome": None,
+            "waitingAtKeyOff": waiting, "confirmed": confirmed}
+
+
+def _sequencer(
+    statesDir: Path, runPipelineFn, isOnBattery=lambda: True, written=None, vcell=3.9,
+):
     emit = makeShutdownPhaseEmitter(str(statesDir), nowIsoFn=lambda: "2026-10-23T20:00:00Z")
     target = statesDir / SHUTDOWN_STATE_FILENAME
 
@@ -109,7 +132,7 @@ def _sequencer(statesDir: Path, runPipelineFn, isOnBattery=lambda: True, written
 
     return ShutdownSequencer(
         isOnBattery=isOnBattery,
-        vcell=lambda: 3.9,
+        vcell=lambda: vcell,
         runPipelineFn=runPipelineFn,
         powerOffFn=lambda: None,
         vcellFloor=3.40,
@@ -260,18 +283,18 @@ def test_homeDrain_publishesConfirmedFromTheAckedMarks(tmp_path: Path) -> None:
     seq.handleOnBattery()
 
     syncs = [w["sync"] for w in written if w["sync"] is not None]
-    assert syncs[:2] == [
-        {"waitingAtKeyOff": 400, "confirmed": 250},
-        {"waitingAtKeyOff": 400, "confirmed": 400},
-    ]
+    # MOVED PIN (US-883-c): each pass now carries state syncing, outcome null.
+    assert syncs[:2] == [_syncing(400, 250), _syncing(400, 400)]
     progressWrites = [w for w in written if w["sync"] is not None and w["phase"] == "flushing"]
     assert len(progressWrites) == 2
     assert all(w["step"] == {"index": 2, "of": 5, "name": "drain"} for w in progressWrites)
     assert written[0]["phase"] == "grace" and written[0]["sync"] is None
 
 
-def test_awayPath_keepsSyncNull(tmp_path: Path) -> None:
-    """Away from home no drain pass runs: sync is null in every write."""
+def test_awayPath_publishesStateAway_withNullCounts(tmp_path: Path) -> None:
+    """MOVED PIN (US-883-c, was test_awayPath_keepsSyncNull): away from home no
+    drain pass runs, and the key-off publishes {state away, outcome away,
+    counts null} through the real task and sequencer."""
     dbPath = _db(tmp_path, rows=50, mark=0)
     statesDir = tmp_path / "states"
     written: list[dict] = []
@@ -283,13 +306,18 @@ def test_awayPath_keepsSyncNull(tmp_path: Path) -> None:
         homeState=HomeNetworkState.AWAY,
         runSync=m._buildRunSync(client, passDoneFn=progress.publish),  # noqa: SLF001
         keyOffSnapshotFn=progress.snapshot,
+        syncStateFn=progress.state,
     )
     seq = _sequencer(statesDir, runPipelineFn=task.run, written=written)
 
     seq.handleOnBattery()
 
     assert client.calls == 0
-    assert written and all(w["sync"] is None for w in written)
+    syncs = [w["sync"] for w in written if w["sync"] is not None]
+    assert syncs and all(
+        sync == {"state": "away", "outcome": "away", "waitingAtKeyOff": None, "confirmed": None}
+        for sync in syncs
+    )
     assert written[-1]["phase"] == "powering_off"
 
 
@@ -343,6 +371,197 @@ def test_cancelAfterAPass_clearsSync(tmp_path: Path) -> None:
 
     seq.handleOnBattery()
 
-    assert {"waitingAtKeyOff": 10, "confirmed": 5} in [w["sync"] for w in written]
+    # MOVED PIN (US-883-c): the pass payload carries state syncing.
+    assert _syncing(10, 5) in [w["sync"] for w in written]
     assert written[-1]["phase"] == "cancelled"
     assert written[-1]["sync"] is None
+
+
+# --------------------------------------------------------------------------- #
+# US-883-c: the emit points of sync.state / sync.outcome
+# --------------------------------------------------------------------------- #
+
+
+def _recordingStates():
+    seen: list[tuple[str, str | None]] = []
+    return seen, lambda state, outcome: seen.append((state, outcome))
+
+
+def test_syncState_homeDrain_isSyncingThenEndedDelivered() -> None:
+    seen, hook = _recordingStates()
+    task = _task(
+        homeState=HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        runSync=lambda: None,
+        syncStateFn=hook,
+    )
+
+    task.run()
+
+    assert seen == [("syncing", None), ("ended", "delivered")]
+
+
+def test_syncState_joiningWait_publishesJoiningFirst() -> None:
+    seen, hook = _recordingStates()
+    task = _task(
+        homeState=[HomeNetworkState.AT_HOME_JOINING, HomeNetworkState.AT_HOME_SERVER_REACHABLE],
+        runSync=lambda: None,
+        syncStateFn=hook,
+        joinWaitSec=60.0,
+    )
+
+    task.run()
+
+    assert seen == [("joining", None), ("syncing", None), ("ended", "delivered")]
+
+
+def test_syncState_joiningTimeout_endsWithoutSyncing() -> None:
+    seen, hook = _recordingStates()
+    task = _task(homeState=HomeNetworkState.AT_HOME_JOINING, runSync=lambda: None,
+                 syncStateFn=hook)
+
+    task.run()
+
+    assert seen == [("joining", None), ("ended", "at_home_joining_timeout")]
+
+
+def test_syncState_unknownNetwork_drains() -> None:
+    seen, hook = _recordingStates()
+    task = _task(homeState=HomeNetworkState.UNKNOWN, runSync=lambda: None, syncStateFn=hook)
+
+    task.run()
+
+    assert seen[0] == ("syncing", None)
+
+
+def test_syncState_away_isAwayAway_withNoSyncing() -> None:
+    seen, hook = _recordingStates()
+    task = _task(homeState=HomeNetworkState.AWAY, runSync=lambda: None, syncStateFn=hook)
+
+    task.run()
+
+    assert seen == [("away", "away")]
+
+
+def test_syncState_neverPublishesInterrupted_evenWithProvisionalRecords() -> None:
+    """Negative case: the provisional INTERRUPTED record never reaches the page."""
+    seen, hook = _recordingStates()
+    provisional: list = []
+
+    def _down() -> None:
+        raise RuntimeError("connection refused")
+
+    task = _task(
+        homeState=HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        runSync=_down,
+        syncStateFn=hook,
+        writeProvisional=provisional.append,
+        backlogReader=lambda: 5,
+    )
+
+    task.run()
+
+    assert len(provisional) == 2
+    assert all(outcome != OutcomeKind.INTERRUPTED.value for _s, outcome in seen)
+    assert seen[-1] == ("ended", "at_home_server_down")
+
+
+def test_syncState_aRaisingHook_neverStopsTheRun() -> None:
+    passes: list[int] = []
+
+    def _boom(_state, _outcome) -> None:
+        raise RuntimeError("writer down")
+
+    task = _task(
+        homeState=HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        runSync=lambda: passes.append(1),
+        syncStateFn=_boom,
+    )
+
+    assert task.run() is OutcomeKind.DELIVERED
+    assert passes == [1]
+
+
+def test_homeJoiningThenTwoPassesThenDelivered_intoShutdownState(tmp_path: Path) -> None:
+    """VC: joining -> syncing (confirmed rises) -> ended/delivered, through the
+    real task, ShutdownSyncProgress and the sequencer's one writer."""
+    dbPath = _db(tmp_path, rows=5400, mark=5000)
+    written: list[dict] = []
+    progress = ShutdownSyncProgress(
+        dbPath, busyTimeoutSec=1.0, publishFn=lambda s: seq.publishSync(s),
+    )
+    client = _AckingClient(dbPath, [5250, 5400])
+    task = _task(
+        homeState=[HomeNetworkState.AT_HOME_JOINING, HomeNetworkState.AT_HOME_SERVER_REACHABLE],
+        runSync=m._buildRunSync(  # noqa: SLF001
+            client, backlogReader=lambda: _backlog(dbPath), passDoneFn=progress.publish,
+        ),
+        keyOffSnapshotFn=progress.snapshot,
+        backlogReader=lambda: _backlog(dbPath).total,
+        syncStateFn=progress.state,
+        joinWaitSec=60.0,
+    )
+    seq = _sequencer(tmp_path / "states", runPipelineFn=task.run, written=written)
+
+    seq.handleOnBattery()
+
+    syncs = [w["sync"] for w in written if w["sync"] is not None]
+    deduped = [s for i, s in enumerate(syncs) if i == 0 or s != syncs[i - 1]]
+    assert deduped == [
+        {"state": "joining", "outcome": None, "waitingAtKeyOff": None, "confirmed": None},
+        _syncing(400, 0),
+        _syncing(400, 250),
+        _syncing(400, 400),
+        {"state": "ended", "outcome": "delivered", "waitingAtKeyOff": 400, "confirmed": 400},
+    ]
+
+
+def test_homeServerDown_endsAtHomeServerDown_withTheRowsLeft(tmp_path: Path) -> None:
+    """VC: home, server down -> ended / at_home_server_down, counts read."""
+    dbPath = _db(tmp_path, rows=40, mark=0)
+    written: list[dict] = []
+    progress = ShutdownSyncProgress(
+        dbPath, busyTimeoutSec=1.0, publishFn=lambda s: seq.publishSync(s),
+    )
+
+    def _down() -> None:
+        raise RuntimeError("connection refused")
+
+    task = _task(
+        homeState=HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        runSync=_down,
+        keyOffSnapshotFn=progress.snapshot,
+        backlogReader=lambda: _backlog(dbPath).total,
+        syncStateFn=progress.state,
+    )
+    seq = _sequencer(tmp_path / "states", runPipelineFn=task.run, written=written)
+
+    seq.handleOnBattery()
+
+    ended = [w["sync"] for w in written if w["sync"] and w["sync"]["state"] == "ended"]
+    assert ended[-1] == {
+        "state": "ended", "outcome": "at_home_server_down",
+        "waitingAtKeyOff": 40, "confirmed": 0,
+    }
+
+
+def test_fastPath_keepsSyncNullThroughout(tmp_path: Path) -> None:
+    """VC / negative case: the VCELL fast path never runs the task -> sync null."""
+    dbPath = _db(tmp_path, rows=10, mark=0)
+    written: list[dict] = []
+    ran: list[int] = []
+    progress = ShutdownSyncProgress(
+        dbPath, busyTimeoutSec=1.0, publishFn=lambda s: seq.publishSync(s),
+    )
+    task = _task(
+        homeState=HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        runSync=lambda: ran.append(1),
+        keyOffSnapshotFn=progress.snapshot,
+        syncStateFn=progress.state,
+    )
+    seq = _sequencer(tmp_path / "states", runPipelineFn=task.run, written=written, vcell=3.30)
+
+    seq.handleOnBattery()
+
+    assert ran == []
+    assert written and all(w["sync"] is None for w in written)
+    assert written[-1]["step"]["of"] == 3

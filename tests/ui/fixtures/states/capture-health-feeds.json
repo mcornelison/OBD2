@@ -183,7 +183,7 @@
     }
   },
   "ups-unreadable": {
-    "note": "The MAX17048 read raised (I2C error): the UPS read site recorded the gauge's unavailable reason, so feeds.ups is faulted until the next valid VCELL read.",
+    "note": "The MAX17048 read raised (I2C error): the UPS read site recorded read_failed, so feeds.ups is faulted until the next valid VCELL read.",
     "input": {
       "powerSource": "external",
       "stallSeconds": 60.0,
@@ -193,7 +193,7 @@
         "light": ["2026-10-13T12:00:21Z", 0.6]
       },
       "feedFaults": {
-        "ups": "gauge unreadable"
+        "ups": "read_failed"
       }
     },
     "payload": {
@@ -206,7 +206,35 @@
         "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
         "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
         "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
-        "ups": {"state": "faulted", "reason": "gauge unreadable", "firstSampleTs": null, "lastSampleSecondsAgo": null}
+        "ups": {"state": "faulted", "reason": "read_failed", "firstSampleTs": null, "lastSampleSecondsAgo": null}
+      }
+    }
+  },
+  "ups-absent": {
+    "note": "No UpsMonitor on the HardwareManager (no gauge to read): the UPS read site recorded sensor_absent, so feeds.ups is faulted.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "light": ["2026-10-13T12:00:21Z", 0.6]
+      },
+      "feedFaults": {
+        "ups": "sensor_absent"
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "reason": null, "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "faulted", "reason": "sensor_absent", "firstSampleTs": null, "lastSampleSecondsAgo": null}
       }
     }
   }

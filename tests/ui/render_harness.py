@@ -49,6 +49,19 @@
 #                                stylesheet section slicing, so a guard can name
 #                                its REGION structurally instead of by a fixed
 #                                character window. RAISES, never returns "".
+# 2026-10-24    | Ralph (Rex)  | US-785: runSplash models phase 0b's three end
+#                                events; brandLoadMs retires with the <object>;
+#                                Surface.lengthPx resolves px / vw / vh.
+# 2026-10-24    | Ralph (Rex)  | US-869-f: runSplash drives the spins
+#                                (dispatchSpinEvents, spinEventMs); a Surface
+#                                can evaluate prefers-reduced-motion (opt-in,
+#                                splashSurface answers it; the dashboard's
+#                                callers keep every block applying).
+# 2026-10-25    | Ralph (Rex)  | US-869-g: runSplash serves capture-health +
+#                                system-status; captureHealth defaults to the
+#                                BUILT all-three-ready payload (Atlas R4).
+# 2026-10-25    | Ralph (Rex)  | US-883-c: runShutdownSplash reports
+#                                progress.kept (the amber rows-kept stretch).
 # ================================================================================
 ################################################################################
 
@@ -56,12 +69,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import tempfile
 from html.parser import HTMLParser
+from types import ModuleType
 from typing import Any
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -570,10 +585,21 @@ def specificity(selector: str) -> tuple[int, int, int]:
 # --- cascade -----------------------------------------------------------------
 
 
-def _mediaApplies(media: str, viewport: tuple[int, int]) -> bool:
-    """Evaluate the min/max-width|height features the kits actually use."""
+def _mediaApplies(
+    media: str, viewport: tuple[int, int], reducedMotion: bool | None = None
+) -> bool:
+    """Evaluate the min/max-width|height features the kits actually use.
+
+    ``prefers-reduced-motion`` is evaluated only when ``reducedMotion`` is a
+    bool (US-869-f); None keeps the historical behaviour, where the feature is
+    not read and its block applies.
+    """
     if not media:
         return True
+    if reducedMotion is not None:
+        for value in re.findall(r"\(\s*prefers-reduced-motion\s*:\s*([\w-]+)\s*\)", media):
+            if (value == "reduce") != reducedMotion:
+                return False
     width, height = viewport
     for feature, value in re.findall(r"\(\s*([\w-]+)\s*:\s*(\d+)px\s*\)", media):
         num = int(value)
@@ -600,10 +626,12 @@ class Surface:
         tree: dict[str, Any],
         css: str,
         viewport: tuple[int, int] = (1920, 1080),
+        reducedMotion: bool | None = None,
     ) -> None:
         self.tree = tree
         self.rules = parseCss(css)
         self.viewport = viewport
+        self.reducedMotion = reducedMotion
         self._paths: list[list[dict[str, Any]]] = []
         self._collect(tree, [])
 
@@ -654,7 +682,7 @@ class Surface:
             bestKey = (1 if important else 0, 1, (0, 0, 0), 10**9)
 
         for rule in self.rules:
-            if not _mediaApplies(rule.media, self.viewport):
+            if not _mediaApplies(rule.media, self.viewport, self.reducedMotion):
                 continue
             if not isResolvable(rule.selector):
                 continue
@@ -668,6 +696,27 @@ class Surface:
             if bestKey is None or key > bestKey:
                 bestKey, best = key, (value, rule.selector)
         return best
+
+    def lengthPx(self, path: list[dict[str, Any]], prop: str) -> float:
+        """Resolve a ``width``/``height``-style length to px against the viewport.
+
+        Only the absolute units the splash kit uses: ``px``, ``vw`` and ``vh``.
+        Anything else (``%``, ``calc()``, ``auto``, no declaration) RAISES, so a
+        stylesheet change this cannot measure goes red instead of passing.
+        """
+        winner = self.winningDeclaration(path, prop)
+        if winner is None:
+            raise ValueError(f"no author declaration of {prop!r}")
+        match = re.fullmatch(r"(-?\d+(?:\.\d+)?)(px|vw|vh)", winner[0].strip())
+        if match is None:
+            raise ValueError(f"{prop}: {winner[0]!r} is not a px / vw / vh length")
+        number, unit = float(match.group(1)), match.group(2)
+        width, height = self.viewport
+        if unit == "vw":
+            return number * width / 100
+        if unit == "vh":
+            return number * height / 100
+        return number
 
     def displayOf(self, path: list[dict[str, Any]]) -> tuple[str, str]:
         """The element's effective ``display`` as (value, whoDecidedIt)."""
@@ -798,13 +847,63 @@ def runDashboard(
     return _runProbe("dom_probe.js", payload)
 
 
+# What getComputedStyle reports for the boot stage once boot-state-poll.js sets
+# its inline `transition: opacity var(--t-fade)` (US-869-d; the token since
+# US-869-f): the fade WILL end. The logo
+# (#mark) carries styles.css's `transition: opacity var(--t-fade)` (US-785), so
+# the phase-0b cross-fade will end too.
+_SPLASH_STAGE_FADE: dict[str, dict[str, str]] = {
+    "splash-stage": {"transitionDuration": "0.5s"},
+    "mark": {"transitionDuration": "0.5s"},
+}
+
+# US-869-g (Atlas R4): "not passed" and "missing" are different facts. Leaving
+# captureHealth out serves the BUILT all-three-ready default; None serves a 404.
+NOT_PASSED: Any = object()
+
+_BOOT_FIXTURE_GENERATOR = os.path.join(
+    _HERE, "fixtures", "states", "boot", "_generate.py"
+)
+_bootGenerator: ModuleType | None = None
+
+
+def bootFixtureGenerator() -> ModuleType:
+    """tests/ui/fixtures/states/boot/_generate.py, loaded once by path."""
+    global _bootGenerator
+    if _bootGenerator is None:
+        spec = importlib.util.spec_from_file_location(
+            "boot_fixture_generator", _BOOT_FIXTURE_GENERATOR
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _bootGenerator = module
+    return _bootGenerator
+
+
+def _stateSequence(value: Any) -> list[Any]:
+    """A state file's written sequence: a list as given, else one steady entry."""
+    return list(value) if isinstance(value, list) else [value]
+
+
 def runSplash(
     bootStates: list[Any],
     pollJsPath: str | None = None,
     markupPath: str | None = None,
     rounds: int = 80,
     emitIntervalMs: int = 500,
-    brandLoadMs: int | None = 0,
+    computedStyles: dict[str, dict[str, str]] | None = None,
+    dispatchTransitionEnd: bool = True,
+    reducedMotion: bool = False,
+    domContentLoadedMs: int = 0,
+    warningDecodeMs: int = 0,
+    warningError: bool = False,
+    fontsReadyMs: int = 0,
+    dispatchCrossFadeEnd: bool = True,
+    dispatchSpinEvents: bool = True,
+    spinEventMs: int | None = None,
+    captureHealth: Any = NOT_PASSED,
+    systemStatus: Any = None,
 ) -> dict[str, Any]:
     """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
 
@@ -814,23 +913,69 @@ def runSplash(
     entry, exactly as it would on the Pi. The final entry repeats. Returns the
     settled outcome plus the resulting DOM tree.
 
-    ``brandLoadMs`` (US-525) is the virtual ms at which the brand ``<object>``
-    fires its `load`. The mark is an async SVG document, so on a cold chromium
-    the poll script is already ticking while the brand is still blank; ``None``
-    models an SVG that never loads at all.
+    The shipped ``motion-gate.js`` is loaded before the poller, as index.html
+    loads it. ``computedStyles`` is what ``getComputedStyle`` reports per
+    element id; the default is the stage's inline 0.5 s fade and the logo's
+    0.5 s cross-fade. ``dispatchTransitionEnd`` False models a browser that
+    fires no ``transitionend`` on the stage because nothing animates;
+    ``reducedMotion`` answers ``prefers-reduced-motion: reduce``.
+
+    Phase 0b (US-785) ends on three events, each fired at its own virtual ms:
+    DOMContentLoaded (``domContentLoadedMs``), the WARNING image's decode()
+    settling (``warningDecodeMs``; rejected when ``warningError``) and
+    document.fonts.ready (``fontsReadyMs``). ``dispatchCrossFadeEnd`` False
+    models no ``transitionend`` on the logo. (The US-525 ``brandLoadMs``, the
+    ``<object>``'s load, retired with the ``<object>``.)
+
+    The spins (US-869-f): ``computedStyles["logo"]`` is what #logo computes
+    while a ``body.spin-N`` class is on. When that is a live animation the
+    probe dispatches #logo's ``animationend`` (spins 1 and 3) or one
+    ``animationiteration`` per rotation (spin 2), one rotation -- ``spinEventMs``,
+    else the computed duration -- after each spin starts; ``spinEventMs=0`` is
+    zero elapsed time, ``dispatchSpinEvents`` False models no event. The
+    default computes no logo animation, so the spins advance at once.
+
+    The checklist (US-869-g): ``captureHealth`` and ``systemStatus`` are the
+    payloads written to those two state files -- one payload (steady), or a
+    list indexed by time like ``bootStates``; a ``None`` entry is a 404. Left
+    out, ``captureHealth`` is IMU, LIGHT and UPS ready, BUILT by the boot
+    fixture generator (Atlas R4), so a test about the spins or the clock still
+    hands off; ``captureHealth=None`` is the file missing. ``systemStatus``
+    defaults to missing (OBD reads plain ``waiting``).
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
+    if captureHealth is NOT_PASSED:
+        captureHealth = bootFixtureGenerator().harnessDefaultCaptureHealth()
     return _runProbe(
         "splash_probe.js",
         {
             "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "boot-state-poll.js"),
+            "motionGatePath": os.path.join(SPLASH_DIR, "motion-gate.js"),
             "tree": bodyChildren(tree),
             "bootStates": bootStates,
+            "captureHealthStates": _stateSequence(captureHealth),
+            "systemStatusStates": _stateSequence(systemStatus),
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
-            "brandLoadMs": brandLoadMs,
+            "computedStyles": (
+                _SPLASH_STAGE_FADE if computedStyles is None else computedStyles
+            ),
+            "dispatchTransitionEnd": dispatchTransitionEnd,
+            "reducedMotion": reducedMotion,
+            "domContentLoadedMs": domContentLoadedMs,
+            "warningDecodeMs": warningDecodeMs,
+            "warningError": warningError,
+            "fontsReadyMs": fontsReadyMs,
+            "dispatchCrossFadeEnd": dispatchCrossFadeEnd,
+            "dispatchSpinEvents": dispatchSpinEvents,
+            "spinEventMs": spinEventMs,
         },
     )
+
+
+#: A shutdownStates entry that makes the probe's fetch REJECT (US-870-a): the
+#: refused connection a dying states server gives, distinct from a 404.
+REFUSED: dict[str, Any] = {"__fetch": "throw"}
 
 
 def runShutdownSplash(
@@ -839,6 +984,11 @@ def runShutdownSplash(
     markupPath: str | None = None,
     rounds: int = 80,
     emitIntervalMs: int = 500,
+    computedStyles: dict[str, Any] | None = None,
+    reducedMotion: bool = False,
+    dispatchLogoEvents: bool = True,
+    logoEventMs: int | None = None,
+    dispatchTransitionEnd: bool = True,
 ) -> dict[str, Any]:
     """Run the SHIPPED shutdown-state-poll.js against a shutdown-state sequence.
 
@@ -846,22 +996,47 @@ def runShutdownSplash(
     emit hook WRITES, one every ``emitIntervalMs``, while the closeout splash
     reads on its own 250 ms cadence -- so a poll sees the last-written entry,
     exactly as it would on the Pi. The final entry repeats. A ``None`` entry
-    models the state file being ABSENT, which is a materially different outcome
-    from a ``cancelled`` phase and is the pair I-043 could not tell apart.
+    models the state file being ABSENT (HTTP 404), which is a materially
+    different outcome from a ``cancelled`` phase and is the pair I-043 could not
+    tell apart. US-870-a: ``REFUSED`` (``{"__fetch": "throw"}``) models a refused
+    connection / thrown fetch, and ``{"__status": n}`` an HTTP n with no body --
+    both of which the page HOLDS on, where a 404 exits.
 
     Returns the settled outcome including ``terminalCause`` /
-    ``terminalRecord`` (the US-549 report) and the raw ``consoleLines``, which
-    are the same bytes that reach ``journalctl -u splash-grace.service``.
+    ``terminalRecord`` (the US-549 report), the raw ``consoleLines``, which
+    are the same bytes that reach ``journalctl -u splash-grace.service``, and
+    ``paintedOnPoll`` (the poll whose read revealed the stage, or None).
+    US-870-b: ``progress`` ({fill, line1, line2}: #bar-fill's inline width and
+    the two label lines at the end) and ``progressLog`` (each change of those
+    three, in order, with ``atMs`` / ``poll``). US-883-c: ``progress`` and
+    each log entry also carry ``kept`` ({left, width}: #bar-kept's inline
+    style, the amber rows-kept stretch; nulls until drawn).
+
+    US-870-c (the logo): ``computedStyles`` is what the browser computes
+    ({elementId: {...}}, with ``logo`` keyed by the logo class -- spin-rev /
+    spin-dim / dim-down); None computes 0s / none everywhere, so no event
+    will fire and the close-out advances on the reads alone. The probe
+    dispatches the logo's events one run (``logoEventMs``, else the computed
+    duration) apart unless ``dispatchLogoEvents`` is False, and the stage's
+    transitionend unless ``dispatchTransitionEnd`` is False. Adds
+    ``logoLog``, ``animationEvents``, ``fadeStartedAtMs``,
+    ``transitionEndDispatched``, ``blackAtMs`` and ``stageOpacity``.
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
     return _runProbe(
         "shutdown_probe.js",
         {
             "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "shutdown-state-poll.js"),
+            "motionGatePath": os.path.join(SPLASH_DIR, "motion-gate.js"),
             "tree": bodyChildren(tree),
             "shutdownStates": shutdownStates,
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
+            "computedStyles": computedStyles or {},
+            "reducedMotion": reducedMotion,
+            "dispatchLogoEvents": dispatchLogoEvents,
+            "logoEventMs": logoEventMs,
+            "dispatchTransitionEnd": dispatchTransitionEnd,
         },
     )
 
@@ -880,7 +1055,12 @@ def splashSurface(
     domTree: dict[str, Any],
     cssPath: str | None = None,
     viewport: tuple[int, int] = (480, 320),
+    reducedMotion: bool = False,
 ) -> Surface:
-    """Resolve the shipped splash stylesheet over a post-JS DOM tree."""
+    """Resolve the shipped splash stylesheet over a post-JS DOM tree.
+
+    ``reducedMotion`` answers ``prefers-reduced-motion`` (US-869-f): False is
+    normal motion, so the reduced block does not apply.
+    """
     with open(cssPath or os.path.join(SPLASH_DIR, "styles.css"), encoding="utf-8") as fh:
-        return Surface(domTree, fh.read(), viewport)
+        return Surface(domTree, fh.read(), viewport, reducedMotion)

@@ -38,6 +38,12 @@
 #               |              | (CIO 2026-10-23, no timed waits). .wayland units:
 #               |              | one `test -S` check; .x11 splash-boot: one
 #               |              | `xset q`. The socket check runs with no fake sleep.
+# 2026-10-24    | Rex (US-869-d) | New: motion-gate.js (Atlas G2) ships in the kit,
+#               |              | is not gitignored, and both installers carry it.
+# 2026-10-24    | Rex (US-869-e) | New: OFL.txt (the Michroma licence) ships in the
+#               |              | kit, is not gitignored, and both installers carry it.
+# 2026-10-25    | Rex (US-870-c) | MOVED PIN (US-870-c): shutdown.html inlines the
+#               |              | logo (no <object>); the SVGs leave the vouched list.
 # ================================================================================
 ################################################################################
 
@@ -46,6 +52,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -84,15 +91,19 @@ def _bashAvailable() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# D-1 / S-1 -- shutdown.html must load the REVERSE svg, not the boot svg.
+# D-1 / S-1 -- shutdown.html must not play the forward boot animation.
+# MOVED PIN (US-870-c): the logo is INLINE now (index.html's markup) and both
+# SVG timelines are retired, so the page embeds no <object> and no .svg at all;
+# its reverse motion is styles.css (tests/ui/test_shutdown_spins.py).
 # ---------------------------------------------------------------------------
 
 
-def test_shutdownHtml_loadsShutdownSvg_d1():
-    """S-1/D-1: shutdown.html embeds splash-shutdown.svg, never splash.svg."""
-    html = _read("shutdown.html")
-    assert "splash-shutdown.svg" in html
-    assert 'data="splash.svg"' not in html
+def test_shutdownHtml_inlinesTheLogo_noObject_d1():
+    """S-1/D-1: shutdown.html inlines the logo; no <object>, no SVG file."""
+    html = re.sub(r"<!--.*?-->", "", _read("shutdown.html"), flags=re.DOTALL)
+    assert '<svg id="mark"' in html
+    assert "<object" not in html
+    assert "splash.svg" not in html and "splash-shutdown.svg" not in html
 
 
 def test_shutdownHtml_wiresStateMachine_renderSide():
@@ -108,6 +119,62 @@ def test_shutdownStatePollJs_present_and_handlesPhases():
     for phase in ("grace", "cancelled", "flushing", "powering_off"):
         assert phase in js, f"shutdown-state-poll.js missing phase {phase!r}"
     assert "/shutdown-state" in js
+
+
+def test_shutdownStage_shipsHidden_untilTheFirstFlushingRead_us870a():
+    """shutdown.html's stage starts visibility:hidden; only the poller reveals it.
+
+    US-870-a moves the reveal from a 1 s pre-roll to the first flushing read,
+    but the hidden start is what keeps a blip (grace then cancelled) from
+    flashing a frame over the dashboard.
+    """
+    html = _read("shutdown.html")
+    assert re.search(r'<div id="splash-stage" style="visibility:hidden">', html)
+    assert "PRE_ROLL" not in html
+    assert 'stage.style.visibility = "visible"' in _read("shutdown-state-poll.js")
+
+
+def test_motionGateJs_presentAndShippedByBothInstallers_us869d():
+    """motion-gate.js (the ONE event-will-fire helper) reaches /opt/splash.
+
+    index.html loads it before the poller; an asset the installers do not carry
+    leaves a 404 that turns every hand-off into the no-event branch.
+    """
+    assert (KIT_DIR / "motion-gate.js").is_file()
+    assert "motionGate = { willFire" in _read("motion-gate.js")
+    assert "motion-gate.js" in INSTALL_SH.read_text(encoding="utf-8")
+    deploySh = (REPO_ROOT / "deploy" / "deploy-pi.sh").read_text(encoding="utf-8")
+    assert re.search(r'local assets="[^"]*motion-gate\.js', deploySh)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", str(KIT_DIR / "motion-gate.js")],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert ignored.returncode == 1, "motion-gate.js is gitignored -- it would never ship"
+
+
+def test_oflLicenceShipsWithTheKitAndBothInstallers_us869e():
+    """OFL.txt reaches /opt/splash beside the stylesheet that carries the face.
+
+    styles.css inlines Michroma (US-869-e), and SIL OFL 1.1 requires the licence
+    to accompany every copy of the font -- one pattern with the dashboard kit.
+    """
+    assert (KIT_DIR / "OFL.txt").read_bytes() == (DASHBOARD_DIR / "OFL.txt").read_bytes()
+    loop = re.search(
+        r"for asset in (.*?); do", INSTALL_SH.read_text(encoding="utf-8"), flags=re.DOTALL
+    )
+    assert loop and "OFL.txt" in loop.group(1).replace("\\\n", " ").split()
+    deploySh = (REPO_ROOT / "deploy" / "deploy-pi.sh").read_text(encoding="utf-8")
+    # MOVED PIN (US-870-c): the vouched list no longer carries the retired SVGs.
+    assert re.search(r'local assets="[^"]*shutdown-state-poll\.js[^"]*OFL\.txt', deploySh)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", str(KIT_DIR / "OFL.txt")],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert ignored.returncode == 1, "splash OFL.txt is gitignored -- it would never ship"
 
 
 # ---------------------------------------------------------------------------

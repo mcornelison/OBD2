@@ -51,6 +51,22 @@
 #               |              | stacks nothing and the takeover ending.
 # 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): #dtc-ribbon is deleted
 #               |              | (Iris U3), so the sweeps cover the overlays only.
+# 2026-10-24    | Rex (US-869-d)| MOVED PIN (US-869-d): TestSplashHandoff builds
+#               |              | the NEW emitter without hardCapSeconds (the
+#               |              | parameter is gone). TestSplashGuardIsRed is
+#               |              | unchanged: its cap is the pre-US-494 emitter's.
+# 2026-10-24    | Rex (US-785) | Phase 0b: the WARNING frame + cross-fade to the
+#               |              | inline logo on DOMContentLoaded, decode and
+#               |              | fonts.ready (TestSplashPhase0b, -WarningFrame).
+# 2026-10-24    | Rex (US-869-f)| MOVED PIN (US-869-f): healthy before 0b ends now
+#               |              | hands off after 0b and spins 1-2-3, not before
+#               |              | the cross-fade (spin 1 starts on its end).
+# 2026-10-25    | Rex (US-869-g)| Atlas C-Atlas-9: TestSplashGuardIsRed restated
+#               |              | against gate R1 -- IMU, LIGHT and UPS served
+#               |              | ready, EXPLICITLY (Atlas R4); the hold is the
+#               |              | never-healthy boot-state, not a feed.
+# 2026-10-25    | Rex (US-870-c)| MOVED PIN (US-870-c): splash.svg is retired;
+#               |              | the logo geometry pin re-anchors on index.html.
 # ================================================================================
 ################################################################################
 
@@ -61,6 +77,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -463,9 +480,10 @@ def _emitSequence(module, buildFn, count: int) -> list[dict]:
     """``count`` successive emissions, the clock advancing one EMIT interval each.
 
     Feeding the splash a real SEQUENCE rather than one frozen payload is what
-    lets the emitter's OWN hard-cap branch fire, so the degraded reason under
-    test is the one the CIO actually read off the panel -- not the splash's
-    generic fallback.
+    lets the pre-US-494 emitter's OWN hard-cap branch fire (TestSplashGuardIsRed),
+    so the degraded reason under test is the one the CIO actually read off the
+    panel. The current emitter has no clock (US-869-d); the clock is driven
+    regardless, so a reintroduced one would be measured against it.
 
     Two subtleties, both learned the hard way writing this:
       * The emitter latches ``startMono`` in its CONSTRUCTOR, so the fake clock
@@ -525,7 +543,6 @@ class TestSplashHandoff:
             bse,
             lambda: bse.buildEmitter(
                 statesDir=str(tmp_path / "states"),
-                hardCapSeconds=12.0,
                 uiAssetPath=str(asset),
             ),
             4,
@@ -567,7 +584,6 @@ class TestSplashHandoff:
             bse,
             lambda: bse.buildEmitter(
                 statesDir=str(tmp_path / "states"),
-                hardCapSeconds=12.0,
                 uiAssetPath=str(asset),
             ),
             4,
@@ -600,7 +616,6 @@ class TestSplashHandoff:
             bse,
             lambda: bse.buildEmitter(
                 statesDir=str(tmp_path / "states"),
-                hardCapSeconds=12.0,
                 uiAssetPath=str(tmp_path / "never-installed" / "dashboard.html"),
             ),
             4,
@@ -617,13 +632,18 @@ class TestSplashGuardIsRed:
     def test_preFixEmitter_pinsTheSplashOnTheBench(self, tmp_path, monkeypatch):
         """
         Given: the REAL pre-US-494 emitter from git, wired the way its own
-               systemd entry point wired it (no obdProbeFn injected)
+               systemd entry point wired it (no obdProbeFn injected), and
+               capture-health with IMU, LIGHT and UPS ready
         When: a bench boot with every core unit active and NO vehicle
         Then: the splash never hands off, and the reason names eclipse-obd
 
         AC-2's literal discharge for S1. This reproduces the exact panel the CIO
         was looking at: "eclipse-obd: not ready (starting)", held until reboot,
         on a Pi whose core services were all perfectly healthy.
+
+        Restated against gate R1 (US-869-g, Atlas C-Atlas-9): the three feeds
+        R1 waits for are FINISHED, so the only thing holding the splash is the
+        boot-state, which this emitter never lets reach healthy.
         """
         source = _gitShow(f"{_US494_FIX_COMMIT}^:src/pi/splash/boot_state_emitter.py")
         if source is None:
@@ -648,8 +668,8 @@ class TestSplashGuardIsRed:
         )
         # The pre-fix production wiring: states dir + hard cap, and NOTHING
         # else. That omission -- no obdProbeFn -- IS the bug.
-        # 30 emissions x 500 ms = 15 s of boot -- past BOTH the emitter's 12 s
-        # hard cap and the splash's, so the verdict is settled, not still open.
+        # 30 emissions x 500 ms = 15 s of boot -- past that emitter's own 12 s
+        # hard cap, so its verdict is settled, not still open.
         states = _emitSequence(
             module,
             lambda: module.BootStateEmitter(
@@ -658,15 +678,247 @@ class TestSplashGuardIsRed:
             30,
         )
 
-        result = rh.runSplash(states)
+        # Atlas R4: passed EXPLICITLY, never left to the harness default.
+        threeReady = rh.bootFixtureGenerator().captureHealthPayload(
+            rh.bootFixtureGenerator().ALL_THREE_READY
+        )
+        result = rh.runSplash(states, captureHealth=threeReady)
         assert not result["handoff"], (
             "the pre-US-494 emitter must pin the splash; this harness let it "
             "hand off, so it would not have caught S1"
         )
+        # The R1 reason: the feeds R1 waits for are finished -- not the hold.
+        tree = result["tree"]
+        for feed in ("imu", "light", "ups"):
+            assert _textOfId(tree, f"feed-{feed}") == "ready", feed
         assert "eclipse-obd" in result["degradedMsg"], (
             "the pre-fix splash should degrade naming the OBD tier -- got "
             f"{result['degradedMsg']!r}"
         )
+
+
+# --- phase 0b: the WARNING image, then the cross-fade to the logo (US-785) ---
+
+_WAITING = {"healthy": False, "degraded": False}
+_HEALTHY_STATE = {"healthy": True, "degraded": False}
+# The stage's fade is live but the logo's cross-fade computes to 0s: what a
+# missing or non-matching #mark rule leaves (Atlas G2).
+_STAGE_FADE_ONLY = {"splash-stage": {"transitionDuration": "0.5s"}}
+
+
+def _indexHtmlText() -> str:
+    with open(os.path.join(rh.SPLASH_DIR, "index.html"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _walk(node: dict) -> list[dict]:
+    found = [node]
+    for child in node.get("children", []):
+        if "tag" in child:
+            found.extend(_walk(child))
+    return found
+
+
+def _byId(tree: dict, elementId: str) -> dict:
+    for node in _walk(tree):
+        if node.get("attrs", {}).get("id") == elementId:
+            return node
+    raise AssertionError(f"no #{elementId} in the splash markup")
+
+
+def _textOfId(tree: dict, elementId: str) -> str:
+    return "".join(c.get("text", "") for c in _byId(tree, elementId)["children"])
+
+
+@_NODE_ONLY
+class TestSplashPhase0b:
+    """Phase 0b ends on its three events; the hand-off never waits for it."""
+
+    def test_crossFadeStartsAtTheLastOfTheThreeEvents(self):
+        """
+        Given: DOMContentLoaded at 100 ms, the decode at 300 ms, fonts.ready at 350 ms
+        Then: the cross-fade starts at 350 ms -- the last event -- and not before
+        """
+        result = rh.runSplash(
+            [_WAITING], rounds=8, domContentLoadedMs=100, warningDecodeMs=300, fontsReadyMs=350
+        )
+
+        assert result["crossFadeStartedAtMs"] == 350
+        assert result["crossFadeEndDispatched"]
+        assert result["crossFadeEndedAtMs"] == 350
+        assert result["warningDecodeCalls"] == 1
+
+    @pytest.mark.parametrize(
+        ("dcl", "decode", "fonts", "last"),
+        [(400, 100, 200, 400), (100, 450, 200, 450), (0, 0, 0, 0)],
+    )
+    def test_whicheverEventIsLastStartsTheCrossFade(self, dcl, decode, fonts, last):
+        result = rh.runSplash(
+            [_WAITING], rounds=8, domContentLoadedMs=dcl, warningDecodeMs=decode, fontsReadyMs=fonts
+        )
+
+        assert result["crossFadeStartedAtMs"] == last
+
+    def test_beforeTheEvents_theWarningIsUp_andTheLogoIsNot(self):
+        """Events never fire inside the run: body stays in phase 0b."""
+        result = rh.runSplash([_WAITING], rounds=4, fontsReadyMs=10_000)
+
+        body = result["tree"]
+        classes = (body["attrs"].get("class") or "").split()
+        assert "logo-up" not in classes and "phase-1" not in classes
+        assert result["crossFadeStartedAtMs"] is None
+
+    def test_imageError_endsOnDomContentLoadedAndFontsReady_noStall(self):
+        """
+        Given: the WARNING image fails to decode (an image error)
+        Then: phase 0b ends on DOMContentLoaded + fonts.ready -- a visual degrade
+        """
+        result = rh.runSplash(
+            [_WAITING],
+            rounds=8,
+            domContentLoadedMs=100,
+            warningDecodeMs=50,
+            warningError=True,
+            fontsReadyMs=300,
+        )
+
+        assert result["crossFadeStartedAtMs"] == 300
+        assert result["crossFadeEndedAtMs"] == 300
+
+    def test_durationsZero_noTransitionEnd_crossFadeCountsAsEnded(self):
+        """Atlas G2: motionGate says no transitionend will fire -> ended on the 0b event."""
+        result = rh.runSplash(
+            [_WAITING],
+            rounds=8,
+            computedStyles=_STAGE_FADE_ONLY,
+            dispatchCrossFadeEnd=False,
+            fontsReadyMs=300,
+        )
+
+        assert not result["crossFadeEndDispatched"]
+        assert result["crossFadeStartedAtMs"] == 300
+        assert result["crossFadeEndedAtMs"] == 300
+
+    def test_reducedMotion_crossFadeCountsAsEnded(self):
+        result = rh.runSplash(
+            [_WAITING], rounds=8, reducedMotion=True, dispatchCrossFadeEnd=False, fontsReadyMs=300
+        )
+
+        assert result["crossFadeEndedAtMs"] == 300
+
+    def test_liveCrossFade_waitsForItsOwnTransitionEnd(self):
+        """The control: with the transition live and no event, phase 1 is not entered."""
+        result = rh.runSplash([_WAITING], rounds=8, dispatchCrossFadeEnd=False)
+
+        assert result["crossFadeStartedAtMs"] == 0
+        assert result["crossFadeEndedAtMs"] is None
+
+    def test_healthyBefore0bEnds_theHandOffFollowsTheSpins(self):
+        """
+        MOVED PIN (US-869-f): spin 1 starts on the cross-fade's end, so the
+        hand-off now follows 0b instead of running before it.
+
+        Given: boot-state healthy at the first poll, the 0b events 5 s later
+        Then: nothing closes before 5 s; at 5 s spins 1 -> 2 -> 3 run (no logo
+              animation computed, so each advances at once) and the window closes
+        """
+        result = rh.runSplash(
+            [_HEALTHY_STATE],
+            rounds=24,
+            domContentLoadedMs=5_000,
+            warningDecodeMs=5_000,
+            fontsReadyMs=5_000,
+        )
+
+        assert result["handoff"]
+        assert result["closeCalls"] == 1
+        assert result["crossFadeStartedAtMs"] == 5_000
+        assert result["handoffAtMs"] == 5_000
+        assert [entry["spin"] for entry in result["spinLog"]] == [1, 2, 3]
+
+    def test_noTimerGatesTheCrossFade(self):
+        """The only setTimeout ever queued is the POLL_MS tick (CIO no-timer rule).
+
+        A page still waiting queues the initial tick plus one per poll (the
+        next round's), so it is polls + 1 -- with or without the cross-fade.
+        """
+        crossFaded = rh.runSplash(
+            [_WAITING], rounds=8, domContentLoadedMs=100, warningDecodeMs=300, fontsReadyMs=350
+        )
+        still0b = rh.runSplash([_WAITING], rounds=8, fontsReadyMs=10_000)
+
+        assert crossFaded["crossFadeEndedAtMs"] == 350
+        assert still0b["crossFadeStartedAtMs"] is None
+        assert crossFaded["timeoutsQueued"] == crossFaded["polls"] + 1
+        assert crossFaded["timeoutsQueued"] == still0b["timeoutsQueued"]
+
+
+class TestSplashWarningFrame:
+    """The page's first frame is the WARNING image, full-frame; the logo is inline."""
+
+    def test_theLogoIsAnInlineSvg_notAnObject(self):
+        html = _indexHtmlText()
+        mark = _byId(rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")), "mark")
+
+        assert "<object" not in html
+        assert mark["tag"] == "svg"
+        assert mark["attrs"].get("viewbox") == "0 0 480 320"
+        assert "style" not in {node["tag"] for node in _walk(mark)}
+
+    def test_theInlineLogoCarriesTheBrandGeometry(self):
+        """One gradient, three rhombus paths, two rotated copies (-120 / -240).
+
+        MOVED PIN (US-870-c): splash.svg is retired, so index.html is the logo's
+        only home; this was an equality with the SVG and is re-anchored on the
+        page (Atlas 2026-10-25). tests/ui/test_shutdown_spins.py pins shutdown.html's
+        logo to this one byte for byte.
+        """
+        logo = re.search(r'<svg id="mark"[^>]*>(.*?)</svg>', _indexHtmlText(), re.S)
+        assert logo is not None, "no inline <svg id=mark> in index.html"
+        markup = logo.group(1)
+
+        assert len(re.findall(r"<linearGradient\b.*?</linearGradient>", markup, re.S)) == 1
+        assert len(re.findall(r"<path\b[^>]*/>", markup)) == 3
+        assert re.findall(r'<g transform="rotate\(([^"]*)\)">', markup) == [
+            "-120 240 160",
+            "-240 240 160",
+        ]
+
+    def test_theWarningImageIsThePagesTopLayer_withNothingOverIt(self):
+        """Spec §1.1 R5: no touch target, button or text node over the warning."""
+        stage = _byId(rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")), "splash-stage")
+        warning = _byId(stage, "warning")
+        elements = [child for child in stage["children"] if "tag" in child]
+
+        assert warning["tag"] == "img"
+        assert warning["attrs"].get("src") == "warning.png"
+        assert warning["attrs"].get("alt") == ""
+        assert elements[-1] is warning, "an element after #warning would paint over it"
+        assert warning["children"] == []
+        assert "<button" not in _indexHtmlText()
+
+    @pytest.mark.parametrize("viewport", [(1280, 720), (480, 320)])
+    def test_theWarningFillsTheViewport_aspectNotPreserved(self, viewport):
+        """
+        Given: the OSOYOO scaler panel driven at 1280x720, and its native 480x320
+        Then: #warning's computed width x height equals the viewport in both
+        """
+        surface = rh.splashSurface(
+            rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")), viewport=viewport
+        )
+        path = surface.pathById("warning")
+
+        assert (surface.lengthPx(path, "width"), surface.lengthPx(path, "height")) == viewport
+        assert surface.winningDeclaration(path, "object-fit")[0] == "fill"
+        assert surface.winningDeclaration(path, "background")[0] == "var(--bg)"
+        assert surface.rendered(path)
+
+    def test_theCrossFadeIsTheFadeToken_onBothLayers(self):
+        """The cross-fade's length lives once, in --t-fade; no JS twin."""
+        surface = rh.splashSurface(rh.parseMarkup(os.path.join(rh.SPLASH_DIR, "index.html")))
+        for elementId in ("warning", "mark"):
+            transition = surface.winningDeclaration(surface.pathById(elementId), "transition")
+            assert transition[0] == "opacity var(--t-fade)", elementId
 
 
 # --- the harness's own honesty ----------------------------------------------

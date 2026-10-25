@@ -52,6 +52,8 @@
 #               |              | failed write) for the alerts arbiter.
 # 2026-10-23    | Rex (US-894-c)| sync.rows and sync.pending are RETIRED (Atlas
 #               |              | P7): the syncRows / syncPending inputs go too.
+# 2026-10-24    | Rex (US-869-c)| the ungated `sensor` verdict member: ONE member
+#               |              | naming every faulted light/imu/ups feed.
 # ================================================================================
 ################################################################################
 
@@ -378,25 +380,50 @@ def _publishLinkChain(link: dict | None) -> dict[str, dict[str, str | None]]:
 
 
 # US-877-b: the verdict's members, in their fixed publish order (Iris s4.1).
-# No `sync` member (Atlas 877-b-1: no sourced threshold) and no UPS member
-# (Spool + Atlas P5: no grounded band) -- both banked, never improvised.
+# No `sync` member (Atlas 877-b-1: no sourced threshold) and no UPS battery
+# member (Spool + Atlas P5: no grounded band) -- both banked, never improvised.
+# A UPS GAUGE fault is a feed fault: it is the `sensor` member (US-869-c),
+# amber on the DATA row, never on the UPS row (Atlas R7).
 VERDICT_BT = "bt"
 VERDICT_ADAPTER = "adapter"
 VERDICT_CAPTURE = "capture"
+VERDICT_SENSOR = "sensor"
 VERDICT_WIFI = "wifi"
 VERDICT_PI = "pi"
 VERDICT_MEMBER_ORDER: tuple[str, ...] = (
-    VERDICT_BT, VERDICT_ADAPTER, VERDICT_CAPTURE, VERDICT_WIFI, VERDICT_PI,
+    VERDICT_BT, VERDICT_ADAPTER, VERDICT_CAPTURE, VERDICT_SENSOR, VERDICT_WIFI,
+    VERDICT_PI,
 )
 
-# Mirror pi.obdii.capture_health's feed names and STATE_STALLED (pinned equal
-# by test; importing pi.obdii here would import the orchestrator, which
-# imports this module). The feeds a capture reason names, in the order it
-# names them (OBD, light, IMU, UPS -- spec s4.3), deliberately NOT FEED_NAMES'.
+# Mirror pi.obdii.capture_health's feed names, STATE_STALLED, STATE_FAULTED
+# and the two FEED_REASON_* tokens (pinned equal by test; importing pi.obdii
+# here would import the orchestrator, which imports this module). The feeds a
+# capture reason names, in the order it names them (OBD, light, IMU, UPS --
+# spec s4.3), deliberately NOT FEED_NAMES'.
 _CAPTURE_STATE_STALLED = "stalled"
+_CAPTURE_STATE_FAULTED = "faulted"
+_FEED_REASON_SENSOR_ABSENT = "sensor_absent"
+_FEED_REASON_READ_FAILED = "read_failed"
 _CAPTURE_FEED_WORDS: tuple[tuple[str, str], ...] = (
     ("obd", "OBD"), ("light", "light"), ("imu", "IMU"), ("ups", "UPS"),
 )
+
+# US-869-c: the sensor member names the faulted feeds in _CAPTURE_FEED_WORDS
+# order without obd (the OBD feed has no sensor fault). The device each feed
+# word names -- 'UPS gauge', else '<word> sensor' (Iris 2026-10-24).
+_SENSOR_FEED_OBD = "obd"
+_SENSOR_DEVICE_GAUGE = "gauge"
+_SENSOR_DEVICE_SENSOR = "sensor"
+_SENSOR_FEED_DEVICES: dict[str, str] = {"ups": _SENSOR_DEVICE_GAUGE}
+# (feed, reason) -> Iris's words. Atlas C-Atlas-1 gives only the UPS a
+# read-failed sentence; any other pair is the generic fault word.
+_SENSOR_FAULT_WORDS: dict[tuple[str, str], str] = {
+    ("light", _FEED_REASON_SENSOR_ABSENT): "not found",
+    ("imu", _FEED_REASON_SENSOR_ABSENT): "not found",
+    ("ups", _FEED_REASON_SENSOR_ABSENT): "not found",
+    ("ups", _FEED_REASON_READ_FAILED): "read failed",
+}
+_SENSOR_FAULT_WORD_UNKNOWN = "fault"
 
 # Mirrors pi.network.wifi_reader.WIFI_REASON_READ_FAILED (pinned equal by
 # test): the one WiFi reason that is an issue. nmcli_absent and not_read are
@@ -447,6 +474,37 @@ def _stalledCaptureWords(captureHealth: dict | None) -> list[str]:
         if isinstance(feed, dict) and feed.get("state") == _CAPTURE_STATE_STALLED:
             stalled.append(word)
     return stalled
+
+
+def _faultedSensorFeeds(captureHealth: dict | None) -> list[tuple[str, str, str | None]]:
+    """``(feed, word, reason)`` for every faulted non-OBD feed, in naming order.
+
+    Like :func:`_stalledCaptureWords`, only ``feeds.<name>`` is read; a missing
+    feeds block is no fault.
+    """
+    feeds = captureHealth.get("feeds") if isinstance(captureHealth, dict) else None
+    if not isinstance(feeds, dict):
+        return []
+    faulted: list[tuple[str, str, str | None]] = []
+    for name, word in _CAPTURE_FEED_WORDS:
+        if name == _SENSOR_FEED_OBD:
+            continue
+        feed = feeds.get(name)
+        if isinstance(feed, dict) and feed.get("state") == _CAPTURE_STATE_FAULTED:
+            reason = feed.get("reason")
+            faulted.append((name, word, reason if isinstance(reason, str) else None))
+    return faulted
+
+
+def _sensorReason(faulted: list[tuple[str, str, str | None]]) -> str:
+    """One sentence per faulted feed, joined by one space (the _captureReason
+    shape): 'IMU sensor not found. UPS gauge read failed.'"""
+    sentences = []
+    for name, word, reason in faulted:
+        device = _SENSOR_FEED_DEVICES.get(name, _SENSOR_DEVICE_SENSOR)
+        what = _SENSOR_FAULT_WORDS.get((name, reason or ""), _SENSOR_FAULT_WORD_UNKNOWN)
+        sentences.append(f"{word[:1].upper()}{word[1:]} {device} {what}.")
+    return " ".join(sentences)
 
 
 def _floorTenthsOfGib(freeBytes: int) -> str:
@@ -521,7 +579,8 @@ def buildSystemVerdict(
 
     Returns:
         ``{"issueCount": int, "members": [{"key", "reason"}]}``, members in
-        :data:`VERDICT_MEMBER_ORDER`, ``issueCount == len(members)``.
+        :data:`VERDICT_MEMBER_ORDER`, ``issueCount == len(members)``. The
+        ``sensor`` member also carries ``feeds``: the faulted feed tokens.
     """
     chain = link or {}
 
@@ -529,7 +588,7 @@ def buildSystemVerdict(
         block = chain.get(layer)
         return block.get("state") if isinstance(block, dict) else None
 
-    members: list[dict[str, str]] = []
+    members: list[dict] = []
     btState = layerState("bt")
     if btState == LINK_DOWN:
         members.append({"key": VERDICT_BT, "reason": "Not linked. Check the OBD dongle."})
@@ -543,6 +602,15 @@ def buildSystemVerdict(
         stalled = _stalledCaptureWords(captureHealth)
         if stalled:
             members.append({"key": VERDICT_CAPTURE, "reason": _captureReason(stalled)})
+    # US-869-c (Atlas R3): UNGATED -- an absent sensor is absent with the ECU
+    # down too. ONE member however many feeds are faulted (R8).
+    faulted = _faultedSensorFeeds(captureHealth)
+    if faulted:
+        members.append({
+            "key": VERDICT_SENSOR,
+            "reason": _sensorReason(faulted),
+            "feeds": [name for name, _word, _reason in faulted],
+        })
     if (wifiSource or {}).get("reason") == _WIFI_REASON_READ_FAILED:
         members.append({"key": VERDICT_WIFI, "reason": "WiFi couldn't be read."})
     pi = piHealth or {}

@@ -2469,7 +2469,15 @@ rainbow, no kernel text. **Owner: `deploy/set-boot-screen.sh`**, run by deploy-p
 Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
 
 - **The theme** `deploy/plymouth/eclipse/` (`eclipse.plymouth`, a script-module
-  `eclipse.script` that draws `warning.png` centred on black once, no animation),
+  `eclipse.script` that draws `warning.png` stretched to the full frame on black
+  once, no animation -- US-885-c: `Image("warning.png").Scale(Window.GetWidth(),
+  Window.GetHeight())` placed at `Window.GetX(), Window.GetY()`, aspect NOT
+  preserved (Atlas, 2026-10-24). The reason is the scaler panel: the Pi scans out
+  1280x720 and the 480x320 panel shrinks that frame to fit, so the unscaled
+  480x320 image filled about a third of the glass; stretched to the window it
+  lands 1:1 at its designed geometry, and under a pinned 480x320 mode the scale is
+  a no-op (no resolution is named in the script). The kiosk splash follows the
+  same full-frame rule for its `<img id=warning>` layer (US-785)),
   installed to `/usr/share/plymouth/themes/eclipse/` and made the default with
   `plymouth-set-default-theme -R eclipse`. With `auto_initramfs=1` the `-R`
   rebuilds the initramfs and the z50-raspi-firmware hook copies it to
@@ -2974,11 +2982,11 @@ the splash** — it calls a generic callback and stays ignorant of the splash sc
 
 | Transition point in `handleOnBattery` | Phase | Splash response |
 |---|---|---|
-| Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash; play PRE_ROLL + ANIMATING (the animation *is* the grace countdown) |
+| Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash (the page loads with its stage hidden and paints nothing: US-870-a) |
 | Smoothing window failed (power returned mid-smoothing) | `cancelled` | ABORT splash (kill chromium, no fadeout) |
-| Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | CONTINUE (no state change) |
-| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | CONTINUE → enters BLACK_TAIL |
-| Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit in BLACK_TAIL awaiting a poweroff that will not fire) |
+| Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | PAINT on the first read (US-870-a) |
+| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | PAINT on the first read if not already; dies with the power |
+| Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit painted awaiting a poweroff that will not fire) |
 
 The VCELL-floor fast-path skips the pipeline, so it emits `powering_off` **without**
 a preceding `flushing` (honest instrument — no flush happened).
@@ -3065,6 +3073,38 @@ unreadable database publishes nothing rather than 0. **Accepted bias (Atlas, nam
 snapshot row UPDATEd again during the drain is re-stamped past `keyOffModified`, leaves the
 bounded set and reads as confirmed early; no OBD read runs during a key-off drain, so the
 dtc_log `last_seen` bump that would cause it does not occur. No wait, timer or budget.
+
+**sync.state and sync.outcome (US-883-c, Sprint 114 / V0.30, Atlas C-Atlas-2 / D-3,
+Iris C-Iris-4).** `shutdown-state.sync` is `{state, outcome, waitingAtKeyOff,
+confirmed}`, ONE shape (`shutdown_progress.syncPayload`). `state` is one of
+`sync_with_server.SYNC_STATES` -- `away`, `joining`, `syncing`, `ended`; `outcome` is the
+`OutcomeKind` value the sync ended with (`away` for the away skip), null while it runs.
+**Emit points:** `SyncWithServerTask`'s optional `syncStateFn(state, outcome)` (production:
+`ShutdownSyncProgress.state`, wired in `power_watch/__main__.py`) is called entering the
+`AT_HOME_JOINING` wait (`joining`), entering the drain on `AT_HOME_SERVER_*` or `UNKNOWN`
+(`syncing`), and from `_record` -- `OutcomeKind.AWAY` -> (`away`, `away`), any other kind ->
+(`ended`, `kind.value`). `_recordProvisional` never calls it, so `interrupted` is never
+published; a raising hook is logged and the run goes on. Each pass's `publish()` carries
+`syncing` / null. Counts are null in `away` and `joining`; in `syncing` and `ended` they
+are read exactly as a pass reads them (no snapshot or unreadable marks -> null, never 0).
+Every write goes through `ShutdownSequencer.publishSync`, the one writer. **sync null**
+now means only: the task has not started (grace, shed, before smoothing confirms) or
+the VCELL fast path, which never runs it -- this supersedes the US-883-b sentence that
+sync stays null away from home. **The page** (`shutdown-state-poll.js`): away (`state
+away`) and the fast path (sync null) stay index ÷ of; at home (`joining` / `syncing` /
+`ended`, latched) the bar is 0 % before the drain, `75 × confirmed ÷ waitingAtKeyOff` at
+the drain (`DRAIN_INDEX` 2, pinned to `CEREMONY_ORDER`), and `75 + 25 × (index − 2) ÷
+(of − 2)` after it; joining or null counts hold, and it never draws less than drawn.
+`waitingAtKeyOff` 0 fills the sync part at once (`nothing to sync`). During the drain the
+§2.2 words take the label from `SYNC_STATE_WORDS` and, once ended, `OUTCOME_WORDS` (any
+other value `sync ended`); a sync ended with rows left jumps the fill to 75 % and draws
+the rows kept as `#bar-kept`, a `--amber-warn` stretch ending at the marker; the rows
+stay queued. A sync{} absent or without a known state says `sync not read`. No new
+timeout: `pi.homeNetwork.stallSec` stays the one number (CIO option A). *Guarded by*
+`tests/pi/power/power_watch/test_sync_with_server_progress.py`,
+`tests/pi/sync/test_shutdown_progress.py` and `tests/ui/test_shutdown_progress_page.py`
+(the cross-language guards pin the page's state keys to `SYNC_STATES`, its outcome
+keys to `OutcomeKind` values, and `DRAIN_INDEX`).
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
@@ -5877,7 +5917,7 @@ cooperating processes communicate via a tmpfs directory.
 
 **Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
 logic: CORE-readiness gate, dashboard-asset gate, informational 3-tier
-eclipse-obd health with retry-once, hard-cap degrade), `states_http_server.py`
+eclipse-obd health with retry-once, degraded on two events only), `states_http_server.py`
 (the localhost server), `token.py` (the one-source auth token).
 
 **Readiness contract = "Pi core / UI is up", NOT "a vehicle is connected"
@@ -5928,16 +5968,246 @@ the real server over the real shipped kits, so the units and the router cannot
 drift apart independently — the two-correct-halves class. The same file asserts
 the bare routes **stay 401**: opening them re-opens TD-067 and is an Atlas BLOCK.
 
-**Boot-splash minimum-VISIBLE floor (US-525).** `MIN_PLAY_MS` (2500 ms, spec §5)
-is now anchored to the brand `<object>`'s `load` event, not to script parse. The
-mark is a separate async SVG document, so on a cold chromium the poll loop ticks
-while the stage is still blank — the old anchor let the splash satisfy its own
-2.5 s floor having shown the brand for a fraction of it, then fade (I-042 cause
-b). Measured on the Pi (boot `dc7a3848`, 2026-08-02): `splash-boot` lived
-**9.806 s** but chromium's startup consumed the first ~5.4 s. The floor is
-**bounded by `HARD_CAP_MS`** and falls back to the parse anchor when the brand
-never loads — a cosmetic asset fault must never withhold the dashboard hand-off
-(that is the US-494 pin-until-reboot failure, re-entered through its own fix).
+**Boot-state: degraded on its two EVENTS, no clock (US-869-d, Sprint 114 / V0.30;
+CIO no-timer rule, Atlas A-tim 1-3, C1, G2).** `degraded` has exactly two event
+sources, both in `computeBootState`: a CORE unit reporting `failed`
+(`<svc>: failed to start`, which outranks) and the dashboard assets missing
+(`dashboard assets not installed`). Nothing in the emitter or the page reads
+elapsed time: the emitter's 12 s `hardCapSeconds` (and its `--hard-cap-seconds`
+flag and `elapsedFn`), the page's `HARD_CAP_MS` and `MIN_PLAY_MS`, the US-525
+brand floor, and the retry-once failure counter are gone, together with the
+words they produced (`<svc>: not ready (<state>)`, `boot did not reach healthy
+state`, `boot-progress instrument not reporting`) and the readerless
+`pi.splash.bootState` config block. **Null means waiting:** a `boot-state` that
+answers 404, is refused or throws is not a verdict -- the page keeps polling at
+`POLL_MS` and paints nothing new, as it does for a unit held `activating`, for
+as long as either lasts. On `healthy` the stage fades over 0.5 s and
+`window.close()` runs on that fade's own `transitionend`, or at once when
+`motionGate.willFire(stage, "transition")` is false (`src/pi/ui/splash/motion-gate.js`,
+the ONE helper, loaded before the poller): Chromium fires no end event for a 0
+computed duration, `animation-name: none` or reduced motion, so a page must
+never wait for one. The only `setTimeout` left in `boot-state-poll.js` is the
+`POLL_MS` tick, a sampling cadence that never decides when a step proceeds
+(Atlas C-Atlas-8). *Guarded by* `tests/ui/test_splash_boot_no_clock.py` (10 min
+of driven clock activating or 404 never degrades; the zero-duration hand-off
+closes exactly once) and `tests/pi/splash/test_boot_state_emitter.py` (600 s
+activating, never degraded).
+
+**Splash CSS: mirror-and-pin, and Michroma (US-869-e, Sprint 114 / V0.30; spec
+AC 12, Atlas C-Atlas-3).** The splash follows the dashboard's two-file rule:
+`tokens.css` is a document, not an import, and `index.html` / `shutdown.html`
+link **only `splash/styles.css`**, so that sheet's `:root` is a hand-kept
+**MIRROR** of the SSOT tokens it renders against, at `tokens.css`'s values:
+`--bg`, `--text-secondary`, `--text-tertiary`, `--amber-warn`, `--fs-label`,
+`--fs-meta`, `--font-mono`, `--font-display` and the six motion tokens
+`--t-spin` / `--t-fade` / `--bright-low|mid|hi|max`. The motion tokens are
+the retired splash.svg's own timings, promoted into `tokens.css` once; since
+US-870-c retired the SVG, `tokens.css` is their **only** copy (the inline logos
+read them through the `styles.css` mirror). Outside the mirror every colour, font-size and font-family is a
+`var(--...)` (layout offsets and border widths may stay px), and the stale
+`#888888` / `#666666` / `#000` literals and the unused `--amber-soft` are gone.
+The wordmark is **Michroma** (`--font-display`, 400, `font-synthesis: none`),
+from ONE `@font-face` whose data-URI payload is byte-equal to `tokens.css`'s;
+all other splash text is `--font-mono`. The licence travels with every copy of
+the face: `src/pi/ui/splash/OFL.txt` (byte-copy of
+`specs/assets/fonts/michroma/OFL-michroma.txt`) is vouched in `deploy-pi.sh`
+`step_install_splash_assets` and in the kit's `install.sh` loop, so
+`refresh_asset_dir` installs and verifies it rather than pruning it (Atlas
+2026-10-24; `/OFL.txt` is served from `/opt/splash` first and is byte-equal to
+the dashboard's copy). *Pinned by* `tests/ui/test_splash_token_ssot.py`: (a) every
+mirrored token equals `tokens.css` (a token changed in `tokens.css` alone turns
+it red), (b) no `#hex`, `rgb()` or px font-size outside `:root`, (c) the face
+payload, (d) every Michroma string in the two pages inside the 38-glyph subset,
+(e) the licence bytes.
+
+**Phase 0b: the WARNING frame, then the cross-fade to the logo (US-785, Sprint
+114 / V0.30; spec §1-§1.2, Atlas C-Atlas-4, C-Atlas-5, G2).** The splash page's
+first frame is the **same WARNING PNG Plymouth drew** in phase 0:
+`<img id="warning">`, the stage's last child (nothing paints over it; no button,
+no text, R5), full-frame (`100vw` x `100vh`, `object-fit: fill`, aspect not
+preserved -- the Plymouth theme's rule: the OSOYOO HDMI35 is a scaler panel driven
+at 1280x720 that shrinks the frame back to 480x320, so a full-frame image lands
+1:1), on `var(--bg)`. The logo is now an **inline `<svg id="mark">`** carrying
+splash.svg's gradient and three rhombus paths verbatim, with no `<style>`; the
+`<object>` and its `load` event are gone (`splash.svg` itself was retired by
+US-870-c; `index.html` is now the logo's home). **Phase 0b ends on three events, none a clock:** `DOMContentLoaded`,
+the warning's `decode()` settling (resolved, or rejected on an image error -- a
+visual degrade, never a stall) and `document.fonts.ready` (the wordmark is
+Michroma). Then `body.logo-up` fades the warning out and the logo in, both over
+`var(--t-fade)`; the logo's opacity `transitionend` sets `body.phase-1` (spin 1
+starts there, US-869-f), or the cross-fade counts as ended on the 0b event itself
+when `motionGate.willFire(logo, "transition")` is false. No minimum hold, and the
+hand-off never waits for the cross-fade. **One deployed PNG:**
+`deploy/plymouth/eclipse/warning.png` (md5-equal to
+`specs/assets/boot/warning-480x320.png`) reaches the Pi with `deploy/`, and
+`step_install_splash_assets` copies it to `/opt/splash/warning.png` **after**
+`refresh_asset_dir`, cmp-verified (a mismatch fails the step, as the refresh
+does); it is keep-listed beside `version.txt` so the next refresh never prunes
+it. The kit's `install.sh` does not ship it. *Guarded by*
+`tests/ui/test_render_regression.py` (`TestSplashPhase0b`,
+`TestSplashWarningFrame`) and `tests/deploy/test_warning_png_single_copy.py`.
+
+**The spins: page CSS on their own events (US-869-f, Sprint 114 / V0.30; spec
+§1.1, Atlas A-tim 3, G2, C-Atlas-6, Iris C-Iris-3).** The inline logo's group
+`<g id="logo">` is what spins. splash.svg's `@keyframes spin` (thirds,
+ease-in-out, to -360deg) lives in `styles.css`, and one rotation is
+`var(--t-spin)`, declared once, with no JS twin. Spin 1 / 2 / 3 are body classes
+`boot-state-poll.js` sets, each started by the previous step's **own event**:
+`body.phase-1` (the cross-fade's `transitionend`, US-785) starts **spin 1**
+(`brightness(var(--bright-mid))`, one rotation); its `animationend` starts
+**spin 2** (`--bright-hi`, infinite); the first `animationiteration` once the
+boot-state is healthy starts **spin 3** (`--bright-max`, one rotation) -- so spin
+2 always turns at least once and finishes the rotation it is in, never snapping;
+spin 3's `animationend` starts the stage fade (`opacity var(--t-fade)`, inline
+via the token) and its `transitionend` calls `window.close()`. Each restart reads
+`#logo`'s computed style with no spin class on, so the shared keyframes start
+again from 0deg. Every wait first asks `motionGate.willFire` (`"animation"` for
+a spin, `"transition"` for the fade); false -- reduced motion, styles missing --
+advances that step on the event that started it, so a healthy read still reaches
+`window.close()` exactly once. **Reduced motion** (one code path, a branch on the
+media query): `@media (prefers-reduced-motion: reduce)` runs no animation and no
+transition (`!important` beats the spin rules and the stage's inline fade); the
+logo rests at `--bright-mid` once 0b ends and the window closes on the healthy
+read. **Degraded** is unchanged in meaning: `body.degraded #logo` sets
+`animation-play-state: paused`, which now reaches the animation directly (the
+`<object>` never let it). The bloom intro (the dot, `s-top` / `s-side`) is not
+carried. This **supersedes US-785's "the hand-off never waits for the
+cross-fade"**: the hand-off follows spin 3, and spin 1 follows 0b. No timer: the
+only `setTimeout` is the `POLL_MS` tick. In this story "ready" is boot-state
+healthy; US-869-g adds the feed gate. *Guarded by* `tests/ui/test_boot_spins.py`
+(the probe dispatches `#logo`'s `animationend` / `animationiteration` one
+rotation apart on virtual time; `render_harness.splashSurface(reducedMotion=)`
+evaluates the media query).
+
+**The four-feed checklist and gate R1 (US-869-g, Sprint 114 / V0.30; spec §1.1
+R1/R2 + §1.3, Atlas G1 / R1 / R3 / R4 / C-Atlas-6 / C-Atlas-9, Iris R2 /
+C-Iris-5 / C-Iris-6).** Each `POLL_MS` tick of `boot-state-poll.js` reads
+`/boot-state`, `/capture-health` and `/system-status` together, all with the
+`X-Splash-Token` header. Under the logo the page shows four rows in carousel.js
+`CAPTURE_FEEDS` order -- OBD, LIGHT, IMU, UPS -- labels in `var(--font-display)`
+(the frame's label voice), words in `var(--font-mono)`. **Word sources:**
+`capture-health.feeds.<feed>`: `faulted` with `sensor_absent` -> `sensor not
+found`, with `read_failed` -> `read failed`, with any other or no reason ->
+`fault` (all `--amber-warn`); a non-null `firstSampleTs` -> `ready`
+(`--green-ok`); otherwise `waiting` (`--text-secondary`). OBD's waiting word is
+the first `system-status.link.{bt, adapter, ecu}` layer that is not `up`
+(`waiting for Bluetooth` / `waiting for adapter` / `waiting for ECU`), plain
+`waiting` when that layer, or the whole file, is unread. No capture-health, or no
+`feeds` block -> `not read` (`--text-tertiary`). **The step latch:** a feed's
+first ready-or-fault read finishes its step for this boot and nothing after
+un-finishes it; the row word always shows the current state. **Gate R1:** spin 3
+starts on spin 2's `animationiteration` once boot-state is healthy AND IMU, LIGHT
+and UPS are all finished; **OBD is never waited for** (the dashboard opens with
+OBD `waiting for ECU` on a normal car boot, Atlas O5). **Atlas G1:** when the
+boot-state's `services['eclipse-obd']` is `failed` -- the only producer of
+capture-health has stopped for good -- IMU, LIGHT and UPS finish as `fault`, so
+the car still reaches its dashboard and the System page that explains it.
+**healthy latches, and degraded is honoured only before the first healthy
+read** (Atlas R3): after healthy the poller keeps reading boot-state only for
+`services['eclipse-obd']`, plus the two feed files, until the window closes.
+**Layout (Iris R2, CIO-approved):** `#mark` draws the logo at 0.6 (top 24 px,
+192 px tall; the swept disc is y 54-186); `#checklist` is a fixed-column grid
+(96 px + 264 px, gap 16 px, 22 px rows) at y 194-282; `#degraded-msg` shares
+that slot (top 194 px) and `body.degraded #checklist` is `display: none`.
+**Reduced motion:** the logo is `--bright-mid` from 0b's end,
+`--bright-hi` once any of IMU / LIGHT / UPS has finished (`body.feed-finished`),
+`--bright-max` when R1 is met (`body.r1-met`), then `window.close()` on that R1
+read with zero animations; the steps are instant. **The brand face** is allowed
+on exactly `#wordmark` and `#checklist .cl-label` (RULED GUARD CHANGE, Atlas
+2026-10-25). No timer: the only `setTimeout` is still the `POLL_MS` tick, and a
+feed that never reports holds the splash -- that is honest, never a reason for a
+ceiling. *Guarded by* `tests/ui/test_boot_checklist.py` (the page's vocabulary
+copies pinned to capture_health / system_status_emitter / boot_state_emitter /
+carousel.js; fixtures built by `tests/ui/fixtures/states/boot/_generate.py`;
+`render_harness.runSplash` serves the generator's IMU/LIGHT/UPS-ready
+capture-health when a test passes none, and a 404 for `captureHealth=None`),
+`tests/ui/test_splash_token_ssot.py` and `TestSplashGuardIsRed`.
+
+**The shutdown page paints on flushing and holds no timer (US-870-a, Sprint 114 /
+V0.30; spec §2.1, Atlas A-sd 1-3 / C-Atlas-7 / C-Atlas-8; CIO 2026-10-23 "Remove
+it").** `shutdown.html`'s stage ships `visibility:hidden`. `shutdown-state-poll.js`
+reveals it on the **first `flushing` or `powering_off` read**, never on `grace`: the
+sequencer's smoothing window (`grace` -> `flushing` | `cancelled`) is the one
+debounce (CIO: keep it), so a blip that writes `grace` then `cancelled` paints
+nothing and the dashboard never left. **404 vs refused:** `fetchShutdownState` returns
+three distinct results. An HTTP **404** exits `state-missing` on the FIRST one --
+`shutdown-state` is written atomically (`writeStateAtomic`) and never deleted, so a
+404 means it was never written. A **thrown fetch / refused connection** (and any
+other non-OK status or an unparseable body) **holds**: no exit, the last paint stays,
+and the page dies with the power. An unrecognized phase still exits
+`unrecognized-phase`. **No cap:** the 1 s `PRE_ROLL_MS`, the 60 s
+`BLACK_TAIL_CAP_MS` (and its `black-tail-cap` cause) and the three-miss count are
+gone, so a 120 s at-home drain keeps the page up throughout; the page exits only on
+`cancelled`, a 404 or an unknown phase. `elapsedMs` stays in the US-549 terminal
+record as **report-only**: `elapsed()` is called only inside `reportTerminal` and no
+condition reads it. The only `setTimeout` is the `POLL_MS` read cadence. *Guarded
+by* `tests/ui/test_shutdown_splash_terminal_reason.py` (the probe models a refused
+fetch as `render_harness.REFUSED` and reports `paintedOnPoll`) and
+`tests/ui/test_shutdown_phase_list_guard.py`.
+
+**The shutdown progress bar and step words come from step{} (US-870-b, Sprint 114 /
+V0.30; spec §2 / §2.1 / §2.2, Iris C-Iris-4, Atlas D1).** The bar's ONE source is
+`shutdown-state.step{index, of, name}`, written by the ShutdownSequencer through
+`CeremonyProgress` (`src/pi/power/power_watch/ceremony.py`). On each `flushing` /
+`powering_off` read `shutdown-state-poll.js` draws `#bar-fill` at **index ÷ of** (a
+step counts when ENTERED) -- on every path in this story, which is final for away and
+the VCELL fast path; the at-home sync-weighted fill (0-75 % by `sync{}`) is US-883-c.
+**Never less than drawn:** index and of are one reading, taken only when both are whole
+counts ≥ 1 with index ≤ of, else the last real pair holds; a step behind the last
+index drawn is stale and changes nothing; a recomputed `of` that would draw less holds
+the bar. **Words:** line 1 (`--fs-label`, `--text-primary`) is the §2.2 word per
+`step.name` from the page's `STEP_WORDS` (keys = `CEREMONY_ORDER` +
+`STEP_MONTHLY_TEST_HOLD`; `drain` and any other name say `shutting down` until
+US-883-c); line 2 (`--fs-meta`, `--text-secondary`) is `step <index> of <of>`.
+`step{}` absent -> `shutting down` / `steps not read` and the bar holds; `cancelled`
+-> no words. **Look:** fill `--accent`, track `--surface`, ticks at 0/25/50/75/100 %
+and the 75 % marker `--line`, tick labels `--font-mono` `--fs-meta`, in the boot
+checklist's slot (y 194-282, four 22 px rows); the four colour tokens join the
+`styles.css` mirror. No timer is added. *Guarded by*
+`tests/ui/test_shutdown_progress_page.py` (fixtures generated by
+`tests/ui/fixtures/states/shutdown/_generate.py` from `buildShutdownState` +
+`CeremonyProgress`; the probe reports `progress` / `progressLog`) and
+`tests/ui/test_splash_token_ssot.py`.
+
+**The shutdown logo is inline and event-driven; both SVG timelines are retired
+(US-870-c, Sprint 114 / V0.30; spec §2 Close-out, Iris C-Iris-3 + the
+2026-10-25 dim-down ruling, Atlas G2 / C-Atlas-6 / C-Atlas-8).** `shutdown.html`'s
+`<object data="splash-shutdown.svg">` is replaced by an inline `<svg id="mark">`
+whose markup is `index.html`'s logo byte for byte (no `<style>`), and the page
+loads `motion-gate.js` before `shutdown-state-poll.js`. The motion is body
+classes on `#logo` in `styles.css`, each set on the previous part's **own
+event**: on paint, `body.spin-rev` -- the one `@keyframes spin` reversed, one
+rotation `var(--t-spin)`, `infinite`, at `var(--bright-hi)` -- loops for as
+long as the bar is under 100 % (a monthly hold that stands the bar still just
+keeps it looping). The 100 % read waits for the next `animationiteration`, so
+the turn in progress finishes; then `body.spin-dim` (one reverse rotation at
+`var(--bright-low)`); its `animationend` starts `body.dim-down`
+(`@keyframes dim-down { from { filter: brightness(var(--bright-low)) } to {
+filter: brightness(0) } }`, ONE linear run of `var(--t-fade)`, fill-mode both,
+no transform: the logo holds the dim spin's end pose -- not the old SVG light
+ramp reversed, which flashed up, and not the rhombus collapse, the retired
+bloom); its `animationend` starts the stage's opacity fade (`var(--t-fade)`),
+whose `transitionend` sets `body.black`. The page then stays black and dies
+with the power -- it never closes itself. Every wait first asks
+`motionGate.willFire`; `false` (durations 0, styles missing) advances that
+part at once on the read that started it. Reduced motion runs no animation
+and goes black at once on the 100 % read. `cancelled` at any point exits with
+no close-out. No `animation-delay` exists anywhere and no timer is added: the
+250 ms poll is the only `setTimeout` (C-Atlas-8). The shutdown `#mark` is
+visible on `body.animating` (a class only the shutdown poller sets), so the
+boot page's phase-0b opacity-0 rule and its cross-fade are unchanged.
+**Retired:** `src/pi/ui/splash/splash.svg`, `splash-shutdown.svg` and the
+dev-only `preview.html` (it previewed only those two); both leave the
+`step_install_splash_assets` manifest and the `install.sh` loop, so
+`refresh_asset_dir` prunes the stale `/opt/splash` copies. The six motion
+tokens now live only in `tokens.css` (RULED GUARD CHANGE, Atlas 2026-10-25:
+`test_tokensCss_declaresEachMotionTokenOnce`). *Guarded by*
+`tests/ui/test_shutdown_spins.py` (the chain, the negatives, the styles, the
+logo == index.html pin), `tests/ui/test_shutdown_splash_render.py` (the mark
+is visible on paint, no logo keyframe touches opacity, the close-out only
+dims), `tests/ui/test_render_regression.py` (the logo geometry, on
+`index.html`) and `tests/deploy/test_asset_refresh.py` (the SVGs are neither
+vouched nor kept).
 
 **Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
 defect).** The sole production writer of `shutdown-state` is the powerwatch
@@ -6000,8 +6270,9 @@ idempotent):
    `/opt/splash/version.txt` (the bare SemVer string the kiosk version chip
    fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?` fallback). The
    manifest covers **both** surfaces — boot (`index.html`, `styles.css`,
-   `boot-state-poll.js`, `splash.svg`) *and* closeout (`shutdown.html`,
-   `shutdown-state-poll.js`, `splash-shutdown.svg`) — force-refreshed and
+   `motion-gate.js`, `boot-state-poll.js`) *and* closeout (`shutdown.html`,
+   `shutdown-state-poll.js`) plus `OFL.txt` (the retired `splash.svg` /
+   `splash-shutdown.svg` are pruned, US-870-c) — force-refreshed and
    byte-verified (US-498; see the `/opt` asset-ownership contract below).
    **A-9:** a missing splash kit **WARNs and the deploy continues** — it
    never blocks.
@@ -6017,7 +6288,10 @@ US-394.
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
 > documented in **§10.6.1** (landed by US-394, same sprint).
 
-**Closeout (shutdown) surface — the reversal contract (US-498).** The closeout
+**Closeout (shutdown) surface — the reversal contract (US-498; HISTORY: both SVG
+timelines were retired by US-870-c, and the close-out is now the page-driven
+chain described under "The shutdown logo is inline and event-driven"; the
+trap below is kept because it is why the logo has no opacity keyframe).** The closeout
 splash is the boot splash **played backwards**: one kit, one set of keyframes,
 `splash-shutdown.svg` differing from `splash.svg` only by a trailing override
 block. Two things have to be reversed there, and shipping only the first is a
@@ -6417,8 +6691,8 @@ legacy AlertManager owns that section (config.json).
 - **Entries**: one per `verdict.members[]`, id `system:<key>:watch`, tier `watch` -- NEVER stop,
   so a system entry never takes over, never pulses and is never in `codeAlert`; it counts
   toward the icon. Title from the arbiter's table (`SYSTEM_TITLES`): bt `BLUETOOTH NOT LINKED`,
-  adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, wifi `WIFI NOT READ`, pi
-  `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
+  adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, sensor `SENSOR FAULT`
+  (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
   `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
   A key not in the table is skipped with one WARNING per key (A5).
 - **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
@@ -7654,7 +7928,7 @@ exact mirror of what the repo vouches for:
 
 | Dir | Manifest (installed + owned) | Keep-list (another installer owns) |
 |---|---|---|
-| `/opt/splash` | `index.html`, `styles.css`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `splash.svg`, `splash-shutdown.svg` | `version.txt` (generated by the same step, after) |
+| `/opt/splash` | `index.html`, `styles.css`, `motion-gate.js`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `OFL.txt` (US-869-e); `splash.svg` / `splash-shutdown.svg` retired and pruned (US-870-c) | `version.txt` (generated by the same step, after); `warning.png` (US-785: copied from `deploy/plymouth/eclipse/` by the same step, after, cmp-verified) |
 | `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js` | *(none -- single installer)* |
 
 `/opt/<kit>` is **deploy-owned, not hand-edited**: anything dropped there
@@ -7824,7 +8098,7 @@ or `car` — then ` · <age>`, the cell's **freshness** age (Iris I6: the S105 M
 rule through the one shared `freshAgeText` Motion uses — floor, clamp 0,
 `N s ago`, cap `999+ s ago`; never `agoText`'s `just now`) against the tick's
 `nowMs`; undated → no age. **Never amber**: there is no UPS verdict member, so
-`on battery` is neutral (Atlas A4). Never on the row: SOC, a runtime,
+`on battery` is neutral (Atlas A4); a gauge read fault is amber through the sensor member on the DATA row, never on the UPS row (US-869-c, Atlas R7). Never on the row: SOC, a runtime,
 `charging`, `crate`. The tick's system-status branch fetches
 `states/battery-health` through `stateOnce` (Atlas P8). The parked **UPS
 detail** (`upsDetailView`, in `#sys-detail`) is described with the emitter
@@ -8097,7 +8371,7 @@ its own event-time ts:
 
 **`verdict` — every counted issue, named (US-877-b; Atlas Y-6, P4/P6/P7, E3).**
 Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
-`adapter`, `capture`, `wifi`, `pi`:
+`adapter`, `capture`, `sensor`, `wifi`, `pi` (`sensor` from US-869-c):
 
 ```json
 "verdict": {"issueCount": 1,
@@ -8120,12 +8394,36 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
     `link.ecu.state == "up"` (P6). The top-level capture-health state
     (`never_written` included) is never read; no `feeds` block or a None
     payload → no member.
+  - `sensor` (US-869-c; Atlas B2, R1–R8, C-Atlas-1): any of `feeds.light`,
+    `feeds.imu`, `feeds.ups` `state == "faulted"` — a missing or unreadable
+    IMU, light sensor or UPS gauge is a real fault. **UNGATED**: evaluated on
+    every call, the ECU down included (an absent chip is absent with the key
+    off); `capture` stays gated on `link.ecu` up. **ONE member per verdict**,
+    never one per feed: `{"key": "sensor", "reason": <sentence>, "feeds":
+    [<feed tokens>]}`, `feeds` in naming order light, imu, ups (no obd). The
+    feed reasons are two tokens, `capture_health.FEED_REASON_SENSOR_ABSENT`
+    (`sensor_absent`: the IMU / light bridges' own absent token, and the UPS
+    read site with no monitor) and `FEED_REASON_READ_FAILED` (`read_failed`:
+    the UPS read raised; IMU and LIGHT have no read-failure code — a chip
+    present but not reading is `stalled`). The reason is one sentence per
+    faulted feed, joined by one space (Iris): `Light sensor not found.`,
+    `IMU sensor not found.`, `UPS gauge not found.`, `UPS gauge read failed.`;
+    any other reason `Light sensor fault.` / `IMU sensor fault.` / `UPS gauge
+    fault.`. A second feed faulting changes the sentence and keeps the
+    `system:sensor:watch` episode (title `SENSOR FAULT`, WATCH only). A stalled
+    feed is `capture`, never `sensor` (a feed has one state). On the page the
+    member is amber on the DATA row only: each `.sys-row-part` names its own
+    member (`capture` for the stalled part, `sensor` for the faulted one) and
+    carries `data-feed` (the feeds it names, space-separated); each DATA
+    detail feed row carries its own member, a faulted feed reading `fault`.
+    With a sensor member the DATA sentence never says `all 4 feeds writing`.
   - `wifi`: `source.wifi.reason == "read_failed"` only. `nmcli_absent`,
     `not_read` and a measured WiFi down never count — absence is not an issue.
   - `pi`: `pi.overLimit` non-empty (the provider's verdict, never re-compared).
   - **Not counted:** ECU silent (`connecting`), away from home, any null. No
-    `sync` member (877-b-1: no sourced threshold) and no UPS member (P5: no
-    grounded band) — both banked.
+    `sync` member (877-b-1: no sourced threshold) and no UPS battery member
+    (P5: no grounded band) — both banked. A UPS **gauge** fault is the
+    `sensor` member's, not a UPS member (US-869-c).
 - **`reason` is the finished sentence** (Iris 2026-10-19 words; the page
   composes nothing): bt retrying `Link dropped. Retrying.`; bt down `Not
   linked. Check the OBD dongle.`; adapter `Bluetooth up; adapter not

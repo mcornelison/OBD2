@@ -17,6 +17,8 @@
 # 2026-06-29    | Ralph (Rex)  | Initial implementation (US-394 F-103 shutdown splash)
 # 2026-10-23    | Rex (US-883-a) | The payload gains step (null for grace).
 # 2026-10-23    | Rex (US-883-b) | The payload gains sync (null until a drain pass).
+# 2026-10-25    | Rex (US-883-c) | sync carries state + outcome; the docstring
+#               |                | names what sync null means.
 # ================================================================================
 ################################################################################
 
@@ -231,3 +233,21 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
         reason=DEFAULT_REASON,
     )
     assert not os.path.exists(statesDir)
+
+
+def test_emitter_writesSyncStateAndOutcome(tmp_path):
+    """US-883-c: sync.state / sync.outcome reach the file as handed in."""
+    emit = makeShutdownPhaseEmitter(str(tmp_path), nowIsoFn=lambda: _NOW)
+    target = tmp_path / SHUTDOWN_STATE_FILENAME
+    sync = {"state": "ended", "outcome": "stalled", "waitingAtKeyOff": 400, "confirmed": 250}
+
+    emit(PHASE_FLUSHING, tGraceStartedAtIso=_GRACE_START, tGraceTotalS=7.0,
+         tRemainingS=0.0, reason=DEFAULT_REASON, sync=sync)
+
+    assert json.loads(target.read_text(encoding="utf-8"))["sync"] == sync
+
+
+def test_buildShutdownState_docstring_namesWhatSyncNullMeans():
+    """Rule 10 in the code: sync null means only not-started or the fast path."""
+    doc = buildShutdownState.__doc__ or ""
+    assert "has not started" in doc and "fast path" in doc

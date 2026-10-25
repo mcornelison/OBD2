@@ -34,6 +34,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-f AC 7 amber = members gate.
+# 2026-10-24    | Rex (US-869-c)| 30 fixtures (the three sensor ones).
 # ================================================================================
 ################################################################################
 
@@ -215,7 +216,8 @@ def test_theSubjectIsEveryFixtureExceptSettings_andIsNotEmpty():
     # Every generated fixture is in the subject (an empty or partial
     # directory listing cannot pass the gate vacuously).
     assert set(names) == {n for n in gen.fixtureNames() if not n.startswith("settings-")}
-    assert len(names) == 27
+    # MOVED PIN (US-869-c): + imu-faulted, imu-ups-faulted, imu-faulted-ecu-down.
+    assert len(names) == 30
     assert not [n for n in names if n.startswith("settings-")]
     for named in ("two-issues", "pi-hot", "pi-multi-limit", "verdict-absent"):
         assert named in names
@@ -254,7 +256,9 @@ def test_ac7_theAmberSetEqualsTheMemberSet_onThePageEveryDetailAndTheTopBar(
 
 @_needsNode
 @pytest.mark.parametrize("name", ["two-issues", "pi-multi-limit", "capture-ups-feed-stalled",
-                                  "wifi-read-failed", "adapter-silent", "all-ok-driving"])
+                                  "wifi-read-failed", "adapter-silent", "all-ok-driving",
+                                  # US-869-c: the sensor member's fixtures.
+                                  "imu-faulted", "imu-ups-faulted"])
 def test_everyElementTheStylesheetPaintsAmber_isInsideAMemberMarkedElement(name, monkeypatch):
     """The only amber-coloured element outside a data-member is the verdict
     count (`issues`), which is the member set itself, not one of it."""

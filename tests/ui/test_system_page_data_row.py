@@ -29,6 +29,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-c System page DATA row.
+# 2026-10-24    | Rex (US-869-c)| the `sensor` member on the DATA row and detail;
+#               |              | per-part members + data-feed; the guard extended.
 # ================================================================================
 ################################################################################
 
@@ -88,6 +90,12 @@ _DATA_FIXTURES = {
     "capture-stalled", "away-from-home", "rows-not-counted",
     "capture-stalled-ecu-silent", "capture-never-written-ecu-up",
     "capture-ups-feed-stalled", "sync-days-old", "sync-stale-glyph",
+}
+
+
+# US-869-c: the sensor-member fixtures (one UPS-row fixture gains a feed fault).
+_SENSOR_FIXTURES = {
+    "imu-faulted", "imu-ups-faulted", "imu-faulted-ecu-down", "ups-gauge-unreadable",
 }
 
 
@@ -181,6 +189,7 @@ def test_everyDataFixtureIsTheBuildersOutputForItsStoredInputs(name: str):
         feedSamples={k: tuple(v) for k, v in capIn["feedSamples"].items()},
         powerSource=capIn["powerSource"],
         stallSeconds=capIn["stallSeconds"],
+        feedFaults=capIn.get("feedFaults"),  # US-869-c
     )
     assert capture == fx["payloads"]["capture-health"]
     assert buildSystemStatusState(**inputs["system-status"], captureHealth=capture) == (
@@ -244,7 +253,10 @@ def test_validation_upsFeedStalled_topLevelOk_isStalled_oneMember_amberOnTheData
         "issueCount": 1, "members": [{"key": "capture", "reason": "UPS feed stalled."}],
     }
     assert (row["word"], row["look"], row["level"]) == ("stalled", "amber", "amber")
-    assert row["parts"][0] == {"text": "UPS feed stalled.", "level": "amber"}
+    # MOVED PIN (US-869-c): each part names its own member and feeds.
+    assert row["parts"][0] == {
+        "text": "UPS feed stalled.", "level": "amber", "member": "capture", "feed": "ups",
+    }
 
 
 @_needsNode
@@ -694,7 +706,10 @@ def test_theJsCopyOfCaptureHealthsVocabularyIsTheProducers():
     word = _jsLiteral("CAPTURE_STATE_WORD")
     assert set(re.findall(r"(\w+):", word)) == {ch.STATE_OK, ch.STATE_IDLE}
     feedWord = _jsLiteral("CAPTURE_FEED_WORD")
-    assert set(re.findall(r"(\w+):", feedWord)) == {ch.STATE_OK, ch.STATE_STALLED, ch.STATE_IDLE}
+    # MOVED PIN (US-869-c): `faulted` joins the feed words (Iris C-Iris-2).
+    assert set(re.findall(r"(\w+):", feedWord)) == {
+        ch.STATE_OK, ch.STATE_STALLED, ch.STATE_IDLE, ch.STATE_FAULTED,
+    }
     feeds = re.findall(r'\["(\w+)", "\w+"\]', _jsLiteral("CAPTURE_FEEDS"))
     assert sorted(feeds) == sorted(ch.FEED_NAMES)
     assert _jsLiteral("CAPTURE_STATE_STALLED") == '"' + ch.STATE_STALLED + '"'
@@ -702,6 +717,28 @@ def test_theJsCopyOfCaptureHealthsVocabularyIsTheProducers():
     assert _jsLiteral("CAPTURE_MEMBER_KEY") == '"' + sse.VERDICT_CAPTURE + '"'
     silent = set(re.findall(r'"(\w+)"', _jsLiteral("DATA_ECU_SILENT_STATES")))
     assert silent == {sse.LINK_DOWN, sse.LINK_RETRYING, sse.LINK_CONNECTING}
+    # US-869-c: the faulted word, the faulted state and the sensor member key.
+    assert re.search(r"\b" + ch.STATE_FAULTED + r': "fault"', feedWord), feedWord
+    assert _jsLiteral("CAPTURE_STATE_FAULTED") == '"' + ch.STATE_FAULTED + '"'
+    assert _jsLiteral("SENSOR_MEMBER_KEY") == '"' + sse.VERDICT_SENSOR + '"'
+
+
+@_needsNode
+@pytest.mark.parametrize("name", sorted(_SENSOR_FIXTURES | _DATA_FIXTURES))
+def test_everySysRowPartDataFeedValueIsAProducerFeedName(name: str, monkeypatch):
+    """US-869-c cross-language guard: data-feed on a .sys-row-part names only
+    capture_health.FEED_NAMES (space-separated when a member names several)."""
+    monkeypatch.setenv("TZ", _ZONE)
+    surface = _render(name)
+    seen = 0
+    for path in surface.pathsByClass("sys-row-part"):
+        value = path[-1]["attrs"].get("data-feed")
+        if value is not None:
+            seen += 1
+            assert value.split() and set(value.split()) <= set(ch.FEED_NAMES), (name, value)
+    status, _ = _payloads(name)
+    if {"capture", "sensor"} & set(_members(status)):
+        assert seen > 0, name  # non-vacuous: a member part carries data-feed
 
 
 def test_ac13_carouselJsHoldsNoCaptureMemberReasonText():
@@ -747,3 +784,144 @@ def test_aStatusWithAMemberAddedIsStillAMemberOnly():
     rows = _map("dataRowView", [[status, capture], [plain, capture]])
     assert rows[0]["word"] == "stalled"
     assert rows[1]["word"] == "stopped"
+
+
+# ---------------------------------------------------------------------------
+# US-869-c: a faulted feed is ONE `sensor` member (Atlas R1-R8).
+# ---------------------------------------------------------------------------
+
+
+def _rowPath(surface, key: str):
+    rows = [p for p in surface.pathsByClass("sys-row") if p[-1]["attrs"].get("data-row") == key]
+    assert len(rows) == 1, key
+    return rows[0]
+
+
+def _amberUnder(path) -> list[dict]:
+    return [p[-1]["attrs"] for p in _descendants(path)
+            if p[-1].get("attrs", {}).get("data-level") == "amber"]
+
+
+def _parts(surface) -> list[dict]:
+    return [p[-1] for p in surface.pathsByClass("sys-row-part")]
+
+
+@_needsNode
+def test_validation_imuFaulted_withAStalledLightFeed_eachPartIsItsOwnMember(monkeypatch):
+    """VC: faulted part data-member=sensor data-feed=imu; stalled part
+    data-member=capture; UPS row not amber."""
+    monkeypatch.setenv("TZ", _ZONE)
+    status, _ = _payloads("imu-faulted")
+    assert _members(status) == ["capture", "sensor"]
+    surface = _render("imu-faulted")
+
+    members = [(_text(p), p["attrs"].get("data-member"), p["attrs"].get("data-feed"))
+               for p in _parts(surface) if p["attrs"].get("data-level") == "amber"]
+    assert members == [
+        ("Light feed stalled.", "capture", "light"),
+        (" " + MIDDLE_DOT + " IMU sensor not found.", "sensor", "imu"),
+    ]
+    assert _amberUnder(_rowPath(surface, "ups")) == []
+
+
+@_needsNode
+def test_validation_imuAndUpsFaulted_oneSensorPart_neverAllFeedsWriting(monkeypatch):
+    monkeypatch.setenv("TZ", _ZONE)
+    status, capture = _payloads("imu-ups-faulted")
+    row = _call("dataRowView", status, capture)
+
+    assert (row["word"], row["look"]) == ("recording", "ok")
+    assert "all 4 feeds writing" not in row["sentence"]
+    assert row["parts"][0] == {
+        "text": "IMU sensor not found. UPS gauge read failed.", "level": "amber",
+        "member": "sensor", "feed": "imu ups",
+    }
+    assert [p["level"] for p in row["parts"][1:]] == ["secondary"]
+    assert (row["level"], row["member"]) == ("amber", "sensor")
+    surface = _render("imu-ups-faulted")
+    assert _amberUnder(_rowPath(surface, "ups")) == []
+
+
+@_needsNode
+def test_validation_imuFaultedEcuDown_sensorPartPresent_noCapturePart(monkeypatch):
+    monkeypatch.setenv("TZ", _ZONE)
+    status, capture = _payloads("imu-faulted-ecu-down")
+    assert _members(status) == ["sensor"]
+    row = _call("dataRowView", status, capture)
+
+    assert [(p["member"], p["feed"]) for p in row["parts"] if p["level"] == "amber"] == [
+        ("sensor", "imu")
+    ]
+    assert row["word"] != "stalled"
+
+
+@_needsNode
+def test_upsGaugeUnreadable_isAmberOnTheDataRowOnly_neverOnTheUpsRow(monkeypatch):
+    """Atlas R7: a gauge read fault is amber through the sensor member on the
+    DATA row, never on the UPS row."""
+    monkeypatch.setenv("TZ", _ZONE)
+    surface = _render("ups-gauge-unreadable")
+
+    assert _amberUnder(_rowPath(surface, "ups")) == []
+    dataAmber = _amberUnder(_rowPath(surface, "data"))
+    assert dataAmber and {a.get("data-member") for a in dataAmber} == {"sensor"}
+    assert [a.get("data-feed") for a in dataAmber if "sys-row-part" in a.get("class", "")] == [
+        "ups"
+    ]
+
+
+@_needsNode
+def test_detail_eachFeedRowIsItsOwnMember_faultedReadsFault(monkeypatch):
+    monkeypatch.setenv("TZ", _ZONE)
+    status, capture = _payloads("imu-faulted")
+    detail = _call("dataDetailView", status, capture)
+    assert [(f["label"], f["state"], f["look"], f["member"]) for f in detail["feeds"]] == [
+        ("OBD", "writing", "ok", None),
+        ("LIGHT", "stalled", "amber", "capture"),
+        ("IMU", "fault", "amber", "sensor"),
+        ("UPS", "writing", "ok", None),
+    ]
+    surface = _render(
+        "imu-faulted", parked=True,
+        steps=[{"clickNth": {"selector": ".sys-row", "index": 1}}, {"flush": 1}],
+    )
+    states = surface.pathsByClass("data-feed-state")
+    assert [(p[-1]["attrs"].get("data-member"), surface.winningDeclaration(p, "color")[0])
+            for p in states] == [
+        (None, GREEN), ("capture", AMBER), ("sensor", AMBER), (None, GREEN),
+    ]
+    feeds = surface.pathsByClass("data-feed-row")
+    assert [p[-1]["attrs"]["data-feed"] for p in feeds] == ["obd", "light", "imu", "ups"]
+
+
+@_needsNode
+def test_aFaultedFeedNamedByNoSensorMember_isNeverAmber():
+    status, capture = _payloads("imu-faulted")
+    plain = copy.deepcopy(status)
+    plain["verdict"] = {"issueCount": 0, "members": []}
+    detail = _call("dataDetailView", plain, capture)
+    imu = detail["feeds"][2]
+    assert (imu["state"], imu["look"], imu["member"]) == ("fault", "secondary", None)
+    row = _call("dataRowView", plain, capture)
+    assert all(p["level"] == "secondary" for p in row["parts"])
+
+
+@_needsNode
+def test_aPartIsNeverBothStalledAndFaulted():
+    """A feed has one state, so no feed is in both a capture part and a sensor part."""
+    for name in sorted(_SENSOR_FIXTURES):
+        status, capture = _payloads(name)
+        row = _call("dataRowView", status, capture)
+        named = {}
+        for part in row["parts"]:
+            for feed in (part["feed"] or "").split():
+                named.setdefault(feed, set()).add(part["member"])
+        assert all(len(m) == 1 for m in named.values()), (name, named)
+
+
+@_needsNode
+def test_allFeedsOk_noSensorPart_andTheRowIsUnchanged():
+    status, capture = _payloads("all-ok-driving")
+    row = _call("dataRowView", status, capture)
+    assert all(p["member"] is None and p["feed"] is None for p in row["parts"])
+    assert row["sentence"] == "all 4 feeds writing " + MIDDLE_DOT + " 0 rows waiting"

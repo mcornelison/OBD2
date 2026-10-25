@@ -1220,6 +1220,15 @@ def _capture(topState="ok", **feedStates):
     }
 
 
+def _faultedCapture(faults, topState="ok", **feedStates):
+    """A capture-health payload whose named feeds are faulted with a reason."""
+    payload = _capture(topState, **feedStates)
+    for name, reason in faults.items():
+        payload["feeds"][name]["state"] = "faulted"
+        payload["feeds"][name]["reason"] = reason
+    return payload
+
+
 def _pi(**fields):
     return {**_PI_BLOCK, **fields}
 
@@ -1414,8 +1423,20 @@ def test_verdict_fixedOrder_countIsLen_andNoSyncKeyEver():
     assert _keys(adapterSide) == ["adapter", "capture", "wifi", "pi"]
     for verdict in (btSide, adapterSide):
         assert verdict["issueCount"] == len(verdict["members"])
-        assert all(set(m) == {"key", "reason"} for m in verdict["members"])
+        # MOVED PIN (US-869-c): a sensor member also carries `feeds`.
+        assert all(
+            set(m) == ({"key", "reason", "feeds"} if m["key"] == "sensor" else {"key", "reason"})
+            for m in verdict["members"]
+        )
         assert "sync" not in _keys(verdict)
+
+    withSensor = _verdict(
+        link=_chain(bt=LINK_RETRYING),
+        captureHealth=_faultedCapture({"imu": "sensor_absent"}, obd="stalled"),
+        wifiSource=everything["wifiSource"], piHealth=everything["piHealth"],
+    )
+    assert _keys(withSensor) == ["bt", "capture", "sensor", "wifi", "pi"]
+    assert set(withSensor["members"][2]) == {"key", "reason", "feeds"}
 
 
 def test_builder_noSyncMember_evenWithASyncThatNeverSucceeded():
@@ -1426,10 +1447,12 @@ def test_builder_noSyncMember_evenWithASyncThatNeverSucceeded():
     assert "sync" not in _keys(state["verdict"])
 
 
-def test_verdict_memberOrderConstant_isBtAdapterCaptureWifiPi():
-    from pi.splash.system_status_emitter import VERDICT_MEMBER_ORDER
+def test_verdict_memberOrderConstant_isBtAdapterCaptureSensorWifiPi():
+    from pi.splash.system_status_emitter import VERDICT_MEMBER_ORDER, VERDICT_SENSOR
 
-    assert VERDICT_MEMBER_ORDER == ("bt", "adapter", "capture", "wifi", "pi")
+    # MOVED PIN (US-869-c): `sensor` sits after `capture` (Atlas R2).
+    assert VERDICT_SENSOR == "sensor"
+    assert VERDICT_MEMBER_ORDER == ("bt", "adapter", "capture", "sensor", "wifi", "pi")
 
 
 def test_verdict_aMembersKeyStaysPut_whenItsReasonChangesMidEpisode():
@@ -1450,6 +1473,10 @@ def test_verdict_mirroredVocabularies_matchTheirProducers():
     from src.pi.network import wifi_reader
 
     assert sse._CAPTURE_STATE_STALLED == capture_health.STATE_STALLED
+    # US-869-c (Atlas R1): the fault state and the two feed fault tokens.
+    assert sse._CAPTURE_STATE_FAULTED == capture_health.STATE_FAULTED
+    assert sse._FEED_REASON_SENSOR_ABSENT == capture_health.FEED_REASON_SENSOR_ABSENT
+    assert sse._FEED_REASON_READ_FAILED == capture_health.FEED_REASON_READ_FAILED
     assert {n for n, _w in sse._CAPTURE_FEED_WORDS} == set(capture_health.FEED_NAMES)
     assert [w for _n, w in sse._CAPTURE_FEED_WORDS] == ["OBD", "light", "IMU", "UPS"]
     assert sse._WIFI_REASON_READ_FAILED == wifi_reader.WIFI_REASON_READ_FAILED
@@ -1471,6 +1498,77 @@ def test_verdict_vc2_wifiNotRead_ecuConnecting_isZeroIssues():
         wifiSource={"available": False, "reason": "not_read"},
     )
     assert verdict == {"issueCount": 0, "members": []}
+
+
+# ---------------------------------------------------------------------------
+# US-869-c -- a faulted feed is ONE `sensor` member (Atlas R1-R8, C-Atlas-1).
+# ---------------------------------------------------------------------------
+
+
+def _sensorMembers(verdict):
+    return [m for m in verdict["members"] if m["key"] == "sensor"]
+
+
+@pytest.mark.parametrize(
+    ("faults", "feeds", "reason"),
+    [
+        ({"imu": "sensor_absent"}, ["imu"], "IMU sensor not found."),
+        ({"light": "sensor_absent"}, ["light"], "Light sensor not found."),
+        ({"ups": "sensor_absent"}, ["ups"], "UPS gauge not found."),
+        ({"ups": "read_failed"}, ["ups"], "UPS gauge read failed."),
+        ({"imu": "sensor_absent", "ups": "read_failed"}, ["imu", "ups"],
+         "IMU sensor not found. UPS gauge read failed."),
+        ({"ups": "sensor_absent", "imu": "sensor_absent"}, ["imu", "ups"],
+         "IMU sensor not found. UPS gauge not found."),
+        ({"ups": "read_failed", "imu": "sensor_absent", "light": "sensor_absent"},
+         ["light", "imu", "ups"],
+         "Light sensor not found. IMU sensor not found. UPS gauge read failed."),
+        # Unknown or absent reasons: the generic fault word (Iris).
+        ({"light": "something_else"}, ["light"], "Light sensor fault."),
+        ({"imu": None}, ["imu"], "IMU sensor fault."),
+        ({"ups": "bogus"}, ["ups"], "UPS gauge fault."),
+        # C-Atlas-1 dropped the IMU/LIGHT read-failed words.
+        ({"imu": "read_failed"}, ["imu"], "IMU sensor fault."),
+        ({"light": "read_failed"}, ["light"], "Light sensor fault."),
+    ],
+)
+def test_verdict_sensorMember_oneMemberNamesEveryFaultedFeed(faults, feeds, reason):
+    verdict = _verdict(captureHealth=_faultedCapture(faults))
+
+    assert verdict["members"] == [{"key": "sensor", "reason": reason, "feeds": feeds}]
+    assert verdict["issueCount"] == 1
+
+
+def test_verdict_sensorMember_isUngated_ecuDown_captureAbsent():
+    """Atlas R3: the sensor member is evaluated on every call; capture stays gated."""
+    payload = _faultedCapture({"imu": "sensor_absent"}, obd="stalled")
+    for ecu in (LINK_DOWN, LINK_CONNECTING, LINK_RETRYING, None):
+        verdict = _verdict(link=_chain(ecu=ecu), captureHealth=payload, driveState="idle")
+        assert "capture" not in _keys(verdict), ecu
+        assert _sensorMembers(verdict) == [
+            {"key": "sensor", "reason": "IMU sensor not found.", "feeds": ["imu"]}
+        ], ecu
+
+
+def test_verdict_sensorMember_negatives():
+    """All ok: byte-identical to today. A stalled feed is capture only. An obd
+    fault is never a sensor feed."""
+    assert _verdict() == {"issueCount": 0, "members": []}
+    stalled = _verdict(captureHealth=_capture(imu="stalled"))
+    assert _keys(stalled) == ["capture"]
+    assert _verdict(captureHealth=_faultedCapture({"obd": "sensor_absent"}))["members"] == []
+    assert _verdict(captureHealth=None)["members"] == []
+    noFeeds = _faultedCapture({"imu": "sensor_absent"})
+    del noFeeds["feeds"]
+    assert _verdict(captureHealth=noFeeds)["members"] == []
+
+
+def test_verdict_stalledAndFaulted_areTwoMembers_eachNamingItsOwnFeeds():
+    verdict = _verdict(captureHealth=_faultedCapture({"imu": "sensor_absent"}, light="stalled"))
+    assert verdict["members"] == [
+        {"key": "capture", "reason": "Light feed stalled."},
+        {"key": "sensor", "reason": "IMU sensor not found.", "feeds": ["imu"]},
+    ]
 
 
 def _verdictState(**kw):

@@ -12,14 +12,59 @@
  *          shows up is END TO END: real emitter payload -> real poll JS ->
  *          did window.close() get called.
  *
- *          TIME IS VIRTUAL and advances POLL_MS per round, so the shipped
- *          MIN_PLAY_MS (2.5s) and HARD_CAP_MS (12s) thresholds are exercised
- *          for real in milliseconds of wall clock. `performance.now` is the
- *          seam the shipped JS already reads.
+ *          TIME IS VIRTUAL and advances POLL_MS per round, so minutes of
+ *          driven clock cost milliseconds of wall clock. The page itself has
+ *          no clock (US-869-d); time only indexes which boot-state was last
+ *          written.
+ *
+ *          US-869-d: motion-gate.js is loaded BEFORE the poller, as index.html
+ *          loads it, and getComputedStyle is stubbed from `computedStyles`
+ *          ({elementId: {transitionDuration, animationName,
+ *          animationDuration}}; an unlisted element computes 0s / none). Once
+ *          the poller sets #splash-stage's opacity to 0 the probe dispatches
+ *          `transitionend` on it -- unless `dispatchTransitionEnd` is false,
+ *          modelling a browser that fires nothing because nothing animates.
+ *
+ *          US-785 (phase 0b): the page's three end events are modelled at
+ *          given virtual ms -- DOMContentLoaded (`domContentLoadedMs`), the
+ *          WARNING image's decode() resolving or, with `warningError`, failing
+ *          (`warningDecodeMs`), and document.fonts.ready (`fontsReadyMs`); each
+ *          defaults to 0. Events inside a poll round fire in time order, at
+ *          their own virtual ms, so "the cross-fade starts at the last event"
+ *          is measurable below POLL_MS. Once body.logo-up is set the probe
+ *          dispatches the logo's `transitionend` -- unless
+ *          `dispatchCrossFadeEnd` is false.
+ *
+ *          US-869-f (the spins): `computedStyles.logo` is what #logo computes
+ *          WHILE a body.spin-N class is on (styles.css's `body.spin-N #logo`);
+ *          with no spin class, or under `reducedMotion` (the media block),
+ *          every element computes none / 0s. While a spin is live the probe is
+ *          the browser's half: one rotation (`spinEventMs`, else the computed
+ *          animationDuration) after a spin starts it dispatches #logo's
+ *          `animationend` (spins 1 and 3) or one `animationiteration` per
+ *          rotation (spin 2) -- unless `dispatchSpinEvents` is false.
+ *          `spinEventMs` 0 dispatches at zero elapsed time.
+ *
+ *          US-869-g (the checklist): /capture-health and /system-status are
+ *          served from `captureHealthStates` and `systemStatusStates`, each
+ *          indexed by time exactly as `bootStates` is (the final entry repeats;
+ *          a null entry, or an empty list, is a 404). Every state-file read is
+ *          logged in `stateFetches` as {route, atMs, token}, so "one tick
+ *          reads all three, with the token" is measurable.
  *
  *          Invoked as:  node splash_probe.js <inputJsonPath>
- *          Input:  {pollJsPath, tree, bootStates, rounds}
- *          Output: {handoff, degraded, degradedMsg, polls, elapsedMs, tree}
+ *          Input:  {pollJsPath, motionGatePath, tree, bootStates,
+ *                   captureHealthStates, systemStatusStates, rounds,
+ *                   computedStyles, dispatchTransitionEnd, reducedMotion,
+ *                   domContentLoadedMs, warningDecodeMs, warningError,
+ *                   fontsReadyMs, dispatchCrossFadeEnd, dispatchSpinEvents,
+ *                   spinEventMs}
+ *          Output: {handoff, closeCalls, timeoutsQueued, degraded,
+ *                   degradedMsg, polls, elapsedMs, crossFadeStartedAtMs,
+ *                   crossFadeEndedAtMs, crossFadeEndDispatched,
+ *                   warningDecodeCalls, spinLog, animationEvents,
+ *                   fadeStartedAtMs, spinAtHandoff, animationLiveAtHandoff,
+ *                   stateFetches, tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
  * ==========================================================================*/
@@ -44,25 +89,37 @@ async function main() {
   let virtualMs = 0;
   let handoff = false;
   let handoffAtMs = null;
+  let closeCalls = 0;
+  let timeoutsQueued = 0;
   let polls = 0;
-
-  // US-525: the brand mark is an <object type="image/svg+xml"> -- it loads
-  // ASYNCHRONOUSLY, after the poll script has already parsed. `brandLoadMs` is
-  // the virtual ms at which that `load` fires, so a test can model a cold
-  // chromium where the script is running but the brand is not yet painted.
-  // null => never loads (a missing/broken splash.svg).
-  const brandLoadMs =
-    input.brandLoadMs === undefined ? 0 : input.brandLoadMs;
-  let brandDispatched = false;
 
   // The state file is indexed by TIME, not by poll count: the emitter writes on
   // its own cadence (eclipse-boot-state.service --poll-ms, 500 by default) while
   // the splash reads at 250 ms, so a poll sees whatever was last WRITTEN. Two
   // independent cadences is the real system, and getting it wrong would decide
-  // which hard cap -- the emitter's or the splash's -- fires first. The final
-  // entry repeats (a steady state); a `null` entry models an unreadable file.
+  // which emission a poll sees. The final entry repeats (a steady state); a
+  // `null` entry models an unreadable file.
+  // US-869-f: the spin the page is in, read off body.spin-N (0 = none).
+  let spinAtHandoff = null;
+  let animationLiveAtHandoff = null;
+  function currentSpin() {
+    for (let n = 1; n <= 3; n++) {
+      if (doc.body.classList.contains("spin-" + n)) return n;
+    }
+    return 0;
+  }
+  function logoAnimationLive() {
+    const logo = doc.getElementById("logo");
+    if (!logo) return false;
+    const cs = win.getComputedStyle(logo);
+    return cs.animationName !== "none" && parseFloat(cs.animationDuration) > 0;
+  }
+
   const states = input.bootStates || [];
   const emitIntervalMs = input.emitIntervalMs || 500;
+  const computedStyles = input.computedStyles || {};
+  const dispatchTransitionEnd = input.dispatchTransitionEnd !== false;
+  let transitionEndDispatched = false;
 
   const win = {
     SPLASH_TOKEN: "test-token",
@@ -73,21 +130,56 @@ async function main() {
     },
     close: function () {
       handoff = true;
-      if (handoffAtMs === null) handoffAtMs = virtualMs;
+      closeCalls += 1;
+      if (handoffAtMs === null) {
+        handoffAtMs = virtualMs;
+        spinAtHandoff = currentSpin();
+        animationLiveAtHandoff = logoAnimationLive();
+      }
     },
     addEventListener: function () {},
+    getComputedStyle: function (el) {
+      const id = el && el.getAttribute ? el.getAttribute("id") : null;
+      let entry = (id && computedStyles[id]) || {};
+      // styles.css: #logo animates only under body.spin-N, and the
+      // reduced-motion block turns every animation and transition off.
+      if (id === "logo" && currentSpin() === 0) entry = {};
+      if (input.reducedMotion) entry = {};
+      return {
+        transitionDuration: entry.transitionDuration || "0s",
+        animationName: entry.animationName || "none",
+        animationDuration: entry.animationDuration || "0s",
+      };
+    },
+    matchMedia: function (query) {
+      return { matches: !!input.reducedMotion && /prefers-reduced-motion/.test(query) };
+    },
   };
 
   global.window = win;
   global.performance = win.performance;
   global.document = doc;
-  global.fetch = function (url) {
+  // The last-written entry of a time-indexed sequence; null when none.
+  function writtenAt(sequence) {
+    if (!sequence || !sequence.length) return null;
+    const idx = Math.min(Math.floor(virtualMs / emitIntervalMs), sequence.length - 1);
+    const body = sequence[idx];
+    return body === undefined ? null : body;
+  }
+  const stateRoutes = {
+    "/boot-state": states,
+    "/capture-health": input.captureHealthStates || [],
+    "/system-status": input.systemStatusStates || [],
+  };
+  const stateFetches = [];
+  global.fetch = function (url, options) {
     const route = String(url).split("?")[0];
-    if (route === "/boot-state") {
-      const idx = Math.min(Math.floor(virtualMs / emitIntervalMs), states.length - 1);
-      polls += 1;
-      const body = states.length ? states[idx] : null;
-      if (body === null || body === undefined) {
+    if (Object.prototype.hasOwnProperty.call(stateRoutes, route)) {
+      if (route === "/boot-state") polls += 1;
+      const headers = (options && options.headers) || {};
+      stateFetches.push({ route: route, atMs: virtualMs, token: headers["X-Splash-Token"] || null });
+      const body = writtenAt(stateRoutes[route]);
+      if (body === null) {
         return Promise.resolve({ ok: false, status: 404 });
       }
       return Promise.resolve({
@@ -110,39 +202,200 @@ async function main() {
     return Promise.resolve({ ok: false, status: 404 });
   };
   global.setTimeout = function (fn) {
+    timeoutsQueued += 1;
     return clock.setTimeout(fn);
   };
   global.clearTimeout = function (id) {
     return clock.clearTimeout(id);
   };
 
+  // --- Phase 0b (US-785): the three end events, each a promise or an event the
+  // probe settles at its own virtual ms. The scripts sit at the end of <body>,
+  // so they run while the document is still "loading".
+  doc.readyState = "loading";
+  function deferred() {
+    const d = {};
+    d.promise = new Promise(function (resolve, reject) {
+      d.resolve = resolve;
+      d.reject = reject;
+    });
+    return d;
+  }
+  const decoded = deferred();
+  const fontsReady = deferred();
+  doc.fonts = { ready: fontsReady.promise };
+  let warningDecodeCalls = 0;
+  const warningImg = doc.getElementById("warning");
+  if (warningImg) {
+    warningImg.decode = function () {
+      warningDecodeCalls += 1;
+      return decoded.promise;
+    };
+  }
+  const pageEvents = [
+    {
+      atMs: input.domContentLoadedMs || 0,
+      fire: function () {
+        doc.readyState = "interactive";
+        doc.dispatch("DOMContentLoaded", { target: doc });
+      },
+    },
+    {
+      atMs: input.warningDecodeMs || 0,
+      fire: function () {
+        if (input.warningError) decoded.reject(new Error("EncodingError"));
+        else decoded.resolve();
+      },
+    },
+    {
+      atMs: input.fontsReadyMs || 0,
+      fire: function () {
+        fontsReady.resolve(doc.fonts);
+      },
+    },
+  ].sort(function (a, b) {
+    return a.atMs - b.atMs;
+  });
+  // A rejection nobody awaits yet must not crash node before the page attaches.
+  decoded.promise.catch(function () {});
+
+  const dispatchCrossFadeEnd = input.dispatchCrossFadeEnd !== false;
+  let crossFadeEndDispatched = false;
+  let crossFadeStartedAtMs = null;
+  let crossFadeEndedAtMs = null;
+
+  if (input.motionGatePath) require(path.resolve(input.motionGatePath));
   require(path.resolve(input.pollJsPath));
 
-  for (let i = 0; i < (input.rounds || 80); i++) {
-    // Fire the brand's `load` once virtual time reaches it -- BEFORE draining,
-    // so a listener registered by the poll script sees it on the right round.
-    if (!brandDispatched && brandLoadMs !== null && virtualMs >= brandLoadMs) {
-      brandDispatched = true;
-      const mark = doc.getElementById("mark");
-      if (mark) mark.dispatch("load", { type: "load" });
+  // The browser's half of the fade: once the stage's opacity is 0, a real
+  // transition ends with a `transitionend` on the stage itself.
+  function maybeEndTransition() {
+    if (!dispatchTransitionEnd || transitionEndDispatched) return;
+    const stage = doc.getElementById("splash-stage");
+    if (!stage || stage.style.opacity !== "0") return;
+    transitionEndDispatched = true;
+    stage.dispatch("transitionend", { target: stage, propertyName: "opacity" });
+  }
+
+  // The browser's half of the cross-fade: body.logo-up starts the logo's
+  // opacity transition, which ends with a `transitionend` on the logo itself.
+  function maybeEndCrossFade() {
+    const body = doc.body;
+    if (crossFadeStartedAtMs === null && body.classList.contains("logo-up")) {
+      crossFadeStartedAtMs = virtualMs;
     }
+    if (dispatchCrossFadeEnd && !crossFadeEndDispatched && crossFadeStartedAtMs !== null) {
+      const logo = doc.getElementById("mark");
+      if (logo) {
+        crossFadeEndDispatched = true;
+        logo.dispatch("transitionend", { target: logo, propertyName: "opacity" });
+      }
+    }
+    if (crossFadeEndedAtMs === null && body.classList.contains("phase-1")) {
+      crossFadeEndedAtMs = virtualMs;
+    }
+  }
+
+  // The browser's half of the spins (US-869-f). A spin is a new run each time
+  // the body's spin class changes; while it is live, its events fall due one
+  // rotation apart from the moment it started.
+  const dispatchSpinEvents = input.dispatchSpinEvents !== false;
+  const spinLog = [];
+  const animationEvents = [];
+  let spinRun = null;
+  function rotationMs() {
+    if (typeof input.spinEventMs === "number") return input.spinEventMs;
+    const logo = doc.getElementById("logo");
+    const raw = logo ? win.getComputedStyle(logo).animationDuration : "0s";
+    const n = parseFloat(raw);
+    return /ms$/.test(raw) ? n : n * 1000;
+  }
+  // Every spin the page STARTS is logged at the moment its class goes on --
+  // including one that advances synchronously because no event will fire.
+  const bodyClassAdd = doc.body.classList.add.bind(doc.body.classList);
+  doc.body.classList.add = function (name) {
+    bodyClassAdd(name);
+    const m = /^spin-([123])$/.exec(name);
+    if (!m) return;
+    spinRun = { spin: Number(m[1]), startedAtMs: virtualMs, live: logoAnimationLive(), events: 0 };
+    spinLog.push({ spin: spinRun.spin, atMs: virtualMs, live: spinRun.live });
+  };
+  function maybeAdvanceSpin() {
+    const n = currentSpin();
+    if (n === 0 || !spinRun || spinRun.spin !== n) return false;
+    if (!dispatchSpinEvents || !spinRun.live || spinRun.done) return false;
+    const due = spinRun.startedAtMs + (spinRun.events + 1) * rotationMs();
+    if (virtualMs < due) return false;
+    const logo = doc.getElementById("logo");
+    const type = n === 2 ? "animationiteration" : "animationend";
+    spinRun.events += 1;
+    if (type === "animationend") spinRun.done = true;
+    animationEvents.push({ type: type, spin: n, atMs: virtualMs });
+    logo.dispatchAnimationEvent(type, "spin", (spinRun.events * rotationMs()) / 1000);
+    return true;
+  }
+
+  let fadeStartedAtMs = null;
+  async function settle() {
     await dom.drainMicrotasks();
+    // Bounded: each pass lets at most one spin event land and the page answer
+    // it, so a zero-length rotation cascades spin 1 -> 2 -> 3 -> fade at once.
+    for (let pass = 0; pass < 16; pass++) {
+      maybeEndCrossFade();
+      const spun = maybeAdvanceSpin();
+      const stage = doc.getElementById("splash-stage");
+      if (fadeStartedAtMs === null && stage && stage.style.opacity === "0") {
+        fadeStartedAtMs = virtualMs;
+      }
+      maybeEndTransition();
+      await dom.drainMicrotasks();
+      if (!spun && pass > 0) break;
+    }
+    maybeEndCrossFade();
+  }
+
+  // Fire every page event due before `limitMs`, each at its own virtual ms.
+  async function fireEventsBefore(limitMs) {
+    while (pageEvents.length && pageEvents[0].atMs < limitMs) {
+      const ev = pageEvents.shift();
+      virtualMs = Math.max(virtualMs, ev.atMs);
+      ev.fire();
+      await settle();
+    }
+  }
+
+  for (let i = 0; i < (input.rounds || 80); i++) {
+    const roundStartMs = virtualMs;
+    await settle();
     clock.flushRound();
-    virtualMs += POLL_MS;
+    await fireEventsBefore(roundStartMs + POLL_MS);
+    virtualMs = roundStartMs + POLL_MS;
     if (handoff) break;
   }
-  await dom.drainMicrotasks();
+  await settle();
 
   const msg = doc.getElementById("degraded-msg");
   process.stdout.write(
     JSON.stringify({
       handoff: handoff,
       handoffAtMs: handoffAtMs,
-      brandLoadMs: brandLoadMs,
+      closeCalls: closeCalls,
+      timeoutsQueued: timeoutsQueued,
+      transitionEndDispatched: transitionEndDispatched,
       degraded: doc.body.classList.contains("degraded"),
       degradedMsg: msg ? msg.textContent : "",
       polls: polls,
       elapsedMs: virtualMs,
+      crossFadeStartedAtMs: crossFadeStartedAtMs,
+      crossFadeEndedAtMs: crossFadeEndedAtMs,
+      crossFadeEndDispatched: crossFadeEndDispatched,
+      warningDecodeCalls: warningDecodeCalls,
+      spinLog: spinLog,
+      animationEvents: animationEvents,
+      fadeStartedAtMs: fadeStartedAtMs,
+      spinAtHandoff: spinAtHandoff,
+      animationLiveAtHandoff: animationLiveAtHandoff,
+      stateFetches: stateFetches,
       tree: dom.serialize(doc.body),
     })
   );

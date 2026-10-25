@@ -1,12 +1,19 @@
 # Eclipse boot screen (US-885-b): Iris's WARNING image (specs/assets/boot/
-# warning-480x320.png, PR #130), centred on black, from the firmware hand-off
-# until lightdm quits Plymouth. Drawn once: no refresh callback, no animation,
-# no progress -- the boot screen proper is the S114 kiosk splash.
+# warning-480x320.png, PR #130), stretched to the full frame on black, from the
+# firmware hand-off until lightdm quits Plymouth. Drawn once: no refresh
+# callback, no animation, no progress -- the boot screen proper is the S114
+# kiosk splash.
+#
+# Full frame (US-885-c): the Pi scans out a larger mode (1280x720) that the
+# 480x320 panel's scaler shrinks to fit, so an unscaled 480x320 image filled a
+# third of the glass. Scaling to the window's own size lets the panel show it
+# 1:1 at its designed geometry; aspect is NOT preserved (Atlas, 2026-10-24).
+# No resolution is named: a pinned 480x320 mode makes the scale a no-op.
 
 Window.SetBackgroundTopColor(0, 0, 0);
 Window.SetBackgroundBottomColor(0, 0, 0);
 
-warning.image = Image("warning.png");
+warning.image = Image("warning.png").Scale(Window.GetWidth(), Window.GetHeight());
 warning.sprite = Sprite(warning.image);
-warning.sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - warning.image.GetWidth() / 2);
-warning.sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - warning.image.GetHeight() / 2);
+warning.sprite.SetX(Window.GetX());
+warning.sprite.SetY(Window.GetY());

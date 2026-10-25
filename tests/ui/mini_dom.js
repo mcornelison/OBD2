@@ -254,6 +254,17 @@ Element.prototype.dispatch = function (type, event) {
   for (var i = 0; i < list.length; i++) list[i].call(this, ev);
   if (type === "click" && typeof this.onclick === "function") this.onclick(ev);
 };
+// US-869-f (additive): an AnimationEvent-shaped event -- `animationend` /
+// `animationiteration` with the real event's target, animationName and
+// elapsedTime (seconds) -- so a probe can stand in for the browser's half of a
+// CSS animation on the element that animates.
+Element.prototype.dispatchAnimationEvent = function (type, animationName, elapsedTime) {
+  this.dispatch(type, {
+    target: this,
+    animationName: animationName || "",
+    elapsedTime: elapsedTime || 0,
+  });
+};
 Element.prototype.click = function () {
   this.dispatch("click", {});
 };

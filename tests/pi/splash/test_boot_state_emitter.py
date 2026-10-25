@@ -3,8 +3,8 @@
 # Purpose/Description: Tests for the F-103 boot-state emitter (honest-instrument
 #   verdict logic): the US-494 CORE-readiness contract (Pi core/UI up, NOT
 #   vehicle-connected), the non-gating informational eclipse-obd tier, the
-#   dashboard-asset readiness gate, hard-cap degrade, atomic state write, and
-#   C-5 states-dir provisioning.
+#   dashboard-asset readiness gate, degraded on its two events only (no clock),
+#   atomic state write, and C-5 states-dir provisioning.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-29
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -18,13 +18,21 @@
 #               |              | tier is informational/non-gating; dashboard
 #               |              | assets join the gate; obdProbeFn absence is
 #               |              | reported as not-probed, never as "starting".
+# 2026-10-24    | Ralph (Rex)  | US-869-d: the hard cap is gone. The past-cap
+#               |              | degrade test is replaced by a 600 s driven-clock
+#               |              | test that never degrades; hardCapSeconds,
+#               |              | elapsedSeconds and elapsedFn are no longer inputs.
 # ================================================================================
 ################################################################################
 
 """Tests for ``pi.splash.boot_state_emitter``."""
 
+import inspect
 import json
 
+import pytest
+
+import pi.splash.boot_state_emitter as bse
 from pi.splash.boot_state_emitter import (
     CORE_SERVICES_DEFAULT,
     INFORMATIONAL_SERVICES_DEFAULT,
@@ -58,8 +66,6 @@ def _compute(**overrides):
     kwargs = {
         "coreServiceStates": _coreUp(),
         "uiAssetsPresent": True,
-        "elapsedSeconds": 3.0,
-        "hardCapSeconds": 12.0,
         "coreServices": _CORE,
         "nowIso": _TS,
     }
@@ -91,12 +97,11 @@ def test_computeBootState_coreUpNoVehicle_isHealthyAndHandsOff():
     assert state["progress"] == 1.0
 
 
-def test_computeBootState_obdTierNeverProbed_doesNotBlockHealthyPastHardCap():
+def test_computeBootState_obdTierStillStarting_doesNotBlockHealthy():
     """The exact V0.29.19 regression: obdProbeFn defaulted to a permanent
-    'starting', so past the 12 s cap the splash pinned at
-    'eclipse-obd: not ready (starting)' until reboot. A never-probed tier must
-    not degrade a core-up boot no matter how long it runs."""
-    state = _compute(obdTier=OBD_STARTING, elapsedSeconds=60.0)
+    'starting', and the splash pinned at 'eclipse-obd: not ready (starting)'
+    until reboot. A tier stuck 'starting' must not hold a core-up boot."""
+    state = _compute(obdTier=OBD_STARTING)
 
     assert state["healthy"] is True
     assert state["degraded"] is False
@@ -162,26 +167,102 @@ def test_computeBootState_coreStillActivating_isNeitherHealthyNorDegraded():
     states = _coreUp()
     states["eclipse-powerwatch"] = "activating"
 
-    state = _compute(coreServiceStates=states, elapsedSeconds=2.0)
+    state = _compute(coreServiceStates=states)
 
     assert state["healthy"] is False
     assert state["degraded"] is False
+    assert state["degradedReason"] is None
     assert state["progress"] < 1.0
 
 
-def test_computeBootState_pastHardCapCoreNotReady_degradesNamingTheCoreService():
-    """Hard-cap degrade survives -- but its reason can only ever name a CORE
-    component, never the informational OBD tier."""
-    states = _coreUp()
-    states["eclipse-powerwatch"] = "activating"
+# --- US-869-d: degraded on its two EVENTS only, never on elapsed time ----------
 
-    state = _compute(
-        coreServiceStates=states, obdTier=OBD_STARTING, elapsedSeconds=12.5
+
+def test_computeBootState_takesNoElapsedTimeInput():
+    """The verdict cannot read a clock it is never given (CIO no-timer rule)."""
+    params = inspect.signature(computeBootState).parameters
+
+    assert "elapsedSeconds" not in params
+    assert "hardCapSeconds" not in params
+
+
+def test_emitter_unitActivatingFor600sOfDrivenClock_neverDegrades(tmp_path, monkeypatch):
+    """
+    Given: the production wiring, eclipse-powerwatch held `activating`
+    When: the emitter runs 600 s of driven clock at its 500 ms cadence
+    Then: no emission is ever degraded -- a slow unit is waiting, not a fault
+
+    The clock is installed BEFORE the emitter is built, so a constructor that
+    latched a start time would be measured against it.
+    """
+    clock = {"t": 0.0}
+    monkeypatch.setattr(bse.time, "monotonic", lambda: clock["t"])
+    states = dict(_coreUp(), **{"eclipse-powerwatch": "activating"})
+    emitter = BootStateEmitter(
+        statesDir=str(tmp_path / "states"),
+        coreServices=_CORE,
+        serviceQueryFn=lambda name: states.get(name, "inactive"),
+        uiAssetProbeFn=lambda: True,
+        nowIsoFn=lambda: _TS,
+    )
+    emitted = []
+    realRunOnce = emitter.runOnce
+    emitter.runOnce = lambda: emitted.append(realRunOnce()) or emitted[-1]
+
+    def advance(seconds):
+        clock["t"] += seconds
+
+    runForever(emitter, pollSeconds=0.5, sleepFn=advance, stopAfter=1201)
+
+    assert clock["t"] == 600.0
+    assert len(emitted) == 1201
+    assert not any(s["degraded"] for s in emitted)
+    assert all(s["degradedReason"] is None for s in emitted)
+    assert not any(s["healthy"] for s in emitted)
+
+
+def test_emitter_oneUnitFails_degradesOnTheNextEmission_namingIt(tmp_path):
+    """The failed-unit EVENT degrades at once, on the emission that sees it."""
+    states = dict(_coreUp(), **{"eclipse-powerwatch": "activating"})
+    emitter = BootStateEmitter(
+        statesDir=str(tmp_path / "states"),
+        coreServices=_CORE,
+        serviceQueryFn=lambda name: states.get(name, "inactive"),
+        uiAssetProbeFn=lambda: True,
+        nowIsoFn=lambda: _TS,
     )
 
-    assert state["degraded"] is True
-    assert state["degradedReason"] == "eclipse-powerwatch: not ready (activating)"
-    assert "eclipse-obd" not in state["degradedReason"]
+    before = emitter.runOnce()
+    states["eclipse-powerwatch"] = "failed"
+    after = emitter.runOnce()
+
+    assert before["degraded"] is False
+    assert after["degraded"] is True
+    assert after["degradedReason"] == "eclipse-powerwatch: failed to start"
+
+
+def test_retiredClockReasons_noLongerExistInTheEmitter():
+    """The two hard-cap strings cannot be produced: they are gone from source."""
+    source = inspect.getsource(bse)
+
+    assert "not ready (" not in source.replace("eclipse-obd: not ready (starting)", "")
+    assert "boot did not reach healthy state" not in source
+    assert "hardCapSeconds" not in source
+    assert "elapsedSeconds" not in source
+
+
+def test_emitter_rejectsTheRetiredHardCapArgument(tmp_path):
+    """No caller can configure a clock back in: the parameter is gone."""
+    with pytest.raises(TypeError):
+        BootStateEmitter(statesDir=str(tmp_path), hardCapSeconds=12.0)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        BootStateEmitter(statesDir=str(tmp_path), elapsedFn=lambda: 0.0)  # type: ignore[call-arg]
+
+
+def test_main_rejectsTheRetiredHardCapFlag(tmp_path):
+    """--hard-cap-seconds is no longer a CLI argument."""
+    with pytest.raises(SystemExit):
+        main(["--states-dir", str(tmp_path), "--hard-cap-seconds", "12"])
 
 
 # --- AC-1: "dashboard assets present" is part of UI readiness ----------------
@@ -265,11 +346,9 @@ def test_emitter_runOnce_writesBootStateJson(tmp_path):
     emitter = BootStateEmitter(
         statesDir=str(statesDir),
         coreServices=_CORE,
-        hardCapSeconds=12.0,
         serviceQueryFn=lambda name: "active",
         obdProbeFn=lambda: OBD_SYNCED_WITH_DATA,
         uiAssetProbeFn=lambda: True,
-        elapsedFn=lambda: 3.0,
         nowIsoFn=lambda: _TS,
     )
 
@@ -289,7 +368,6 @@ def test_runForever_loopsStopAfterTimes_sleepingBetween(tmp_path):
         serviceQueryFn=lambda name: "active",
         obdProbeFn=lambda: OBD_SYNCED_WITH_DATA,
         uiAssetProbeFn=lambda: True,
-        elapsedFn=lambda: 3.0,
         nowIsoFn=lambda: _TS,
     )
     sleeps = []
@@ -309,13 +387,12 @@ def test_emitter_noObdProbeInjected_reportsNotProbedAndStillReachesHealthy(tmp_p
     """ROOT CAUSE GUARD. eclipse-boot-state.service constructs the emitter with
     NO obdProbeFn. That absence must (a) be reported as `not-probed` -- an
     un-taken reading, never the confident claim "starting" -- and (b) not stop a
-    core-up boot from reaching healthy, even far past the hard cap."""
+    core-up boot from reaching healthy."""
     emitter = BootStateEmitter(
         statesDir=str(tmp_path / "states"),
         coreServices=_CORE,
         serviceQueryFn=lambda name: "active",
         uiAssetProbeFn=lambda: True,
-        elapsedFn=lambda: 60.0,
         nowIsoFn=lambda: _TS,
     )
 
@@ -338,8 +415,7 @@ def test_emitter_uiAssetProbe_readsTheRealAssetPath(tmp_path):
             coreServices=_CORE,
             serviceQueryFn=lambda name: "active",
             uiAssetPath=str(assetPath),
-            elapsedFn=lambda: 3.0,
-            nowIsoFn=lambda: _TS,
+                nowIsoFn=lambda: _TS,
         )
 
     missing = makeEmitter().runOnce()
@@ -357,7 +433,6 @@ def test_buildEmitter_gateExcludesTheObdTier(tmp_path):
     Asserted on the object main() actually constructs, not on a re-spelling."""
     emitter = buildEmitter(
         statesDir=str(tmp_path / "states"),
-        hardCapSeconds=12.0,
         uiAssetPath=str(tmp_path / "dashboard.html"),
     )
 

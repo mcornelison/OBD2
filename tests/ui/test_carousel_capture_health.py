@@ -34,6 +34,7 @@
 # 2026-10-23    | Rex (US-894-e)| MOVED PIN: the UPS row follows the WIFI row.
 # 2026-10-23    | Rex (US-869-b)| A faulted feed's raw reason never reaches the
 #               |              | DATA detail.
+# 2026-10-24    | Rex (US-869-c)| MOVED PIN: the ups-absent fault case.
 # ================================================================================
 ################################################################################
 
@@ -290,7 +291,10 @@ class TestTheFeedsBlockIsAdditiveToTheRow:
 
         assert _row(_sys(), withFeeds) == _row(_sys(), preChange)
 
-    @pytest.mark.parametrize("case", ["imu-absent", "light-absent", "ups-unreadable"])
+    # MOVED PIN (US-869-c): + ups-absent (no monitor is its own token).
+    @pytest.mark.parametrize(
+        "case", ["imu-absent", "light-absent", "ups-unreadable", "ups-absent"]
+    )
     def test_faultedFeed_noRawReasonReachesTheDataDetail(self, case: str) -> None:
         """US-869-b: the producer's feed `reason` (sensor_absent, gauge
         unreadable) is for the S114 boot screen; today's DATA detail must

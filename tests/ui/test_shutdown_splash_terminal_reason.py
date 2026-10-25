@@ -7,7 +7,7 @@
 #
 #   phase=cancelled (a CORRECT abort -- power returned), the state file going
 #   missing (may be a legitimate end-of-sequence, may be a cold-start RACE), the
-#   60s BLACK_TAIL cap (poweroff never fired) and an unrecognized phase all
+#   60s cap (poweroff never fired) and an unrecognized phase all
 #   produced the same two journal lines: `Started` ... `Deactivated
 #   successfully`. The one time splash-grace.service has ever fired in the
 #   retained journal it lived 2.17s, and whether that was case 1 or case 2 is
@@ -33,6 +33,13 @@
 #   too -- with a parser self-test, because the flag now also appears in those
 #   units' COMMENTS and a substring check would be satisfied by the prose
 #   documenting the fix rather than by the fix.
+#
+#   US-870-a (S114, Atlas A-sd; CIO "Remove it"): the page's own clocks are gone
+#   -- the 1s pre-roll, the 60s cap and the three-miss count. Three exits remain
+#   (cancelled, a FIRST 404, an unrecognized phase); a refused connection HOLDS
+#   the last paint; the page paints on the first flushing/powering_off read and
+#   never on grace. elapsedMs stays in the record as REPORT-ONLY (C-Atlas-7),
+#   fenced statically below.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-10
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -43,6 +50,9 @@
 # ================================================================================
 # 2026-08-10    | Ralph (Rex)  | Initial -- US-549 (I-043) observable terminal
 #               |              | reason for the closeout shutdown splash.
+# 2026-10-25    | Ralph (Rex)  | US-870-a: black-tail-cap scenario and the
+#               |              | pre-roll/three-miss pins retired; paint-on-
+#               |              | flushing, 404-vs-refused, no-timer cases added.
 # ================================================================================
 ################################################################################
 
@@ -59,10 +69,12 @@ import pytest
 from pi.power.power_watch.controller import (
     DEFAULT_SHUTDOWN_REASON,
     PHASE_CANCELLED,
+    PHASE_FLUSHING,
     PHASE_GRACE,
+    PHASE_POWERING_OFF,
 )
 from tests.deploy.test_dashboard_kit import _execStartFlags
-from tests.ui.render_harness import ProbeError, runShutdownSplash
+from tests.ui.render_harness import REFUSED, ProbeError, runShutdownSplash
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
@@ -89,22 +101,11 @@ def _pollJsText() -> str:
     return POLL_JS.read_text(encoding="utf-8")
 
 
-def _jsConst(name: str) -> float:
-    """Read a numeric ``var NAME = <n>;`` out of the SHIPPED poll script.
-
-    Grounded, not retyped: MAX_MISSING_RETRIES and BLACK_TAIL_CAP_MS are the
-    script's own thresholds, and a test that hardcodes them silently stops
-    testing the shipped behaviour the moment either is retuned.
-    """
-    match = re.search(rf"var\s+{re.escape(name)}\s*=\s*(\d+)", _pollJsText())
-    assert match, f"{POLL_JS.name} declares no {name}"
-    return float(match.group(1))
-
-
-MAX_MISSING_RETRIES = int(_jsConst("MAX_MISSING_RETRIES"))
-BLACK_TAIL_CAP_MS = _jsConst("BLACK_TAIL_CAP_MS")
-PRE_ROLL_MS = _jsConst("PRE_ROLL_MS")
 PROBE_POLL_MS = 250  # shutdown_probe.js advances one poll of virtual time per round
+
+# The 120 s at-home drain of spec AC 10: longer than the retired 60 s cap, so a
+# page that still timed itself out would close inside it.
+AT_HOME_DRAIN_MS = 120_000
 
 
 def _state(phase: str, reason: str = DEFAULT_SHUTDOWN_REASON) -> dict:
@@ -119,9 +120,9 @@ def _state(phase: str, reason: str = DEFAULT_SHUTDOWN_REASON) -> dict:
     }
 
 
-def _run(states: list[dict | None], rounds: int = 80) -> dict:
+def _run(states: list[dict | None], rounds: int = 80, emitIntervalMs: int = 500) -> dict:
     try:
-        return runShutdownSplash(states, rounds=rounds)
+        return runShutdownSplash(states, rounds=rounds, emitIntervalMs=emitIntervalMs)
     except FileNotFoundError as exc:  # node absent on this machine
         pytest.skip(f"node is required for the shutdown render probe: {exc}")
     except ProbeError as exc:
@@ -138,14 +139,10 @@ def _terminalLines(result: dict) -> list[str]:
 
 # `None` = the state file is ABSENT (the server 404s), which is a materially
 # different event from a `cancelled` phase. Conflating the two is I-043.
-_NEVER_TERMINATES = [_state(PHASE_GRACE)]
-_CAP_ROUNDS = int(BLACK_TAIL_CAP_MS / PROBE_POLL_MS) + 10
-
 SCENARIOS = {
     "cancelled": ([_state(PHASE_CANCELLED)], 80),
     "state-missing": ([None], 80),
     "unrecognized-phase": ([_state("reticulating_splines")], 80),
-    "black-tail-cap": (_NEVER_TERMINATES, _CAP_ROUNDS),
 }
 
 
@@ -158,7 +155,7 @@ def outcomes() -> dict[str, dict]:
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_everyTerminalExit_reportsExactlyOneReason(outcomes, scenario):
     """
-    Given: each of the four ways the closeout splash can end
+    Given: each of the three ways the closeout splash can end
     When: the shipped script runs to its terminal state
     Then: it exits AND leaves exactly one terminal report behind
 
@@ -177,8 +174,8 @@ def test_everyTerminalExit_reportsExactlyOneReason(outcomes, scenario):
 
 def test_theFourTerminalCauses_areDistinguishableFromEachOther(outcomes):
     """
-    Given: the four outcomes that used to funnel through one silent window.close()
-    Then: each reports its OWN cause -- four scenarios, four distinct strings
+    Given: the exits that used to funnel through one silent window.close()
+    Then: each reports its OWN cause -- one distinct string per scenario
 
     THE headline assertion of this story. A single generic "splash exited" reason
     would satisfy every other test in this file and leave I-043 fully open: the
@@ -224,9 +221,24 @@ def test_missingState_reportsNullPhase_ratherThanAPlausibleDefault(outcomes):
     assert record["cause"] == "state-missing"
     assert record["phase"] is None, f"a phase was invented for a file we never read: {record}"
     assert record["reason"] is None, f"a reason was invented for a file we never read: {record}"
-    assert record["polls"] == MAX_MISSING_RETRIES, (
-        "the report must show how many polls were spent before giving up "
-        f"(shipped MAX_MISSING_RETRIES={MAX_MISSING_RETRIES}, reported {record['polls']})"
+
+
+def test_oneNotFound_exitsStateMissingAtOnce_us870a(outcomes):
+    """
+    Given: the states server answers 404 for shutdown-state on the first poll
+    Then: the page exits state-missing on THAT poll -- no retry count
+
+    The file is written atomically and never deleted (Atlas A-sd 2), so a 404
+    means it was never written; the retired three-miss count only delayed the
+    same verdict by two polls.
+    """
+    result = outcomes["state-missing"]
+    assert result["closed"]
+    assert result["terminalRecord"]["polls"] == 1, result["terminalRecord"]
+    # The probe settles a poll's answer in the NEXT round, so the first poll's
+    # verdict lands at one POLL_MS.
+    assert result["closedAtMs"] == PROBE_POLL_MS, (
+        f"closed at {result['closedAtMs']} ms, not on the first poll's answer"
     )
 
 
@@ -243,53 +255,124 @@ def test_unrecognizedPhase_carriesTheOffendingValue(outcomes):
     assert record["phase"] == "reticulating_splines"
 
 
-def test_blackTailCap_isReportedAsATimeout_notAsACancellation(outcomes):
-    """
-    Given: `grace` on disk forever -- poweroff never fired
-    Then: the cap fires, is named as the cap, and the last live phase is kept
-
-    This is the failure that most needs its own name: the state file said the
-    shutdown was still in progress right up to the moment the splash gave up, so
-    reading it as a cancellation would point the investigation at the power
-    supply instead of at the sequencer that never reached poweroff.
-    """
-    result = outcomes["black-tail-cap"]
-    record = result["terminalRecord"]
-    assert record["cause"] == "black-tail-cap"
-    assert record["phase"] == PHASE_GRACE
-    assert record["elapsedMs"] >= BLACK_TAIL_CAP_MS, (
-        f"the cap fired early at {record['elapsedMs']}ms of a {BLACK_TAIL_CAP_MS}ms cap"
-    )
-
-
 # ---------------------------------------------------------------------------
-# The paint discriminator -- the specific question I-043 could not answer
+# US-870-a: the paint trigger, the hold, and no timer
 # ---------------------------------------------------------------------------
+
+
+def test_graceThenCancelled_paintsNothing_us870a():
+    """
+    Given: a blip -- the sequencer writes grace, then cancelled
+    Then: zero paints, and the exit is cancelled
+
+    The sequencer's smoothing window is the one debounce (CIO: keep it): during
+    grace the dashboard is still up, so a blip must never flash a frame.
+    """
+    states = [_state(PHASE_GRACE)] * 6 + [_state(PHASE_CANCELLED)]
+    result = _run(states, emitIntervalMs=PROBE_POLL_MS)
+
+    assert result["terminalCause"] == "cancelled"
+    assert result["paintedOnPoll"] is None
+    assert result["terminalRecord"]["painted"] is False
+    assert result["stageVisibility"] != "visible"
+
+
+@pytest.mark.parametrize("paintPhase", [PHASE_FLUSHING, PHASE_POWERING_OFF])
+def test_graceThenFlushing_paintsOnThatRead_us870a(paintPhase):
+    """
+    Given: a real key-off -- grace for eight polls (2 s, past the retired 1 s
+           pre-roll), then flushing (or powering_off)
+    Then: nothing paints during grace; the stage is revealed on poll 9, the first
+          read of the painting phase, and the page stays up
+    """
+    states = [_state(PHASE_GRACE)] * 8 + [_state(paintPhase)]
+    result = _run(states, rounds=20, emitIntervalMs=PROBE_POLL_MS)
+
+    assert result["paintedOnPoll"] == 9, result["paintedOnPoll"]
+    assert result["painted"] is True
+    assert result["stageVisibility"] == "visible"
+    assert result["closed"] is False
+
+
+def test_tenRefusedPolls_holdTheLastPaint_us870a():
+    """
+    Given: flushing painted, then the states server refuses ten polls in a row
+    Then: no exit, no terminal report, the paint holds
+
+    A refused connection is power-off in progress (spec §2.1): the page dies with
+    the power. The retired three-miss count read it as a missing file and closed
+    the splash just before the screen went dark.
+    """
+    states = [_state(PHASE_FLUSHING)] + [REFUSED] * 10
+    result = _run(states, rounds=11, emitIntervalMs=PROBE_POLL_MS)
+
+    assert result["polls"] == 11
+    assert result["closed"] is False
+    assert result["terminalCause"] is None
+    assert _terminalLines(result) == []
+    assert result["painted"] is True
+    assert result["stageVisibility"] == "visible"
+
+
+def test_aNon404Failure_holdsLikeARefusal_us870a():
+    """
+    Given: a painted page, then the server answers 503 (no body) for ten polls
+    Then: it holds -- only a 404 is evidence the file was never written
+    """
+    states = [_state(PHASE_FLUSHING)] + [{"__status": 503}] * 10
+    result = _run(states, rounds=11, emitIntervalMs=PROBE_POLL_MS)
+
+    assert result["polls"] == 11
+    assert result["closed"] is False
+    assert result["painted"] is True
+
+
+def test_refusedThenNotFound_stillExitsStateMissing_us870a():
+    """The hold is not a latch: a 404 after refusals still exits at once."""
+    states = [REFUSED] * 3 + [None]
+    result = _run(states, rounds=10, emitIntervalMs=PROBE_POLL_MS)
+
+    assert result["terminalCause"] == "state-missing"
+    assert result["terminalRecord"]["polls"] == 4
+
+
+def test_aLongAtHomeDrain_keepsThePageUpThroughout_us870a():
+    """
+    Given: a 120 s at-home drain -- flushing on disk for all of it
+    Then: the page is up and painted at the end; no timer closed it
+
+    The retired 60 s cap would have closed the splash half way through a drain
+    that ARCH-065 lets run to completion.
+    """
+    rounds = AT_HOME_DRAIN_MS // PROBE_POLL_MS
+    result = _run([_state(PHASE_GRACE), _state(PHASE_FLUSHING)], rounds=rounds)
+
+    assert result["elapsedMs"] >= AT_HOME_DRAIN_MS
+    assert result["polls"] == rounds
+    assert result["closed"] is False
+    assert result["terminalCause"] is None
+    assert result["painted"] is True
 
 
 def test_report_saysWhetherTheOperatorEverSawAFrame():
     """
-    Given: two cancellations -- one before the PRE_ROLL reveal, one after
-    Then: the reports differ on `painted`, and on elapsed time
+    Given: two cancellations -- one during grace, one after flushing painted
+    Then: the reports differ on `painted`
 
     The 2.17s journal entry in I-043 is ambiguous precisely because nothing
-    recorded whether a frame was ever painted. PRE_ROLL is a deliberate 1s
-    no-paint window, so "cancelled at 0.5s" (correct: nothing should be shown)
-    and "cancelled at 5s having shown the mark" are different events that the
-    unit's lifetime alone cannot separate. Both are driven here, and the fields
-    are asserted to actually disagree -- a hardcoded `painted: false` would pass
-    the first half of this test on its own.
+    recorded whether a frame was ever painted. "Cancelled during grace"
+    (correct: nothing should be shown) and "cancelled having shown the mark" are
+    different events that the unit's lifetime alone cannot separate. Both are
+    driven here, and the fields are asserted to actually disagree -- a
+    hardcoded `painted: false` would pass the first half of this test on its own.
     """
-    early = _run([_state(PHASE_CANCELLED)])
-    late = _run([_state(PHASE_GRACE)] * 4 + [_state(PHASE_CANCELLED)])
+    early = _run([_state(PHASE_GRACE)] * 4 + [_state(PHASE_CANCELLED)])
+    late = _run([_state(PHASE_GRACE), _state(PHASE_FLUSHING), _state(PHASE_CANCELLED)])
 
     assert early["terminalRecord"]["painted"] is False
-    assert early["terminalRecord"]["elapsedMs"] < PRE_ROLL_MS
-
     assert late["terminalRecord"]["painted"] is True, (
-        "a grace that ran past PRE_ROLL must report that the mark was on screen"
+        "a cancel after flushing painted must report that the mark was on screen"
     )
-    assert late["terminalRecord"]["elapsedMs"] >= PRE_ROLL_MS
     # Same cause, different story -- which is the whole point.
     assert early["terminalCause"] == late["terminalCause"] == "cancelled"
 
@@ -341,6 +424,88 @@ def test_noExitPathCanBeAddedSilently():
         assert arg.startswith("CAUSE_"), (
             f"abort({arg}) does not pass one of the named CAUSE_* constants"
         )
+
+
+#: A read of the elapsed-time seam: the report field or the function call.
+_ELAPSED_READ = re.compile(r"\belapsed(?:Ms\b|\s*\()")
+
+
+def _code(js: str | None = None) -> str:
+    """``js`` (default: the shipped poll script) with every comment stripped."""
+    body = re.sub(r"/\*.*?\*/", "", _pollJsText() if js is None else js, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", "", body)
+
+
+def _balanced(text: str, openAt: int, opener: str, closer: str) -> str:
+    """The text between ``text[openAt]`` (an opener) and its matching closer."""
+    depth = 0
+    for i in range(openAt, len(text)):
+        if text[i] == opener:
+            depth += 1
+        elif text[i] == closer:
+            depth -= 1
+            if depth == 0:
+                return text[openAt + 1 : i]
+    raise AssertionError(f"unbalanced {opener}{closer} from offset {openAt}")
+
+
+def _conditions(code: str) -> list[str]:
+    """Every if/while/for condition, and every ternary test, in ``code``."""
+    found = [
+        _balanced(code, m.end() - 1, "(", ")")
+        for m in re.finditer(r"\b(?:if|while|for)\s*\(", code)
+    ]
+    # A ternary's test: the expression before a `?` back to the statement start.
+    found += re.findall(r"([^;{}?:]+)\?(?![?.])", code)
+    return found
+
+
+def test_elapsedIsReportOnly_noConditionReadsIt_us870a():
+    """
+    Given: the shipped shutdown-state-poll.js
+    Then: no condition reads elapsedMs or elapsed(), and elapsed() is called
+          only inside reportTerminal (Atlas C-Atlas-7)
+
+    elapsedMs stays in the US-549 record because the journal needs to know how
+    long the page lived; the moment a branch consults it, it is a timer again.
+    """
+    code = _code()
+    readers = [c.strip() for c in _conditions(code) if _ELAPSED_READ.search(c)]
+    assert readers == [], f"a condition reads elapsed time: {readers!r}"
+
+    report = re.search(r"function\s+reportTerminal\s*\([^)]*\)\s*\{", code)
+    assert report, "reportTerminal is gone"
+    reportBody = _balanced(code, report.end() - 1, "{", "}")
+    outside = code.replace(reportBody, "")
+    calls = re.findall(r"(?<!function )\belapsed\s*\(", outside)
+    assert calls == [], f"elapsed() called outside reportTerminal: {len(calls)} call(s)"
+    assert re.search(r"\belapsed\s*\(", reportBody), "the report no longer carries elapsedMs"
+
+
+@pytest.mark.parametrize(
+    "js",
+    [
+        "if (elapsed() >= CAP) { abort(X); }",
+        "while (record.elapsedMs < 5) {}",
+        "var go = elapsed() > 1 ? 1 : 0;",
+    ],
+)
+def test_elapsedFence_selfTest_seesATimer_us870a(js):
+    """The fence sees a timer written as an if, a while or a ternary."""
+    assert any(_ELAPSED_READ.search(c) for c in _conditions(_code(js))), js
+
+
+def test_elapsedFence_selfTest_ignoresTheReport_us870a():
+    """...and does not mistake the report's own field for a condition."""
+    js = "var r = { elapsedMs: Math.round(elapsed()) }; var t = ok ? 1 : 0;"
+    assert not any(_ELAPSED_READ.search(c) for c in _conditions(_code(js)))
+
+
+def test_noClockNamesRemain_us870a():
+    """The retired clocks are gone from the code, not merely unused."""
+    code = _code()
+    for name in ("PRE_ROLL", "BLACK_TAIL", "MAX_MISSING", "missingCount", "black-tail-cap"):
+        assert name not in code, f"{POLL_JS.name} still carries {name}"
 
 
 def test_execStartFlagParser_selfTest_us549():

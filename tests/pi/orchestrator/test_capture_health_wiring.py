@@ -794,9 +794,10 @@ class TestTheFeedFaults:
         """
         Given: a UPS read that raises, then a valid VCELL read (validation 3)
         When: capture-health is emitted after each
-        Then: faulted with the UPS reason, then ok with reason null
+        Then: faulted read_failed, then ok with reason null
         """
-        from pi.splash.source_availability import REASON_UPS_UNREADABLE
+        # MOVED PIN (US-869-c): a read that raises is read_failed (C-Atlas-1).
+        from pi.obdii.capture_health import FEED_REASON_READ_FAILED
 
         orch = _feedOrch(tmp_path)
         orch._feedClock = lambda: 100.0
@@ -809,7 +810,7 @@ class TestTheFeedFaults:
         healed = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
 
         assert faulted["ups"]["state"] == STATE_FAULTED
-        assert faulted["ups"]["reason"] == REASON_UPS_UNREADABLE
+        assert faulted["ups"]["reason"] == FEED_REASON_READ_FAILED
         assert healed["ups"]["state"] == STATE_OK
         assert healed["ups"]["reason"] is None
 
@@ -836,9 +837,10 @@ class TestTheFeedFaults:
         Given: a hardware manager with no UPS monitor (the read site's
                monitor-absent branch)
         When: battery-health then capture-health run
-        Then: feeds.ups is faulted with the UPS reason
+        Then: feeds.ups is faulted sensor_absent
         """
-        from pi.splash.source_availability import REASON_UPS_UNREADABLE
+        # MOVED PIN (US-869-c): no monitor is sensor_absent (C-Atlas-1).
+        from pi.obdii.capture_health import FEED_REASON_SENSOR_ABSENT
 
         orch = _feedOrch(tmp_path)
         self._emitUps(orch, None)
@@ -847,7 +849,7 @@ class TestTheFeedFaults:
 
         assert feeds["ups"] == {
             "state": STATE_FAULTED,
-            "reason": REASON_UPS_UNREADABLE,
+            "reason": FEED_REASON_SENSOR_ABSENT,
             "firstSampleTs": None,
             "lastSampleSecondsAgo": None,
         }

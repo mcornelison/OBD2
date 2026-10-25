@@ -1811,7 +1811,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # US-883-b: the S114 sync bar. Snapshotted at the sync run's start, published
     # after each drain pass through the sequencer's one shutdown-state writer
-    # (shutdownSequencer is bound below and read at call time).
+    # (shutdownSequencer is bound below and read at call time). US-883-c: the
+    # task's transitions (sync.state / sync.outcome) go through it too, so sync
+    # is null only before the task starts and on the VCELL fast path.
     syncProgress = ShutdownSyncProgress(
         dbPath,
         busyTimeoutSec=perTaskTimeoutSec,
@@ -1832,6 +1834,8 @@ def main(argv: list[str] | None = None) -> int:
             passDoneFn=syncProgress.publish,
         ),
         keyOffSnapshotFn=syncProgress.snapshot,
+        # US-883-c: joining / syncing / ended / away through the same writer.
+        syncStateFn=syncProgress.state,
         # US-776-d / US-741 / US-833: the final outcome and the provisional
         # records share the one serialised sink built above.
         writeRecord=syncRecordSink,

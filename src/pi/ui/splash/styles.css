@@ -4,13 +4,77 @@
  *          Externalized from index.html so the HTML overlay bindings stay clean.
  * Author:  Ralph Agent (Rex)
  * Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+ * Changed: 2026-10-24 -- US-869-e: every value is a token mirrored from
+ *          src/pi/ui/tokens.css; the wordmark is Michroma (Atlas C-Atlas-3).
+ * Changed: 2026-10-24 -- US-785: the phase-0b WARNING layer and the logo's
+ *          cross-fade (both var(--t-fade)); #mark is an inline <svg> now.
+ * Changed: 2026-10-24 -- US-869-f: the spins. splash.svg's `spin` keyframes
+ *          live here now; spin 1 / 2 / 3 are body classes on #logo, one
+ *          rotation is var(--t-spin), and reduced motion runs none of it.
+ * Changed: 2026-10-25 -- US-869-g: the four-feed checklist under a 0.6 logo
+ *          (Iris R2, CIO-approved); Michroma labels (Atlas/Iris R1); the
+ *          reduced-motion brightness steps follow the feeds (C-Atlas-6).
+ * Changed: 2026-10-25 -- US-870-b: the shutdown progress bar (ticks 0-100 %,
+ *          the 75 % marker) and its two-line step label; --surface, --line,
+ *          --accent and --text-primary join the mirror.
+ * Changed: 2026-10-25 -- US-883-c: #bar-kept, the rows a sync that ended kept,
+ *          drawn --amber-warn up to the 75 % marker.
+ * Changed: 2026-10-25 -- US-870-c: the shutdown logo -- reverse spin, dim spin,
+ *          dim-down -- as body classes on #logo; splash.svg and
+ *          splash-shutdown.svg are retired, so these rules are the only motion.
  * ==========================================================================*/
 
+/* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
+   Michroma Regular 400, the 38-glyph subset (A-Z / 0-9 / space / hyphen) Iris
+   cut, inlined as a data: URI -- the SAME payload as tokens.css and
+   dashboard.css, byte for byte. The kiosk is offline in the car, so the face
+   travels inside this sheet and is never fetched.
+
+   Licence: SIL Open Font License 1.1 -- src/pi/ui/splash/OFL.txt ships with
+   this kit (the face travels inside the stylesheet, so the licence travels
+   with the stylesheet), byte-equal to src/pi/ui/dashboard/OFL.txt.
+
+   Weight 400 ONLY: the rule that binds --font-display asks for 400 and sets
+   font-synthesis: none, so the single-weight subset is never faux-bolded.
+   Pinned by tests/ui/test_splash_token_ssot.py. */
+@font-face {
+  font-family: "Michroma";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(data:font/woff2;base64,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) format("woff2");
+}
+
+/* --- Token MIRROR -------------------------------------------------------------
+   tokens.css is a document, not an import (src/pi/ui/README.md): index.html and
+   shutdown.html link ONLY this sheet. Every value below is tokens.css's, at
+   tokens.css's value, and tests/ui/test_splash_token_ssot.py pins each one --
+   change a token in tokens.css and not here and that suite goes red. Outside
+   this block every colour, font-size and font-family is a var(--...). */
 :root {
-  --text-secondary: #888888;   /* wordmark */
-  --text-tertiary:  #666666;   /* version chip */
+  --bg:             #0A0A0A;   /* matte black field                           */
+  --surface:        #141414;   /* shutdown bar: empty track                   */
+  --line:           #262626;   /* shutdown bar: ticks + the 75 % marker       */
+  --accent:         #FF6A2B;   /* shutdown bar: fill (unbanded step progress) */
+  --text-primary:   #F5F1E8;   /* shutdown label line 1                       */
+  --text-secondary: #A8A296;   /* wordmark                                    */
+  --text-tertiary:  #5F5A52;   /* version chip                                */
   --amber-warn:     #FFC400;   /* degraded escalation; project-wide warn token */
-  --amber-soft:     #FFC40033; /* 20% alpha amber for soft backdrops */
+  --green-ok:       #35C46A;   /* checklist `ready`                           */
+
+  --fs-label:       20px;      /* wordmark, degraded message, checklist       */
+  --fs-meta:        15px;      /* version chip                                */
+
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --font-display: "Michroma", "Arial Narrow", system-ui, sans-serif;
+
+  /* Motion: the retired splash.svg's timings, promoted into tokens.css (C-Atlas-3). */
+  --t-spin:         3.0s;
+  --t-fade:         0.5s;
+  --bright-low:     0.25;
+  --bright-mid:     0.50;
+  --bright-hi:      0.75;
+  --bright-max:     1.00;
   /* Future tuning-instrument reservations (Spool S-2; NOT used in splash v1):
      --critical-red and --neutral-blue are declared in the spec only -- the
      splash never renders them, and brand reds are never reused as critical red. */
@@ -18,39 +82,167 @@
 
 html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
-  background: #000; overflow: hidden; cursor: none;
+  background: var(--bg); overflow: hidden; cursor: none;
 }
 
 #splash-stage {
-  position: relative; width: 100vw; height: 100vh; background: #000;
+  position: relative; width: 100vw; height: 100vh; background: var(--bg);
 }
 
+/* The inline logo (US-785) is invisible through phase 0b and fades in as the
+   WARNING fades out; its opacity transitionend ends the cross-fade.
+   US-869-g (Iris R2): the boot page draws it at 0.6 -- the 480x320 viewBox
+   meets a 192 px box, centre at y 120 -- so the disc spin 2 sweeps (y 54-186)
+   clears the checklist below it. The geometry is unchanged. */
 #mark {
-  width: 100vw; height: 100vh; object-fit: contain;
-  background: #000; border: 0; display: block;
+  position: absolute; top: 24px; left: 0; width: 100%; height: 192px;
+  background: var(--bg); border: 0; display: block;
+  opacity: 0; transition: opacity var(--t-fade);
 }
 
-/* Single font family: system mono only -- no web fonts, no CDN dependency. */
+/* --- Phase 0b WARNING (US-785, spec §1.2) ------------------------------------
+   Full-frame, aspect NOT preserved -- the Plymouth theme's rule (US-885-c): the
+   OSOYOO HDMI35 is a scaler panel driven at 1280x720 that shrinks the frame back
+   to its 480x320 native pixels, so a full-frame image lands 1:1 at its designed
+   geometry. No hold: body.logo-up is set by boot-state-poll.js on the 0b end
+   events, never by a timer. */
+#warning {
+  position: absolute; top: 0; left: 0;
+  width: 100vw; height: 100vh; object-fit: fill;
+  background: var(--bg); border: 0; display: block;
+  pointer-events: none;
+  opacity: 1; transition: opacity var(--t-fade);
+}
+
+body.logo-up #warning { opacity: 0; }
+body.logo-up #mark { opacity: 1; }
+
+/* Data text is system mono; the brand face is the wordmark's and the
+   checklist labels' alone (test_splash_token_ssot.py _BRAND_FACE_SELECTORS). */
 .overlay {
   position: absolute; left: 0; right: 0; text-align: center;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   pointer-events: none;
 }
 
 #wordmark {
-  top: 18px; font-size: 14px; font-weight: 500;
+  top: 18px; font-family: var(--font-display); font-size: var(--fs-label);
+  font-weight: 400; font-synthesis: none;
   color: var(--text-secondary); letter-spacing: 0.12em; text-transform: uppercase;
 }
 
 #version-chip {
-  bottom: 12px; font-size: 10px; font-weight: 400;
+  bottom: 12px; font-size: var(--fs-meta); font-weight: 400;
   color: var(--text-tertiary); letter-spacing: 0.06em;
 }
 
 #degraded-msg {
-  top: 200px; font-size: 11px; font-weight: 500;
+  top: 194px; line-height: 22px; font-size: var(--fs-label); font-weight: 500;
   color: var(--amber-warn); letter-spacing: 0.06em;
 }
+
+/* --- The checklist (US-869-g, spec §1.3; Iris R2) -----------------------------
+   Rows y 194-282, FIXED columns: a max-content block would shift sideways each
+   time a word changes length (`waiting` -> `waiting for Bluetooth`). Labels are
+   the frame's label voice (Michroma, right-aligned); words are data (mono). */
+#checklist {
+  position: absolute; top: 194px; left: 52px; width: 376px;
+  display: grid; grid-template-columns: 96px 264px; column-gap: 16px;
+  line-height: 22px; font-family: var(--font-mono); font-size: var(--fs-label);
+  pointer-events: none;
+}
+
+#checklist .cl-label {
+  text-align: right; white-space: nowrap;
+  font-family: var(--font-display); font-size: var(--fs-label);
+  font-weight: 400; font-synthesis: none;
+  color: var(--text-secondary);
+}
+
+#checklist .cl-word {
+  text-align: left; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--fs-label);
+}
+
+/* The word colours (spec §1.3): amber only for a fault the feed published. */
+#checklist .w-ok     { color: var(--green-ok); }
+#checklist .w-warn   { color: var(--amber-warn); }
+#checklist .w-wait   { color: var(--text-secondary); }
+#checklist .w-unread { color: var(--text-tertiary); }
+
+/* --- The shutdown progress bar (US-870-b, spec §2 / §2.1 / §2.2) --------------
+   The boot checklist's slot, reused: y 194-282, x 52-428, four 22 px rows (Iris
+   R2) -- the track, the tick labels, label line 1, label line 2. Fill
+   --accent (step progress is unbanded), track --surface, ticks and the 75 %
+   marker --line. The fill's width is the only thing the page script writes. */
+#progress {
+  position: absolute; top: 194px; left: 52px; width: 376px; height: 88px;
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+
+#bar-track {
+  position: absolute; top: 7px; left: 0; right: 0; height: 8px;
+  background: var(--surface);
+}
+
+#bar-fill {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 0%;
+  background: var(--accent);
+}
+
+/* US-883-c: a sync that ended with rows left -- the unfilled stretch of the
+   sync part, ending at the 75 % marker, amber (spec §2 / §2.1). The page
+   script writes its left and width; it is empty until then. */
+#bar-kept {
+  position: absolute; top: 0; bottom: 0; left: 75%; width: 0%;
+  background: var(--amber-warn);
+}
+
+.bar-tick {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: var(--line);
+}
+
+/* At home 0-75 % is the sync and 75-100 % the steps after it (spec §2). */
+#bar-marker {
+  position: absolute; top: -7px; bottom: -7px; left: 75%; width: 2px;
+  background: var(--line);
+}
+
+#bar-ticks {
+  position: absolute; top: 22px; left: 0; right: 0; height: 22px;
+}
+
+.bar-tick-label {
+  position: absolute; top: 0; line-height: 22px; transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-tertiary);
+}
+
+.tick-0   { left: 0%; }
+.tick-25  { left: 25%; }
+.tick-50  { left: 50%; }
+.tick-75  { left: 75%; }
+.tick-100 { left: 100%; }
+
+#label-1, #label-2 {
+  position: absolute; left: 0; right: 0; line-height: 22px;
+  text-align: center; white-space: nowrap;
+}
+
+#label-1 {
+  top: 44px; font-size: var(--fs-label); color: var(--text-primary);
+}
+
+#label-2 {
+  top: 66px; font-size: var(--fs-meta); color: var(--text-secondary);
+}
+
+/* Degraded HIDES the checklist (Iris R2): rows left reading `waiting` would
+   promise a ready that is not coming; #degraded-msg takes the slot. */
+body.degraded #checklist { display: none; }
 
 /* Degraded escalation (spec §5): three reinforcing channels. */
 body.degraded #amber-ring {
@@ -60,8 +252,87 @@ body.degraded #amber-ring {
 
 body.degraded #version-chip { color: var(--amber-warn); }
 
-/* Motion FREEZE: visual silence is the alarm. Stop every SVG animation by
-   pausing the embedded document's animations via the object element. */
-body.degraded #mark { animation-play-state: paused; }
+/* --- The spins (US-869-f, spec §1.1) ----------------------------------------
+   the retired splash.svg's rotation, page-driven: boot-state-poll.js sets body.spin-N on the
+   previous step's own event (animationend / animationiteration), so spin 2 can
+   loop for as long as the boot takes and spin 3 starts on a turn boundary. One
+   rotation is var(--t-spin), declared here and nowhere in JS. */
+#logo {
+  transform-box: view-box;
+  transform-origin: 240px 160px;
+  filter: brightness(var(--bright-mid));   /* the cross-fade lands on spin 1's level */
+}
+body.spin-1 #logo {
+  animation: spin var(--t-spin) linear 1 both;
+  filter: brightness(var(--bright-mid));
+}
+body.spin-2 #logo {
+  animation: spin var(--t-spin) linear infinite both;
+  filter: brightness(var(--bright-hi));
+}
+body.spin-3 #logo {
+  animation: spin var(--t-spin) linear 1 both;
+  filter: brightness(var(--bright-max));
+}
+
+/* The retired splash.svg's keyframes, verbatim: thirds, ease-in-out, to -360deg. */
+@keyframes spin {
+  0%     { transform: rotate(0deg);    animation-timing-function: ease-in-out; }
+  33.33% { transform: rotate(-120deg); animation-timing-function: ease-in-out; }
+  66.67% { transform: rotate(-240deg); animation-timing-function: ease-in-out; }
+  100%   { transform: rotate(-360deg); }
+}
+
+/* --- The shutdown logo (US-870-c, spec §2 Close-out) ------------------------
+   the retired splash-shutdown.svg's fixed timeline, page-driven: shutdown-state-poll.js sets
+   each class on the previous part's own event. The reverse spin loops while the
+   bar is under 100 %; the 100 % read waits for its next animationiteration, so
+   the dim spin starts on a turn boundary; the dim spin's animationend starts the
+   dim-down, whose animationend starts the stage fade (var(--t-fade), inline).
+   No animation-delay: nothing here is placed on a clock. The shutdown page has
+   no WARNING to cross-fade from, so its logo is up the moment the stage paints. */
+body.animating #mark { opacity: 1; transition: none; }
+body.spin-rev #logo {
+  animation: spin var(--t-spin) linear infinite reverse both;
+  filter: brightness(var(--bright-hi));
+}
+body.spin-dim #logo {
+  animation: spin var(--t-spin) linear 1 reverse both;
+  filter: brightness(var(--bright-low));
+}
+/* The dim-down (Iris 2026-10-25; spec §2 Close-out): ONE linear run of
+   var(--t-fade), --bright-low to black. No transform: the logo holds the dim
+   spin's end pose. NOT the old SVG light ramp reversed (it flashes up) and NOT
+   the rhombus collapse (the bloom stays retired, C-Iris-3). */
+body.dim-down #logo {
+  animation: dim-down var(--t-fade) linear 1 both;
+  filter: brightness(var(--bright-low));
+}
+@keyframes dim-down {
+  from { filter: brightness(var(--bright-low)); }
+  to   { filter: brightness(0); }
+}
+
+/* Motion FREEZE: visual silence is the alarm. The logo is inline now, so this
+   reaches its animation directly (through the <object> it never could). After
+   the spin rules: same specificity, so source order makes the pause win. */
+body.degraded #logo { animation-play-state: paused; }
+
+/* Reduced motion (Atlas C-Atlas-6): no spin, no cross-fade, no fade -- the logo
+   is static at var(--bright-mid) once 0b ends, var(--bright-hi) once any of
+   IMU / LIGHT / UPS has finished (body.feed-finished), var(--bright-max) when
+   gate R1 is met (body.r1-met). The steps are instant: no transition (Iris
+   2026-10-24 call 2). motionGate reports no event, so boot-state-poll.js
+   advances on the R1 read itself. !important beats the spin rules and the
+   stage's inline fade; the class rules outrank #logo on specificity. */
+@media (prefers-reduced-motion: reduce) {
+  #logo {
+    animation: none !important;
+    filter: brightness(var(--bright-mid)) !important;
+  }
+  body.feed-finished #logo { filter: brightness(var(--bright-hi)) !important; }
+  body.r1-met #logo { filter: brightness(var(--bright-max)) !important; }
+  #mark, #warning, #splash-stage { transition: none !important; }
+}
 
 @keyframes amber-fade-in { from { opacity: 0; } to { opacity: 1; } }

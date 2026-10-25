@@ -32,6 +32,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-e System page UPS row.
+# 2026-10-24    | Rex (US-869-c)| the gauge read fault is the sensor member: the
+#               |              | UPS row stays never-amber (Atlas R7).
 # ================================================================================
 ################################################################################
 
@@ -176,9 +178,11 @@ def test_everyUpsFixtureOnDiskIsWhatTheGeneratorBuilds(name: str):
 def test_everyUpsFixtureIsTheBuildersOutputForItsStoredInputs(name: str):
     fx = _fixture(name)
     assert set(fx) == {"description", "now", "zone", "inputs", "payloads"}
-    assert buildSystemStatusState(**fx["inputs"]["system-status"]) == (
-        fx["payloads"]["system-status"]
-    )
+    # MOVED PIN (US-869-c): ups-gauge-unreadable now carries a capture-health
+    # payload (the UPS feed's read_failed), and the verdict is judged with it.
+    assert buildSystemStatusState(
+        **fx["inputs"]["system-status"], captureHealth=fx["payloads"].get("capture-health"),
+    ) == (fx["payloads"]["system-status"])
     assert buildBatteryHealthState(**fx["inputs"]["battery-health"]) == (
         fx["payloads"]["battery-health"]
     )

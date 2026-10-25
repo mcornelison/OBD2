@@ -2049,7 +2049,10 @@ step_install_splash_assets() {
     # assets forever.
     #
     # US-498 (S5/F-103): the manifest now covers the WHOLE served surface --
-    # boot AND closeout (shutdown.html, shutdown-state-poll.js) plus both SVGs.
+    # boot AND closeout (shutdown.html, shutdown-state-poll.js). (US-870-c: the
+    # two SVG timelines, splash.svg + splash-shutdown.svg, are retired -- both
+    # pages inline the logo -- so they leave this list and the refresh PRUNES
+    # the stale /opt/splash copies.)
     # They were previously keep-listed as "the kit's install.sh owns those", but
     # a keep-listed asset is never installed, never pruned and never verified
     # here; its only refresh path was the kiosk-unit step, which is an A-9 step
@@ -2061,14 +2064,27 @@ step_install_splash_assets() {
     # kit dir, so owning them here costs nothing and buys the byte-verify.
     # `keepAssets` is now version.txt alone: the deploy GENERATES it from
     # deploy/RELEASE_VERSION below (not a kit file), so the refresh must not
-    # prune it in the window before it is rewritten.
+    # prune it in the window before it is rewritten. (US-785 adds warning.png
+    # on the same footing: written by the deploy, not the kit.)
     #
     # Runs AFTER sync_tree so ${PI_PATH}/src/pi/ui/splash/ exists on the Pi.
     echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
     local assetSrc="$REPO_ROOT/src/pi/ui/splash"
     local installDir="/opt/splash"
-    local assets="index.html styles.css boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
-    local keepAssets="version.txt"
+    # OFL.txt (US-869-e, Atlas 2026-10-24): styles.css now carries the Michroma
+    # face inline, and SIL OFL 1.1 requires the licence to travel with every
+    # copy of the font -- the same rule as the dashboard kit's OFL.txt. It is
+    # VOUCHED here (never keep-listed) so refresh_asset_dir installs and
+    # verifies it instead of pruning it. Served first from /opt/splash
+    # (assets-dir order); byte-equal to the dashboard's copy.
+    local assets="index.html styles.css motion-gate.js boot-state-poll.js shutdown.html shutdown-state-poll.js OFL.txt"
+    # warning.png (US-785, Atlas C-Atlas-4): the phase-0b WARNING image is the
+    # Plymouth theme's own PNG -- deploy/plymouth/eclipse/warning.png is the
+    # ONLY deployed copy (one image, two consumers, no twin; spec §1.2). The kit
+    # has no copy, so it is copied in below AFTER the refresh and cmp-verified,
+    # and keep-listed beside version.txt so the next refresh does not prune it.
+    local keepAssets="version.txt warning.png"
+    local warningSrc="${PI_PATH}/deploy/plymouth/eclipse/warning.png"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2
         return 0
@@ -2086,6 +2102,7 @@ step_install_splash_assets() {
         echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/splash ${installDir} '${assets}' '${keepAssets}'"
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         echo "DRY-RUN would: write ${installDir}/version.txt = ${splashVersion}"
+        echo "DRY-RUN would: copy ${warningSrc} -> ${installDir}/warning.png (cmp-verified)"
         return 0
     fi
     remote "
@@ -2095,6 +2112,13 @@ step_install_splash_assets() {
                           '${assets}' '${keepAssets}'
         printf '%s\n' '${splashVersion}' | sudo tee '${installDir}/version.txt' >/dev/null
         echo 'wrote ${installDir}/version.txt = ${splashVersion}'
+        sudo install -m 0644 '${warningSrc}' '${installDir}/warning.png'
+        cmp -s '${warningSrc}' '${installDir}/warning.png' || {
+            echo 'ERROR: ${installDir}/warning.png does not match ${warningSrc} after install' >&2
+            echo 'ERROR: the splash would open on a stale WARNING; fix the write path and re-deploy.' >&2
+            false
+        }
+        echo 'copied ${warningSrc} -> ${installDir}/warning.png (cmp-verified)'
     "
 }
 

@@ -30,6 +30,11 @@
 #               |              | claiming "starting" forever.
 # 2026-09-13    | Ralph (Rex)  | US-737: ensureStatesDir docstring corrected --
 #               |              | systemd does NOT ref-count the shared runtime dir.
+# 2026-10-24    | Ralph (Rex)  | US-869-d: the 12 s hard cap is gone (CIO no-timer
+#               |              | rule, Atlas A-tim 1). Degraded has two event
+#               |              | sources only: a CORE unit failed, or the
+#               |              | dashboard assets are missing. A unit still
+#               |              | activating is waiting, never degraded.
 # ================================================================================
 ################################################################################
 
@@ -119,8 +124,6 @@ def assessObdTier(probeFn: Callable[[], str]) -> str:
 def computeBootState(
     coreServiceStates: dict[str, str],
     uiAssetsPresent: bool,
-    elapsedSeconds: float,
-    hardCapSeconds: float,
     coreServices: tuple[str, ...] | list[str],
     nowIso: str,
     obdTier: str = OBD_NOT_PROBED,
@@ -132,11 +135,13 @@ def computeBootState(
     assets installed. The eclipse-obd tier is carried through untouched in
     ``obdTier`` and never influences ``healthy``/``degraded`` (US-494 AC-1).
 
+    Degraded has exactly two EVENT sources (US-869-d): a CORE unit reports
+    ``failed``, or the dashboard assets are missing. Nothing here reads elapsed
+    time -- a unit still ``activating`` is waiting, however long it takes.
+
     Args:
         coreServiceStates: ``systemctl is-active`` result per CORE service.
         uiAssetsPresent: True when the dashboard assets are installed.
-        elapsedSeconds: Seconds since the emitter started.
-        hardCapSeconds: Degrade if no healthy verdict is reached by this point.
         coreServices: The CORE-readiness contract (the gate's membership).
         nowIso: ISO-8601 timestamp to stamp into the payload.
         obdTier: Assessed eclipse-obd granular tier string (informational).
@@ -179,19 +184,6 @@ def computeBootState(
     )
     healthy = allCoreGood and progress >= 1.0 and uiAssetsPresent
     degraded = degradedReason is not None
-
-    # Hard-cap timeout: never reached a healthy verdict in time -> degrade with
-    # the first not-good CORE service as the reason (no silent green-when-slow).
-    # Only CORE components can appear here -- the OBD tier is not consulted.
-    if not healthy and not degraded and elapsedSeconds > hardCapSeconds:
-        degraded = True
-        for svc in coreServices:
-            st = services.get(svc, "unknown")
-            if st != "active":
-                degradedReason = f"{svc}: not ready ({st})"
-                break
-        if degradedReason is None:
-            degradedReason = "boot did not reach healthy state"
 
     return {
         "progress": progress,
@@ -251,7 +243,7 @@ class BootStateEmitter:
     """Polls the CORE-readiness set + dashboard assets, writes boot-state.
 
     Dependencies are injected (``serviceQueryFn``, ``obdProbeFn``,
-    ``uiAssetProbeFn``, ``elapsedFn``, ``nowIsoFn``) so the verdict logic is
+    ``uiAssetProbeFn``, ``nowIsoFn``) so the verdict logic is
     testable without systemd or hardware.
     """
 
@@ -263,18 +255,15 @@ class BootStateEmitter:
         coreServices: tuple[str, ...] | list[str] = CORE_SERVICES_DEFAULT,
         informationalServices: tuple[str, ...]
         | list[str] = INFORMATIONAL_SERVICES_DEFAULT,
-        hardCapSeconds: float = 12.0,
         serviceQueryFn: Callable[[str], str] = _queryServiceState,
         obdProbeFn: Callable[[], str] | None = None,
         uiAssetPath: str = UI_ASSET_PATH_DEFAULT,
         uiAssetProbeFn: Callable[[], bool] | None = None,
-        elapsedFn: Callable[[], float] | None = None,
         nowIsoFn: Callable[[], str] | None = None,
     ) -> None:
         self.statesDir = statesDir
         self.coreServices = tuple(coreServices)
         self.informationalServices = tuple(informationalServices)
-        self.hardCapSeconds = hardCapSeconds
         self.uiAssetPath = uiAssetPath
         self._serviceQueryFn = serviceQueryFn
         # No tier probe wired -> say so (OBD_NOT_PROBED). Never fabricate a
@@ -283,8 +272,6 @@ class BootStateEmitter:
         self._uiAssetProbeFn = uiAssetProbeFn or (
             lambda: Path(self.uiAssetPath).is_file()
         )
-        startMono = time.monotonic()
-        self._elapsedFn = elapsedFn or (lambda: time.monotonic() - startMono)
         self._nowIsoFn = nowIsoFn or (
             lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         )
@@ -299,8 +286,6 @@ class BootStateEmitter:
         state = computeBootState(
             coreServiceStates=coreStates,
             uiAssetsPresent=self._uiAssetProbeFn(),
-            elapsedSeconds=self._elapsedFn(),
-            hardCapSeconds=self.hardCapSeconds,
             coreServices=self.coreServices,
             nowIso=self._nowIsoFn(),
             obdTier=assessObdTier(self._obdProbeFn),
@@ -336,9 +321,7 @@ def runForever(
         sleepFn(pollSeconds)
 
 
-def buildEmitter(
-    statesDir: str, hardCapSeconds: float, uiAssetPath: str
-) -> BootStateEmitter:
+def buildEmitter(statesDir: str, uiAssetPath: str) -> BootStateEmitter:
     """Construct the emitter the systemd unit runs (the production wiring).
 
     Extracted from ``main`` so the wiring itself is assertable: US-494's root
@@ -346,7 +329,6 @@ def buildEmitter(
     """
     return BootStateEmitter(
         statesDir=statesDir,
-        hardCapSeconds=hardCapSeconds,
         uiAssetPath=uiAssetPath,
     )
 
@@ -365,9 +347,6 @@ def main(argv: list[str] | None = None) -> int:
         "--poll-ms", type=int, default=500, help="poll interval in ms (default 500)"
     )
     parser.add_argument(
-        "--hard-cap-seconds", type=float, default=12.0, help="degrade timeout"
-    )
-    parser.add_argument(
         "--ui-asset-path",
         default=UI_ASSET_PATH_DEFAULT,
         help=(
@@ -379,7 +358,6 @@ def main(argv: list[str] | None = None) -> int:
 
     emitter = buildEmitter(
         statesDir=args.states_dir,
-        hardCapSeconds=args.hard_cap_seconds,
         uiAssetPath=args.ui_asset_path,
     )
     runForever(emitter, pollSeconds=args.poll_ms / 1000.0)
