@@ -48,7 +48,7 @@ its timer was retired, US-646 -- plus the 3 deploy-server.sh files via (i-b)),
 eclipse-obd.service via SERVICE_NAME, and rfcomm-bind.service via US-908-b's
 step_sync_rfcomm_bind_unit.  The allow-listed one: obd2-server.service.
 MOVED PIN (US-925-a, 2026-10-25): 24 files -- eclipse-wifi-recover.service is
-the 18th deploy-pi.sh literal (step_install_wifi_recover_unit).
+the 19th deploy-pi.sh literal (step_install_wifi_recover_unit).
 
 Comment lines are dropped before any search: prose about a unit is not an
 installer for it.
