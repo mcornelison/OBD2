@@ -18,6 +18,7 @@
 # ================================================================================
 # 2026-10-25    | Rex (US-925-a) | Initial implementation
 # 2026-10-26    | Rex (US-925-b) | psk-flags != 0 -> one WARNING per Wi-Fi profile
+# 2026-10-26    | Rex (US-925-c) | READY=1 (sd_notify) after the subscription; bus_name
 # ================================================================================
 ################################################################################
 
@@ -58,9 +59,10 @@ from __future__ import annotations
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -90,6 +92,13 @@ WIFI_CONNECTION_TYPE = "802-11-wireless"
 NMCLI = "/usr/bin/nmcli"
 JOURNALCTL = "/usr/bin/journalctl"
 SUPPLICANT_UNIT = "wpa_supplicant.service"
+
+# sd_notify(3) wire protocol, spoken with the stdlib (no package on the Pi):
+# one datagram on the AF_UNIX socket systemd names in $NOTIFY_SOCKET; a
+# leading '@' names an abstract socket, whose first byte is NUL.
+NOTIFY_SOCKET_ENV = "NOTIFY_SOCKET"
+NOTIFY_READY = b"READY=1"
+ABSTRACT_SOCKET_PREFIX = "@"
 
 LOGGER_NAME = "wifi-recover"
 LOG_FORMAT = "%(levelname)s wifi-recover: %(message)s"
@@ -471,8 +480,36 @@ def buildEvent(
     return DeviceEvent(interface, newState, reason)
 
 
+def notifyReady(environ: Mapping[str, str] | None = None) -> bool:
+    """Tell systemd (Type=notify) the service is up: READY=1 on $NOTIFY_SOCKET (US-925-c).
+
+    With no NOTIFY_SOCKET (the desk, the tests, a manual run) nothing is sent.
+    A send that fails is ONE ERROR line and the service keeps running: systemd
+    then fails the start at its timeout, which the deploy gate reports.
+
+    Args:
+        environ: The environment to read; ``os.environ`` when None.
+
+    Returns:
+        True when READY=1 was sent.
+    """
+    address = (os.environ if environ is None else environ).get(NOTIFY_SOCKET_ENV)
+    if not address:
+        return False
+    if address.startswith(ABSTRACT_SOCKET_PREFIX):
+        address = "\0" + address[len(ABSTRACT_SOCKET_PREFIX) :]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(NOTIFY_READY)
+    except OSError as exc:
+        logger.error("could not send READY=1 to systemd on %s (%s)", address, exc)
+        return False
+    return True
+
+
 def main() -> int:
-    """Subscribe to Device.StateChanged on ANY path and run until stopped."""
+    """Subscribe to NetworkManager's Device.StateChanged on ANY path and run until stopped."""
     import dbus
     from dbus.mainloop.glib import DBusGMainLoop
     from gi.repository import GLib
@@ -509,13 +546,19 @@ def main() -> int:
             return
         memory[0] = runEvent(event, memory[0], launch)
 
+    # bus_name (Atlas RULED, US-925-c): only NetworkManager's own signals reach
+    # the handler; another sender cannot forge a FAILED/NO_SECRETS.
     bus.add_signal_receiver(
         onStateChanged,
         signal_name="StateChanged",
         dbus_interface=NM_DEVICE_IFACE,
+        bus_name=NM_BUS_NAME,
         path_keyword="path",
     )
     logger.info("watching %s for NetworkManager no-secrets failures", WIFI_INTERFACE)
+    # READY only now that the subscription is in place, and after the line the
+    # deploy gate looks for: `systemctl restart` returns on READY.
+    notifyReady()
     GLib.MainLoop().run()
     return 0
 

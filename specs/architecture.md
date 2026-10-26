@@ -2055,13 +2055,13 @@ starts it happens below the supplicant, and `band=bg`, `freq_list` and
 `roamoff=1` are already set (MEASURED), so nothing above the driver can stop
 the failure — only answer it.
 
-- **Service.** `deploy/eclipse-wifi-recover.service` runs
-  `src/pi/network/wifi_recover.py` on the SYSTEM python (`/usr/bin/python3`;
+- **Service.** `deploy/eclipse-wifi-recover.service` runs a root-owned copy of
+  `src/pi/network/wifi_recover.py` (US-925-c, below) on the SYSTEM python (`/usr/bin/python3`;
   dbus + `gi.repository.GLib` from Debian `python3-dbus` / `python3-gi`, which
   `obd2-venv` cannot import). Root with no `User=` (NM's network-control polkit
   is `auth_admin` for a session-less caller, and a grant to the kiosk user
   would reach Chromium too), sandboxed: `NoNewPrivileges`, empty
-  `CapabilityBoundingSet=`, `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `CapabilityBoundingSet=`, `ProtectSystem=strict`, `ProtectHome=yes`,
   `PrivateTmp`, `AF_UNIX` only; `PartOf=NetworkManager.service`. No polkit
   rule. `deploy-pi.sh step_install_wifi_recover_unit` installs it every
   deploy (cmp-guarded; fails loud when either Debian package is missing; never
@@ -2093,6 +2093,28 @@ the failure — only answer it.
 - **Why not a dispatcher script.** NetworkManager-dispatcher(8) has no event
   for a failed activation and carries no state reason, so it cannot see this
   failure at all.
+
+**Root-owned path, readiness and the deploy gate (US-925-c, Sprint 117; Atlas
+RULED).** As shipped in V0.30.15 the unit crash-looped with `Errno 13`: root
+with an empty capability set has no `CAP_DAC_*`, so it cannot enter the deploy
+user's home, where the script lived. The deploy printed "enabled + active"
+anyway. The fix is the path, not a wider capability set.
+`step_install_wifi_recover_unit` copies the script to
+**`/usr/local/lib/eclipse/wifi_recover.py`** (root:root 0644, sync-if-changed,
+cmp-verified; the directory is created root-owned 0755 if absent). The unit's
+`ExecStart` points there, it has no `WorkingDirectory`, and `ProtectHome=yes`
+hides every home directory. The unit is **`Type=notify`** with
+`NotifyAccess=main`. `wifi_recover.main` subscribes with
+`bus_name=org.freedesktop.NetworkManager`, so only NM's signals reach the
+handler (there is no live State/StateReason re-read; it would race
+FAILED→DISCONNECTED). Then it logs "watching wlan0 …" and only after that sends
+`READY=1` on `$NOTIFY_SOCKET`, using the stdlib socket module (nothing is sent
+when it is unset). **The deploy gate** replaces the old echo: the step fails,
+naming the check, unless `systemctl restart` exits 0 (it waits for READY,
+bounded by systemd's default start timeout), `systemctl show -p NRestarts
+--value` is 0, and the journal of this invocation (`_SYSTEMD_INVOCATION_ID`)
+has the "watching wlan0" line. A missing source script or a copy that fails
+cmp fails the step with an ERROR before the restart.
 
 #### `pi.companionService` — Pi → server reach (US-151)
 
