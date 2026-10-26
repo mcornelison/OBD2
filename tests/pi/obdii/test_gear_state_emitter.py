@@ -32,6 +32,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Rex (US-630) | Initial -- gear producer: reading seam -> file.
+# 2026-10-26    | Rex (US-904-a) | hintGear/hintDirection on every write; the
+#               |              | orchestrator publishes up/down/none hints.
 # ================================================================================
 ################################################################################
 
@@ -226,7 +228,8 @@ class TestPayloadShape:
         """
         Given: a resolved 3rd gear
         When:  it is built into a states/gear payload
-        Then:  it carries available/gear/reason/ts and no other key
+        Then:  it carries available/gear/reason/ts plus the two hint keys (US-904-a),
+               explicit null when there is no hint, and no other key
         """
         reading = gd.GearReading(available=True, gear=3, reason=gd.REASON_ENGAGED)
 
@@ -235,6 +238,8 @@ class TestPayloadShape:
             "gear": 3,
             "reason": gd.REASON_ENGAGED,
             "ts": _NOW_ISO,
+            "hintGear": None,
+            "hintDirection": None,
         }
 
     def test_buildGearState_typedAbsence_keepsTheReasonAndNullsTheGear(self):
@@ -254,6 +259,8 @@ class TestPayloadShape:
             "gear": None,
             "reason": gd.REASON_NO_BAND,
             "ts": _NOW_ISO,
+            "hintGear": None,
+            "hintDirection": None,
         }
 
     def test_makeGearStateEmitter_writesTheFileNamedGear(self, tmp_path):
@@ -534,3 +541,134 @@ def test_bothInputParameters_areRoutedToTheDeriver(tmp_path, param):
     assert state["reason"] == (
         gd.REASON_LINK_DOWN if param == "RPM" else gd.REASON_STALE
     )
+
+
+# ---------------------------------------------------------------------------
+# US-904-a: the between-gears hint rides on states/gear, computed by gearHint
+# in gear_derivation.py and published here. It never changes gear or reason.
+# ---------------------------------------------------------------------------
+
+
+class TestTheHintIsPublished:
+    """hintGear / hintDirection on every states/gear write."""
+
+    def test_buildGearState_withAHint_writesBothKeys_andLeavesGearAlone(self):
+        reading = gd.GearReading(
+            available=False,
+            gear=None,
+            reason=gd.REASON_SETTLING,
+            hintGear=3,
+            hintDirection=gd.HINT_DIRECTION_UP,
+        )
+
+        assert gse.buildGearState(reading, nowIso=_NOW_ISO) == {
+            "available": False,
+            "gear": None,
+            "reason": gd.REASON_SETTLING,
+            "ts": _NOW_ISO,
+            "hintGear": 3,
+            "hintDirection": gd.HINT_DIRECTION_UP,
+        }
+
+    def test_toStateDict_staysTheDeriversThreeKeys(self):
+        reading = gd.GearReading(
+            available=False, gear=None, reason=gd.REASON_SETTLING, hintGear=3,
+            hintDirection=gd.HINT_DIRECTION_UP,
+        )
+
+        assert reading.toStateDict() == {
+            "available": False, "gear": None, "reason": gd.REASON_SETTLING,
+        }
+
+    def test_upshiftFrom3rd_publishesHollow4Up_whileGearStaysNull(self, tmp_path):
+        """
+        Given: a settled 3rd gear at 80 km/h
+        When:  RPM drops to a 4th-gear ratio at the same speed (settling)
+        Then:  states/gear reads gear null, reason settling, hint (4, 'up')
+        """
+        orch = _Orch(str(tmp_path / "states"))
+        assert _settleThirdGear(orch, tmp_path)["gear"] == 3
+
+        orch.feed(_SPEED_3RD, 30.0 * _SPEED_3RD)
+
+        state = _readGear(tmp_path)
+        assert (state["available"], state["gear"], state["reason"]) == (
+            False, None, gd.REASON_SETTLING,
+        )
+        assert (state["hintGear"], state["hintDirection"]) == (4, gd.HINT_DIRECTION_UP)
+
+    def test_downshiftFrom3rd_publishesHollow2Down(self, tmp_path):
+        """
+        Given: a settled 3rd gear at 80 km/h (3,544 rpm)
+        When:  speed falls to 70 km/h and RPM rises to a 2nd-gear ratio
+        Then:  the hint is (2, 'down')
+        """
+        orch = _Orch(str(tmp_path / "states"))
+        assert _settleThirdGear(orch, tmp_path)["gear"] == 3
+
+        orch.feed(70.0, 4500.0)
+
+        state = _readGear(tmp_path)
+        assert state["gear"] is None
+        assert (state["hintGear"], state["hintDirection"]) == (2, gd.HINT_DIRECTION_DOWN)
+
+    def test_theNewGearConfirms_theHintClears(self, tmp_path):
+        """A solid gear is published with an explicit null hint."""
+        orch = _Orch(str(tmp_path / "states"))
+        assert _settleThirdGear(orch, tmp_path)["gear"] == 3
+        orch.feed(_SPEED_3RD, 30.0 * _SPEED_3RD)
+        orch.clock.advance(_POLL_PERIOD_S)
+
+        orch.feed(_SPEED_3RD, 30.0 * _SPEED_3RD)
+
+        state = _readGear(tmp_path)
+        assert (state["gear"], state["reason"]) == (4, gd.REASON_ENGAGED)
+        assert (state["hintGear"], state["hintDirection"]) == (None, None)
+
+    def test_aSettledGear_carriesExplicitNullHintKeys(self, tmp_path):
+        orch = _Orch(str(tmp_path / "states"))
+
+        state = _settleThirdGear(orch, tmp_path)
+
+        assert "hintGear" in state and state["hintGear"] is None
+        assert "hintDirection" in state and state["hintDirection"] is None
+
+    def test_theHintAgesOut_fiveSecondsAfterTheLastSolidGear(self, tmp_path):
+        """
+        Given: a settled 3rd gear, then a candidate that keeps changing
+        When:  more than 5 s of arrivals pass with no solid gear
+        Then:  the hint goes null -- an AGE of readings, not a timer
+        """
+        orch = _Orch(str(tmp_path / "states"))
+        assert _settleThirdGear(orch, tmp_path)["gear"] == 3
+        hints = []
+        # 4th-gear ratio, then 5th, alternating: each RPM is a NEW candidate,
+        # and cycles 1.5 s apart never let one hold the 2 s debounce, so the
+        # deriver stays `settling` while RPM stays below RPM at G. G=3 was last
+        # solid on the FIRST cycle's SPEED arrival (fresh SPEED + the previous,
+        # still-fresh 3rd-gear RPM), so ages run 0, 1.5, 3.0, 4.5, 6.0 s.
+        for rpm in (30.0, 22.0, 30.0, 22.0, 30.0):
+            orch.feed(_SPEED_3RD, rpm * _SPEED_3RD)
+            state = _readGear(tmp_path)
+            assert state["reason"] == gd.REASON_SETTLING
+            hints.append(state["hintGear"])
+            orch.clock.advance(1.5)
+
+        assert hints == [4, 4, 4, 4, None]
+
+    def test_theRpmAndSpeedOfOneCycle_mustPair(self, tmp_path):
+        """
+        Given: a settled 3rd gear
+        When:  a shifted RPM arrives 1.5 s after the latest SPEED
+        Then:  no hint (Spool S2 2026-10-26: > 1.1 s apart is two instants)
+        """
+        orch = _Orch(str(tmp_path / "states"))
+        assert _settleThirdGear(orch, tmp_path)["gear"] == 3
+        orch.feed(_SPEED_3RD, None)
+        orch.clock.advance(1.5)
+
+        orch.feed(None, 30.0 * _SPEED_3RD)
+
+        state = _readGear(tmp_path)
+        assert state["reason"] == gd.REASON_SETTLING
+        assert (state["hintGear"], state["hintDirection"]) == (None, None)

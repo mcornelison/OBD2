@@ -133,7 +133,9 @@
       "available": false,
       "gear": null,
       "reason": "link_down",
-      "ts": "2026-10-22T23:10:00Z"
+      "ts": "2026-10-22T23:10:00Z",
+      "hintGear": null,
+      "hintDirection": null
     },
     "settings": {
       "pi.display.carousel.autoRotateS": {

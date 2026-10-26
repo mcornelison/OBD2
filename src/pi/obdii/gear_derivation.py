@@ -29,6 +29,9 @@
 #               |              | A1-A4). P needs a FRESH SPEED 0 on both roads
 #               |              | in; a fresh RPM 0 at speed is the new typed
 #               |              | absence engine_off_rolling.
+# 2026-10-26    | Rex (US-904-a) | gearHint: Spool's between-gears hint rule
+#               |              | (s4.2, 2026-10-13; pairing guard 2026-10-26),
+#               |              | pure over arrival times (Atlas A2).
 # ================================================================================
 ################################################################################
 
@@ -81,6 +84,13 @@ __all__ = [
     "GearBand",
     "GearDeriver",
     "GearReading",
+    "HINT_DIRECTION_DOWN",
+    "HINT_DIRECTION_UP",
+    "HINT_MAX_PAIR_GAP_S",
+    "HINT_MAX_SOLID_AGE_S",
+    "HINT_MIN_SPEED_KPH",
+    "HINT_REASONS",
+    "HINT_SPEED_TOLERANCE_KPH",
     "MPH_PER_KPH",
     "REASON_AMBIGUOUS",
     "REASON_BELOW_THRESHOLD",
@@ -99,6 +109,8 @@ __all__ = [
     "TIRE_CIRCUMFERENCE_M",
     "bandsFromGearRatios",
     "createGearDeriverFromConfig",
+    "gearHint",
+    "isSolidGear",
     "rpmPerKph",
 ]
 
@@ -127,6 +139,29 @@ REASON_SETTLING_PARK = "settling_park"
 # (fresh RPM 0) while the car is still moving (fresh SPEED > 0) -- a stall while
 # rolling. Before this it read P, and P now unlocks parked-only controls.
 REASON_ENGINE_OFF_ROLLING = "engine_off_rolling"
+
+# --------------------------------------------------------------------------
+# US-904-a: the between-gears HINT (specs/v030-driving-page-design.md s4.2,
+# Spool 2026-10-13). A hint is only ever offered while the deriver is honestly
+# refusing to name a gear for one of these three reasons -- the ones a shift in
+# progress produces. Every other reason (engaged, N, P, stale, link_down,
+# no_data, ...) is either a measured fact or a dead pipe, and neither is hinted.
+# --------------------------------------------------------------------------
+HINT_REASONS = frozenset({REASON_NO_BAND, REASON_AMBIGUOUS, REASON_SETTLING})
+HINT_DIRECTION_UP = "up"
+HINT_DIRECTION_DOWN = "down"
+# s4.2, Spool 2026-10-13: the last SOLID gear must be at most this old. An AGE
+# CONDITION between two readings' arrival times, never a timer (Atlas A2,
+# 2026-10-26).
+HINT_MAX_SOLID_AGE_S = 5.0
+# s4.2, Spool 2026-10-13: no hint at or below this road speed (strictly above).
+HINT_MIN_SPEED_KPH = 15.0
+# s4.2, Spool 2026-10-13: "speed not falling" tolerates this much drop, km/h.
+HINT_SPEED_TOLERANCE_KPH = 2.0
+# Spool S2 RULED 2026-10-26: RPM and SPEED are polled back to back in the same
+# cycle (~0.14 s apart); the latest pair must be within half a ~2.2 s cycle of
+# each other, or they describe two different instants and no hint is drawn.
+HINT_MAX_PAIR_GAP_S = 1.1
 
 # --------------------------------------------------------------------------
 # Spool's semantics, transcribed from the US-508 contract already recorded in
@@ -294,9 +329,17 @@ class GearReading:
     available: bool
     gear: int | str | None
     reason: str
+    # US-904-a: the between-gears hint the emitter attaches (see gearHint). The
+    # deriver never sets them; they never change `gear` or `reason`, and they
+    # are NOT part of toStateDict -- buildGearState writes them on its own.
+    hintGear: int | None = None
+    hintDirection: str | None = None
 
     def toStateDict(self) -> dict[str, Any]:
         """Serialise to the states/gear shape carousel.js gearView() reads.
+
+        The hint is deliberately absent here: this is the deriver's opinion,
+        and the hint is not part of it.
 
         Returns:
             ``{"available": bool, "gear": int | None, "reason": str}``.
@@ -712,6 +755,93 @@ class GearDeriver:
 # Sentinels for _liveValue. Module-private; never published.
 _MISSING = object()
 _STALE = object()
+
+
+def isSolidGear(gear: Any) -> bool:
+    """Whether ``gear`` is a measured numbered gear (1..5), for the hint rule.
+
+    N and P are determinate states but NOT gears a shift leaves from, so they
+    are not solid here. ``bool`` is excluded explicitly: ``True`` is an int.
+    """
+    return isinstance(gear, int) and not isinstance(gear, bool) and gear in F5M33_GEAR_RATIOS
+
+
+def _finite(reading: Reading | None) -> float | None:
+    """A reading's value as a finite float, or None."""
+    if reading is None or reading.value is None:
+        return None
+    value = float(reading.value)
+    return value if isfinite(value) else None
+
+
+def gearHint(
+    *,
+    reason: str,
+    solidGear: Any,
+    solidAtS: float | None,
+    rpmAtSolid: float | None,
+    rpm: Reading | None,
+    speed: Reading | None,
+    prevSpeed: Reading | None,
+    nowS: float | None,
+) -> tuple[int | None, str | None]:
+    """The likely next gear while the deriver is between gears (US-904-a).
+
+    specs/v030-driving-page-design.md s4.2, Spool 2026-10-13. A hint exists
+    only while ``reason`` is one a shift produces, the last solid gear G is at
+    most :data:`HINT_MAX_SOLID_AGE_S` old, and speed is above
+    :data:`HINT_MIN_SPEED_KPH`.  Then RPM below the RPM at G with speed not
+    falling is G+1 up; RPM above it with speed falling is G-1 down.  A result
+    outside 1..5 is no hint (Spool 2026-10-26: never a clamped 5 while in 5th).
+
+    PURE, AND NO CLOCK (Atlas A2, 2026-10-26): ``nowS`` is the arrival time of
+    the reading that triggered the emit, and every comparison is between
+    arrival times on the same basis as :attr:`Reading.tsS`.  The hint never
+    changes the measured gear; only :class:`GearDeriver` makes a solid gear.
+
+    Args:
+        reason: The deriver's reason for this emit.
+        solidGear: The last solid gear G, or None if there has been none.
+        solidAtS: Arrival time at which G was last solid.
+        rpmAtSolid: The RPM reading G was last solid on.
+        rpm: The latest RPM reading.
+        speed: The latest SPEED reading (km/h).
+        prevSpeed: The SPEED reading just before ``speed``.
+        nowS: Arrival time of the reading that triggered this emit.
+
+    Returns:
+        ``(hintGear, hintDirection)``, or ``(None, None)`` when there is none.
+    """
+    none: tuple[int | None, str | None] = (None, None)
+    if reason not in HINT_REASONS or not isSolidGear(solidGear):
+        return none
+    if solidAtS is None or nowS is None or nowS - solidAtS > HINT_MAX_SOLID_AGE_S:
+        return none
+
+    rpmNow = _finite(rpm)
+    speedNow = _finite(speed)
+    speedBefore = _finite(prevSpeed)
+    rpmAtG = None if rpmAtSolid is None else float(rpmAtSolid)
+    if rpmNow is None or speedNow is None or speedBefore is None:
+        return none
+    if rpmAtG is None or not isfinite(rpmAtG):
+        return none
+    # Spool S2 2026-10-26: the two must describe the same poll cycle.
+    assert rpm is not None and speed is not None
+    if abs(rpm.tsS - speed.tsS) > HINT_MAX_PAIR_GAP_S:
+        return none
+    if speedNow <= HINT_MIN_SPEED_KPH:
+        return none
+
+    if rpmNow < rpmAtG and speedNow >= speedBefore - HINT_SPEED_TOLERANCE_KPH:
+        candidate, direction = solidGear + 1, HINT_DIRECTION_UP
+    elif rpmNow > rpmAtG and speedNow < speedBefore:
+        candidate, direction = solidGear - 1, HINT_DIRECTION_DOWN
+    else:
+        return none
+    if not isSolidGear(candidate) or candidate == solidGear:
+        return none
+    return candidate, direction
 
 
 def createGearDeriverFromConfig(config: dict[str, Any]) -> GearDeriver | None:

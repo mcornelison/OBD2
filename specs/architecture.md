@@ -9652,6 +9652,28 @@ Driving spec §3-§5 (`specs/v030-driving-page-design.md`), Iris Q1 (card slot):
   literal colour in any Driving rule. Fixtures:
   `tests/ui/fixtures/states/driving/*.json` (Iris's list; no hint or takeover).
 
+**states/gear hintGear / hintDirection (US-904-a, Sprint 117).** `states/gear`
+now carries `hintGear` (1..5 or null) and `hintDirection` (`up` / `down` or
+null) on EVERY write, explicit null when there is no hint, beside the unchanged
+`available`, `gear`, `reason`, `ts`; the hint never changes `gear` or `reason`,
+and `GearReading.toStateDict` stays `{available, gear, reason}`. Computed ONCE by
+the pure `gearHint` in `src/pi/obdii/gear_derivation.py`, attached by
+`CardStateEmitterMixin._emitGearState` and published by `gear_state_emitter`
+`buildGearState`; the page (US-904-b) only renders it. Rule: driving spec §4.2,
+Spool 2026-10-13 -- reason in {`no_band_match`, `ambiguous`, `settling`}, the last
+solid gear G (1..5; N/P are not solid) at most 5 s old, speed > 15 km/h; RPM below
+the RPM at G with speed >= previous − 2 km/h -> G+1 up, RPM above it with speed
+falling -> G−1 down; outside 1..5 is no hint (Spool 2026-10-26, no clamp). Pairing
+guard (Spool S2 2026-10-26): the latest RPM and SPEED must arrive within 1.1 s of
+each other. **Atlas A2 (2026-10-26):** the 5 s is an AGE between readings, not a
+timer -- "now" is the arrival time (`Reading.tsS`) of the newest SPEED/RPM reading,
+G's time is the arrival time of the readings it was solid on, and the card tick
+re-emits the same hint for the same readings; no clock read enters the rule. The
+mixin keeps the previous SPEED reading (`_prevSpeedReading`) and the last solid
+gear (`_lastSolidGear`), because `_lastGearReading` is overwritten by the very
+`settling` the hint is for. Gear stays display-only (no schema, sync or poll
+change; `tests/lint/test_gear_is_display_only.py`).
+
 #### V0.30 Driving RPM bar contract (US-888-b, Sprint 103 / V0.30.1)
 
 Driving spec §4.1-§4.2, R30, R35:

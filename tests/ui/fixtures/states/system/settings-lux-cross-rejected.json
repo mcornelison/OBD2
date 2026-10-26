@@ -162,7 +162,9 @@
       "available": true,
       "gear": "N",
       "reason": "neutral",
-      "ts": "2026-10-22T23:10:00Z"
+      "ts": "2026-10-22T23:10:00Z",
+      "hintGear": null,
+      "hintDirection": null
     },
     "settings": {
       "pi.display.autoDim.luxMin": {

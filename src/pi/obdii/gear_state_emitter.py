@@ -16,6 +16,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Rex (US-630) | Initial -- states/gear payload + emit callable.
+# 2026-10-26    | Rex (US-904-a) | hintGear + hintDirection on every write,
+#               |              | explicit null when there is no hint.
 # ================================================================================
 ################################################################################
 
@@ -67,12 +69,21 @@ def buildGearState(reading: GearReading, *, nowIso: str) -> dict[str, Any]:
         reading: What the deriver concluded this instant.
         nowIso: ISO-8601 emission timestamp (the freshness marker).
 
+    US-904-a: ``hintGear`` / ``hintDirection`` ride along on EVERY write, as
+    explicit nulls when there is no hint, for the same reason ``gear`` does.
+    They are computed by ``gear_derivation.gearHint`` and attached to the
+    reading by the orchestrator; this module only publishes them, and they
+    never change ``gear`` or ``reason``.
+
     Returns:
-        ``{"available", "gear", "reason", "ts"}`` -- the three keys
-        ``gearView()`` reads, plus the stamp every other state file carries.
+        ``{"available", "gear", "reason", "ts", "hintGear", "hintDirection"}``
+        -- the three keys ``gearView()`` reads, the stamp every other state
+        file carries, and the between-gears hint.
     """
     payload: dict[str, Any] = dict(reading.toStateDict())
     payload["ts"] = nowIso
+    payload["hintGear"] = reading.hintGear
+    payload["hintDirection"] = reading.hintDirection
     return payload
 
 
