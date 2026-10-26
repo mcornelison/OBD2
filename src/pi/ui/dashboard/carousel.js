@@ -5121,10 +5121,32 @@
     };
   }
 
+  // US-904-b: the gears a hint may name -- the producer's own range (spec s4.2,
+  // Spool 2026-10-26: "a hint outside 1..5 is no hint"). A VALIDITY check on
+  // the provider's field, not a decision: the hint itself is gearHint's
+  // (gear_derivation.py), and this page never derives one.
+  var DRIVING_HINT_GEAR_MIN = 1;
+  var DRIVING_HINT_GEAR_MAX = 5;
+
+  // states/gear's hintGear/hintDirection, copied as-is, or null. Only between
+  // gears: a measured gear never shows a hint, whatever the provider sent. An
+  // invalid hint (not a whole 1..5, or a direction other than up/down) is no
+  // hint -- the page draws '--' rather than guess what was meant.
+  function drivingGearHint(gearData, measured) {
+    if (measured || !isObj(gearData)) return null;
+    var g = gearData.hintGear;
+    var direction = gearData.hintDirection;
+    if (typeof g !== "number" || Math.floor(g) !== g) return null;
+    if (g < DRIVING_HINT_GEAR_MIN || g > DRIVING_HINT_GEAR_MAX) return null;
+    if (direction !== "up" && direction !== "down") return null;
+    return { gear: g, direction: direction };
+  }
+
   // The Driving card's whole view from the two states it reads: states/obd-live
   // and states/gear (the ONE gear fetch the tick already makes). The page
   // computes no value and no band. The gear is gearView's glyph; between gears
-  // it is "--" with no hint and no reason line (spec s4.2; the hint is US-904).
+  // it is the provider's hint digit when there is one (drawn hollow, with its
+  // arrow), else "--" with no reason line (spec s4.2).
   function drivingView(obdLiveData, gearData, nowMs) {
     var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
     var readings = {};
@@ -5133,8 +5155,9 @@
       readings[pid] = params ? drivingReading(params[pid], nowMs) : drivingNotRead("no source");
     }
     var gear = gearView(gearData);
+    var hint = drivingGearHint(gearData, gear.available);
     return {
-      gear: { text: gear.value, measured: gear.available },
+      gear: { text: hint ? String(hint.gear) : gear.value, measured: gear.available, hint: hint },
       readings: readings,
       // US-888-b: the stepped bar, from the same params.RPM as the number.
       rpmBar: rpmBarView(params ? params.RPM : null),
@@ -6812,12 +6835,33 @@
     // change (3 -> 4, also through a "--" between them) and never on the first
     // gear, a repeat of the same gear, or "--".
     var drivingLastGear = null;
+
+    // US-904-b (Iris RULED, spec s4.2): the hint's arrow is a SHAPE, never a
+    // character -- Michroma's 38-glyph subset has no arrows. One triangle path;
+    // down is the same path flipped about the box's horizontal centre line.
+    var DRIVING_HINT_ARROW_PATH = "M5 0 L10 10 L0 10 Z";
+    var DRIVING_HINT_ARROW_FLIP = "matrix(1 0 0 -1 0 10)";
+    function drivingHintArrow(direction) {
+      var svg = svgEl("svg", {
+        "class": "drv-hint-arrow", viewBox: "0 0 10 10",
+        "data-direction": direction, "aria-hidden": "true",
+      });
+      var shape = { d: DRIVING_HINT_ARROW_PATH };
+      if (direction === "down") shape.transform = DRIVING_HINT_ARROW_FLIP;
+      svg.appendChild(svgEl("path", shape));
+      return svg;
+    }
+
     function renderDrivingCard(card, view) {
       if (!card || !view) return;
       var gearEl = card.querySelector(".drv-gear");
       if (gearEl) {
+        // textContent also drops the previous paint's arrow, so a hint never
+        // outlives the state that carried it.
         gearEl.textContent = view.gear.text;
         gearEl.setAttribute("data-measured", view.gear.measured ? "true" : "false");
+        gearEl.classList.toggle("drv-gear-hint", !!view.gear.hint);
+        if (view.gear.hint) gearEl.appendChild(drivingHintArrow(view.gear.hint.direction));
         if (view.gear.measured) {
           if (drivingLastGear !== null && drivingLastGear !== view.gear.text) {
             // Alternate a/b: a NEW animation-name restarts the glide without a

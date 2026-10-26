@@ -1503,6 +1503,8 @@ html, body {
   --drv-value-line: 1.2;      /* reading line box */
   --drv-gear-line: 1;         /* the gear glyph's box is exactly its size */
   --drv-stale-opacity: 0.4;   /* stale = dimmed (spec s4.4) */
+  --drv-hint-stroke: 3px;     /* hollow hint digit outline (spec s4.2, US-904-b) */
+  --drv-hint-arrow: 30px;     /* hint arrow box, square (spec s4.2, US-904-b) */
 }
 /* The body keeps the shared .card-body guard (overflow-y auto + the scroll
    cue): if layout B ever outgrows the band it says so instead of clipping. */
@@ -1612,12 +1614,29 @@ html, body {
    1-5, N, P and '-'). Measured gear is warm white; '--' (between gears, no
    source) is secondary so it never reads as a gear. */
 #driving-card .drv-gear {
+  position: relative;
   font-family: var(--font-display); font-weight: 400; font-synthesis: none;
   font-size: var(--fs-giant); line-height: var(--drv-gear-line);
   color: var(--text-primary);
 }
 #driving-card .drv-gear[data-measured="false"] {
   color: var(--text-secondary);
+}
+/* US-904-b: between gears, the provider's hint (states/gear hintGear) is drawn
+   HOLLOW -- same face, size and place as a solid gear, differing only in fill,
+   so a guess is never mistaken for a reading (spec s4.2, s6 AC 6). Its arrow is
+   an SVG triangle hung off the digit's right edge, so the digit never moves
+   when the hint turns solid. Compound selector: it must out-rank the
+   [data-measured="false"] fill above. */
+#driving-card .drv-gear.drv-gear-hint {
+  color: transparent;
+  -webkit-text-stroke: var(--drv-hint-stroke) var(--text-secondary);
+}
+#driving-card .drv-hint-arrow {
+  position: absolute; left: calc(100% + var(--drv-gap));
+  top: calc(50% - var(--drv-hint-arrow) / 2);
+  width: var(--drv-hint-arrow); height: var(--drv-hint-arrow);
+  fill: currentColor; color: var(--text-secondary);
 }
 /* US-888-b motion, OPT-IN: declared only when the user has not asked for
    reduced motion, so reduced motion keeps every colour above and loses only

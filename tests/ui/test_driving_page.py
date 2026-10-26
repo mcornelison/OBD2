@@ -39,6 +39,9 @@
 #                               card at index 4.
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
 #               |              | (9 -> 8).
+# 2026-10-26    | Ralph (Rex)  | US-904-b -- the provider's gear hint drawn hollow
+#               |              | with an SVG arrow; MOVED PINS: gear view keys,
+#               |              | fixture list (+2 hint fixtures).
 # ================================================================================
 ################################################################################
 
@@ -108,8 +111,9 @@ BAND_TOKEN = {
     "red": "var(--critical-red)",
 }
 
-# Iris's fixture list (SHAPE-CHECK S103, 888-a). Hint and takeover fixtures are
-# deliberately absent (US-904 / Warnings).
+# Iris's fixture list (SHAPE-CHECK S103, 888-a). Takeover fixtures are
+# deliberately absent (Warnings).
+# MOVED PIN (US-904-b): the two hint fixtures (spec s7) join the list.
 FIXTURE_NAMES = [
     "idle-neutral",
     "gear-1",
@@ -118,6 +122,8 @@ FIXTURE_NAMES = [
     "gear-4",
     "gear-5",
     "between-gears-no-hint",
+    "between-gears-hint-up",
+    "between-gears-hint-down",
     "coolant-amber",
     "coolant-red",
     "iat-neutral",
@@ -375,7 +381,9 @@ def test_displayUnits_isTheOnlyConversionInCarouselJs():
 # ---------------------------------------------------------------------------
 
 
-def test_everyIrisFixtureIsPresent_andNoHintOrTakeoverFixture():
+def test_everyIrisFixtureIsPresent_andNoTakeoverFixture():
+    # MOVED PIN (US-904-b): was ..._andNoHintOrTakeoverFixture; the hint
+    # fixtures now belong to the page.
     names = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(_FIXTURES, "*.json")))
     assert names == sorted(FIXTURE_NAMES)
 
@@ -440,7 +448,9 @@ def test_drivingView_readingsMatchTheProvider(name: str):
 def test_drivingView_gearIsTheProducersGlyph_withNoHint(name: str):
     gear = _view(name)["gear"]
     assert (gear["text"], gear["measured"]) == EXPECTED_GEAR[name]
-    assert set(gear) == {"text", "measured"}, "the page grew a hint it does not compute"
+    # MOVED PIN (US-904-b): the view carries the provider's hint, null here.
+    assert set(gear) == {"text", "measured", "hint"}
+    assert gear["hint"] is None
 
 
 @_NODE_ONLY
@@ -450,7 +460,130 @@ def test_drivingView_noObdLive_isDashDashWithAReason_never0():
         r = view["readings"][pid]
         assert (r["text"], r["band"], r["stale"]) == ("--", None, False)
         assert r["note"] == "no source"
-    assert view["gear"] == {"text": "--", "measured": False}
+    # MOVED PIN (US-904-b): + "hint": None.
+    assert view["gear"] == {"text": "--", "measured": False, "hint": None}
+
+
+# US-904-b: the hint is the provider's hintGear/hintDirection, copied only when
+# the gear is not measured and both are valid (spec s4.2, s6 AC 6 + 8b).
+HINT_FIXTURES = {
+    "between-gears-hint-up": {"text": "3", "measured": False, "hint": {"gear": 3, "direction": "up"}},
+    "between-gears-hint-down": {
+        "text": "2",
+        "measured": False,
+        "hint": {"gear": 2, "direction": "down"},
+    },
+}
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", sorted(HINT_FIXTURES))
+def test_drivingView_hintFixture_isExactlyTheProvidersFields(name: str):
+    fx = _fixture(name)
+    gear = _view(name)["gear"]
+    assert gear == HINT_FIXTURES[name]
+    assert gear["hint"] == {"gear": fx["gear"]["hintGear"], "direction": fx["gear"]["hintDirection"]}
+
+
+def _gearState(**overrides: Any) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "available": False,
+        "gear": None,
+        "reason": "settling",
+        "hintGear": 3,
+        "hintDirection": "up",
+        "ts": "2026-10-13T12:30:10Z",
+    }
+    state.update(overrides)
+    return state
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("overrides", "text", "measured"),
+    [
+        # A measured gear never shows a hint, whatever the provider sent.
+        ({"available": True, "gear": 4, "reason": "engaged", "hintGear": 5}, "4", True),
+        ({"available": True, "gear": "N", "reason": "neutral"}, "N", True),
+        # Invalid hints are no hint: '--' as today.
+        ({"hintGear": 0}, "--", False),
+        ({"hintGear": 6}, "--", False),
+        ({"hintGear": "N"}, "--", False),
+        ({"hintGear": "3"}, "--", False),
+        ({"hintGear": 2.5}, "--", False),
+        ({"hintGear": True}, "--", False),
+        ({"hintGear": None, "hintDirection": None}, "--", False),
+        ({"hintDirection": "left"}, "--", False),
+        ({"hintDirection": None}, "--", False),
+        ({"hintDirection": "UP"}, "--", False),
+    ],
+)
+def test_drivingView_measuredOrInvalidHint_drawsNoHint(
+    overrides: dict[str, Any], text: str, measured: bool
+):
+    gear = _probe("drivingView", None, _gearState(**overrides), 0)["gear"]
+    assert gear == {"text": text, "measured": measured, "hint": None}
+
+
+@_NODE_ONLY
+def test_drivingView_absentHintKeys_drawNoHint():
+    state = _gearState()
+    del state["hintGear"], state["hintDirection"]
+    assert _probe("drivingView", None, state, 0)["gear"] == {
+        "text": "--",
+        "measured": False,
+        "hint": None,
+    }
+
+
+def _jsFunction(name: str, indent: str = "  ") -> str:
+    """A carousel.js function's body with its // comments stripped: the gates
+    below judge code, and the prose around the gear names RPM and speed."""
+    js = _read(_JS)
+    start = js.index(f"{indent}function {name}(")
+    body = js[start : js.index(f"\n{indent}}}\n", start)]
+    return re.sub(r"(?m)^\s*//.*$", "", body)
+
+
+def test_gearCode_readsNoRpmOrSpeed_andJudgesTheHintOnlyFor1to5():
+    """Grep gate (US-904-b): the gear glyph is states/gear's fields only. The
+    hint is never derived here: no RPM/SPEED field, and the only test on
+    hintGear is its 1..5 validity."""
+    gearCode = [_jsFunction("gearView"), _jsFunction("drivingGearHint")]
+    driving = _jsFunction("drivingView")
+    gearLines = [line for line in driving.splitlines() if "gear" in line.lower()]
+    gearCode.append("\n".join(gearLines))
+    for body in gearCode:
+        assert not re.search(r"RPM|SPEED|\brpm\b|\bspeed\b", body), body
+    # Not vacuous: the same scan sees the RPM bar's read in the rest of drivingView.
+    assert re.search(r"RPM|SPEED", driving)
+    hint = _jsFunction("drivingGearHint")
+    compared = re.findall(r"\bg\s*(?:[<>]=?|[!=]==?)\s*([\w.]+)|([\w.]+)\s*(?:[<>]=?)\s*g\b", hint)
+    operands = sorted({a or b for a, b in compared})
+    assert operands == ["DRIVING_HINT_GEAR_MAX", "DRIVING_HINT_GEAR_MIN"], operands
+    assert re.search(r"DRIVING_HINT_GEAR_MIN\s*=\s*1;", _read(_JS))
+    assert re.search(r"DRIVING_HINT_GEAR_MAX\s*=\s*5;", _read(_JS))
+
+
+def test_noArrowCharacter_inTheDrivingGearCodeOrMarkup():
+    """The arrow is an SVG shape, never text (Michroma's subset has none).
+    Scoped as the validation row is (gearView/drivingView): the Engine cue and
+    the Alerts 'more below' line carry a pre-existing down arrow in their own
+    face, on other pages, outside this story's fence."""
+    render = _jsFunction("renderDrivingCard", "    ")
+    arrow = _jsFunction("drivingHintArrow", "    ")
+    bodies = {
+        "gearView": _jsFunction("gearView"),
+        "drivingGearHint": _jsFunction("drivingGearHint"),
+        "drivingView": _jsFunction("drivingView"),
+        "renderDrivingCard": render,
+        "drivingHintArrow": arrow,
+        "#driving-card markup": _drivingMarkup(),
+    }
+    for where, text in bodies.items():
+        assert "↑" not in text and "↓" not in text, where
+    assert "drivingHintArrow(" in render, "the arrow is not painted by the Driving renderer"
+    assert '"drv-hint-arrow"' in arrow and 'svgEl("svg"' in arrow
 
 
 @_NODE_ONLY
@@ -498,6 +631,122 @@ def test_theShippedDomPaintsTheView(name: str):
     assert gear[0][-1]["attrs"].get("data-measured") == (
         "true" if view["gear"]["measured"] else "false"
     )
+
+
+_ARROW_PATH = "M5 0 L10 10 L0 10 Z"
+
+
+def _gearPath(surface: rh.Surface) -> list[dict[str, Any]]:
+    gear = _drivingPaths(surface, "drv-gear")
+    assert len(gear) == 1
+    return gear[0]
+
+
+def _arrows(gearPath: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        child
+        for child in gearPath[-1].get("children", [])
+        if "drv-hint-arrow" in _classes(child)
+    ]
+
+
+def _strokeWidthPx(value: str) -> float:
+    width = value.split()[0]
+    return _px(width)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("name", "direction"), [
+    ("between-gears-hint-up", "up"),
+    ("between-gears-hint-down", "down"),
+])
+def test_hintFixture_paintsAHollowDigitAndAnSvgArrow(name: str, direction: str):
+    """Spec s4.2 / s6 AC 6: hollow digit (transparent fill, non-zero stroke in
+    --text-secondary) plus an inline SVG triangle; down is the same path
+    flipped. The cascade resolver handles `-webkit-text-stroke` (a plain
+    property name to its declaration matcher), so the WINNING values are
+    asserted here, not the rule text."""
+    surface = _boot(name)
+    gear = _gearPath(surface)
+    attrs = gear[-1]["attrs"]
+    assert _textOf(gear[-1]) == str(_fixture(name)["gear"]["hintGear"])
+    assert "drv-gear-hint" in _classes(gear[-1])
+    assert attrs.get("data-measured") == "false"
+    assert surface.winningDeclaration(gear, "color")[0] == "transparent"
+    stroke = surface.winningDeclaration(gear, "-webkit-text-stroke")
+    assert stroke is not None
+    assert _strokeWidthPx(stroke[0]) > 0
+    assert stroke[0].split()[1] == "var(--text-secondary)"
+    arrows = _arrows(gear)
+    assert len(arrows) == 1
+    svg = arrows[0]
+    assert svg["tag"].lower() == "svg"
+    assert svg["attrs"].get("viewBox") == "0 0 10 10" or svg["attrs"].get("viewbox") == "0 0 10 10"
+    assert svg["attrs"].get("data-direction") == direction
+    paths = [c for c in svg.get("children", []) if c.get("tag", "").lower() == "path"]
+    assert len(paths) == 1
+    assert paths[0]["attrs"].get("d") == _ARROW_PATH
+    flip = paths[0]["attrs"].get("transform")
+    if direction == "up":
+        assert flip is None
+    else:
+        assert flip == "matrix(1 0 0 -1 0 10)"
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", ["gear-3", "idle-neutral", "between-gears-no-hint"])
+def test_noHint_paintsNoArrow_andAMeasuredGearIsSolid(name: str):
+    surface = _boot(name)
+    gear = _gearPath(surface)
+    assert "drv-gear-hint" not in _classes(gear[-1])
+    assert _arrows(gear) == []
+    assert surface.winningDeclaration(gear, "-webkit-text-stroke") is None
+    colour = surface.winningDeclaration(gear, "color")[0]
+    if _fixture(name)["gear"]["available"]:
+        assert colour == "var(--text-primary)"
+    else:
+        assert colour == "var(--text-secondary)"
+
+
+@_NODE_ONLY
+def test_aHintThenAMeasuredGear_dropsTheHollowAndTheArrow():
+    """The renderer repaints one element: a hint followed by a measured gear
+    must not leave the hollow class or the arrow behind."""
+    hinted = _fixture("between-gears-hint-up")
+    solid = _fixture("gear-3")
+    dom = rh.runDashboard(
+        routes={"/obd-live": hinted["obd-live"], "/gear": hinted["gear"]},
+        nowMs=_ms(hinted["now"]),
+        steps=[
+            {"flush": 4},
+            {"setRoutes": {"/gear": solid["gear"]}},
+            {"advanceMs": 1000, "flush": 4},
+        ],
+    )
+    surface = rh.dashboardSurface(dom["tree"])
+    gear = _gearPath(surface)
+    assert _textOf(gear[-1]) == "3"
+    assert "drv-gear-hint" not in _classes(gear[-1])
+    assert _arrows(gear) == []
+    assert gear[-1]["attrs"].get("data-measured") == "true"
+
+
+def test_hintCss_isTheSpecsRules_withTheTwoScopedLengths():
+    scoped = _scopedVars()
+    assert scoped["--drv-hint-stroke"] == "3px"
+    assert scoped["--drv-hint-arrow"] == "30px"
+    hint = _rule("#driving-card .drv-gear.drv-gear-hint")
+    assert _decl(hint, "color") == "transparent"
+    assert _decl(hint, "-webkit-text-stroke") == "var(--drv-hint-stroke) var(--text-secondary)"
+    arrow = _rule("#driving-card .drv-hint-arrow")
+    assert _decl(arrow, "position") == "absolute"
+    assert _decl(arrow, "left") == "calc(100% + var(--drv-gap))"
+    assert _decl(arrow, "width") == "var(--drv-hint-arrow)"
+    assert _decl(arrow, "height") == "var(--drv-hint-arrow)"
+    assert _decl(arrow, "fill") == "currentcolor"
+    assert _decl(arrow, "color") == "var(--text-secondary)"
+    # The digit is the arrow's containing block, so the digit itself never moves.
+    assert _decl(_rule("#driving-card .drv-gear"), "position") == "relative"
 
 
 @_NODE_ONLY
