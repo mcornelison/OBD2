@@ -41,6 +41,11 @@
 #               |              | takeoverView are deleted -- the ribbon pins are
 #               |              | retired; the STOP colour + PULL OVER text probes
 #               |              | read takeoverAlertView over the provider fixture.
+# 2026-10-26    | Rex (US-758-a)| MOVED PIN (US-758-a): the dead DTC hero rules
+#               |              | retire, so test_stopHero_bordersCriticalRed_
+#               |              | notBrandRed retires with them; the STOP intent
+#               |              | stays pinned by the brand-red, #D32F2F-once and
+#               |              | stop-chip tests below.
 # ================================================================================
 ################################################################################
 
@@ -219,12 +224,6 @@ def test_dashboardCss_criticalRedLiteral_appearsOnceInRoot():
 
 def test_stopChip_rendersCriticalRed_notBrandRed():
     block = _ruleBlock(_read(_CSS), '.dtc-chip[data-level="stop"]')
-    assert "var(--critical-red)" in block
-    assert "--red-light" not in block and "var(--red)" not in block
-
-
-def test_stopHero_bordersCriticalRed_notBrandRed():
-    block = _ruleBlock(_read(_CSS), '.dtc-hero[data-level="stop"]')
     assert "var(--critical-red)" in block
     assert "--red-light" not in block and "var(--red)" not in block
 

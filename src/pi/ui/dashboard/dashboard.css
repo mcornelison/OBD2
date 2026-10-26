@@ -1177,30 +1177,6 @@ html, body {
 .dtc-chip[data-level="na"]      { background: var(--neutral-chip-bg); color: var(--text-secondary); }
 .dtc-chip[data-level="unknown"] { background: var(--neutral-chip-bg); color: var(--text-secondary); }
 
-/* Hero block: the worst code + its directive (a tappable block -> detail). */
-.dtc-hero {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  width: 100%; min-height: var(--tap-min);
-  padding: 6px 8px; margin-bottom: 6px; box-sizing: border-box;
-  text-align: left;
-  border: 1px solid var(--surface); border-radius: 4px;
-  background: var(--surface); color: var(--text-primary);
-}
-/* US-757: the featured entry is the worst code's own row, not a second copy of
-   it. Out-specifies the .dtc-row reset below; the tier colors after it win. */
-.dtc-row.dtc-hero {
-  flex-wrap: wrap; padding: 6px 8px; margin-bottom: 6px;
-  border: 1px solid var(--surface); border-radius: 4px; background: var(--surface);
-}
-.dtc-hero[data-level="stop"]  { border-color: var(--critical-red); }
-.dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }
-.dtc-hero-code { font-size: var(--fs-primary); font-weight: 800; letter-spacing: 0.04em; }
-.dtc-hero-short { font-size: var(--fs-label); color: var(--text-secondary); flex: 1 1 100%; }
-.dtc-hero-directive {
-  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;
-  flex: 1 1 100%; color: var(--text-primary);
-}
-
 /* Compact tappable rows (worst-first, na last). */
 .dtc-row {
   display: flex; align-items: center; gap: 6px;
@@ -1317,11 +1293,13 @@ html, body {
 .detail-value { font-size: inherit; color: inherit; }
 .detail-fix-text { font-size: var(--fs-secondary); color: var(--text-primary); }
 /* The fix slot REPLACED by a diagnose directive for a 🔴/🟡 code (never a raw
-   internet fix on a dangerous code -- F-1/S-4). */
+   internet fix on a dangerous code -- F-1/S-4). The words are amber (severity);
+   the card keeps the neutral .detail-card border -- a coloured border is control
+   grammar, and the CIO pressed this box (US-758-a, Iris RULED). Guarded by
+   tests/ui/test_control_border_grammar.py. */
 .dtc-fix-directive {
   font-size: var(--fs-secondary); font-weight: 700; color: var(--amber-warn); letter-spacing: 0.02em;
 }
-.detail-fix[data-mode="directive"] { border-color: var(--amber-warn); }
 /* 3-state trust badge: verified reads authoritative; community is muted/dashed;
    offline is a neutral "arrives on next sync". */
 .dtc-trust-badge {
