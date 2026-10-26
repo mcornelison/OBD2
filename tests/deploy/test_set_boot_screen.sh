@@ -27,6 +27,7 @@ set -u
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SELF_DIR/../.." && pwd)"
 SCRIPT="$REPO_ROOT/deploy/set-boot-screen.sh"
+KEYS_LIB="$REPO_ROOT/deploy/lib/config-txt-keys.sh"
 MODE_SCRIPT="$REPO_ROOT/deploy/set-display-mode.sh"
 THEME_REPO="$REPO_ROOT/deploy/plymouth/eclipse"
 
@@ -117,6 +118,41 @@ effective_disable_splash() {
     ' "$1"
 }
 
+# The effective value of KEY in FILE (last one in an applicable section).
+effective_key() {
+    awk -v key="$2" '
+        { t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t\r]+$/, "", t) }
+        t ~ /^\[/ { section = tolower(t); next }
+        (section == "" || section == "[all]" || section == "[pi5]") && index(t, key "=") == 1 {
+            last = substr(t, length(key) + 2)
+        }
+        END { print last }
+    ' "$1"
+}
+
+# FILE with the stock auto-detect lines turned to 0 -- what apply does to them
+# and what --revert leaves (US-926-b).
+autodetect_zeroed() {
+    sed -e 's/^camera_auto_detect=1$/camera_auto_detect=0/' \
+        -e 's/^display_auto_detect=1$/display_auto_detect=0/' "$1"
+}
+
+# The marker line a NAME="..." constant in set-boot-screen.sh holds.
+script_const() {
+    sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$SCRIPT"
+}
+
+# What the config.txt key writer alone makes of FILE for the two auto-detect
+# keys, written to OUT (the expectation after apply + --revert).
+autodetect_only() {
+    local k
+    cp "$1" "$2"
+    for k in camera_auto_detect display_auto_detect; do
+        ( . "$KEYS_LIB"; config_txt_set_key "$2" "$k" 0 "$2.expect-bak" "$(script_const AUTODETECT_MARKER)" ) > /dev/null
+    done
+    rm -f "$2.expect-bak"
+}
+
 # Count of -R calls the stub received.
 r_calls() { grep -c '^-R ' "$STUB_LOG" 2>/dev/null || true; }
 
@@ -189,9 +225,13 @@ setup() {
     cp "$THEME_REPO"/* "$THEME_SRC/"
     printf '[Daemon]\nTheme=%s\n' "$theme" > "$CONF"
     printf '%s\n' "$PRISTINE_CMDLINE" > "$FW/cmdline.txt"
+    # MOVED PIN (US-926-b): the stock RPi OS top block carries
+    # camera_auto_detect=1 / display_auto_detect=1, which apply now sets to 0.
     printf '%s\n' \
         '# For more options and information see' \
         'dtparam=audio=on' \
+        'camera_auto_detect=1' \
+        'display_auto_detect=1' \
         'auto_initramfs=1' \
         'dtoverlay=vc4-kms-v3d' \
         '' \
@@ -261,6 +301,16 @@ done
 assert_eq "prior theme recorded beside the backup" "pix" "$(cat "$FW/eclipse-boot-screen.prior-theme" 2>/dev/null)"
 assert_true "initramfs now carries themes/eclipse" grep -q themes/eclipse "$FW/initramfs_2712"
 assert_true "the [cm4] line is untouched" grep -qx 'otg_mode=1' "$FW/config.txt"
+autodetect_zeroed "$WORK/case/config.before" > "$WORK/case/config.zeroed"
+nBefore="$(wc -l < "$WORK/case/config.before" | tr -d ' ')"
+head -n "$nBefore" "$FW/config.txt" > "$WORK/case/config.head"
+assert_files_identical "auto-detect keys rewritten to 0 in place, every other line identical" \
+    "$WORK/case/config.zeroed" "$WORK/case/config.head"
+assert_eq "camera_auto_detect=0 effective" "0" "$(effective_key "$FW/config.txt" camera_auto_detect)"
+assert_eq "display_auto_detect=0 effective" "0" "$(effective_key "$FW/config.txt" display_auto_detect)"
+assert_eq "only the marker + disable_splash=1 appended" "2" \
+    "$(( $(wc -l < "$FW/config.txt") - nBefore ))"
+assert_eq "disable_splash=1 is the last line" "disable_splash=1" "$(tail -1 "$FW/config.txt")"
 
 # ---- 2. apply then set-display-mode, and the reverse order ----
 
@@ -292,7 +342,10 @@ setup pix
 run_bs
 run_bs --revert; rc=$?
 assert_rc "revert exits 0" 0 "$rc"
-assert_files_identical "config.txt byte-identical after revert" "$WORK/case/config.before" "$FW/config.txt"
+# MOVED PIN (US-926-b): byte-identical to before but for the two auto-detect
+# lines, which --revert leaves at 0 (Atlas 2026-10-25).
+autodetect_zeroed "$WORK/case/config.before" > "$WORK/case/config.zeroed"
+assert_files_identical "config.txt byte-identical after revert (auto-detect left at 0)" "$WORK/case/config.zeroed" "$FW/config.txt"
 assert_files_identical "cmdline.txt byte-identical after revert" "$WORK/case/cmdline.before" "$FW/cmdline.txt"
 assert_eq "revert rebuilt with the recorded prior theme" "-R pix" "$(grep '^-R ' "$STUB_LOG" | tail -1)"
 assert_eq "revert took its backups before -R (2712)" "2" "$(grep -c '^bak:initramfs_2712:yes' "$STUB_LOG")"
@@ -332,11 +385,20 @@ cp "$FW/config.txt" "$WORK/case/config.before"
 run_bs; rc=$?
 assert_rc "apply exits 0" 0 "$rc"
 assert_eq "disable_splash=1 effective despite the [cm4] tail" "1" "$(effective_disable_splash "$FW/config.txt")"
+assert_eq "camera_auto_detect=0 effective despite the [cm4] tail" "0" "$(effective_key "$FW/config.txt" camera_auto_detect)"
+assert_eq "display_auto_detect=0 effective despite the [cm4] tail" "0" "$(effective_key "$FW/config.txt" display_auto_detect)"
 run_bs --revert
-assert_files_identical "config.txt byte-identical (no trailing newline kept)" "$WORK/case/config.before" "$FW/config.txt"
+# MOVED PIN (US-926-b): the revert leaves the auto-detect lines (under the
+# [all] they opened), so the file equals the writer's auto-detect-only result.
+autodetect_only "$WORK/case/config.before" "$WORK/case/config.expect"
+assert_files_identical "config.txt byte-identical to the auto-detect-only result" "$WORK/case/config.expect" "$FW/config.txt"
+assert_eq "auto-detect still 0 after revert" "0 0" \
+    "$(effective_key "$FW/config.txt" camera_auto_detect) $(effective_key "$FW/config.txt" display_auto_detect)"
 
 echo "--- 3e. an effective disable_splash=1 already present: config untouched ---"
 setup pix
+# MOVED PIN (US-926-b): "already right" now includes the two auto-detect keys.
+autodetect_zeroed "$FW/config.txt" > "$WORK/case/zeroed" && cp "$WORK/case/zeroed" "$FW/config.txt"
 printf '[all]\ndisable_splash=1\n' >> "$FW/config.txt"
 cp "$FW/config.txt" "$WORK/case/config.before"
 run_bs
@@ -440,6 +502,79 @@ setup pix
 run_bs --bogus; rc=$?
 assert_rc "unknown argument exits 1" 1 "$rc"
 assert_eq "stub never called" "0" "$(r_calls)"
+assert_files_identical "cmdline.txt unchanged" "$WORK/case/cmdline.before" "$FW/cmdline.txt"
+
+# ---- 10. US-926-b: the auto-detect keys ----
+
+echo "--- 10. an auto-detect key put back to 1 is rewritten in place; no -R ---"
+setup pix
+run_bs
+cp "$FW/config.txt" "$WORK/case/config.after1"
+sed -i 's/^camera_auto_detect=0$/camera_auto_detect=1/' "$FW/config.txt"
+run_bs; rc=$?
+assert_rc "apply exits 0" 0 "$rc"
+assert_files_identical "config.txt back to the first apply's bytes" "$WORK/case/config.after1" "$FW/config.txt"
+assert_eq "config.txt edits never trigger -R (one call total)" "1" "$(r_calls)"
+
+echo "--- 10b. an effective disable_splash=0 is rewritten in place; revert puts 0 back ---"
+setup pix
+sed -i 's/^auto_initramfs=1$/disable_splash=0\nauto_initramfs=1/' "$FW/config.txt"
+cp "$FW/config.txt" "$WORK/case/config.before"
+run_bs; rc=$?
+assert_rc "apply exits 0" 0 "$rc"
+assert_eq "disable_splash=1 effective" "1" "$(effective_disable_splash "$FW/config.txt")"
+assert_eq "rewritten in place, never shadowed (one disable_splash line)" "1" "$(grep -c '^disable_splash=' "$FW/config.txt")"
+assert_eq "same line count as before" "$(wc -l < "$WORK/case/config.before")" "$(wc -l < "$FW/config.txt")"
+run_bs --revert; rc=$?
+assert_rc "revert exits 0" 0 "$rc"
+autodetect_zeroed "$WORK/case/config.before" > "$WORK/case/config.zeroed"
+assert_files_identical "disable_splash=0 back; auto-detect left at 0" "$WORK/case/config.zeroed" "$FW/config.txt"
+
+echo "--- 10c. --revert never touches camera_auto_detect / display_auto_detect ---"
+setup pix
+run_bs
+run_bs --revert
+assert_eq "both still 0 after revert" "0 0" \
+    "$(effective_key "$FW/config.txt" camera_auto_detect) $(effective_key "$FW/config.txt" display_auto_detect)"
+if sed -n '/^revertConfig()/,/^}/p' "$SCRIPT" | grep -q 'auto_detect\|AUTODETECT'; then
+    echo "  FAIL: revertConfig names an auto-detect key"; FAIL=$((FAIL + 1))
+else
+    echo "  PASS: revertConfig never names an auto-detect key"; PASS=$((PASS + 1))
+fi
+
+echo "--- 10d. an older apply's [all] block, auto-detect appended after it: revert keeps [all] ---"
+setup pix
+printf '[cm4]\notg_mode=1\n%s\n[all]\ndisable_splash=1\n' "$(script_const CONFIG_MARKER)" > "$FW/config.txt"
+run_bs
+run_bs --revert; rc=$?
+assert_rc "revert exits 0" 0 "$rc"
+assert_eq "disable_splash no longer set" "" "$(effective_disable_splash "$FW/config.txt")"
+assert_eq "auto-detect still effective at 0 (their [all] kept)" "0 0" \
+    "$(effective_key "$FW/config.txt" camera_auto_detect) $(effective_key "$FW/config.txt" display_auto_detect)"
+
+echo "--- 10e. the config.txt helper missing: loud non-zero, nothing written ---"
+setup pix
+mkdir -p "$WORK/case/nolib/lib"
+cp "$SCRIPT" "$WORK/case/nolib/set-boot-screen.sh"
+cp "$REPO_ROOT/deploy/lib/cmdline-tokens.sh" "$WORK/case/nolib/lib/"
+SCRIPT_SAVED="$SCRIPT"; SCRIPT="$WORK/case/nolib/set-boot-screen.sh"
+run_bs; rc=$?
+SCRIPT="$SCRIPT_SAVED"
+assert_rc "apply without the lib exits 1" 1 "$rc"
+assert_true "the error names config-txt-keys.sh" grep -q 'config-txt-keys.sh' "$WORK/case/out.txt"
+assert_eq "stub never called" "0" "$(r_calls)"
+assert_files_identical "config.txt unchanged" "$WORK/case/config.before" "$FW/config.txt"
+assert_files_identical "cmdline.txt unchanged" "$WORK/case/cmdline.before" "$FW/cmdline.txt"
+assert_true "no config backup taken" test ! -e "$FW/config.txt.boot-screen-bak"
+
+echo "--- 10f. config.txt missing: the existing refusal, nothing written ---"
+setup pix
+rm -f "$FW/config.txt"
+run_bs; rc=$?
+assert_rc "apply exits 1" 1 "$rc"
+assert_true "refusal names config.txt" grep -q 'config.txt not found or unreadable' "$WORK/case/out.txt"
+assert_eq "stub never called" "0" "$(r_calls)"
+assert_true "no config.txt created" test ! -e "$FW/config.txt"
 assert_files_identical "cmdline.txt unchanged" "$WORK/case/cmdline.before" "$FW/cmdline.txt"
 
 echo

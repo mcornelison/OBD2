@@ -28,6 +28,9 @@
 #                                setting every deploy. See
 #                                offices/architect/findings/2026-05-18-
 #                                architecture-md-corrections-definitive.md §11.
+# 2026-10-25    | Rex          | US-926-a: key-table guards (exact four pairs, no
+#                                never-key, source comments, no update -a) and
+#                                the deploy step's dry-run/header key labels.
 # ================================================================================
 ################################################################################
 
@@ -43,6 +46,7 @@ harness shows up in the same fast suite.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -141,3 +145,129 @@ def test_enforceScript_toolMissingExitCode():
         f"expected exit 1 (tool missing); got {result.returncode}\nstderr: {result.stderr}"
     )
     assert "not found" in result.stderr.lower() or "not found" in result.stdout.lower()
+
+
+# --------------------------------------------------------------------------
+# US-926-a: the boot-speed key table -- static VC and the deploy step label
+# --------------------------------------------------------------------------
+
+DEPLOY_SCRIPT = REPO_ROOT / "deploy" / "deploy-pi.sh"
+STEP_NAME = "step_enforce_eeprom_power_off_on_halt"
+TABLE_START = "# >>> EEPROM_KEY_TABLE"
+TABLE_END = "# <<< EEPROM_KEY_TABLE"
+REQUIRED_KEYS = {
+    "POWER_OFF_ON_HALT": "1",
+    "NET_INSTALL_AT_POWER_ON": "0",
+    "NET_INSTALL_ENABLED": "0",
+    "BOOT_UART": "0",
+}
+NEVER_KEYS = ("PSU_MAX_CURRENT", "max_framebuffers", "BOOT_ORDER")
+
+
+def _keyTable() -> str:
+    """Return the text between the key-table markers, comments included."""
+    text = ENFORCE_SCRIPT.read_text(encoding="utf-8")
+    assert text.count(TABLE_START) == 1 and text.count(TABLE_END) == 1, (
+        "the enforcer must hold exactly ONE marked key table"
+    )
+    return text[text.index(TABLE_START) : text.index(TABLE_END)]
+
+
+def _codeLines(text: str) -> list[str]:
+    """Return non-blank, non-comment lines, stripped."""
+    return [
+        ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")
+    ]
+
+
+def test_keyTable_holdsExactlyTheFourRequiredPairs():
+    """
+    Given: the enforcer's one key table
+    When: its quoted KEY=VALUE entries are read
+    Then: they are exactly the four US-926-a pairs, each once
+    """
+    entries = re.findall(r'"([A-Za-z_]+)=([^"]*)"', _keyTable())
+    assert dict(entries) == REQUIRED_KEYS
+    assert len(entries) == len(REQUIRED_KEYS), f"a key is listed twice: {entries}"
+
+
+def test_keyTable_namesNoNeverKey():
+    """
+    Given: the key table, comments included (the grep VC)
+    When: it is searched for PSU_MAX_CURRENT, max_framebuffers and BOOT_ORDER
+    Then: none of the three appears
+    """
+    table = _keyTable()
+    found = [key for key in NEVER_KEYS if re.search(key, table)]
+    assert not found, f"never-keys in the EEPROM key table: {found}"
+
+
+def test_keyTable_everyEntryCarriesASourceComment():
+    """
+    Given: the key table
+    When: each entry line is checked against the line above it
+    Then: every KEY=VALUE entry is preceded by a comment naming its source
+    """
+    lines = [ln.strip() for ln in _keyTable().splitlines()]
+    for i, line in enumerate(lines):
+        if re.match(r'"[A-Z_]+=', line):
+            assert lines[i - 1].startswith("#"), f"no source comment above {line}"
+
+
+def test_enforcer_neverRunsEepromUpdateApply():
+    """
+    Given: the enforcer's executable lines
+    When: they are searched for an `rpi-eeprom-update -a`
+    Then: none exists -- --apply already installs the image; -a is never ours
+    """
+    offenders = [
+        ln
+        for ln in _codeLines(ENFORCE_SCRIPT.read_text(encoding="utf-8"))
+        if re.search(r"(rpi-eeprom-update|UPDATE_TOOL\"?)\s+.*-a\b", ln)
+    ]
+    assert not offenders, f"the enforcer must never run rpi-eeprom-update -a: {offenders}"
+
+
+def _stepBody() -> str:
+    """Return deploy-pi.sh's step function text, header comment included."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = text.index(f"{STEP_NAME}()")
+    end = text.index("\n}\n", start)
+    return text[start : end + 3]
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_deployStep_dryRunNamesEveryEnforcedKey():
+    """
+    Given: the real step function from deploy-pi.sh, run with DRY_RUN=true
+    When: its output is read
+    Then: every enforced KEY=VALUE is named, the stale =0 label is gone, and
+          nothing reaches the Pi
+    """
+    script = (
+        'remote() { echo "REMOTE-CALLED"; }\n'
+        "DRY_RUN=true\n"
+        "PI_PATH=/home/pi/obd2\n" + _stepBody() + f"{STEP_NAME}\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    for key, value in REQUIRED_KEYS.items():
+        assert f"{key}={value}" in result.stdout, f"dry-run never names {key}={value}"
+    assert "POWER_OFF_ON_HALT=0" not in result.stdout
+    assert "REMOTE-CALLED" not in result.stdout
+
+
+def test_deployStep_headerCommentNamesEveryEnforcedKey():
+    """
+    Given: the step's header comment in deploy-pi.sh
+    When: it is read
+    Then: it names every table key and no longer claims POWER_OFF_ON_HALT=0
+    """
+    comments = "\n".join(
+        ln for ln in _stepBody().splitlines() if ln.strip().startswith("#")
+    )
+    for key, value in REQUIRED_KEYS.items():
+        assert f"{key}={value}" in comments, f"step header never names {key}={value}"
+    assert "POWER_OFF_ON_HALT=0" not in _stepBody()

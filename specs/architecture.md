@@ -2045,6 +2045,55 @@ dead and nothing rules home out: `nmcli` missing or timing out, or the
 `hostname -I` read itself failing (US-776-c).  The shutdown sync drains on
 `UNKNOWN` (§10.6.3).
 
+#### Wi-Fi no-secrets recovery — `eclipse-wifi-recover` (US-925-a, Sprint 115)
+
+**The defect, MEASURED on 2 of 25 boots.** After a handshake failure
+NetworkManager walks a stored-PSK Wi-Fi connection need-auth → no secrets →
+failed and never retries it; the Pi was offline 8 and 63 minutes, until a
+power-cycle. **Recovery, not prevention, is the fix:** the 5 GHz move that
+starts it happens below the supplicant, and `band=bg`, `freq_list` and
+`roamoff=1` are already set (MEASURED), so nothing above the driver can stop
+the failure — only answer it.
+
+- **Service.** `deploy/eclipse-wifi-recover.service` runs
+  `src/pi/network/wifi_recover.py` on the SYSTEM python (`/usr/bin/python3`;
+  dbus + `gi.repository.GLib` from Debian `python3-dbus` / `python3-gi`, which
+  `obd2-venv` cannot import). Root with no `User=` (NM's network-control polkit
+  is `auth_admin` for a session-less caller, and a grant to the kiosk user
+  would reach Chromium too), sandboxed: `NoNewPrivileges`, empty
+  `CapabilityBoundingSet=`, `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `PrivateTmp`, `AF_UNIX` only; `PartOf=NetworkManager.service`. No polkit
+  rule. `deploy-pi.sh step_install_wifi_recover_unit` installs it every
+  deploy (cmp-guarded; fails loud when either Debian package is missing; never
+  restarts NetworkManager or reloads brcmfmac, so SSH survives).
+- **Trigger.** `Device.StateChanged` subscribed by interface + member on ANY
+  object path (device paths change when NM restarts), resolved to the
+  device's `Interface`: wlan0, new state `NM_DEVICE_STATE_FAILED`, reason
+  `NM_DEVICE_STATE_REASON_NO_SECRETS` — **whatever caused it** (a reason-15 or
+  reason-17 disconnect, or the boot race). The preceding disconnect reason and
+  the BSSID before/after come from this boot's wpa_supplicant lines and are
+  only logged, one journal line per event.
+- **Action.** `nmcli connection up uuid U`, launched without blocking the
+  signal loop (GLib reaps it; a non-zero exit is ONE ERROR line with the exit
+  code). `U` is the uuid wlan0 last reached `NM_DEVICE_STATE_ACTIVATED` with,
+  recorded with its psk-flags (GetSettings; GetSecrets is never called).
+- **Rearm rule (no counter, no window, no timer).** At most ONE retry per
+  ACTIVATED; only ACTIVATED re-arms. A second no-secrets failure with no
+  ACTIVATED between is not retried and logs ONE ERROR line; so does a failure
+  of a connection that never activated (a wrong key on a fresh profile). No
+  action for any other state reason (NM's own autoconnect owns those), another
+  device, or an agent-owned secret (`psk-flags != 0`: no stored key to reuse,
+  and asking a person is correct).
+- **Provisioning requirement (US-925-b).** Recovery needs every Wi-Fi profile
+  provisioned with a system-owned secret (`psk-flags=0`); the deploy step
+  (`nmcli -g 802-11-wireless-security.psk-flags`, never the psk field) and the
+  service at start (GetSettings over `ListConnections`) each log ONE `WARNING`
+  line per profile whose psk-flags != 0, and nothing ever modifies a profile
+  or prints a secret.
+- **Why not a dispatcher script.** NetworkManager-dispatcher(8) has no event
+  for a failed activation and carries no state reason, so it cannot see this
+  failure at all.
+
 #### `pi.companionService` — Pi → server reach (US-151)
 
 Consumed by `src.pi.sync.SyncClient` (US-149) for delta upload to
@@ -2315,16 +2364,58 @@ tidying an async body.
 ### Kiosk Display Stack: X11 or Wayland (US-649-a, F-139, Sprint 102)
 
 **`/etc/eclipse/display-mode` is the SSOT for which kiosk stack the car runs.** It
-holds exactly `x11` or `wayland`; an ABSENT file means `x11`. Nothing chooses by
+holds exactly `x11` or `wayland`; an ABSENT file means `wayland` since US-652-b
+(the default's one home is `deploy/lib/display-mode-default.sh`, below). Nothing chooses by
 detecting the running session any more: the deploy used to pick the `.x11` /
 `.wayland` kiosk units from the active seat0 session, so a deploy run while X11
 was up re-installed X11 over a Wayland choice (Atlas, measured trap).
 
 | Reader | What it does with the file |
 |--------|----------------------------|
-| `deploy-pi.sh` `step_install_ui_kiosk_units` | `kiosk_mode_resolver` reads it and forces that type into both kit installers via `{SPLASH,DASHBOARD}_FORCE_SESSION`. Any other content -> one WARN, kiosk install skipped (A-9). A running seat0 session that disagrees -> one WARN; it never chooses. |
-| `src/pi/ui/{splash,dashboard}/install.sh` (V-2) | Unforced, they read it (absent -> x11, other -> abort). A forced `_FORCE_SESSION` still wins. Their own session detection only WARNs. |
+| `deploy-pi.sh` `step_install_ui_kiosk_units` | `kiosk_mode_resolver` reads it and forces that type into both kit installers via `{SPLASH,DASHBOARD}_FORCE_SESSION`. Absent -> `kiosk_mode_converge` runs the switch once (US-652-b, below). Any other content -> one WARN, kiosk install skipped (A-9). A running seat0 session that disagrees -> one WARN; it never chooses. |
+| `src/pi/ui/{splash,dashboard}/install.sh` (V-2) | Unforced, they read it (absent -> the lib's default, other -> abort). A forced `_FORCE_SESSION` still wins. Their own session detection only WARNs. |
 | `eclipse-display-mode status` | Reports file mode, enabled display manager and installed dashboard variant; non-zero on any mismatch. |
+| `eclipse-capture-panel` (US-650) | Picks grim (wayland) or scrot (x11) from it; read-only. |
+
+**The absent-file default has ONE home: `deploy/lib/display-mode-default.sh`**
+(US-652-a). It defines `DISPLAY_MODE_DEFAULT` (`wayland` since US-652-b; it was
+`x11`) and nothing else that runs. All FIVE shell readers -- `eclipse-display-mode.sh`
+`read_mode`, `eclipse-capture-panel.sh` `read_mode`, `deploy-pi.sh`
+`kiosk_mode_resolver`, and both kit installers' `read_display_mode` -- source it
+and use `$DISPLAY_MODE_DEFAULT` for the absent case; none carries its own. Each
+finds it in the tree it runs from: the two deploy/ commands beside themselves
+(`deploy/lib/`), the kits from `$SCRIPT_DIR` (as they find their unit templates),
+the resolver from the path deploy-pi.sh hands it (the synced tree on the Pi,
+`$REPO_ROOT` for the dry-run). It ships inside `./deploy` (rsync whitelist and tar
+fallback alike). A missing or unreadable lib is a loud non-zero exit naming it,
+with nothing changed -- never a silent x11 (the `cmdline-tokens.sh` pattern). A
+grep gate in `tests/deploy/test_display_mode.py` fails any absent-file default
+outside the lib (`installed_dashboard_variant`'s `printf 'x11'` is a unit-variant
+DETECTION, exempt by name).
+
+**No mode file means wayland, and the deploy converges such a car (US-652-b, ADR
+2026-08-30 §11.6).** The default boot is the labwc kiosk. When
+`/etc/eclipse/display-mode` is ABSENT (a fresh or re-imaged card),
+`step_install_ui_kiosk_units` runs `kiosk_mode_converge` right after the resolver:
+`eclipse-display-mode wayland --no-reboot`, ONCE, from the synced tree -- the one
+switch command, unchanged (priors recorded, both `[Seat:*]` keys `eclipse-kiosk`,
+the file written, the `.wayland` units and trigger). The deploy never reboots and
+never restarts lightdm: the session changes at the next key-on. **An explicit file
+is never changed by a deploy** (Atlas RULED Q1 2026-10-24): an `x11` file -- the
+CIO's revert -- keeps lightdm.conf and the file byte-identical and gets the X11
+units; a `wayland` file gets the `.wayland` units, no switch. `--dry-run` prints
+the switch it would run, or `mode file present: <mode>, no switch`. A garbage file
+is the resolver's WARN + skip (A-9); a switch that fails its own pre-flight (labwc
+missing, no `[Seat:*]`) prints the error and the deploy continues with NO kiosk
+change -- never `.wayland` units under an X11 lightdm. `tools/imu/drive_console.py`
+`readDisplayMode` keeps NO default (Atlas Q1 (c)): tools/ is not deployed, so it
+cannot source the lib, and an absent file raises naming
+`sudo eclipse-display-mode x11|wayland`. **Hide the mouse:** `dashboard.css` and
+the splash's `styles.css` each carry exactly ONE cursor rule,
+`html, html *{cursor:none !important}` (Iris RULED; plain `html *` is (0,0,1) and
+loses to any class rule), and no other cursor declaration
+(`tests/ui/test_kiosk_cursor_none.py`); CSS covers Chromium's frames only, the
+frames labwc owns are US-652-e's blank cursor theme.
 
 **The one command:** `sudo eclipse-display-mode x11|wayland|status [--no-reboot]`
 (`deploy/eclipse-display-mode.sh`, installed by deploy-pi.sh as a wrapper at
@@ -2447,6 +2538,66 @@ quit.
   rsync `--include=deploy/labwc/` + `--include=deploy/labwc/***` (a lone directory
   include ships it empty), likewise `deploy/wayland-sessions/`; tar
   `./deploy/labwc` and `./deploy/wayland-sessions`.
+- **No cursor in the frames labwc owns (US-652-e, Sprint 115; Atlas RULED
+  2026-10-25).** CSS `cursor: none` hides the pointer only inside Chromium; labwc
+  draws the frames from its start until Chromium first maps, and the splash ->
+  dashboard hand-off (Atlas MEASURED 2026-10-25). So the session names a blank
+  cursor theme:
+  - **The environment file:** `deploy/labwc/environment`, exactly one line,
+    `XCURSOR_THEME=eclipse-blank` (labwc parses `environment` in its `-C` config
+    dir; the default `XCURSOR_PATH` includes `/usr/share/icons`).
+    `step_install_kiosk_session` installs it to `/etc/eclipse/labwc/environment`
+    sync-if-changed beside `rc.xml` and `autostart`, and fails the deploy (exit
+    12) when it is missing, like `rc.xml`.
+  - **The theme:** `/usr/share/icons/eclipse-blank` -- an `index.theme` with NO
+    `Inherits=` (inheriting would fall back to a visible cursor), ONE fully
+    transparent Xcursor image (24x24, labwc's default `XCURSOR_SIZE`, every pixel
+    alpha 0) in `cursors/`, and a symlink to it for every name in
+    `/usr/share/icons/Adwaita/cursors` (listed at run time), with `default` and
+    `left_ptr` always present.
+  - **The generator:** `deploy/make-blank-cursor-theme.py`, stdlib-only, run as
+    root with `/usr/bin/python3` by `step_install_blank_cursor_theme` every
+    deploy, in BOTH display modes (the theme is inert unless the eclipse labwc
+    session names it). It is a generator, never a committed binary; it writes by
+    temp + rename, so a re-run is byte-identical and prints `already current`.
+    A missing Adwaita cursors dir is one WARN; a theme that cannot be written
+    exits non-zero naming the icons dir, and because the step runs BEFORE
+    `step_install_kiosk_session` the deploy halts (set -e) before the
+    environment could name a missing theme. It ships by EXACT name: rsync
+    `--include=deploy/make-blank-cursor-theme.py` (never a `deploy/*.py` glob);
+    the tar fallback ships `./deploy` whole.
+  - **Why not HideCursor:** labwc's `HideCursor` action is one-shot and the next
+    pointer input undoes it (REJECTED by Atlas).
+  - **Revert:** delete the `XCURSOR_THEME` line from `deploy/labwc/environment`
+    and deploy; the theme dir left behind in `/usr/share/icons` is inert.
+- **No local text-console login (US-652-c, Sprint 115; CIO 2026-10-24 access
+  ruling).** logind's defaults (`NAutoVTs=6`, `ReserveVT=6`; Atlas MEASURED
+  2026-10-24: no override on the Pi) let Ctrl+Alt+F2..F6 raise a text login on
+  the panel. `deploy/eclipse-kiosk-vt.conf` ->
+  `/etc/systemd/logind.conf.d/51-eclipse-kiosk-vt.conf` (`[Login]
+  NAutoVTs=0`, `ReserveVT=0`, nothing else) stops logind spawning or reserving
+  a getty on any VT (logind.conf(5)). There is no on-screen login ever; SSH and
+  the serial login are the way in. `step_install_logind_kiosk_vt`, called right
+  after `step_install_logind_powerkey` and in its posture, installs it
+  sync-if-changed (`cmp -s`; a current copy prints `already current (no
+  change)` and writes nothing) in **both** modes, and never restarts or reloads
+  logind -- it takes effect on the next boot. It ships through the existing
+  `deploy/eclipse-*.conf` rsync include and the tar fallback's `./deploy`.
+  `HandlePowerKey` stays the power-key drop-in's alone.
+  **getty@tty1 is masked (US-652-d).** `NAutoVTs=0` does not cover tty1:
+  `getty@tty1` ran behind the kiosk VT (Atlas MEASURED), a text login one VT
+  switch away. `step_mask_getty_tty1`, called right after
+  `step_install_logind_kiosk_vt` in both modes, runs `systemctl mask
+  getty@tty1.service` only when `systemctl is-enabled` does not already print
+  `masked` (a masked unit runs nothing and prints `already masked (no
+  change)`); it never stops the unit live -- no `stop`, no `--now` -- so the
+  mask takes effect on the next boot. It lives in `deploy-pi.sh`, not the mode
+  command (which masks nothing). The two kept ways in are **sshd** and
+  **`serial-getty@ttyAMA10`** (the debug-UART login): `deploy-pi.sh` never
+  disables, masks or stops ssh, sshd or serial-getty, and
+  `deploy/os-trim.manifest` lists neither (pinned by
+  `tests/deploy/test_local_login_lockdown.py`). Revert: `sudo systemctl unmask
+  getty@tty1.service` and drop the step.
 - **`eclipse-compositor.service` is retired** (CIO 2026-10-16; US-649-d removed it
   from the deploy tree). The US-649-b system unit ran labwc itself with
   `PAMName=login` and had to do every display-manager duty by hand; the
@@ -2482,9 +2633,32 @@ Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
   `plymouth-set-default-theme -R eclipse`. With `auto_initramfs=1` the `-R`
   rebuilds the initramfs and the z50-raspi-firmware hook copies it to
   `/boot/firmware`; plymouthd.conf carries the choice across kernel updates.
-- **config.txt `disable_splash=1`**, appended section-aware (an `[all]` is opened
-  if the file ends in e.g. `[cm4]`) under a marker comment, unless an effective
-  `disable_splash=1` is already there.
+- **config.txt `disable_splash=1`, `camera_auto_detect=0`, `display_auto_detect=0`**
+  (US-926-b, Sprint 115) -- the three keys set-boot-screen owns, all written
+  through **`deploy/lib/config-txt-keys.sh`, the ONE config.txt key writer**
+  (`config_txt_set_key`; moved out of set-boot-screen.sh, Atlas Q6; the
+  `deploy/lib/cmdline-tokens.sh` pattern -- the lib missing is a loud exit 1 with
+  nothing written). The writer is section-aware (only the top level, `[all]` and
+  `[pi5]` reach a Pi 5): an effective line with another value is **rewritten in
+  place**, never shadowed (stock RPi OS has `camera_auto_detect=1` /
+  `display_auto_detect=1` in its top block -> `=0` on the same lines); an absent
+  key is appended under a marker comment (an `[all]` opened if the file ends in
+  e.g. `[cm4]`); one first-write-wins backup (`config.txt.boot-screen-bak`),
+  verify after write, and a file already right is left byte-identical. The two
+  auto-detect keys stop the firmware's BSC_A/BSC_B "no ACK" I2C probes for a
+  camera and a DSI panel right before Starting OS (Atlas MEASURED 2026-10-24);
+  this car has neither. They are applied before `disable_splash`, so an `[all]`
+  the script opens belongs to them. config.txt edits never trigger the initramfs
+  `-R`. **Their undo** -- needed only if a camera or a DSI panel is ever fitted
+  (the HDMI35 is HDMI and needs neither; Atlas 2026-10-25) -- is the same writer
+  setting each back to 1: `. deploy/lib/config-txt-keys.sh;
+  config_txt_set_key /boot/firmware/config.txt camera_auto_detect 1 <backup>
+  "<marker>"` (and `display_auto_detect`); a 0 -> 1 -> 0 round trip is
+  byte-identical. **Not yet migrated:** `deploy/enable-rtc-charging.sh` writes
+  `rtc_bbat_vchg=<uV>` as a token inside a `dtparam=` comma list with its own
+  `sectionAtEof` writer -- a shape the lib (standalone `key=value` lines only)
+  has no mode for; recorded debt. `max_framebuffers` and set-gpu-cma.sh's
+  `dtoverlay=vc4-kms-v3d` are never touched.
 - **cmdline.txt tokens** `loglevel=3` and `vt.global_cursor_default=0` added,
   `console=tty1` removed -- through `deploy/lib/cmdline-tokens.sh` (US-885-a), so
   it and `set-display-mode.sh`'s `video=` pin give their union in either order.
@@ -2503,9 +2677,14 @@ Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
 - **Revert:** `sudo bash deploy/set-boot-screen.sh --revert` (independent of display
   mode) backs up the initramfs pair, runs `plymouth-set-default-theme -R <the
   recorded prior theme>` (`pix` if there is no record), removes the installed
-  theme and the record, removes its config.txt block and the tokens it added, and
-  puts `console=tty1` back in its original place -- both files byte-identical to
-  before when nothing else edited them. It never restores the initramfs from a
+  theme and the record, removes its config.txt `disable_splash` block (or, when
+  apply rewrote an existing `disable_splash` line in place, puts its prior value
+  back through the writer) and the tokens it added, and puts `console=tty1` back
+  in its original place -- both files byte-identical to before when nothing else
+  edited them, but for the two auto-detect keys: `--revert` leaves
+  `camera_auto_detect=0` / `display_auto_detect=0` alone (Atlas AGREED
+  2026-10-25: one revert per concern; undoing the boot screen must not slow the
+  boot or touch hardware detection). It never restores the initramfs from a
   `.bak` (a kernel update may have happened in between; `-R` rebuilds it).
 
 #### Panel capture: `eclipse-capture-panel` (US-650)
@@ -6047,6 +6226,30 @@ it. The kit's `install.sh` does not ship it. *Guarded by*
 `tests/ui/test_render_regression.py` (`TestSplashPhase0b`,
 `TestSplashWarningFrame`) and `tests/deploy/test_warning_png_single_copy.py`.
 
+**One letterbox for both kits (US-869-h, Sprint 115 / V0.30; Atlas 2026-10-26).**
+Every kiosk page -- the dashboard and both splash pages -- is authored in a fixed
+480x320 `#stage` and scaled as ONE unit to the real panel by
+**`src/pi/ui/stage-scale.js`**, the only letterbox: `computeStageScale(w, h)` =
+`min(w/480, h/320)`, 1 on a degenerate (<=0 / non-finite) viewport, written as
+`--scale` on `#stage` (`transform: scale(var(--scale, 1))` about its centre) on
+load and on resize only -- no timer (C-Atlas-8). The car drives the panel at
+1280x720 (wlr-randr MEASURED), so scale 2.25: the stage is 1080x720 with 100 px
+black bars. The dashboard keeps its call site (`carousel.js` `applyStageScale`,
+load + resize) and resolves the shared file (`window.EclipseStageScale`;
+`dashboard.html` loads it first); each splash page loads it and calls
+`bindStageScale(document, window)` behind a guard, so with the file absent the
+page renders unscaled rather than throwing. On the splash, `#splash-stage` is the
+full-viewport flex frame that centres `#stage`; `#warning` and `#amber-ring`
+stay OUTSIDE the stage on purpose, full-frame. **Delivery:** no kit dir carries a
+copy -- `step_install_splash_assets` and `step_install_dashboard_assets` each
+copy `src/pi/ui/stage-scale.js` into `/opt/splash` / `/opt/dashboard` **after**
+`refresh_asset_dir`, cmp-verified and keep-listed (the `warning.png` pattern),
+and both kits' `install.sh` install `../stage-scale.js` the same way. *Guarded
+by* `tests/ui/test_splash_stage_scale_1280x720.py` (the 1280x720 render pin:
+`render_harness.splashSurface` defaults to the 480x320 design box, which is why
+no test saw the unscaled splash), `tests/ui/test_carousel_letterbox_scale.py`
+and `tests/deploy/test_asset_refresh.py`.
+
 **The spins: page CSS on their own events (US-869-f, Sprint 114 / V0.30; spec
 §1.1, Atlas A-tim 3, G2, C-Atlas-6, Iris C-Iris-3).** The inline logo's group
 `<g id="logo">` is what spins. splash.svg's `@keyframes spin` (thirds,
@@ -7928,8 +8131,8 @@ exact mirror of what the repo vouches for:
 
 | Dir | Manifest (installed + owned) | Keep-list (another installer owns) |
 |---|---|---|
-| `/opt/splash` | `index.html`, `styles.css`, `motion-gate.js`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `OFL.txt` (US-869-e); `splash.svg` / `splash-shutdown.svg` retired and pruned (US-870-c) | `version.txt` (generated by the same step, after); `warning.png` (US-785: copied from `deploy/plymouth/eclipse/` by the same step, after, cmp-verified) |
-| `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js` | *(none -- single installer)* |
+| `/opt/splash` | `index.html`, `styles.css`, `motion-gate.js`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `OFL.txt` (US-869-e); `splash.svg` / `splash-shutdown.svg` retired and pruned (US-870-c) | `version.txt` (generated by the same step, after); `warning.png` (US-785: copied from `deploy/plymouth/eclipse/` by the same step, after, cmp-verified); `stage-scale.js` (US-869-h: copied from `src/pi/ui/` by the same step, after, cmp-verified) |
+| `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js`, `OFL.txt` | `stage-scale.js` (US-869-h: the one letterbox, copied from `src/pi/ui/` by the same step, after, cmp-verified) |
 
 `/opt/<kit>` is **deploy-owned, not hand-edited**: anything dropped there
 out-of-band is pruned by design.
@@ -10061,6 +10264,33 @@ script reads first (falls back to a plain `rpi-eeprom-config` PATH lookup).
 The pytest wrapper `tests/deploy/test_deploy_pi_eeprom_config.py` runs the
 bash test in the fast suite so a regression in either the production script
 or the mock harness shows up alongside other deploy regressions.
+
+**The EEPROM key table (US-926-a, Sprint 115) [Atlas Rule 10].** The same
+script enforces ONE table of keys, each with its source in a comment:
+`POWER_OFF_ON_HALT=1` (above), and the boot-speed keys
+`NET_INSTALL_AT_POWER_ON=0`, `NET_INSTALL_ENABLED=0` and `BOOT_UART=0` (Atlas
+MEASURED 2026-10-24: firmware reached 'Starting OS' at 13.5 s against a ~7 s
+floor, RPi WP-1). It reads `rpi-eeprom-config` once and compares every key,
+logging one line per key (`already set` / `X -> Y` / `absent -> Y`;
+`POWER_OFF_ON_HALT` keeps its earlier wording). All right means no apply.
+Otherwise there is ONE `--apply` that **merges, never rebuilds**: the applied
+file is the running config as read, with only the table keys rewritten in place
+or appended when absent. Every other line (`WAKE_ON_GPIO`, `BOOT_ORDER`,
+comments, blank lines) stays byte-identical and in order. This is because
+`--apply` replaces the whole config, so a second apply would rebuild from the
+unchanged running config and drop the first one's staged change (Atlas MEASURED
+Q3, Spool). **The bootloader moves with it:** `--apply` writes the config into
+the LATEST packaged image. The first real apply therefore also moves this car's
+bootloader 2026/05/11 -> 2026/05/26 (Atlas Q5, ruled: accept and name it). The
+script logs that image from `rpi-eeprom-update -l` before the apply, and never
+runs `rpi-eeprom-update -a`. **Never in the table:** `PSU_MAX_CURRENT` (Atlas
+MEASURED: `usb_pd_init` costs 6 ms, so there is nothing to win, and 5 A is unrated
+for the car buck, per Spool; out unless the CIO grounds it), `max_framebuffers`
+(never 0: WP-1 p.10), and `BOOT_ORDER`. Exit codes are unchanged: 1 means the tool
+is missing, 2 means the read or apply failed and the EEPROM config is unchanged, and
+the deploy stops. Tests: `tests/deploy/test_eeprom_power_off_on_halt.sh` adds
+today's car (one apply, all five live keys kept) and the `PSU_MAX_CURRENT`
+pass-through. `test_deploy_pi_eeprom_config.py` pins the table and the step label.
 
 **What is still pending (IRL, out of code scope).** The 5-cycle IRL
 acceptance drill — graceful `systemctl poweroff` → external power off →

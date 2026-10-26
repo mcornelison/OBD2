@@ -2,7 +2,8 @@
 # File Name: test_capture_panel.py
 # Purpose/Description: US-650 -- eclipse-capture-panel screenshots the running
 #                      panel in either display mode: it reads
-#                      /etc/eclipse/display-mode (absent -> x11) and runs grim
+#                      /etc/eclipse/display-mode (absent -> wayland since
+#                      US-652-b) and runs grim
 #                      (wayland) or scrot (x11) as the kiosk user, writes
 #                      /tmp/eclipse-panel-<utc>.png and prints that path.
 # Author: Rex (Ralph Agent)
@@ -14,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Rex (US-650) | Initial implementation (Sprint 102 V0.30.1).
+# 2026-10-25    | Rex (US-652-b) | MOVED PIN: an absent mode file is wayland
+#               |                | (grim); the x11 row is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -173,9 +176,26 @@ def test_wayland_runsGrimAsTheKioskUser_withTheWaylandEnv_andPrintsThePath(rig):
     assert _log(rig, "scrot") == ""
 
 
-@pytest.mark.parametrize("mode", [None, "x11"], ids=["absent", "x11"])
+def test_absentFile_isWayland_runsGrim(rig):
+    """MOVED PIN (US-652-b): the absent row of the x11 test below; an absent
+    mode file means the lib's default, wayland -> grim, never scrot."""
+    _addSocket(rig)
+
+    result = _run(rig)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    printed = result.stdout.strip()
+    assert OUTPUT_RE.match(printed), printed
+    grim = _log(rig, "grim")
+    assert f"argv=grim {printed}\n" in grim
+    assert "WAYLAND_DISPLAY=wayland-0\n" in grim
+    assert _log(rig, "scrot") == ""
+
+
+@pytest.mark.parametrize("mode", ["x11"], ids=["x11"])
 def test_x11_orAbsentFile_runsScrotWithDisplay0(rig, mode):
-    """An absent mode file means x11: scrot with DISPLAY=:0, as the kiosk user."""
+    """An x11 mode file: scrot with DISPLAY=:0, as the kiosk user. (Its absent
+    row moved to test_absentFile_isWayland_runsGrim, US-652-b.)"""
     if mode is not None:
         _setMode(rig, mode)
 
@@ -255,6 +275,38 @@ def test_toolFails_exitsNonZero_reasonCaptureFailed(rig):
     assert result.returncode != 0
     assert "capture_failed" in result.stderr
     assert result.stdout.strip() == ""
+
+
+def test_defaultLibAbsent_exitsNonZero_reasonNoDefaultLib(rig, tmp_path):
+    """
+    US-652-a: the absent-file default lives in deploy/lib/display-mode-default.sh.
+    Given: no mode file, and a copy of the command with no deploy/lib beside it
+    When:  it runs
+    Then:  non-zero, reason no_default_lib naming the lib; no tool ran -- never a
+           silent x11.
+    """
+    lonely = tmp_path / "lonely" / "deploy" / "eclipse-capture-panel.sh"
+    lonely.parent.mkdir(parents=True)
+    shutil.copyfile(CAPTURE_CMD, lonely)
+    env = dict(os.environ)
+    env["PATH"] = _posix(rig["bin"]) + os.pathsep + env.get("PATH", "")
+    env["FAKE_STATE"] = _posix(rig["state"])
+    env["KIOSK_MODE_FILE"] = _posix(rig["modeFile"])
+    env["KIOSK_RUNTIME_ROOT"] = _posix(rig["runtimeRoot"])
+    env["KIOSK_UID"] = "1000"
+
+    result = subprocess.run(["bash", _posix(lonely)], capture_output=True, text=True,
+                            encoding="utf-8", timeout=60, env=env)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "no_default_lib" in result.stderr
+    assert "lib/display-mode-default.sh" in result.stderr
+    assert result.stdout.strip() == ""
+    assert _log(rig, "grim") == "" and _log(rig, "scrot") == ""
+
+
+def test_captureCommand_namesTheDefaultLib():
+    assert "deploy/lib/display-mode-default.sh" in CAPTURE_CMD.read_text(encoding="utf-8")
 
 
 # ----------------------------------------------------------------------------

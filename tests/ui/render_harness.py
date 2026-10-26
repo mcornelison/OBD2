@@ -62,6 +62,11 @@
 #                                BUILT all-three-ready payload (Atlas R4).
 # 2026-10-25    | Ralph (Rex)  | US-883-c: runShutdownSplash reports
 #                                progress.kept (the amber rows-kept stretch).
+# 2026-10-26    | Ralph (Rex)  | US-869-h: runStageScale runs a page's letterbox
+#                                scripts (the one src/pi/ui/stage-scale.js + the
+#                                inline ones) at a viewport; splashSurface's
+#                                480x320 default is why no test saw the
+#                                unscaled splash on the 1280x720 panel.
 # ================================================================================
 ################################################################################
 
@@ -83,6 +88,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.abspath(os.path.join(_HERE, "..", ".."))
 DASHBOARD_DIR = os.path.join(_REPO, "src", "pi", "ui", "dashboard")
 SPLASH_DIR = os.path.join(_REPO, "src", "pi", "ui", "splash")
+# US-869-h: the ONE letterbox. No kit dir carries a copy; the deploy copies it
+# into /opt/splash and /opt/dashboard, so a page's `stage-scale.js` is this file.
+STAGE_SCALE_JS = os.path.join(_REPO, "src", "pi", "ui", "stage-scale.js")
 
 # Elements the HTML spec renders as `display: none` with no stylesheet at all.
 _UA_NOT_RENDERED_TAGS = frozenset({"script", "style", "head", "meta", "link", "title"})
@@ -1041,6 +1049,58 @@ def runShutdownSplash(
     )
 
 
+def pageScripts(tree: dict[str, Any], withSharedScaler: bool = True) -> list[dict[str, str]]:
+    """A page's letterbox scripts in document order: inline + stage-scale.js.
+
+    Every inline ``<script>`` body runs; of the ``src`` scripts only
+    ``stage-scale.js`` does, resolved to its one source (STAGE_SCALE_JS) as the
+    deploy delivers it. The pollers have their own probes (runSplash /
+    runShutdownSplash). ``withSharedScaler`` False models the file absent.
+    """
+    scripts: list[dict[str, str]] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        for child in node.get("children", []):
+            if child.get("tag") == "script":
+                src = child["attrs"].get("src")
+                if src is None:
+                    text = "".join(c.get("text", "") for c in child["children"])
+                    scripts.append({"inline": text})
+                elif src == "stage-scale.js" and withSharedScaler:
+                    scripts.append({"path": STAGE_SCALE_JS})
+            elif "tag" in child:
+                walk(child)
+
+    walk(tree)
+    return scripts
+
+
+def runStageScale(
+    markupPath: str,
+    viewport: tuple[Any, Any],
+    resizeTo: tuple[Any, Any] | None = None,
+    withSharedScaler: bool = True,
+    tree: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run a page's letterbox scripts against the mini-DOM at ``viewport``.
+
+    Returns ``{tree, errors, timers, resizeListeners}`` (tests/ui/
+    stage_scale_probe.js). ``tree`` overrides the parsed markup (a test's
+    modified copy); ``resizeTo`` fires one resize at that viewport after load.
+    Viewport values may be "NaN" / "Infinity" strings (JSON has no non-finite).
+    """
+    parsed = tree if tree is not None else parseMarkup(markupPath)
+    return _runProbe(
+        "stage_scale_probe.js",
+        {
+            "tree": bodyChildren(parsed),
+            "viewport": list(viewport),
+            "scripts": pageScripts(parsed, withSharedScaler),
+            "resizeTo": list(resizeTo) if resizeTo is not None else None,
+        },
+    )
+
+
 def dashboardSurface(
     domTree: dict[str, Any],
     cssPath: str | None = None,
@@ -1058,6 +1118,10 @@ def splashSurface(
     reducedMotion: bool = False,
 ) -> Surface:
     """Resolve the shipped splash stylesheet over a post-JS DOM tree.
+
+    The (480, 320) default is the DESIGN box, not the panel: the car drives the
+    panel at 1280x720 (US-869-h). A layout claim about the glass passes
+    ``viewport=(1280, 720)``.
 
     ``reducedMotion`` answers ``prefers-reduced-motion`` (US-869-f): False is
     normal motion, so the reduced block does not apply.

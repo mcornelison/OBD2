@@ -199,6 +199,14 @@
    real cascade for every element the markup ships `hidden`. */
 [hidden] { display: none !important; }
 
+/* US-652-b (CIO 2026-10-24, Iris RULED): hide the mouse. The ONE cursor rule
+   in this sheet; every per-element cursor declaration is deleted -- on a
+   touch kiosk they are dead and only invite the pointer back. `html *` alone
+   is (0,0,1) and would lose to any class rule; the !important wins. The
+   frames labwc owns are US-652-e's blank cursor theme. Pinned by
+   tests/ui/test_kiosk_cursor_none.py. */
+html, html *{cursor:none !important}
+
 html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
   background: var(--bg); overflow: hidden;
@@ -305,7 +313,7 @@ html, body {
   width: calc(3 * (1ch + var(--glyph-ls))); height: var(--bar-h);
   flex: none; display: flex; align-items: center;
   text-align: start; white-space: nowrap;
-  position: relative; cursor: pointer;
+  position: relative;
 }
 #glyph-warnings::after {
   content: ""; position: absolute;
@@ -440,7 +448,7 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   position: relative;
   background: transparent; border: 0; color: var(--text-secondary);
-  font-size: var(--fs-secondary); line-height: 1; cursor: pointer;
+  font-size: var(--fs-secondary); line-height: 1;
 }
 /* The S-2 tap minimum, preserved WITHOUT touching layout or paint. The inset is
    HALF THE SHORTFALL, SIGNED: `(--bar-h - --tap-min) / 2` is negative while the
@@ -646,7 +654,6 @@ html, body {
    is the member set itself, so it names no one member. Same amber hue. */
 .sys-verdict[data-level="issues"] .sys-verdict-text { color: var(--amber-warn); }
 .sys-verdict[data-level="unavailable"] .sys-verdict-text { color: var(--text-tertiary); }
-.sys-tappable { cursor: pointer; }
 /* US-894-f (s4.1): the Pi line -- one mono --fs-meta line in amber under the
    verdict, the `pi` member's reason verbatim; its ` ›` (parked only) takes
    the line's colour. One line: the ellipsis is the visible sign. */
@@ -661,7 +668,7 @@ html, body {
    state; a neutral navigation link, never a state colour. */
 .sys-settings {
   margin-left: auto; display: inline-flex; align-items: center;
-  min-height: var(--tap-min); cursor: pointer;
+  min-height: var(--tap-min);
   font-size: var(--fs-meta); letter-spacing: 0.06em; color: var(--text-secondary);
 }
 .sys-row {
@@ -757,7 +764,7 @@ html, body {
 .dot {
   min-width: var(--tap-min); min-height: var(--tap-min);
   display: flex; align-items: center; justify-content: center;
-  background: transparent; border: 0; padding: 0; cursor: pointer;
+  background: transparent; border: 0; padding: 0;
 }
 .dot::before {
   content: ""; width: 8px; height: 8px; border-radius: 50%;
@@ -924,7 +931,7 @@ html, body {
   min-height: var(--tap-min); min-width: var(--tap-min);
   padding-inline: var(--code-alert-chip-pad); border-radius: var(--code-alert-radius);
   border: 1px solid var(--text-primary); background: var(--surface);
-  color: var(--text-primary); cursor: pointer;
+  color: var(--text-primary);
 }
 
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */
@@ -1000,7 +1007,7 @@ html, body {
 #menu-close {
   min-width: var(--tap-min); min-height: var(--tap-min);
   background: transparent; border: 0; color: var(--accent);
-  font-size: var(--fs-label); cursor: pointer;
+  font-size: var(--fs-label);
 }
 .menu-section { display: flex; flex-direction: column; gap: 4px; }
 .menu-section-title {
@@ -1014,7 +1021,7 @@ html, body {
 .svc-name { flex: 1; font-size: var(--fs-label); color: var(--text-primary); }
 .svc-btn {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 10px; font-size: var(--fs-label); cursor: pointer;
+  padding: 0 10px; font-size: var(--fs-label);
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
@@ -1022,11 +1029,11 @@ html, body {
    taps (no consequential action). */
 .svc-btn:disabled {
   color: var(--text-tertiary); border-color: var(--surface);
-  opacity: 0.5; cursor: not-allowed;
+  opacity: 0.5;
 }
 .menu-wide {
   min-height: var(--tap-min); width: 100%;
-  font-size: var(--fs-secondary); cursor: pointer;
+  font-size: var(--fs-secondary);
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
@@ -1051,7 +1058,7 @@ html, body {
 .set-controls { display: flex; gap: 4px; margin-left: auto; }
 .set-btn {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 8px; font-size: var(--fs-label); cursor: pointer;
+  padding: 0 8px; font-size: var(--fs-label);
   background: var(--surface); color: var(--text-secondary);
   border: 1px solid var(--surface); border-radius: 4px;
 }
@@ -1070,7 +1077,7 @@ html, body {
 /* The steps kind (auto-rotate): `− value +`, each target >= --tap-min. */
 .set-step {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  font-size: var(--fs-label); cursor: pointer;
+  font-size: var(--fs-label);
   background: var(--bg); color: var(--text-primary);
   border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
@@ -1087,7 +1094,7 @@ html, body {
   color: var(--text-secondary);
 }
 #settings-list[data-locked="true"] .set-btn {
-  background: transparent; color: var(--text-tertiary); cursor: default;
+  background: transparent; color: var(--text-tertiary);
   border-color: transparent;
 }
 #settings-list[data-locked="true"] .set-btn[aria-pressed="true"] {
@@ -1105,13 +1112,13 @@ html, body {
 .set-end-controls { display: flex; gap: 4px; }
 .set-ends { flex-direction: column; align-items: flex-end; }
 .set-step:disabled {
-  background: transparent; color: var(--text-tertiary); cursor: default;
+  background: transparent; color: var(--text-tertiary);
 }
 /* US-895-c (spec s4.7): BRIGHTNESS's FIXED segment with the effective minLevel
    unreadable is drawn disabled the same way -- a floor it cannot know is a
    level it cannot offer. */
 .set-btn:disabled {
-  background: transparent; color: var(--text-tertiary); cursor: default;
+  background: transparent; color: var(--text-tertiary);
 }
 .settings-foot {
   margin: 2px 0 0; font-size: var(--fs-meta); color: var(--text-tertiary);
@@ -1139,7 +1146,7 @@ html, body {
 .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .confirm-actions button {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 14px; font-size: var(--fs-secondary); cursor: pointer; border-radius: 4px;
+  padding: 0 14px; font-size: var(--fs-secondary); border-radius: 4px;
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary);
 }
@@ -1175,7 +1182,7 @@ html, body {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   width: 100%; min-height: var(--tap-min);
   padding: 6px 8px; margin-bottom: 6px; box-sizing: border-box;
-  text-align: left; cursor: pointer;
+  text-align: left;
   border: 1px solid var(--surface); border-radius: 4px;
   background: var(--surface); color: var(--text-primary);
 }
@@ -1198,7 +1205,7 @@ html, body {
 .dtc-row {
   display: flex; align-items: center; gap: 6px;
   width: 100%; min-height: var(--tap-min);
-  padding: 2px 8px; box-sizing: border-box; text-align: left; cursor: pointer;
+  padding: 2px 8px; box-sizing: border-box; text-align: left;
   border: 0; border-bottom: 1px solid var(--surface);
   background: transparent; color: var(--text-primary);
 }
@@ -1241,7 +1248,7 @@ html, body {
   padding: 0 12px; box-sizing: border-box;
   background: var(--surface); border: 1px solid var(--text-tertiary);
   border-radius: 6px; color: var(--text-primary);
-  font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
+  font-size: var(--fs-secondary); font-weight: 700;
 }
 .detail-code-head {
   font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
@@ -1358,7 +1365,7 @@ html, body {
   padding: 0 12px; box-sizing: border-box;
   background: var(--surface); border: 1px solid var(--text-tertiary);
   border-radius: 6px; color: var(--text-primary);
-  font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
+  font-size: var(--fs-secondary); font-weight: 700;
 }
 .sys-issue-head { display: flex; align-items: baseline; gap: 8px; }
 .sys-issue-label {
@@ -1401,12 +1408,12 @@ html, body {
 #dtc-clear-zone[hidden] { display: none; }
 #dtc-clear-btn {
   min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
-  font-size: var(--fs-secondary); font-weight: 700; cursor: pointer; border-radius: 4px;
+  font-size: var(--fs-secondary); font-weight: 700; border-radius: 4px;
   background: var(--surface); color: var(--green-ok);
   border: 1px solid var(--green-ok);
 }
 #dtc-clear-btn:disabled {
-  cursor: not-allowed; color: var(--text-tertiary);
+  color: var(--text-tertiary);
   border-color: var(--surface); font-weight: 400;
 }
 #dtc-clear-result { font-size: var(--fs-label); color: var(--text-secondary); }
@@ -1443,11 +1450,12 @@ html, body {
 
 /* --- US-482 letterbox scaling (F-121) --------------------------------------- */
 /* The UI is authored at a fixed 480x320 design box (#stage) and uniformly
-   scaled to fill the real panel (the Pi outputs 1080p; 480x320 is the design
-   target, matching the 3.5" panel it was drawn for). #screen is the full-
+   scaled to fill the real panel (the car drives it at 1280x720; 480x320 is the
+   design target, matching the 3.5" panel it was drawn for). #screen is the full-
    viewport black frame -- the letterbox strip on the aspect mismatch reads as
-   bezel, not a gap. #stage is the EXACT 480x320 box; carousel.js sets --scale
-   on load + resize (= min(innerW/480, innerH/320)), and `transform: scale()`
+   bezel, not a gap. #stage is the EXACT 480x320 box; stage-scale.js (US-869-h,
+   the one letterbox, shared with the splash) sets --scale on load + resize
+   (= min(innerW/480, innerH/320)), and `transform: scale()`
    grows the whole box as ONE unit. Because #stage is transformed, it becomes
    the containing block for its fixed/absolute descendants, so every shipped
    layout rule above is UNCHANGED -- no reflow, no token/px layout edits (CIO-
@@ -2524,7 +2532,6 @@ html, body {
   font-family: inherit; font-size: var(--fs-label); line-height: var(--warn-line);
   text-align: start;
 }
-#alerts-card .warn-row-code { cursor: pointer; }
 #alerts-card .warn-chip {
   font-family: var(--font-display); font-weight: 400; font-synthesis: none;
   font-size: var(--fs-meta); line-height: var(--warn-line); white-space: nowrap;

@@ -26,6 +26,8 @@
 #               |              | retired with deploy/eclipse-compositor.service.
 # 2026-10-24    | Rex (US-651-a) | MOVED PIN (US-651-a): splash-boot.wayland is
 #               |              | WantedBy no target; the kiosk start latch pulls it.
+# 2026-10-25    | Rex (US-652-e) | MOVED PIN (US-652-e): the workstation checks
+#               |              | are rc.xml and deploy/labwc/environment.
 # ================================================================================
 ################################################################################
 
@@ -302,13 +304,16 @@ def test_kioskSessionStep_startsEnablesAndRemovesNothing():
 
 def test_kioskSessionStep_hasNoWorkstationCheckForTheSessionFile():
     """
-    Only rc.xml fails loud on the workstation; the .desktop is checked on the Pi
-    after the sync, so isolated --dry-run trees without it keep working.
+    Only the labwc config fails loud on the workstation; the .desktop is checked
+    on the Pi after the sync, so isolated --dry-run trees without it keep working.
+
+    MOVED PIN (US-652-e): deploy/labwc/environment fails loud like rc.xml, so
+    the workstation checks are rc.xml and the environment file.
     """
     body = _code(_stepBody(STEP))
     local = body[: body.index("if $DRY_RUN")]
     checks = [ln.strip() for ln in local.splitlines() if "[ ! -f" in ln or "[ -f" in ln]
-    assert checks == ['if [ ! -f "$rcXml" ]; then'], checks
+    assert checks == ['if [ ! -f "$rcXml" ]; then', 'if [ ! -f "$labwcEnv" ]; then'], checks
 
 
 def test_kioskSessionStep_isWiredBeforeTheKioskUnits():

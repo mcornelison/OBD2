@@ -10,7 +10,8 @@
 #        substitute it into the unit templates; fail loudly if it can't
 #        be determined -- the kit no longer hardcodes User=pi.
 #   V-2  take the session type (Wayland vs X11) from /etc/eclipse/display-mode
-#        (US-649-a: the ONLY authority; absent => x11) and pick the matching
+#        (US-649-a: the ONLY authority; absent => the default in
+#        deploy/lib/display-mode-default.sh, US-652-a) and pick the matching
 #        unit variant; fail loudly on any other value -- guessing wrong gives
 #        the D-3 class of bug (X11 env on a Wayland session => black screen).
 #        The running session is still detected, but only WARNs on disagreement.
@@ -57,6 +58,18 @@ SYSTEMD_DIR="$SPLASH_ROOT/etc/systemd/system"
 INSTALL_DIR="$SPLASH_ROOT/opt/splash"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
+
+# US-652-a: what an absent mode file means lives in ONE file in the deployed
+# tree, found from this kit the way it finds its unit templates ($SCRIPT_DIR).
+# Missing => refuse before anything is installed; never a silent x11.
+DISPLAY_MODE_DEFAULT_LIB="$SCRIPT_DIR/../../../../deploy/lib/display-mode-default.sh"
+if [[ ! -r "$DISPLAY_MODE_DEFAULT_LIB" ]]; then
+  echo "ERROR: display-mode default lib not found at '$DISPLAY_MODE_DEFAULT_LIB'" >&2
+  echo "       (deploy/lib/display-mode-default.sh in the deployed tree) -- nothing changed." >&2
+  exit 1
+fi
+# shellcheck source=../../../../deploy/lib/display-mode-default.sh
+. "$DISPLAY_MODE_DEFAULT_LIB"
 
 DRY_RUN=0
 
@@ -111,12 +124,12 @@ detect_pi_uid() {
 # the running session used to CHOOSE the variant, so an install run while X11 was
 # up re-installed X11 over a Wayland choice (Atlas, measured trap). A forced
 # SPLASH_FORCE_SESSION (deploy-pi.sh / eclipse-display-mode pass the file's
-# value) still wins; otherwise the file decides, absent => x11.
+# value) still wins; otherwise the file decides, absent => $DISPLAY_MODE_DEFAULT.
 read_display_mode() {
   if [[ -f "$MODE_FILE" ]]; then
     tr -d '[:space:]' < "$MODE_FILE"   # raw: a garbage value must reach the abort
   else
-    printf 'x11'
+    printf '%s' "$DISPLAY_MODE_DEFAULT"
   fi
 }
 
@@ -282,6 +295,21 @@ for asset in index.html shutdown.html \
     echo "WARN: asset missing, skipped: $asset" >&2
   fi
 done
+
+# US-869-h: the ONE letterbox, src/pi/ui/stage-scale.js, shared with the
+# dashboard kit. It has no copy in this kit dir: install it from its one source and
+# cmp-verify the bytes, as deploy-pi.sh does (a stale copy draws the page
+# unscaled or on an old scale).
+STAGE_SCALE_SRC="$SCRIPT_DIR/../stage-scale.js"
+if [[ -f "$STAGE_SCALE_SRC" ]]; then
+  install -m 0644 "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js"
+  cmp -s "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js" || {
+    echo "ERROR: $INSTALL_DIR/stage-scale.js does not match $STAGE_SCALE_SRC after install" >&2
+    exit 1
+  }
+else
+  echo "WARN: asset missing, skipped: $STAGE_SCALE_SRC" >&2
+fi
 
 echo "==> Sweeping retired units (D-2 splash-shutdown, D-3 original boot)"
 rm -f "$SYSTEMD_DIR/splash-shutdown.service"

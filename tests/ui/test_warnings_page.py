@@ -39,6 +39,10 @@
 #               |              | checks are not built yet.', one per unassessed
 #               |              | source; every alerts fixture's sources.system is
 #               |              | {assessed: false, reason: 'not_read'}.
+# 2026-10-25    | Ralph (Rex)  | US-652-b -- MOVED PIN: cursor is no longer the
+#               |              | CODE-vs-ENGINE discriminator (the kiosk hides the
+#               |              | mouse); the element is -- a BUTTON with a click
+#               |              | listener vs a DIV with none (Iris RULED Q2).
 # ================================================================================
 ################################################################################
 
@@ -979,20 +983,51 @@ def test_rowsAreAtLeast48px_throughAScopedProperty():
     )
 
 
+# Prepended to a temp copy of the SHIPPED carousel.js: every element the page
+# creates marks itself data-probe-click="yes" when a click listener is added,
+# so the serialized tree shows which rows are wired (mini_dom does not
+# serialize listeners).
+_CLICK_PROBE = """(function () {
+  var make = document.createElement;
+  document.createElement = function () {
+    var el = make.apply(this, arguments);
+    var listen = el.addEventListener;
+    el.addEventListener = function (type) {
+      if (type === "click") el.setAttribute("data-probe-click", "yes");
+      return listen.apply(el, arguments);
+    };
+    return el;
+  };
+})();
+"""
+
+
 @_NODE_ONLY
-def test_sentencesAreNeverStyledAsControls_engineRowsNeither():
-    """US-758 (898-7): no border, fill or pointer on a sentence or an ENGINE row;
-    CODE rows are real controls."""
-    _, surface, _ = _cardDom(_fixture("mixed-live-and-stored"))
+def test_sentencesAreNeverStyledAsControls_engineRowsNeither(tmp_path):
+    """US-758 (898-7): no border or fill on a sentence; CODE rows are real
+    controls, ENGINE rows are not.
+
+    MOVED PIN (US-652-b): cursor was the CODE-vs-ENGINE discriminator; the kiosk
+    hides the mouse, so the element is (Iris RULED Q2): the CODE row is a BUTTON
+    with a click listener, the ENGINE row a DIV with none.
+    """
+    carousel = tmp_path / "carousel.js"
+    shipped = open(os.path.join(rh.DASHBOARD_DIR, "carousel.js"), encoding="utf-8").read()
+    carousel.write_text(_CLICK_PROBE + shipped, encoding="utf-8")
+    dom = rh.runDashboard(routes=_routes(_fixture("mixed-live-and-stored")), viewport=PANEL,
+                          nowMs=NOW_MS, carouselPath=str(carousel))
+    surface = rh.dashboardSurface(dom["tree"], viewport=PANEL)
     for path in surface.pathsByClass("warn-sentence"):
-        for prop in ("border", "background", "cursor"):
+        for prop in ("border", "background"):
             won = surface.winningDeclaration(path, prop)
             assert won is None or won[0] in ("none", "0", "transparent", "default"), (prop, won)
     rows = _rowPaths(surface)
-    engine = surface.winningDeclaration(rows[0], "cursor")
-    code = surface.winningDeclaration(rows[1], "cursor")
-    assert engine is None or engine[0] != "pointer", engine
-    assert code is not None and code[0] == "pointer", code
+    engine, code = rows[0][-1], rows[1][-1]
+    assert "warn-row-code" not in _classes(engine) and "warn-row-code" in _classes(code)
+    assert engine["tag"].upper() == "DIV", engine["tag"]
+    assert code["tag"].upper() == "BUTTON", code["tag"]
+    assert "data-probe-click" not in engine.get("attrs", {}), engine.get("attrs")
+    assert code.get("attrs", {}).get("data-probe-click") == "yes", code.get("attrs")
 
 
 def test_warningsCssIsTokensOnly_noHexOrPxOutsideTheScopedProperties():

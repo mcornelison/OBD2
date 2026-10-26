@@ -19,6 +19,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-22    | Ralph (Rex)  | Initial -- US-482 full-bleed letterbox scaling.
+# 2026-10-26    | Ralph (Rex)  | US-869-h MOVED PIN: computeStageScale moved to
+#               |              | src/pi/ui/stage-scale.js (the one letterbox,
+#               |              | shared with the splash); the probe follows it
+#               |              | and the JS wiring checks read both files.
+#               |              | Every assertion kept; non-finite cases added.
 # ================================================================================
 ################################################################################
 
@@ -32,7 +37,6 @@ import subprocess
 import pytest
 
 _NODE = shutil.which("node")
-_PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
     os.path.dirname(__file__),
     "..",
@@ -45,6 +49,16 @@ _DIST = os.path.join(
 _HTML = os.path.join(_DIST, "dashboard.html")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
+# MOVED PIN (US-869-h): the formula's one home.
+_STAGE_SCALE_JS = os.path.join(_DIST, "..", "stage-scale.js")
+
+# Viewport args travel as strings and are Number()-ed in node, so the
+# non-finite cases (NaN / Infinity) that JSON cannot carry reach the function.
+_SCALE_SCRIPT = (
+    "const s = require(process.argv[1]);"
+    "const a = process.argv.slice(2).map(Number);"
+    "process.stdout.write(JSON.stringify(s.computeStageScale(a[0], a[1])));"
+)
 
 
 def _read(path: str) -> str:
@@ -53,9 +67,9 @@ def _read(path: str) -> str:
 
 
 def _scale(*args: object) -> float:
-    """Evaluate computeStageScale against a viewport fixture via the node probe."""
+    """Evaluate stage-scale.js computeStageScale against a viewport fixture."""
     proc = subprocess.run(
-        [_NODE, _PROBE, "computeStageScale", *[json.dumps(a) for a in args]],
+        [_NODE, "-e", _SCALE_SCRIPT, os.path.abspath(_STAGE_SCALE_JS), *[str(a) for a in args]],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -109,6 +123,22 @@ def test_computeStageScale_degenerateViewport_fallsBackToOne():
     assert _scale(-5, 100) == 1.0
 
 
+@nodeless
+def test_computeStageScale_nonFiniteViewport_fallsBackToOne():
+    """US-869-h: a non-finite viewport (NaN / Infinity) is degenerate too -- the
+    scale stays 1, never NaN or Infinity written into --scale."""
+    assert _scale("NaN", 720) == 1.0
+    assert _scale(1280, "NaN") == 1.0
+    assert _scale("Infinity", 720) == 1.0
+    assert _scale("Infinity", "Infinity") == 1.0
+
+
+@nodeless
+def test_computeStageScale_carPanel1280x720_isHeightBound():
+    """US-869-h: the car's panel mode (wlr-randr MEASURED): min(2.667, 2.25)."""
+    assert _scale(1280, 720) == 2.25
+
+
 # ---------------------------------------------------------------------------
 # Static wiring -- the shipped dist assets carry the letterbox plumbing. These
 # run without node (they are the deploy-truth the PI-RUNTIME AC-6 rests on).
@@ -156,8 +186,23 @@ def test_css_screen_isBlackFullViewportFlexCenter():
 
 def test_js_resizeHandler_setsScaleVar():
     """AC step 3 (JS half): a resize handler recomputes --scale from the live
-    viewport -- the safe path per spec (no fluid reflow)."""
+    viewport -- the safe path per spec (no fluid reflow).
+
+    MOVED PIN (US-869-h): the dashboard's call site stays in carousel.js; the
+    write and the formula are stage-scale.js's, and carousel.js keeps no copy.
+    """
     js = _read(_JS)
+    shared = _read(_STAGE_SCALE_JS)
     assert 'window.addEventListener("resize", applyStageScale)' in js
-    assert 'stage.style.setProperty("--scale"' in js
-    assert "computeStageScale(window.innerWidth, window.innerHeight)" in js
+    assert "StageScale.applyStageScale(document, window)" in js
+    assert 'stage.style.setProperty("--scale"' in shared
+    assert "computeStageScale(win.innerWidth, win.innerHeight)" in shared
+    assert "Math.min(w / STAGE_W" not in js
+    assert "STAGE_W = 480" not in js
+
+
+def test_html_loadsTheSharedScaler_beforeCarousel():
+    """US-869-h: dashboard.html loads stage-scale.js before carousel.js, which
+    resolves window.EclipseStageScale at load."""
+    html = _read(_HTML)
+    assert html.index('<script src="stage-scale.js">') < html.index('<script src="carousel.js">')

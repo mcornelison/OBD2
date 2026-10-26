@@ -27,7 +27,9 @@
 #   Default mode:
 #     1. rsync the working tree to PI_PATH on the Pi (excludes .git/, .venv/, data/, etc.)
 #     2. Install/refresh systemd-journald persistent-storage drop-in (US-210, idempotent)
-#     3. Enforce POWER_OFF_ON_HALT=0 in Pi 5 EEPROM (US-253, wake-on-power, idempotent)
+#     3. Enforce the Pi 5 EEPROM key table POWER_OFF_ON_HALT=1, NET_INSTALL_AT_POWER_ON=0,
+#        NET_INSTALL_ENABLED=0, BOOT_UART=0 (US-253 wake-on-power + US-926-a boot speed,
+#        one merged apply, idempotent)
 #     4. Set GPU CMA to 256M in /boot/firmware/config.txt (US-524, idempotent,
 #        takes effect on next reboot)
 #     5. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
@@ -214,6 +216,7 @@ sync_tree() {
             --include=scripts/*** \
             --include=deploy/ \
             --include=deploy/*.sh \
+            --include=deploy/make-blank-cursor-theme.py \
             --include=deploy/boot-progress-*.service \
             --include=deploy/drain-forensics.* \
             --include=deploy/eclipse-*.service \
@@ -751,6 +754,61 @@ step_install_logind_powerkey() {
     "
 }
 
+step_install_logind_kiosk_vt() {
+    # US-652-c: logind opens no text consoles (NAutoVTs=0, ReserveVT=0). CIO
+    # 2026-10-24 access ruling: no on-screen login ever; SSH and the serial
+    # login stay. Same posture as step_install_logind_powerkey: sync-if-changed,
+    # NEVER restarts or reloads logind (a live restart can drop the kiosk
+    # session; the drop-in takes effect on the next boot), both display modes.
+    echo "--- Step: Installing logind no-text-console drop-in (US-652-c) ---"
+    local sourceFile="deploy/eclipse-kiosk-vt.conf"
+    local targetPath="/etc/systemd/logind.conf.d/51-eclipse-kiosk-vt.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: no logind restart (takes effect on next boot)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/systemd/logind.conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'logind no-text-console drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'logind no-text-console drop-in installed: ${targetPath} (effective next boot).'
+        fi
+    "
+}
+
+step_mask_getty_tty1() {
+    # US-652-d: getty@tty1 runs today behind the kiosk VT (Atlas MEASURED), a
+    # text login one VT switch away. CIO 2026-10-24 access ruling: mask it;
+    # sshd and serial-getty@ttyAMA10 (the debug-UART login) stay untouched.
+    # Masks only when is-enabled does not already print masked, and NEVER
+    # stops the unit live -- the mask takes effect on the next boot. Lives here,
+    # not in eclipse-display-mode.sh (the mode command masks nothing).
+    echo "--- Step: Masking getty@tty1 (US-652-d) ---"
+    local unit="getty@tty1.service"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would: systemctl mask ${unit} (unless already masked; effective next boot, not stopped live)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        GETTY_STATE=\$(systemctl is-enabled ${unit} 2>/dev/null || true)
+        if [ \"\$GETTY_STATE\" = 'masked' ]; then
+            echo '${unit} already masked (no change).'
+        else
+            sudo systemctl mask ${unit}
+            echo '${unit} masked (effective next boot).'
+        fi
+    "
+}
+
 step_install_polkit_poweroff() {
     # US-341 / I-036: install polkit rule granting mcornelison the
     # org.freedesktop.login1.power-off action without interactive auth.
@@ -940,21 +998,107 @@ step_install_nm_wifi_powersave() {
     "
 }
 
-step_enforce_eeprom_power_off_on_halt() {
-    # US-253: enforce POWER_OFF_ON_HALT=0 in the Pi 5 bootloader EEPROM so that
-    # `systemctl poweroff` halts the SoC but leaves the PMIC awake watching the
-    # power rails. With 0, wall-power return auto-boots the Pi -- no operator
-    # button press needed (the post-B-043 in-car drill: key-OFF -> US-216
-    # graceful shutdown -> key-ON -> auto-boot).
+step_install_wifi_recover_unit() {
+    # US-925-a / F-155: install eclipse-wifi-recover.service, the one-shot-per-
+    # ACTIVATED retry of a stored-PSK connection NetworkManager failed with
+    # NO_SECRETS (src/pi/network/wifi_recover.py).
     #
-    # Idempotent. The standalone script logs no-op when the setting is already
-    # 0 or absent (default), and rewrites only when it differs. Errors from
-    # rpi-eeprom-config halt the deploy with a clear message rather than
-    # silently shipping a broken wake-on-power config.
-    echo "--- Step: Enforcing POWER_OFF_ON_HALT=0 in Pi 5 EEPROM (US-253) ---"
+    # Posture of step_install_nm_wifi_powersave above (cmp -s guard, every
+    # deploy), but this step NEVER restarts NetworkManager and never reloads
+    # brcmfmac: the unit only listens on the bus, so nothing here can sever the
+    # SSH session the deploy runs over. daemon-reload only on a real change.
+    # `restart` (which starts a stopped unit) rather than `start`, so a running
+    # copy never keeps the previous release's code in memory (US-354 class).
+    #
+    # The unit runs the SYSTEM python with Debian python3-dbus + python3-gi
+    # (obd2-venv cannot import dbus). Both are checked BEFORE the install, and a
+    # missing one FAILS the deploy naming it -- a deploy never installs packages.
+    # Runs in both display modes, outside any display-mode branch.
+    #
+    # US-925-b: the recovery reuses a STORED key only (psk-flags=0); an
+    # agent-owned secret needs a person every time. After the install, a
+    # READ-ONLY check reads psk-flags of every Wi-Fi profile with `nmcli -g`
+    # (never the psk field, never a modify) and prints ONE WARNING line per
+    # profile whose psk-flags != 0. No nmcli -> one WARN; the deploy continues.
+    echo "--- Step: Installing eclipse-wifi-recover systemd unit (US-925-a, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: dpkg -s python3-dbus python3-gi (FAIL the deploy, naming the package, if either is missing)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-wifi-recover.service /etc/systemd/system/eclipse-wifi-recover.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable eclipse-wifi-recover.service"
+        echo "DRY-RUN would: sudo systemctl restart eclipse-wifi-recover.service (start; replaces a running copy)"
+        echo "DRY-RUN note: NetworkManager is NOT restarted and brcmfmac is NOT reloaded"
+        echo "DRY-RUN would: psk-flags check -- nmcli -g 802-11-wireless-security.psk-flags connection show uuid <each Wi-Fi profile> (read-only, never the psk); ONE WARNING per profile with psk-flags != 0, else 'all Wi-Fi secrets system-owned (psk-flags=0)'; nmcli unavailable -> one WARN, the deploy continues"
+        return 0
+    fi
+    remote "
+        set -e
+        for pkg in python3-dbus python3-gi; do
+            if ! dpkg -s \"\$pkg\" >/dev/null 2>&1; then
+                echo \"ERROR: Debian package \$pkg is not installed -- eclipse-wifi-recover needs it. A deploy never installs packages: install \$pkg on the Pi, then re-deploy.\" >&2
+                exit 1
+            fi
+        done
+
+        SRC='${PI_PATH}/deploy/eclipse-wifi-recover.service'
+        DST='/etc/systemd/system/eclipse-wifi-recover.service'
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'ERROR: eclipse-wifi-recover.service not present in deploy/ on the Pi (sync_tree whitelist?).' >&2
+            exit 1
+        fi
+
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'eclipse-wifi-recover.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            sudo systemctl daemon-reload
+            echo 'eclipse-wifi-recover.service installed + daemon-reload complete.'
+        fi
+
+        sudo systemctl enable eclipse-wifi-recover.service
+        sudo systemctl restart eclipse-wifi-recover.service
+        echo 'eclipse-wifi-recover.service enabled + active.'
+
+        if ! command -v nmcli >/dev/null 2>&1 || ! WIFI_ROWS=\$(nmcli -g UUID,TYPE connection show 2>/dev/null); then
+            echo 'WARN: nmcli unavailable -- the Wi-Fi psk-flags check could not run; the deploy continues.' >&2
+        else
+            AGENT_OWNED=0
+            for row in \$WIFI_ROWS; do
+                [ \"\${row#*:}\" = 802-11-wireless ] || continue
+                uuid=\${row%%:*}
+                name=\$(nmcli -g connection.id connection show uuid \"\$uuid\" 2>/dev/null) || name=\$uuid
+                if ! flags=\$(nmcli -g 802-11-wireless-security.psk-flags connection show uuid \"\$uuid\" 2>/dev/null); then
+                    echo \"WARN: could not read psk-flags of Wi-Fi profile \$name; not checked.\" >&2
+                    continue
+                fi
+                flags=\${flags%% *}
+                case \"\$flags\" in ''|0) continue ;; esac
+                echo \"WARNING: Wi-Fi profile \$name psk-flags=\$flags (agent-owned): no-secrets recovery cannot reuse its key\" >&2
+                AGENT_OWNED=1
+            done
+            if [ \"\$AGENT_OWNED\" = 0 ]; then
+                echo 'all Wi-Fi secrets system-owned (psk-flags=0)'
+            fi
+        fi
+    "
+}
+
+step_enforce_eeprom_power_off_on_halt() {
+    # US-253 / SS-T8 / US-926-a: enforce the Pi 5 bootloader EEPROM key table
+    # POWER_OFF_ON_HALT=1, NET_INSTALL_AT_POWER_ON=0, NET_INSTALL_ENABLED=0,
+    # BOOT_UART=0. POWER_OFF_ON_HALT=1 is the Pi 5 + X1209-HAT wake-on-power
+    # setting (CIO 2026-05-18); the other three cut the firmware's time to
+    # 'Starting OS' (Atlas 2026-10-24 + RPi WP-1).
+    #
+    # Idempotent. The standalone script reads the config once, logs no-op when
+    # every key is right, and otherwise merges the table keys into the running
+    # config in ONE --apply (which also installs the latest packaged
+    # bootloader image, logged first). Errors from rpi-eeprom-config halt the
+    # deploy with a clear message rather than silently shipping a broken
+    # wake-on-power config.
+    echo "--- Step: Enforcing Pi 5 EEPROM POWER_OFF_ON_HALT=1 NET_INSTALL_AT_POWER_ON=0 NET_INSTALL_ENABLED=0 BOOT_UART=0 (US-253, US-926-a) ---"
     if $DRY_RUN; then
         echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh"
-        echo "DRY-RUN would verify: rpi-eeprom-config exposes POWER_OFF_ON_HALT=0 (or unset = default 0)"
+        echo "DRY-RUN would verify: rpi-eeprom-config shows POWER_OFF_ON_HALT=1 NET_INSTALL_AT_POWER_ON=0 NET_INSTALL_ENABLED=0 BOOT_UART=0, else ONE merged --apply"
         return 0
     fi
     remote "sudo bash '${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh'"
@@ -2083,8 +2227,13 @@ step_install_splash_assets() {
     # ONLY deployed copy (one image, two consumers, no twin; spec §1.2). The kit
     # has no copy, so it is copied in below AFTER the refresh and cmp-verified,
     # and keep-listed beside version.txt so the next refresh does not prune it.
-    local keepAssets="version.txt warning.png"
+    # stage-scale.js (US-869-h, Atlas 2026-10-26): the ONE letterbox, shared
+    # with the dashboard kit. Its only source is src/pi/ui/stage-scale.js -- no
+    # kit carries a copy -- so it takes warning.png's footing: copied in below
+    # AFTER the refresh, cmp-verified, keep-listed so the refresh never prunes it.
+    local keepAssets="version.txt warning.png stage-scale.js"
     local warningSrc="${PI_PATH}/deploy/plymouth/eclipse/warning.png"
+    local stageScaleSrc="${PI_PATH}/src/pi/ui/stage-scale.js"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2
         return 0
@@ -2103,6 +2252,7 @@ step_install_splash_assets() {
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         echo "DRY-RUN would: write ${installDir}/version.txt = ${splashVersion}"
         echo "DRY-RUN would: copy ${warningSrc} -> ${installDir}/warning.png (cmp-verified)"
+        echo "DRY-RUN would: copy ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)"
         return 0
     fi
     remote "
@@ -2119,6 +2269,13 @@ step_install_splash_assets() {
             false
         }
         echo 'copied ${warningSrc} -> ${installDir}/warning.png (cmp-verified)'
+        sudo install -m 0644 '${stageScaleSrc}' '${installDir}/stage-scale.js'
+        cmp -s '${stageScaleSrc}' '${installDir}/stage-scale.js' || {
+            echo 'ERROR: ${installDir}/stage-scale.js does not match ${stageScaleSrc} after install' >&2
+            echo 'ERROR: the splash would draw unscaled or on a stale letterbox; fix the write path and re-deploy.' >&2
+            false
+        }
+        echo 'copied ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)'
     "
 }
 
@@ -2140,9 +2297,12 @@ step_install_dashboard_assets() {
     # the splash kiosk unit -- and is started by the splash OnSuccess= hand-off.
     #
     # US-495 (S2/F-111): force-refresh via deploy/asset-refresh.sh, same as
-    # the splash step. NO keep-list here -- /opt/dashboard has exactly one
-    # installer (this step and the kit's install.sh ship the identical three
-    # files), so anything else in there is a retired generation and gets pruned.
+    # the splash step. /opt/dashboard has exactly one installer (this step and
+    # the kit's install.sh ship the identical files), so anything else in there
+    # is a retired generation and gets pruned. The keep-list is stage-scale.js
+    # alone (US-869-h): the ONE letterbox, src/pi/ui/stage-scale.js, shared with
+    # the splash kit -- copied in AFTER the refresh and cmp-verified, the
+    # splash step's warning.png pattern.
     #
     # Runs AFTER sync_tree so ${PI_PATH}/src/pi/ui/dashboard/ exists.
     echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
@@ -2154,20 +2314,67 @@ step_install_dashboard_assets() {
     # /opt/dashboard -- i.e. the repo would look compliant while the deployed
     # artifact shipped the face bare.
     local assets="dashboard.html dashboard.css carousel.js OFL.txt"
+    local keepAssets="stage-scale.js"
+    local stageScaleSrc="${PI_PATH}/src/pi/ui/stage-scale.js"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: dashboard assets not found at $assetSrc -- skipping; deploy continues (A-9)." >&2
         return 0
     fi
     if $DRY_RUN; then
         echo "DRY-RUN would: source ${PI_PATH}/deploy/asset-refresh.sh"
-        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/dashboard ${installDir} '${assets}'"
+        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/dashboard ${installDir} '${assets}' '${keepAssets}'"
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
+        echo "DRY-RUN would: copy ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)"
         return 0
     fi
     remote "
         set -e
         . '${PI_PATH}/deploy/asset-refresh.sh'
-        refresh_asset_dir '${PI_PATH}/src/pi/ui/dashboard' '${installDir}' '${assets}'
+        refresh_asset_dir '${PI_PATH}/src/pi/ui/dashboard' '${installDir}' \
+                          '${assets}' '${keepAssets}'
+        sudo install -m 0644 '${stageScaleSrc}' '${installDir}/stage-scale.js'
+        cmp -s '${stageScaleSrc}' '${installDir}/stage-scale.js' || {
+            echo 'ERROR: ${installDir}/stage-scale.js does not match ${stageScaleSrc} after install' >&2
+            echo 'ERROR: the dashboard would draw unscaled or on a stale letterbox; fix the write path and re-deploy.' >&2
+            false
+        }
+        echo 'copied ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)'
+    "
+}
+
+step_install_blank_cursor_theme() {
+    # US-652-e (F-139; Atlas RULED 2026-10-25): CSS cursor:none cannot reach the
+    # frames labwc owns -- from labwc start until Chromium first maps, and the
+    # splash -> dashboard hand-off.  The kiosk session's labwc environment file
+    # names XCURSOR_THEME=eclipse-blank; this step GENERATES that theme with
+    # deploy/make-blank-cursor-theme.py (one transparent Xcursor image, a
+    # symlink per /usr/share/icons/Adwaita cursor name, no Inherits=) into
+    # /usr/share/icons/eclipse-blank.  labwc's HideCursor action was REJECTED:
+    # one-shot, undone by the next pointer input.
+    #
+    # Runs every deploy as root with the SYSTEM /usr/bin/python3 (stdlib only),
+    # in BOTH display modes: the theme is inert unless the eclipse labwc session
+    # names it, so the x11 revert path is untouched.  Idempotent: an unchanged
+    # theme prints 'already current'.  A missing Adwaita cursors dir is one
+    # WARN (the theme still carries default and left_ptr).  A theme that cannot
+    # be written exits non-zero naming the icons dir and, under set -e, halts
+    # the deploy BEFORE step_install_kiosk_session installs the environment.
+    # The generator is checked on the Pi only, after the sync (isolated
+    # --dry-run trees do not carry it).
+    echo "--- Step: Generating the eclipse-blank cursor theme (US-652-e, F-139) ---"
+    local generator="deploy/make-blank-cursor-theme.py"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo /usr/bin/python3 ${PI_PATH}/${generator} (writes /usr/share/icons/eclipse-blank; both display modes; 'already current' when unchanged)"
+        return 0
+    fi
+    remote "
+        set -e
+        GENERATOR='${PI_PATH}/${generator}'
+        if [ ! -f \"\$GENERATOR\" ]; then
+            echo \"ERROR: cursor theme generator not found on the Pi: \$GENERATOR -- the sync did not ship it.\" >&2
+            exit 12
+        fi
+        sudo /usr/bin/python3 \"\$GENERATOR\"
     "
 }
 
@@ -2190,17 +2397,29 @@ step_install_kiosk_session() {
     # workstation AND on the Pi after the sync: without it labwc runs its stock
     # root menu and keybinds over the kiosk.  Never "nothing to install".  The
     # session file is checked on the Pi only, after the sync.
+    #
+    # US-652-e: deploy/labwc/environment (XCURSOR_THEME=eclipse-blank) joins
+    # rc.xml and autostart, and fails loud like rc.xml -- without it labwc
+    # draws its visible default cursor over the kiosk.  The theme it names is
+    # generated by step_install_blank_cursor_theme, which runs BEFORE this
+    # step: a failed generator halts the deploy (set -e) so the environment
+    # never names a missing theme.
     echo "--- Step: Installing the eclipse-kiosk Wayland session + labwc config (US-649-d, F-139) ---"
     local rcXml="${REPO_ROOT}/deploy/labwc/rc.xml"
+    local labwcEnv="${REPO_ROOT}/deploy/labwc/environment"
     local sessionSrc="deploy/wayland-sessions/eclipse-kiosk.desktop"
     local sessionDst="/usr/share/wayland-sessions/eclipse-kiosk.desktop"
     if [ ! -f "$rcXml" ]; then
         echo "ERROR: labwc config not found: ${rcXml} -- refusing to deploy without it (labwc would run its default root menu and keybinds)." >&2
         exit 12
     fi
+    if [ ! -f "$labwcEnv" ]; then
+        echo "ERROR: labwc config not found: ${labwcEnv} -- refusing to deploy without it (labwc would draw its visible default cursor)." >&2
+        exit 12
+    fi
     if $DRY_RUN; then
         echo "DRY-RUN would: sudo install -d -m 0755 /etc/eclipse/labwc"
-        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/labwc/{rc.xml,autostart} /etc/eclipse/labwc/ || install -m 0644"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/labwc/{rc.xml,autostart,environment} /etc/eclipse/labwc/ || install -m 0644"
         echo "DRY-RUN would: sudo install -m 644 ${PI_PATH}/${sessionSrc} ${sessionDst} (only if cmp -s says it changed)"
         echo "DRY-RUN note: no unit is enabled or started here -- 'sudo eclipse-display-mode wayland' chooses the session"
         return 0
@@ -2222,7 +2441,7 @@ step_install_kiosk_session() {
         fi
 
         sudo install -d -m 0755 \"\$DST_DIR\"
-        for f in rc.xml autostart; do
+        for f in rc.xml autostart environment; do
             if [ ! -f \"\$SRC_DIR/\$f\" ]; then
                 echo \"ERROR: labwc config not found on the Pi: \$SRC_DIR/\$f\" >&2
                 exit 12
@@ -2247,19 +2466,33 @@ step_install_kiosk_session() {
 
 kiosk_mode_resolver() {
     # US-649-a: print the shell that sets SESS from /etc/eclipse/display-mode --
-    # the ONLY authority for x11 vs wayland (absent => x11).  Anything else leaves
-    # SESS empty after one WARN, so the caller skips rather than guesses (A-9).
+    # the ONLY authority for x11 vs wayland.  Anything else leaves SESS empty
+    # after one WARN, so the caller skips rather than guesses (A-9).
     # The running seat0 session is still detected, but only to WARN when it
     # disagrees; it never chooses.  ONE definition, run on the Pi by
     # step_install_ui_kiosk_units and locally by its --dry-run preview, where
     # KIOSK_MODE_FILE / KIOSK_DETECTED_SESSION stand in for the Pi's state.
     # NAME CLASH: unrelated to set-display-mode.sh, which pins the HDMI resolution.
+    #
+    # US-652-a: an ABSENT file means $DISPLAY_MODE_DEFAULT, sourced from $1 --
+    # deploy/lib/display-mode-default.sh in the tree the shell runs against
+    # (the synced tree on the Pi, $REPO_ROOT for the preview).  A missing lib
+    # exits 1 before anything is read or installed; never a silent x11.
+    # MODE_ABSENT=yes marks that case for kiosk_mode_converge (US-652-b).
+    printf "        DISPLAY_MODE_DEFAULT_LIB='%s'\n" "$1"
     cat <<'KIOSK_MODE_RESOLVER'
+        if [ ! -r "$DISPLAY_MODE_DEFAULT_LIB" ]; then
+            echo "ERROR: display-mode default lib not found at '$DISPLAY_MODE_DEFAULT_LIB' -- nothing changed." >&2
+            exit 1
+        fi
+        . "$DISPLAY_MODE_DEFAULT_LIB"
         MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
         if [ -f "$MODE_FILE" ]; then
+            MODE_ABSENT=''
             SESS=$(tr -d '[:space:]' < "$MODE_FILE")
         else
-            SESS=x11
+            MODE_ABSENT=yes
+            SESS="$DISPLAY_MODE_DEFAULT"
         fi
         case "$SESS" in
             x11|wayland) ;;
@@ -2290,6 +2523,45 @@ kiosk_mode_resolver() {
             echo "WARN: the running seat0 session is $RUNNING but $MODE_FILE says $SESS -- installing $SESS (the mode file decides; detection never chooses)." >&2
         fi
 KIOSK_MODE_RESOLVER
+}
+
+kiosk_mode_converge() {
+    # US-652-b (F-139, ADR 2026-08-30 s11.6): print the shell that converges a
+    # car with NO /etc/eclipse/display-mode to $DISPLAY_MODE_DEFAULT (wayland)
+    # by running the one switch command, `eclipse-display-mode <default>
+    # --no-reboot`, ONCE.  Runs right after kiosk_mode_resolver's shell, whose
+    # MODE_ABSENT / SESS / MODE_FILE / DISPLAY_MODE_DEFAULT it reads.
+    #
+    # An EXPLICIT file (x11 or wayland) is never changed by a deploy (Atlas
+    # RULED Q1 2026-10-24): flipping an explicit x11 would silently overrule
+    # the CIO's revert.  A garbage file is the resolver's WARN + skip (A-9).
+    # The switch records the lightdm priors, sets [Seat:*], writes the file,
+    # runs both kits and applies the trigger; with --no-reboot it neither
+    # reboots nor restarts lightdm, so the new session starts at the next
+    # key-on.  If the switch fails (its own pre-flight: labwc missing, no
+    # [Seat:*], ...) the error is printed and SESS is emptied, so the caller
+    # installs NOTHING and the car keeps today's session -- never .wayland
+    # units under an X11 lightdm.
+    #   $1  the switch command in the tree the shell runs against
+    #   $2  the kiosk user (KIOSK_USER for the switch's kit runs and uid)
+    printf "        MODE_CMD='%s'\n" "$1"
+    printf "        KIOSK_CONVERGE_USER='%s'\n" "$2"
+    cat <<'KIOSK_MODE_CONVERGE'
+        if [ "$MODE_ABSENT" = yes ]; then
+            echo "display-mode file $MODE_FILE absent -- converging: eclipse-display-mode $DISPLAY_MODE_DEFAULT --no-reboot (once; the session changes at the next key-on)"
+            if [ ! -f "$MODE_CMD" ]; then
+                echo "ERROR: $MODE_CMD missing -- no switch; deploy continues with no kiosk change (A-9)." >&2
+                SESS=''
+            elif sudo bash -c "KIOSK_USER='$KIOSK_CONVERGE_USER' bash '$MODE_CMD' $DISPLAY_MODE_DEFAULT --no-reboot"; then
+                echo "display mode converged to $DISPLAY_MODE_DEFAULT ($MODE_FILE written)."
+            else
+                echo "ERROR: eclipse-display-mode $DISPLAY_MODE_DEFAULT --no-reboot failed -- deploy continues with no kiosk change (A-9); the car keeps today's session." >&2
+                SESS=''
+            fi
+        elif [ -n "$SESS" ]; then
+            echo "mode file present: $SESS, no switch"
+        fi
+KIOSK_MODE_CONVERGE
 }
 
 step_install_ui_kiosk_units() {
@@ -2347,7 +2619,8 @@ step_install_ui_kiosk_units() {
     # rendered into the units.  The three units are then checked on the Pi.
     #
     # US-649-a: /etc/eclipse/display-mode is the ONLY authority for the session
-    # forced into the installers (kiosk_mode_resolver; absent => x11).  Detecting
+    # forced into the installers (kiosk_mode_resolver; absent => the default in
+    # deploy/lib/display-mode-default.sh, US-652-a).  Detecting
     # the running session used to CHOOSE it, so a deploy run under X11 re-installed
     # X11 over a Wayland choice (Atlas, measured trap).  The seat0 detection
     # survives only as a WARN when the running session disagrees with the file.
@@ -2364,13 +2637,21 @@ step_install_ui_kiosk_units() {
         # KIOSK_DETECTED_SESSION stand in for the Pi's file and seat0 session).
         # Unset, the stand-in session is EMPTY: probing this workstation's own
         # seat0 would WARN about the wrong machine.
-        local resolved
-        resolved="$(KIOSK_DETECTED_SESSION="${KIOSK_DETECTED_SESSION-}" bash -c "$(kiosk_mode_resolver)
-printf '%s' \"\$SESS\"")"
-        echo "DRY-RUN would: read the session from ${KIOSK_MODE_FILE:-/etc/eclipse/display-mode} (absent => x11; local preview) -- a disagreeing seat0 session never chooses"
+        local resolved absent
+        resolved="$(KIOSK_DETECTED_SESSION="${KIOSK_DETECTED_SESSION-}" bash -c "$(kiosk_mode_resolver "$REPO_ROOT/deploy/lib/display-mode-default.sh")
+printf '%s:%s' \"\$MODE_ABSENT\" \"\$SESS\"")"
+        absent="${resolved%%:*}"
+        resolved="${resolved#*:}"
+        echo "DRY-RUN would: read the session from ${KIOSK_MODE_FILE:-/etc/eclipse/display-mode} (absent => the default in deploy/lib/display-mode-default.sh; local preview) -- a disagreeing seat0 session never chooses"
         if [ -z "$resolved" ]; then
             echo "DRY-RUN would: skip the kiosk-unit install (the display-mode file is not x11|wayland)"
             return 0
+        fi
+        # US-652-b: kiosk_mode_converge, previewed (the switch never runs here).
+        if [ "$absent" = yes ]; then
+            echo "DRY-RUN would run (mode file absent, once): eclipse-display-mode ${resolved} --no-reboot -- as sudo KIOSK_USER=${PI_USER} bash ${PI_PATH}/${modeCmd} (no reboot, no lightdm restart; the session changes at the next key-on)"
+        else
+            echo "DRY-RUN would: mode file present: ${resolved}, no switch"
         fi
         echo "DRY-RUN would: (kit installers' V-3 check substitutes the real chromium path into ExecStart -- no symlink shim; US-428)"
         echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=${resolved} _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
@@ -2380,7 +2661,10 @@ printf '%s' \"\$SESS\"")"
     remote "
         # (1) The session type comes from the display-mode file (US-649-a); a
         #     disagreeing running seat0 session only WARNs.
-        $(kiosk_mode_resolver)
+        $(kiosk_mode_resolver "${PI_PATH}/deploy/lib/display-mode-default.sh")
+        # (1b) US-652-b: NO mode file => the one switch to the default, once
+        #      (no reboot); an explicit file is never changed by a deploy.
+        $(kiosk_mode_converge "${PI_PATH}/${modeCmd}" "${PI_USER}")
         if [ -z \"\$SESS\" ]; then
             exit 0
         fi
@@ -2457,8 +2741,9 @@ printf '%s' \"\$SESS\"")"
 step_install_display_mode_command() {
     # US-649-a (F-139): put `eclipse-display-mode x11|wayland|status` on root's
     # PATH.  It is the ONLY thing that writes /etc/eclipse/display-mode or swaps
-    # the display manager -- this step installs the command and changes no mode,
-    # so the car stays on whatever the file says (absent => x11).
+    # the display manager -- this step installs the command and changes no mode.
+    # (A car with NO file was already converged by step_install_ui_kiosk_units,
+    # which runs the tree's copy of the command; US-652-b.)
     #
     # A wrapper, not a copy, at /usr/local/sbin (like obdctl): the command runs
     # deploy/eclipse-display-mode.sh from the deployed tree, so it finds both kit
@@ -2892,6 +3177,16 @@ step_install_journald_persistent
 # modes. Runs AFTER sync_tree so deploy/eclipse-powerkey.conf exists on the Pi.
 step_install_logind_powerkey
 
+# US-652-c: logind no-text-console drop-in (NAutoVTs=0, ReserveVT=0). Same class
+# and posture as the power-key drop-in: unconditional, both display modes, no
+# logind restart. Runs AFTER sync_tree so deploy/eclipse-kiosk-vt.conf exists.
+step_install_logind_kiosk_vt
+
+# US-652-d: mask getty@tty1, the text login behind the kiosk VT. Unconditional,
+# both display modes, never stopped live (effective next boot). sshd and
+# serial-getty@ttyAMA10 are the kept ways in and are never touched here.
+step_mask_getty_tty1
+
 # US-341 / I-036: polkit rule granting mcornelison the
 # org.freedesktop.login1.power-off action.  Without this rule
 # eclipse-obd.service (User=mcornelison) cannot invoke `systemctl poweroff`
@@ -2920,10 +3215,16 @@ step_install_polkit_wifi_scan
 # powersave.conf exists on the Pi.
 step_install_nm_wifi_powersave
 
-# US-253: EEPROM POWER_OFF_ON_HALT=0 enforcement. Runs under --init AND default
-# flow because the setting could be modified out-of-band on the Pi (any
-# `sudo rpi-eeprom-config --edit` rewrites it) and a wrong value silently
-# breaks the wake-on-power loop after the next graceful shutdown. The
+# US-925-a: the Wi-Fi no-secrets recovery unit. Every deploy, both display
+# modes; never restarts NetworkManager (SSH survives). Runs AFTER sync_tree so
+# deploy/eclipse-wifi-recover.service and src/pi/network/wifi_recover.py exist.
+step_install_wifi_recover_unit
+
+# US-253 / US-926-a: EEPROM key-table enforcement (POWER_OFF_ON_HALT=1,
+# NET_INSTALL_AT_POWER_ON=0, NET_INSTALL_ENABLED=0, BOOT_UART=0). Runs under
+# --init AND default flow because the settings could be modified out-of-band on
+# the Pi (any `sudo rpi-eeprom-config --edit` rewrites them) and a wrong value
+# silently breaks the wake-on-power loop after the next graceful shutdown. The
 # standalone script is idempotent -- no-op when already correct. Runs AFTER
 # sync_tree so deploy/enforce-eeprom-power-off-on-halt.sh exists on the Pi.
 step_enforce_eeprom_power_off_on_halt
@@ -3094,6 +3395,9 @@ step_install_state_server_units
 # US-649-d: the eclipse-kiosk Wayland session file lightdm launches + its labwc
 # config (files only, no systemctl -- eclipse-display-mode picks the session).
 # Before the kiosk units. Fails the deploy on a missing deploy/labwc/rc.xml.
+# US-652-e: the blank cursor theme is generated FIRST, so a failed generator
+# halts the deploy before the labwc environment names the theme.
+step_install_blank_cursor_theme
 step_install_kiosk_session
 # Atlas 2026-07-01 BUG-FIX: install the chromium KIOSK UNITS (splash + dashboard).
 # The asset + backend steps above only install what the state server SERVES; without

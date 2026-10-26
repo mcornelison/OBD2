@@ -15,6 +15,11 @@
 </head>
 <body>
   <div id="splash-stage">
+    <!-- US-869-h: #stage is the 480x320 design box, scaled as ONE unit to the
+         real panel by stage-scale.js (the dashboard's US-482 letterbox), centred
+         in #splash-stage. #amber-ring and #warning stay OUTSIDE it: both frame
+         the whole viewport on purpose. -->
+    <div id="stage">
     <!-- 3-rhombus brand mark, INLINE (US-785): splash.svg's gradient and three
          rhombus paths verbatim, with no <style> -- the page's CSS drives it.
          The bloom intro (the dot) and splash.svg's own black rect stay out.
@@ -61,6 +66,7 @@
       <span class="cl-label">IMU</span><span id="feed-imu" class="cl-word w-unread">not read</span>
       <span class="cl-label">UPS</span><span id="feed-ups" class="cl-word w-unread">not read</span>
     </div>
+    </div>
 
     <!-- Amber degraded outer ring (hidden until boot-state.degraded). -->
     <div id="amber-ring" hidden></div>
@@ -77,6 +83,13 @@
     // When previewed from file:// the placeholder is left as-is and the polls
     // simply fail closed to DEGRADED -- the preview still renders the animation.
     window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+  </script>
+  <!-- US-869-h: the ONE letterbox (src/pi/ui/stage-scale.js, copied into this
+       kit by the deploy) scales #stage on load and on resize; no timer. Absent,
+       the guard leaves the page unscaled rather than throwing. -->
+  <script src="stage-scale.js"></script>
+  <script>
+    if (window.EclipseStageScale) window.EclipseStageScale.bindStageScale(document, window);
   </script>
   <!-- motion-gate.js BEFORE the poller: the hand-off asks it whether the fade's
        transitionend will fire at all (Atlas G2, US-869-d). -->

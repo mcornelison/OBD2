@@ -16,6 +16,9 @@
 # 2026-10-24    | Rex (US-651-a) | Atlas GAP G1: *.path + *.target units are accounted;
 #               |                | inventory 20 -> 23 (the kiosk start latch + the
 #               |                | two .path units, installed by the kiosk step).
+# 2026-10-25    | Rex (US-925-a) | MOVED PIN (US-925-a): inventory 23 -> 24 (+
+#               |                | eclipse-wifi-recover.service, pi-literal via
+#               |                | step_install_wifi_recover_unit).
 # ================================================================================
 ################################################################################
 
@@ -44,6 +47,8 @@ drain-forensics.service, whose .service is still synced every deploy -- only
 its timer was retired, US-646 -- plus the 3 deploy-server.sh files via (i-b)),
 eclipse-obd.service via SERVICE_NAME, and rfcomm-bind.service via US-908-b's
 step_sync_rfcomm_bind_unit.  The allow-listed one: obd2-server.service.
+MOVED PIN (US-925-a, 2026-10-25): 24 files -- eclipse-wifi-recover.service is
+the 19th deploy-pi.sh literal (step_install_wifi_recover_unit).
 
 Comment lines are dropped before any search: prose about a unit is not an
 installer for it.
@@ -85,6 +90,7 @@ EXPECTED_PI_LITERAL = {
     "eclipse-powerwatch.service",
     "eclipse-rfkill-unblock.service",
     "eclipse-states-http.service",
+    "eclipse-wifi-recover.service",  # MOVED PIN (US-925-a)
     "eclipse-x-ready.path",
     "orphan-cleanup.service",
     "orphan-cleanup.timer",
@@ -225,18 +231,18 @@ def test_unit_hasAnEveryDeployInstaller(unit: str, piText: str, serverText: str)
     )
 
 
-def test_inventory_matchesTheDocumentedTwentyThree(piText: str, serverText: str) -> None:
+def test_inventory_matchesTheDocumentedTwentyFour(piText: str, serverText: str) -> None:
     """
     Given: the real deploy/ tree
     When: each unit is classified
-    Then: 23 files = 18 deploy-pi.sh literal (14 + rfcomm-bind + the US-651-a
-          latch and two .path units) + 1 expanded + 3 deploy-server.sh
-          top-level + 1 allow-listed
+    Then: 24 files = 19 deploy-pi.sh literal (14 + rfcomm-bind + the US-651-a
+          latch and two .path units + the US-925-a wifi-recover unit) + 1
+          expanded + 3 deploy-server.sh top-level + 1 allow-listed
     """
     units = unitFiles(DEPLOY_DIR)
     how = {unit: installerFor(unit, piText, serverText) for unit in units}
 
-    assert len(units) == 23
+    assert len(units) == 24  # MOVED PIN (US-925-a): + eclipse-wifi-recover.service
     assert {u for u, h in how.items() if h and h.startswith("pi-literal:")} == EXPECTED_PI_LITERAL
     assert {u for u, h in how.items() if h and h.startswith("pi-expanded:")} == (
         EXPECTED_PI_EXPANDED

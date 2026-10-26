@@ -17,6 +17,8 @@
 #               |                | presses are instant, switch presses verify.
 # 2026-10-15    | Rex (US-649-b) | Kiosk takeover follows /etc/eclipse/display-mode
 #               |                | (x11 argv frozen; wayland argv/env pinned).
+# 2026-10-25    | Rex (US-652-b) | MOVED PIN: an absent mode file raises (no
+#               |                | default); grep gate on readDisplayMode.
 # ================================================================================
 ################################################################################
 """What the driver's buttons must guarantee, tested before the code.
@@ -338,9 +340,9 @@ def test_mainRestoresTheCar_onAnyException() -> None:
 # ============ KIOSK TAKEOVER FOLLOWS THE DISPLAY MODE (US-649-b) ==============
 #
 # takeKiosk() launches its own chromium. Under the labwc compositor an X11 argv
-# has no display to draw on, so it follows /etc/eclipse/display-mode exactly as
-# the deploy does: absent -> x11, x11 -> today's argv byte-for-byte, wayland ->
-# the Wayland socket + ozone and NOT the X11-only GPU-raster stopgap.
+# has no display to draw on, so it follows /etc/eclipse/display-mode: x11 ->
+# today's argv byte-for-byte, wayland -> the Wayland socket + ozone and NOT the
+# X11-only GPU-raster stopgap, absent -> raises (US-652-b: no default here).
 
 from tools.imu.drive_console import PORT, kioskLaunch, readDisplayMode  # noqa: E402
 
@@ -378,8 +380,22 @@ def test_kioskLaunch_anUnknownMode_raises() -> None:
         kioskLaunch("drm", {})
 
 
-def test_readDisplayMode_absentFile_isX11(tmp_path) -> None:
-    assert readDisplayMode(tmp_path / "display-mode") == "x11"
+def test_readDisplayMode_absentFile_raisesNamingTheSwitchCommand(tmp_path) -> None:
+    """MOVED PIN (US-652-b): absent was x11; the console keeps NO default now
+    (Atlas Q1 (c)) -- tools/ is not deployed, so it cannot read the shell lib."""
+    f = tmp_path / "display-mode"
+    with pytest.raises(ValueError) as raised:
+        readDisplayMode(f)
+    assert str(raised.value) == (
+        f"{f} absent -- set it with: sudo eclipse-display-mode x11|wayland"
+    )
+
+
+def test_readDisplayMode_absentBranch_returnsNoLiteralMode() -> None:
+    """US-652-a grep gate, extended by US-652-b: no `return "x11"` (or any
+    literal mode) on readDisplayMode's absent branch."""
+    src = inspect.getsource(readDisplayMode)
+    assert not re.search(r"""return\s+['"](x11|wayland)['"]""", src), src
 
 
 @pytest.mark.parametrize("content, mode", [("x11\n", "x11"), ("wayland\n", "wayland"),

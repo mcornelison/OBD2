@@ -32,6 +32,9 @@
 #               |              | warning.png}; the dry run prints the PNG copy.
 # 2026-10-25    | Ralph (Rex)  | US-870-c: MOVED PIN -- the retired SVGs leave
 #               |              | SHUTDOWN_SURFACE and the manifest (pruned).
+# 2026-10-26    | Ralph (Rex)  | US-869-h: MOVED PIN -- keep == {version.txt,
+#               |              | warning.png, stage-scale.js}; the one letterbox
+#               |              | is copied into BOTH kits after the refresh.
 # ================================================================================
 ################################################################################
 
@@ -372,8 +375,10 @@ def test_deployPiSh_splashStep_keepListsOnlyWhatItCannotOwn(splashRefreshArgs):
     kit, and cmp-verified by its own copy step.
     """
     # MOVED PIN (US-785): keep == {version.txt} -> {version.txt, warning.png}.
+    # MOVED PIN (US-869-h): + stage-scale.js, the one letterbox, copied in from
+    # src/pi/ui/ and cmp-verified by its own copy step (warning.png's footing).
     _, keep = splashRefreshArgs
-    assert keep == {"version.txt", "warning.png"}, (
+    assert keep == {"version.txt", "warning.png", "stage-scale.js"}, (
         f"unexpected unverified assets in /opt/splash: {keep}"
     )
 
@@ -399,6 +404,48 @@ def test_deployPiSh_splashStep_copiesTheWarningPngAfterTheRefresh_us785(splashDr
         encoding="utf-8"
     )
     assert "warning.png" not in installSh
+
+
+@pytest.mark.parametrize("kit, installDir", [("splash", "/opt/splash"), ("dashboard", "/opt/dashboard")])
+def test_deployPiSh_copiesTheOneLetterboxIntoBothKits_afterTheRefresh_us869h(
+    splashDryRunStdout, kit, installDir
+):
+    """
+    Given: src/pi/ui/stage-scale.js is the ONE letterbox (US-869-h, Atlas: one
+           source, delivered to both kits, no hand copy)
+    Then: each kit's refresh keep-lists it, the dry run prints its copy into the
+          kit's /opt dir AFTER that refresh with a cmp verify, and neither kit
+          dir carries a copy of its own
+    """
+    lines = splashDryRunStdout.splitlines()
+    refresh = next(
+        i for i, line in enumerate(lines) if "refresh_asset_dir" in line and f"ui/{kit}" in line
+    )
+    keep = re.search(r"refresh_asset_dir \S+ \S+ '[^']*' '([^']*)'", lines[refresh])
+    assert keep and "stage-scale.js" in keep.group(1).split(), lines[refresh]
+    copy = [
+        i
+        for i, line in enumerate(lines)
+        if "src/pi/ui/stage-scale.js" in line and f"{installDir}/stage-scale.js" in line
+    ]
+    assert copy, f"the dry run does not print the stage-scale.js copy into {installDir}"
+    assert copy[0] > refresh, "stage-scale.js must be copied AFTER the refresh, or it is pruned"
+    assert "cmp" in lines[copy[0]], "the copy must be byte-verified"
+    assert not (REPO_ROOT / "src" / "pi" / "ui" / kit / "stage-scale.js").exists(), (
+        f"src/pi/ui/{kit} carries a hand copy of the letterbox"
+    )
+
+
+@pytest.mark.parametrize("kit", ["splash", "dashboard"])
+def test_kitInstallSh_installsTheOneLetterbox_cmpVerified_us869h(kit):
+    """Each kit's own install.sh installs ../stage-scale.js (its one source) and
+    cmp-verifies the bytes, as the deploy does."""
+    installSh = (REPO_ROOT / "src" / "pi" / "ui" / kit / "install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'STAGE_SCALE_SRC="$SCRIPT_DIR/../stage-scale.js"' in installSh
+    assert 'install -m 0644 "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js"' in installSh
+    assert 'cmp -s "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js"' in installSh
 
 
 def test_assetRefreshLibrary_isShippedToThePi():

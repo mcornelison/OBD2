@@ -27,6 +27,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-498 closeout splash wiring.
+# 2026-10-26    | Ralph (Rex)  | US-869-h MOVED PINS: shutdown.html loads the
+#               |              | ONE letterbox, src/pi/ui/stage-scale.js, which
+#               |              | the deploy copies into /opt/splash after the
+#               |              | refresh (cmp-verified, keep-listed, as
+#               |              | warning.png). The served-reference and
+#               |              | installed-by-the-deploy checks accept exactly
+#               |              | that copy-in; every other file is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -53,6 +60,8 @@ from pi.splash.states_http_server import StatesHttpServer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
+# US-869-h: the one shared source of the letterbox, outside every kit dir.
+SHARED_UI_DIR = REPO_ROOT / "src" / "pi" / "ui"
 CONFIG_PATH = REPO_ROOT / "config.json"
 
 _TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz123456"
@@ -179,16 +188,50 @@ def test_graceTransition_emitsGraceBeforeSmoothingResolves(statesDir):
 # ---------------------------------------------------------------------------
 
 
+def _copiedInAfterTheRefresh() -> dict[str, str]:
+    """{asset: source} the splash step copies into /opt/splash after the refresh.
+
+    An asset counts only when it is keep-listed (so the refresh never prunes it)
+    AND the step installs it from a source and cmp-verifies the installed bytes
+    against that same source -- warning.png's pattern (US-785), which
+    stage-scale.js follows (US-869-h). Read off the step body, not a literal.
+    """
+    from tests.deploy.test_deploy_pi import _scriptText, _stepBody
+
+    body = _stepBody(_scriptText(), "step_install_splash_assets")
+    keep = re.search(r'local keepAssets="([^"]*)"', body)
+    assert keep, "the splash step declares no keep-list"
+    sources = dict(re.findall(r'local (\w+)="\$\{PI_PATH\}/([^"]+)"', body))
+    copied = {}
+    for asset in keep.group(1).split():
+        for var, source in sources.items():
+            installs = f"sudo install -m 0644 '${{{var}}}' '${{installDir}}/{asset}'"
+            verifies = f"cmp -s '${{{var}}}' '${{installDir}}/{asset}'"
+            if installs in body and verifies in body:
+                copied[asset] = source
+    return copied
+
+
 @pytest.fixture()
-def shutdownServer(statesDir):
-    """The real states server, serving the real splash kit + a live grace state."""
+def shutdownServer(statesDir, tmp_path):
+    """The real states server, serving the real splash kit + a live grace state.
+
+    MOVED PIN (US-869-h): plus a second assets dir holding ONLY the files the
+    deploy copies in from src/pi/ui/ after the refresh (stage-scale.js) --
+    /opt/splash as the deploy leaves it, not the whole shared dir.
+    """
     _runGrace(statesDir)
+    copiedIn = tmp_path / "copied-in"
+    copiedIn.mkdir()
+    for asset, source in _copiedInAfterTheRefresh().items():
+        if source.startswith("src/pi/ui/"):
+            (copiedIn / asset).write_bytes((REPO_ROOT / source).read_bytes())
     server = StatesHttpServer(
         statesDir=str(statesDir),
         token=_TOKEN,
         host="127.0.0.1",
         port=0,
-        assetsDir=[str(KIT_DIR)],
+        assetsDir=[str(KIT_DIR), str(copiedIn)],
     )
     thread = threading.Thread(target=server.serveForever, daemon=True)
     thread.start()
@@ -229,9 +272,20 @@ def test_shutdownPage_referencesLoadOverTheSameServer(shutdownServer):
     references = re.findall(r'(?:src|data|href)="([^":]+)"', html)
     assert references, "shutdown.html references no assets at all"
 
+    # MOVED PIN (US-869-h): stage-scale.js is served from its one source in
+    # src/pi/ui/ (copied in by the deploy); every OTHER reference must still be
+    # a file in the splash kit dir itself.
+    sharedFromSrcPiUi = {
+        asset
+        for asset, source in _copiedInAfterTheRefresh().items()
+        if source == f"src/pi/ui/{asset}" and (SHARED_UI_DIR / asset).is_file()
+    }
+    assert "stage-scale.js" in sharedFromSrcPiUi
     for reference in references:
         response = _get(shutdownServer, f"/{reference}")
         assert response.status == 200, f"{reference} is referenced but not served"
+        if reference not in sharedFromSrcPiUi:
+            assert (KIT_DIR / reference).is_file(), f"{reference} is not in {KIT_DIR}"
 
 
 def test_shutdownStateRoute_feedsThePollScript(shutdownServer):
@@ -288,9 +342,14 @@ def test_closeoutSurface_isInstalledByTheDeploy():
     assert manifest, "the splash step declares no asset manifest"
     installed = manifest.group(1).split()
 
+    # MOVED PIN (US-869-h): an asset copied in AFTER the refresh, keep-listed
+    # and cmp-verified (warning.png's pattern; stage-scale.js) is installed too.
+    copiedIn = _copiedInAfterTheRefresh()
+
     html = _kitFile("shutdown.html")
     needed = ["shutdown.html", *re.findall(r'(?:src|data)="([^":]+)"', html)]
     for asset in needed:
-        assert asset in installed, (
+        assert asset in installed or asset in copiedIn, (
             f"{asset} is needed to render the closeout but the deploy does not install it"
         )
+    assert copiedIn.get("stage-scale.js") == "src/pi/ui/stage-scale.js"

@@ -17,6 +17,7 @@
 # ================================================================================
 # 2026-10-24    | Rex          | Initial implementation (Sprint 113 US-885-b)
 # 2026-10-25    | Rex          | US-885-c: full-frame scale pin
+# 2026-10-25    | Rex          | US-926-b: config.txt through the shared key writer
 # ================================================================================
 ################################################################################
 
@@ -75,7 +76,9 @@ def test_setBootScreen_allScenariosPass():
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=300,
+        # A hang guard, not a budget: ~190 s alone on the Windows desk since
+        # US-926-b's scenarios, and past 300 s under a loaded chunked run.
+        timeout=600,
     )
     assert result.returncode == 0, (
         f"set-boot-screen bash catalog failed (exit {result.returncode}):\n"
@@ -174,6 +177,42 @@ def test_setBootScreen_namesExactlyTheBootScreenTokens():
     assert not [ln for ln in _codeLines(text) if "video=" in ln]
 
 
+def test_setBootScreen_writesConfigTxtOnlyThroughTheSharedKeyWriter():
+    """
+    Given: Atlas Q6 -- one config.txt key writer, deploy/lib/config-txt-keys.sh
+    When: the script's code is read
+    Then: it sources the lib (refusing loudly if it is missing, like the cmdline
+          helper) and applies disable_splash=1, camera_auto_detect=0 and
+          display_auto_detect=0 through config_txt_set_key
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    lines = _codeLines(text)
+    assert 'CONFIG_TXT_KEYS_LIB="${SELF_DIR}/lib/config-txt-keys.sh"' in lines
+    assert 'if [ ! -r "$CONFIG_TXT_KEYS_LIB" ]; then' in lines
+    assert '. "$CONFIG_TXT_KEYS_LIB"' in lines
+    assert 'AUTODETECT_KEYS="camera_auto_detect=0 display_auto_detect=0"' in lines
+    assert 'CONFIG_KEY="disable_splash"' in lines
+    applyBody = text[
+        text.index("applyConfig() {") : text.index("\n}\n", text.index("applyConfig() {"))
+    ]
+    assert applyBody.count("config_txt_set_key") == 2
+    # The auto-detect keys go first, so an [all] the script opens is theirs.
+    assert applyBody.index("AUTODETECT_KEYS") < applyBody.index('"$CONFIG_KEY"')
+
+
+def test_setBootScreen_revertNeverNamesTheAutoDetectKeys():
+    """
+    Given: Atlas 2026-10-25 -- one revert per concern
+    When: revertConfig's body is read
+    Then: it names neither auto-detect key nor AUTODETECT_*
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    start = text.index("revertConfig() {")
+    body = text[start : text.index("\n}\n", start)]
+    assert "auto_detect" not in body
+    assert "AUTODETECT" not in body
+
+
 def test_noRetainSplashAnywhereInTheShippedTree():
     """
     Given: --retain-splash is stale (Atlas F1: lightdm quits Plymouth itself)
@@ -204,5 +243,27 @@ def test_architectureDocumentsTheBootScreen():
         "console=tty1",
         "--revert",
         "step_set_boot_screen",
+    ):
+        assert needle in section, needle
+
+
+def test_architectureNamesTheOneConfigTxtWriter():
+    """Rule 10 (US-926-b): the lib, the three keys, the rtc debt and the auto-detect undo."""
+    text = ARCHITECTURE.read_text(encoding="utf-8")
+    start = text.index("#### The power-on WARNING screen")
+    section = text[start : text.index("\n#### ", start + 1)]
+    for needle in (
+        "deploy/lib/config-txt-keys.sh",
+        "ONE config.txt key writer",
+        "disable_splash=1",
+        "camera_auto_detect=0",
+        "display_auto_detect=0",
+        "rewritten in",
+        "enable-rtc-charging.sh",
+        "rtc_bbat_vchg",
+        "Not yet migrated",
+        "camera_auto_detect 1",
+        "HDMI35",
+        "leaves",
     ):
         assert needle in section, needle
