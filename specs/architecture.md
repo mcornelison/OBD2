@@ -6793,6 +6793,32 @@ samplePeriodSec, windowSec, midlineV, rearVerdict: 'not_rated', catalystVerdict:
 - A non-numeric value (string, bool, NaN, infinity) is dropped, never stored as 0.
 - Rear and catalyst verdicts are held (CIO 2026-10-13, spec s4.3): always `not_rated`.
 
+**Front verdict (US-891-b, spec v030-o2-page-design s4.2, Spool 2026-10-13):**
+`frontVerdict` is one of `switching`, `stuck_lean`, `stuck_rich`, `unclear`,
+`not_enough_data`, `open_loop`, `warming_up`, `no_data` (snake_case; the page maps token
+-> words). `frontReason` is null for the three rating verdicts and the same token for the
+five withheld ones. `O2History` also keeps the window's `FUEL_SYSTEM_STATUS` and
+`COOLANT_TEMP` readings, fed at the same seam; the pure `frontVerdict` decides at each
+build.
+- **Per-sample gate (Atlas + Spool, 2026-10-26):** a front sample in the window counts
+  only when its paired `FUEL_SYSTEM_STATUS` is `FUEL_SYSTEM_CLOSED_LOOP` and its paired
+  `COOLANT_TEMP` is >= 85 C. Paired = the latest reading with event ts AT OR BEFORE the
+  sample's and within 1.1 s of it (`GATE_PAIR_MAX_SEC`, same poll cycle, Spool S2
+  2026-10-26). 1.1 s < `pi.display.stale.obdLiveSec`, so a paired reading is never stale.
+- **Code 2 only (Spool S3 RULED 2026-10-26):** the constant is IMPORTED from
+  `ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP`, never a second literal; `fuel_status`'s
+  {2, 5} closed-loop set is a different rule. Status 5 samples do not count.
+- **Rule:** with >= 60 gated samples (`VERDICT_MIN_GATED_SAMPLES`): frac(< 0.30 V) >= 0.20
+  and frac(> 0.60 V) >= 0.20 -> `switching`; frac(< `midlineV`) >= 0.90 -> `stuck_lean`;
+  frac(> `midlineV`) >= 0.90 -> `stuck_rich`; else `unclear`. The STUCK thresholds are
+  convention, never exercised on this car.
+- **Withheld reason** (fewer than 60), by the latest `FUEL_SYSTEM_STATUS` (Spool S1 + S3
+  RULED 2026-10-26): absent, non-integral or older than `obdLiveSec` at the emit ->
+  `no_data`; 1/3/4 -> `open_loop`; 2 with the coolant of its cycle (within 1.1 s either
+  way) < 85 C -> `warming_up` (S1 MEASURED: closed loop below 85 C on 16 of 41 drives);
+  anything else, including 5, -> `not_enough_data`. A latest status of 5 never reads
+  `open_loop`.
+
 #### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
 
 **Producer:** `src/pi/obdii/alerts_arbiter.py`, run inside the eclipse-obd process (Atlas

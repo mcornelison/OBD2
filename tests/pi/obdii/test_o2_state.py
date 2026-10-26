@@ -13,6 +13,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-26    | Rex (US-891-a) | Initial -- O2 tracker, builder, seam and tick.
+# 2026-10-26    | Rex (US-891-b) | The front verdict: per-sample gate, the 60
+#                                minimum, Spool's distribution rule, reasons.
 # ================================================================================
 ################################################################################
 
@@ -117,6 +119,8 @@ class TestTheShape:
             "samplePeriodSec": 2.2,
             "windowSec": 300.0,
             "midlineV": 0.45,
+            "frontVerdict": "no_data",
+            "frontReason": "no_data",
             "rearVerdict": "not_rated",
             "catalystVerdict": "not_rated",
             "ts": _iso(3),
@@ -482,3 +486,337 @@ class TestThroughTheCardTick:
         orch.tick(3)
 
         assert orch.state()["front"]["stale"] is True
+
+
+# ================================================== US-891-b: the front verdict
+
+_PERIOD_S = 2.2
+_STATUS_LEAD_S = 0.14
+_COOLANT_LEAD_S = 0.07
+
+
+def _cycles(
+    history: O2History,
+    volts: list[float],
+    *,
+    status: Any = 2,
+    coolantC: Any = 90.0,
+    startS: float = 0.0,
+    statusLeadS: float = _STATUS_LEAD_S,
+    coolantLeadS: float = _COOLANT_LEAD_S,
+) -> float:
+    """One poll cycle per volt: status, coolant, then the front O2 sample.
+
+    Returns the event time (s) of the last front sample.
+    """
+    t = startS
+    for i, v in enumerate(volts):
+        t = startS + i * _PERIOD_S
+        if status is not None:
+            history.observe("FUEL_SYSTEM_STATUS", status, _at(t - statusLeadS))
+        if coolantC is not None:
+            history.observe("COOLANT_TEMP", coolantC, _at(t - coolantLeadS))
+        history.observe("O2_B1S1", v, _at(t))
+    return t
+
+
+def _verdict(history: O2History, nowS: float) -> tuple[str, str | None]:
+    state = _build(history, nowS)
+    return state["frontVerdict"], state["frontReason"]
+
+
+class TestTheDistributionRule:
+    """Spec s4.2 (Spool 2026-10-13): fractions of the gated front samples."""
+
+    def test_storyExample_70gated_30pcLow_35pcHigh_isSwitching(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 21 + [0.8] * 25 + [0.45] * 24)
+
+        assert _verdict(history, last) == ("switching", None)
+
+    def test_switching_atExactlyTwentyPercentEachSide(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 12 + [0.8] * 12 + [0.45] * 36)
+
+        assert _verdict(history, last) == ("switching", None)
+
+    def test_justUnderTwentyPercentLow_isNotSwitching(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 11 + [0.8] * 12 + [0.45] * 37)
+
+        assert _verdict(history, last) == ("unclear", "unclear")
+
+    def test_theSwitchingBands_areStrict(self) -> None:
+        """0.30 V is not below 0.30 and 0.60 V is not above 0.60."""
+        history = _history()
+        last = _cycles(history, [0.30] * 30 + [0.60] * 30)
+
+        assert _verdict(history, last) == ("unclear", "unclear")
+
+    def test_stuckLean_atExactlyNinetyPercent(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 54 + [0.5] * 6)
+
+        assert _verdict(history, last) == ("stuck_lean", None)
+
+    def test_justUnderNinetyPercentLean_isUnclear(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 53 + [0.5] * 7)
+
+        assert _verdict(history, last) == ("unclear", "unclear")
+
+    def test_stuckRich_atExactlyNinetyPercent(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.8] * 54 + [0.4] * 6)
+
+        assert _verdict(history, last) == ("stuck_rich", None)
+
+    def test_justUnderNinetyPercentRich_isUnclear(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.8] * 53 + [0.4] * 7)
+
+        assert _verdict(history, last) == ("unclear", "unclear")
+
+    def test_aSampleOnTheMidline_isNeitherLeanNorRich(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.45] * 60)
+
+        assert _verdict(history, last) == ("unclear", "unclear")
+
+    def test_theRuleConstants_areNamedInO2State(self) -> None:
+        assert o2_state.SWITCH_LOW_V == 0.30
+        assert o2_state.SWITCH_HIGH_V == 0.60
+        assert o2_state.SWITCH_MIN_FRACTION == 0.20
+        assert o2_state.STUCK_MIN_FRACTION == 0.90
+        assert o2_state.VERDICT_MIN_GATED_SAMPLES == 60
+        assert o2_state.GATE_COOLANT_MIN_C == 85.0
+        assert o2_state.GATE_PAIR_MAX_SEC == 1.1
+
+
+class TestNotEnoughData:
+    def test_59gatedSamples_isNotEnoughData(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 29)
+
+        assert _verdict(history, last) == ("not_enough_data", "not_enough_data")
+
+    def test_60gatedSamples_isEnough(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30)
+
+        assert _verdict(history, last)[0] == "switching"
+
+    def test_onlySamplesInsideTheWindowCount(self) -> None:
+        """70 gated samples, but only ~55 fit in a 120 s window."""
+        history = _history(windowSec=120)
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35)
+
+        assert _verdict(history, last) == ("not_enough_data", "not_enough_data")
+
+    def test_rearSamples_neverCount(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 29)
+        for i in range(10):
+            history.observe("O2_B1S2", 0.1, _at(last + 0.01 * i))
+
+        assert _verdict(history, last)[0] == "not_enough_data"
+
+
+class TestThePerSampleGate:
+    """A sample counts only with paired status 2 AND paired coolant >= 85 C."""
+
+    def test_status5Samples_doNotCount(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, status=5)
+
+        assert _verdict(history, last) == ("not_enough_data", "not_enough_data")
+
+    def test_aLatestStatusOf5_neverReadsOpenLoop(self) -> None:
+        """Story example: latest status 5 with 10 code-2 samples -> not_enough_data."""
+        history = _history()
+        last = _cycles(history, [0.1] * 5 + [0.8] * 5)
+        last = _cycles(history, [0.45] * 5, status=5, startS=last + _PERIOD_S)
+
+        assert _verdict(history, last) == ("not_enough_data", "not_enough_data")
+
+    def test_coolant84_samplesDoNotCount(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, coolantC=84.0)
+
+        assert _verdict(history, last)[0] == "warming_up"
+
+    def test_coolantExactly85_counts(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30, coolantC=85.0)
+
+        assert _verdict(history, last)[0] == "switching"
+
+    def test_aStatusReading1point5sBeforeTheSample_isNotPaired(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, statusLeadS=1.5)
+
+        assert _verdict(history, last)[0] == "not_enough_data"
+
+    def test_aCoolantReading1point5sBeforeTheSample_isNotPaired(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, coolantLeadS=1.5)
+
+        assert _verdict(history, last)[0] == "not_enough_data"
+
+    def test_aStatusReadingExactly1point1sBefore_isPaired(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30, statusLeadS=1.1)
+
+        assert _verdict(history, last)[0] == "switching"
+
+    def test_aStatusReadingAfterTheSample_isNotPaired(self) -> None:
+        """At or before: a gate read 0.1 s AFTER the sample does not gate it."""
+        history = _history()
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, statusLeadS=-0.1)
+
+        assert _verdict(history, last)[0] == "not_enough_data"
+
+    def test_theLatestGateAtOrBefore_decides_notAnEarlierGoodOne(self) -> None:
+        """Status 2 at t-0.5 then status 1 at t-0.1: the sample is open loop."""
+        history = _history()
+        last = 0.0
+        for i in range(70):
+            last = i * _PERIOD_S
+            history.observe("FUEL_SYSTEM_STATUS", 2, _at(last - 0.5))
+            history.observe("FUEL_SYSTEM_STATUS", 1, _at(last - 0.1))
+            history.observe("COOLANT_TEMP", 90.0, _at(last - 0.07))
+            history.observe("O2_B1S1", 0.1 if i % 2 else 0.8, _at(last))
+
+        assert _verdict(history, last) == ("open_loop", "open_loop")
+
+    def test_closedLoopIsTheImportedLtftConstant(self) -> None:
+        """Spool S3: the EXISTING code-2-only constant, not a new literal."""
+        from pi.splash import ltft_trend_emitter
+
+        assert o2_state.FUEL_SYSTEM_CLOSED_LOOP is ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP
+
+    def test_aFloatStatus2point0_isClosedLoop(self) -> None:
+        """realtime_data carries the code as a float (decoders: float(code))."""
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30, status=2.0)
+
+        assert _verdict(history, last)[0] == "switching"
+
+
+class TestTheWithheldReason:
+    """Fewer than 60 gated samples: the reason by the latest paired readings."""
+
+    def test_status2_coolant84_isWarmingUp(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.5] * 10, coolantC=84.0)
+
+        assert _verdict(history, last) == ("warming_up", "warming_up")
+
+    def test_storyExample_coolant80_closedLoop_isWarmingUp(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.5] * 3, coolantC=80.0)
+
+        assert _verdict(history, last) == ("warming_up", "warming_up")
+
+    @pytest.mark.parametrize("status", [1, 3, 4, 1.0, 3.0])
+    def test_openLoopCodes_readOpenLoop(self, status: Any) -> None:
+        history = _history()
+        last = _cycles(history, [0.5] * 10, status=status)
+
+        assert _verdict(history, last) == ("open_loop", "open_loop")
+
+    def test_status5_isNotOpenLoop(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.5] * 10, status=5)
+
+        assert _verdict(history, last) == ("not_enough_data", "not_enough_data")
+
+    def test_status2_warmCoolant_isNotEnoughData(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.5] * 10)
+
+        assert _verdict(history, last) == ("not_enough_data", "not_enough_data")
+
+    def test_noStatusReading_isNoData(self) -> None:
+        history = _history()
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, status=None)
+
+        assert _verdict(history, last) == ("no_data", "no_data")
+
+    def test_nothingReadAtAll_isNoData(self) -> None:
+        assert _verdict(_history(), 0) == ("no_data", "no_data")
+
+    @pytest.mark.parametrize("bad", [None, "CL", True, float("nan")])
+    def test_aNonNumericStatus_isNotAStatus(self, bad: Any) -> None:
+        history = _history()
+        last = _cycles(history, [0.5] * 10, status=bad)
+
+        assert _verdict(history, last) == ("no_data", "no_data")
+
+    def test_aStaleStatus_isNoData(self) -> None:
+        """obd-live's value-means-CURRENT: a status older than obdLiveSec is absent."""
+        history = _history()
+        last = _cycles(history, [0.5] * 10, status=1)
+
+        # The last status was read at last - 0.14 s: 4.94 s old, then 5.06 s old.
+        assert _verdict(history, last + 4.8) == ("open_loop", "open_loop")
+        assert _verdict(history, last + 4.92) == ("no_data", "no_data")
+
+    def test_status2_unpairedCoolant_isNotWarmingUp(self) -> None:
+        """A cold coolant 2 s from the latest status is another cycle's."""
+        history = _history()
+        history.observe("COOLANT_TEMP", 60.0, _at(0))
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(2))
+
+        assert _verdict(history, 2) == ("not_enough_data", "not_enough_data")
+
+    def test_status2_coolantJustAfterIt_isPaired(self) -> None:
+        """Status and coolant of one cycle, coolant polled 0.1 s after status."""
+        history = _history()
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(0))
+        history.observe("COOLANT_TEMP", 60.0, _at(0.1))
+
+        assert _verdict(history, 0.1) == ("warming_up", "warming_up")
+
+    def test_enoughGatedSamples_winsOverTheLatestStatus(self) -> None:
+        """A switching window stays SWITCHING when the latest status is open loop."""
+        history = _history()
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30)
+        history.observe("FUEL_SYSTEM_STATUS", 3, _at(last + 1))
+
+        assert _verdict(history, last + 1)[0] == "switching"
+
+
+class TestTheVerdictThroughTheSeam:
+    def test_trackerFeedsTheGateReadings(self) -> None:
+        tracker = _tracker()
+        for i in range(60):
+            t = 10 + i * _PERIOD_S
+            tracker.observeReading(_reading("FUEL_SYSTEM_STATUS", 2.0, t - 0.14))
+            tracker.observeReading(_reading("COOLANT_TEMP", 90.0, t - 0.07))
+            tracker.observeReading(_reading("O2_B1S1", 0.1 if i % 2 else 0.8, t))
+
+        state = buildO2State(
+            tracker.o2Snapshot(), nowUtc=_at(10 + 59 * _PERIOD_S), staleSec=_STALE_S
+        )
+
+        assert state["frontVerdict"] == "switching"
+        assert state["frontReason"] is None
+
+    def test_importingO2State_hasNoCycle(self) -> None:
+        import subprocess
+        import sys
+
+        # As the tests run: the repo root is the cwd and src is on the path.
+        repoRoot = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        env = dict(os.environ, PYTHONPATH=os.path.join(repoRoot, "src") + os.pathsep + repoRoot)
+        result = subprocess.run(
+            [sys.executable, "-c", "import pi.obdii.o2_state"],
+            cwd=repoRoot,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        assert result.returncode == 0, result.stderr
