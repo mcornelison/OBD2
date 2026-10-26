@@ -2521,6 +2521,20 @@ quit.
     pointer input undoes it (REJECTED by Atlas).
   - **Revert:** delete the `XCURSOR_THEME` line from `deploy/labwc/environment`
     and deploy; the theme dir left behind in `/usr/share/icons` is inert.
+- **No local text-console login (US-652-c, Sprint 115; CIO 2026-10-24 access
+  ruling).** logind's defaults (`NAutoVTs=6`, `ReserveVT=6`; Atlas MEASURED
+  2026-10-24: no override on the Pi) let Ctrl+Alt+F2..F6 raise a text login on
+  the panel. `deploy/eclipse-kiosk-vt.conf` ->
+  `/etc/systemd/logind.conf.d/51-eclipse-kiosk-vt.conf` (`[Login]
+  NAutoVTs=0`, `ReserveVT=0`, nothing else) stops logind spawning or reserving
+  a getty on any VT (logind.conf(5)). There is no on-screen login ever; SSH and
+  the serial login are the way in. `step_install_logind_kiosk_vt`, called right
+  after `step_install_logind_powerkey` and in its posture, installs it
+  sync-if-changed (`cmp -s`; a current copy prints `already current (no
+  change)` and writes nothing) in **both** modes, and never restarts or reloads
+  logind -- it takes effect on the next boot. It ships through the existing
+  `deploy/eclipse-*.conf` rsync include and the tar fallback's `./deploy`.
+  `HandlePowerKey` stays the power-key drop-in's alone.
 - **`eclipse-compositor.service` is retired** (CIO 2026-10-16; US-649-d removed it
   from the deploy tree). The US-649-b system unit ran labwc itself with
   `PAMName=login` and had to do every display-manager duty by hand; the

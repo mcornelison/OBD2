@@ -752,6 +752,34 @@ step_install_logind_powerkey() {
     "
 }
 
+step_install_logind_kiosk_vt() {
+    # US-652-c: logind opens no text consoles (NAutoVTs=0, ReserveVT=0). CIO
+    # 2026-10-24 access ruling: no on-screen login ever; SSH and the serial
+    # login stay. Same posture as step_install_logind_powerkey: sync-if-changed,
+    # NEVER restarts or reloads logind (a live restart can drop the kiosk
+    # session; the drop-in takes effect on the next boot), both display modes.
+    echo "--- Step: Installing logind no-text-console drop-in (US-652-c) ---"
+    local sourceFile="deploy/eclipse-kiosk-vt.conf"
+    local targetPath="/etc/systemd/logind.conf.d/51-eclipse-kiosk-vt.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: no logind restart (takes effect on next boot)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/systemd/logind.conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'logind no-text-console drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'logind no-text-console drop-in installed: ${targetPath} (effective next boot).'
+        fi
+    "
+}
+
 step_install_polkit_poweroff() {
     # US-341 / I-036: install polkit rule granting mcornelison the
     # org.freedesktop.login1.power-off action without interactive auth.
@@ -3006,6 +3034,11 @@ step_install_journald_persistent
 # unconditionally, outside any display-mode branch, so the pin holds in both
 # modes. Runs AFTER sync_tree so deploy/eclipse-powerkey.conf exists on the Pi.
 step_install_logind_powerkey
+
+# US-652-c: logind no-text-console drop-in (NAutoVTs=0, ReserveVT=0). Same class
+# and posture as the power-key drop-in: unconditional, both display modes, no
+# logind restart. Runs AFTER sync_tree so deploy/eclipse-kiosk-vt.conf exists.
+step_install_logind_kiosk_vt
 
 # US-341 / I-036: polkit rule granting mcornelison the
 # org.freedesktop.login1.power-off action.  Without this rule
