@@ -2315,22 +2315,22 @@ tidying an async body.
 ### Kiosk Display Stack: X11 or Wayland (US-649-a, F-139, Sprint 102)
 
 **`/etc/eclipse/display-mode` is the SSOT for which kiosk stack the car runs.** It
-holds exactly `x11` or `wayland`; an ABSENT file means `x11` (the default's one
-home is `deploy/lib/display-mode-default.sh`, below). Nothing chooses by
+holds exactly `x11` or `wayland`; an ABSENT file means `wayland` since US-652-b
+(the default's one home is `deploy/lib/display-mode-default.sh`, below). Nothing chooses by
 detecting the running session any more: the deploy used to pick the `.x11` /
 `.wayland` kiosk units from the active seat0 session, so a deploy run while X11
 was up re-installed X11 over a Wayland choice (Atlas, measured trap).
 
 | Reader | What it does with the file |
 |--------|----------------------------|
-| `deploy-pi.sh` `step_install_ui_kiosk_units` | `kiosk_mode_resolver` reads it and forces that type into both kit installers via `{SPLASH,DASHBOARD}_FORCE_SESSION`. Any other content -> one WARN, kiosk install skipped (A-9). A running seat0 session that disagrees -> one WARN; it never chooses. |
-| `src/pi/ui/{splash,dashboard}/install.sh` (V-2) | Unforced, they read it (absent -> x11, other -> abort). A forced `_FORCE_SESSION` still wins. Their own session detection only WARNs. |
+| `deploy-pi.sh` `step_install_ui_kiosk_units` | `kiosk_mode_resolver` reads it and forces that type into both kit installers via `{SPLASH,DASHBOARD}_FORCE_SESSION`. Absent -> `kiosk_mode_converge` runs the switch once (US-652-b, below). Any other content -> one WARN, kiosk install skipped (A-9). A running seat0 session that disagrees -> one WARN; it never chooses. |
+| `src/pi/ui/{splash,dashboard}/install.sh` (V-2) | Unforced, they read it (absent -> the lib's default, other -> abort). A forced `_FORCE_SESSION` still wins. Their own session detection only WARNs. |
 | `eclipse-display-mode status` | Reports file mode, enabled display manager and installed dashboard variant; non-zero on any mismatch. |
 | `eclipse-capture-panel` (US-650) | Picks grim (wayland) or scrot (x11) from it; read-only. |
 
 **The absent-file default has ONE home: `deploy/lib/display-mode-default.sh`**
-(US-652-a). It defines `DISPLAY_MODE_DEFAULT` (`x11` today; US-652-b flips it)
-and nothing else that runs. All FIVE shell readers -- `eclipse-display-mode.sh`
+(US-652-a). It defines `DISPLAY_MODE_DEFAULT` (`wayland` since US-652-b; it was
+`x11`) and nothing else that runs. All FIVE shell readers -- `eclipse-display-mode.sh`
 `read_mode`, `eclipse-capture-panel.sh` `read_mode`, `deploy-pi.sh`
 `kiosk_mode_resolver`, and both kit installers' `read_display_mode` -- source it
 and use `$DISPLAY_MODE_DEFAULT` for the absent case; none carries its own. Each
@@ -2343,6 +2343,30 @@ with nothing changed -- never a silent x11 (the `cmdline-tokens.sh` pattern). A
 grep gate in `tests/deploy/test_display_mode.py` fails any absent-file default
 outside the lib (`installed_dashboard_variant`'s `printf 'x11'` is a unit-variant
 DETECTION, exempt by name).
+
+**No mode file means wayland, and the deploy converges such a car (US-652-b, ADR
+2026-08-30 §11.6).** The default boot is the labwc kiosk. When
+`/etc/eclipse/display-mode` is ABSENT (a fresh or re-imaged card),
+`step_install_ui_kiosk_units` runs `kiosk_mode_converge` right after the resolver:
+`eclipse-display-mode wayland --no-reboot`, ONCE, from the synced tree -- the one
+switch command, unchanged (priors recorded, both `[Seat:*]` keys `eclipse-kiosk`,
+the file written, the `.wayland` units and trigger). The deploy never reboots and
+never restarts lightdm: the session changes at the next key-on. **An explicit file
+is never changed by a deploy** (Atlas RULED Q1 2026-10-24): an `x11` file -- the
+CIO's revert -- keeps lightdm.conf and the file byte-identical and gets the X11
+units; a `wayland` file gets the `.wayland` units, no switch. `--dry-run` prints
+the switch it would run, or `mode file present: <mode>, no switch`. A garbage file
+is the resolver's WARN + skip (A-9); a switch that fails its own pre-flight (labwc
+missing, no `[Seat:*]`) prints the error and the deploy continues with NO kiosk
+change -- never `.wayland` units under an X11 lightdm. `tools/imu/drive_console.py`
+`readDisplayMode` keeps NO default (Atlas Q1 (c)): tools/ is not deployed, so it
+cannot source the lib, and an absent file raises naming
+`sudo eclipse-display-mode x11|wayland`. **Hide the mouse:** `dashboard.css` and
+the splash's `styles.css` each carry exactly ONE cursor rule,
+`html, html *{cursor:none !important}` (Iris RULED; plain `html *` is (0,0,1) and
+loses to any class rule), and no other cursor declaration
+(`tests/ui/test_kiosk_cursor_none.py`); CSS covers Chromium's frames only, the
+frames labwc owns are US-652-e's blank cursor theme.
 
 **The one command:** `sudo eclipse-display-mode x11|wayland|status [--no-reboot]`
 (`deploy/eclipse-display-mode.sh`, installed by deploy-pi.sh as a wrapper at

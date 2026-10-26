@@ -6,9 +6,10 @@
 # /etc/eclipse/display-mode holds exactly `x11` or `wayland` and is the ONLY
 # authority for which kiosk variants are installed. An ABSENT file means
 # $DISPLAY_MODE_DEFAULT, defined ONLY in deploy/lib/display-mode-default.sh
-# (x11 today; US-652-a). The deploy and both kit installers read it; nothing chooses by detecting the
-# running session any more (a deploy run while X11 was up used to re-install
-# X11 over a Wayland choice -- Atlas, measured trap).
+# (wayland since US-652-b; US-652-a). The deploy and both kit installers read
+# it; nothing chooses by detecting the running session any more (a deploy run
+# while X11 was up used to re-install X11 over a Wayland choice -- Atlas,
+# measured trap).
 #
 # NAME CLASH, not the same thing: deploy/set-display-mode.sh pins the HDMI
 # RESOLUTION in cmdline.txt (US-552). This command never reads or sets that.

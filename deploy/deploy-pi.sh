@@ -2259,6 +2259,7 @@ kiosk_mode_resolver() {
     # deploy/lib/display-mode-default.sh in the tree the shell runs against
     # (the synced tree on the Pi, $REPO_ROOT for the preview).  A missing lib
     # exits 1 before anything is read or installed; never a silent x11.
+    # MODE_ABSENT=yes marks that case for kiosk_mode_converge (US-652-b).
     printf "        DISPLAY_MODE_DEFAULT_LIB='%s'\n" "$1"
     cat <<'KIOSK_MODE_RESOLVER'
         if [ ! -r "$DISPLAY_MODE_DEFAULT_LIB" ]; then
@@ -2268,8 +2269,10 @@ kiosk_mode_resolver() {
         . "$DISPLAY_MODE_DEFAULT_LIB"
         MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
         if [ -f "$MODE_FILE" ]; then
+            MODE_ABSENT=''
             SESS=$(tr -d '[:space:]' < "$MODE_FILE")
         else
+            MODE_ABSENT=yes
             SESS="$DISPLAY_MODE_DEFAULT"
         fi
         case "$SESS" in
@@ -2301,6 +2304,45 @@ kiosk_mode_resolver() {
             echo "WARN: the running seat0 session is $RUNNING but $MODE_FILE says $SESS -- installing $SESS (the mode file decides; detection never chooses)." >&2
         fi
 KIOSK_MODE_RESOLVER
+}
+
+kiosk_mode_converge() {
+    # US-652-b (F-139, ADR 2026-08-30 s11.6): print the shell that converges a
+    # car with NO /etc/eclipse/display-mode to $DISPLAY_MODE_DEFAULT (wayland)
+    # by running the one switch command, `eclipse-display-mode <default>
+    # --no-reboot`, ONCE.  Runs right after kiosk_mode_resolver's shell, whose
+    # MODE_ABSENT / SESS / MODE_FILE / DISPLAY_MODE_DEFAULT it reads.
+    #
+    # An EXPLICIT file (x11 or wayland) is never changed by a deploy (Atlas
+    # RULED Q1 2026-10-24): flipping an explicit x11 would silently overrule
+    # the CIO's revert.  A garbage file is the resolver's WARN + skip (A-9).
+    # The switch records the lightdm priors, sets [Seat:*], writes the file,
+    # runs both kits and applies the trigger; with --no-reboot it neither
+    # reboots nor restarts lightdm, so the new session starts at the next
+    # key-on.  If the switch fails (its own pre-flight: labwc missing, no
+    # [Seat:*], ...) the error is printed and SESS is emptied, so the caller
+    # installs NOTHING and the car keeps today's session -- never .wayland
+    # units under an X11 lightdm.
+    #   $1  the switch command in the tree the shell runs against
+    #   $2  the kiosk user (KIOSK_USER for the switch's kit runs and uid)
+    printf "        MODE_CMD='%s'\n" "$1"
+    printf "        KIOSK_CONVERGE_USER='%s'\n" "$2"
+    cat <<'KIOSK_MODE_CONVERGE'
+        if [ "$MODE_ABSENT" = yes ]; then
+            echo "display-mode file $MODE_FILE absent -- converging: eclipse-display-mode $DISPLAY_MODE_DEFAULT --no-reboot (once; the session changes at the next key-on)"
+            if [ ! -f "$MODE_CMD" ]; then
+                echo "ERROR: $MODE_CMD missing -- no switch; deploy continues with no kiosk change (A-9)." >&2
+                SESS=''
+            elif sudo bash -c "KIOSK_USER='$KIOSK_CONVERGE_USER' bash '$MODE_CMD' $DISPLAY_MODE_DEFAULT --no-reboot"; then
+                echo "display mode converged to $DISPLAY_MODE_DEFAULT ($MODE_FILE written)."
+            else
+                echo "ERROR: eclipse-display-mode $DISPLAY_MODE_DEFAULT --no-reboot failed -- deploy continues with no kiosk change (A-9); the car keeps today's session." >&2
+                SESS=''
+            fi
+        elif [ -n "$SESS" ]; then
+            echo "mode file present: $SESS, no switch"
+        fi
+KIOSK_MODE_CONVERGE
 }
 
 step_install_ui_kiosk_units() {
@@ -2376,13 +2418,21 @@ step_install_ui_kiosk_units() {
         # KIOSK_DETECTED_SESSION stand in for the Pi's file and seat0 session).
         # Unset, the stand-in session is EMPTY: probing this workstation's own
         # seat0 would WARN about the wrong machine.
-        local resolved
+        local resolved absent
         resolved="$(KIOSK_DETECTED_SESSION="${KIOSK_DETECTED_SESSION-}" bash -c "$(kiosk_mode_resolver "$REPO_ROOT/deploy/lib/display-mode-default.sh")
-printf '%s' \"\$SESS\"")"
+printf '%s:%s' \"\$MODE_ABSENT\" \"\$SESS\"")"
+        absent="${resolved%%:*}"
+        resolved="${resolved#*:}"
         echo "DRY-RUN would: read the session from ${KIOSK_MODE_FILE:-/etc/eclipse/display-mode} (absent => the default in deploy/lib/display-mode-default.sh; local preview) -- a disagreeing seat0 session never chooses"
         if [ -z "$resolved" ]; then
             echo "DRY-RUN would: skip the kiosk-unit install (the display-mode file is not x11|wayland)"
             return 0
+        fi
+        # US-652-b: kiosk_mode_converge, previewed (the switch never runs here).
+        if [ "$absent" = yes ]; then
+            echo "DRY-RUN would run (mode file absent, once): eclipse-display-mode ${resolved} --no-reboot -- as sudo KIOSK_USER=${PI_USER} bash ${PI_PATH}/${modeCmd} (no reboot, no lightdm restart; the session changes at the next key-on)"
+        else
+            echo "DRY-RUN would: mode file present: ${resolved}, no switch"
         fi
         echo "DRY-RUN would: (kit installers' V-3 check substitutes the real chromium path into ExecStart -- no symlink shim; US-428)"
         echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=${resolved} _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
@@ -2393,6 +2443,9 @@ printf '%s' \"\$SESS\"")"
         # (1) The session type comes from the display-mode file (US-649-a); a
         #     disagreeing running seat0 session only WARNs.
         $(kiosk_mode_resolver "${PI_PATH}/deploy/lib/display-mode-default.sh")
+        # (1b) US-652-b: NO mode file => the one switch to the default, once
+        #      (no reboot); an explicit file is never changed by a deploy.
+        $(kiosk_mode_converge "${PI_PATH}/${modeCmd}" "${PI_USER}")
         if [ -z \"\$SESS\" ]; then
             exit 0
         fi
@@ -2469,8 +2522,9 @@ printf '%s' \"\$SESS\"")"
 step_install_display_mode_command() {
     # US-649-a (F-139): put `eclipse-display-mode x11|wayland|status` on root's
     # PATH.  It is the ONLY thing that writes /etc/eclipse/display-mode or swaps
-    # the display manager -- this step installs the command and changes no mode,
-    # so the car stays on whatever the file says (absent => x11).
+    # the display manager -- this step installs the command and changes no mode.
+    # (A car with NO file was already converged by step_install_ui_kiosk_units,
+    # which runs the tree's copy of the command; US-652-b.)
     #
     # A wrapper, not a copy, at /usr/local/sbin (like obdctl): the command runs
     # deploy/eclipse-display-mode.sh from the deployed tree, so it finds both kit

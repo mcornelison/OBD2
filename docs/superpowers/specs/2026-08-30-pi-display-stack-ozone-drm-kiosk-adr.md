@@ -397,10 +397,14 @@ design A). The mode is chosen by an explicit mode file and switched by one comma
 
 ### 11.6 Cut-over -- §9 S5 amended
 
-- The S102 deploy is boot-neutral: an absent mode file means X11.
+- The S102 deploy is boot-neutral: an absent mode file means X11 (until US-652-b, below).
 - The CIO flips the car with `sudo eclipse-display-mode wayland` to run the gates, and only after the S101 after-ladder has n >= 5 counted
   boots. That after-ladder is this migration's before-ladder.
-- **US-652**, the code default flip (absent file -> wayland) and this ADR's status -> cut over, is filed only after every gate in §11.4 passes.
+- **US-652**, the code default flip (absent file -> wayland), is BUILT before the §11.4 gates and DEPLOYED only after they pass (CIO
+  ruling; amended in-sprint, Atlas 2026-10-24, S115). This ADR's status moves to cut over with that deploy.
+- The default is wayland (`deploy/lib/display-mode-default.sh`). A car with NO mode file is converged by the deploy: it runs
+  `eclipse-display-mode wayland --no-reboot` once (no reboot, no lightdm restart; the session changes at the next key-on). An
+  explicit mode file is never overwritten by a deploy, so the CIO's `eclipse-display-mode x11` revert survives every deploy.
 
 ### 11.7 What this amendment does NOT change
 

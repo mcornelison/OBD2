@@ -2,7 +2,8 @@
 # File Name: test_capture_panel.py
 # Purpose/Description: US-650 -- eclipse-capture-panel screenshots the running
 #                      panel in either display mode: it reads
-#                      /etc/eclipse/display-mode (absent -> x11) and runs grim
+#                      /etc/eclipse/display-mode (absent -> wayland since
+#                      US-652-b) and runs grim
 #                      (wayland) or scrot (x11) as the kiosk user, writes
 #                      /tmp/eclipse-panel-<utc>.png and prints that path.
 # Author: Rex (Ralph Agent)
@@ -14,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Rex (US-650) | Initial implementation (Sprint 102 V0.30.1).
+# 2026-10-25    | Rex (US-652-b) | MOVED PIN: an absent mode file is wayland
+#               |                | (grim); the x11 row is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -173,9 +176,26 @@ def test_wayland_runsGrimAsTheKioskUser_withTheWaylandEnv_andPrintsThePath(rig):
     assert _log(rig, "scrot") == ""
 
 
-@pytest.mark.parametrize("mode", [None, "x11"], ids=["absent", "x11"])
+def test_absentFile_isWayland_runsGrim(rig):
+    """MOVED PIN (US-652-b): the absent row of the x11 test below; an absent
+    mode file means the lib's default, wayland -> grim, never scrot."""
+    _addSocket(rig)
+
+    result = _run(rig)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    printed = result.stdout.strip()
+    assert OUTPUT_RE.match(printed), printed
+    grim = _log(rig, "grim")
+    assert f"argv=grim {printed}\n" in grim
+    assert "WAYLAND_DISPLAY=wayland-0\n" in grim
+    assert _log(rig, "scrot") == ""
+
+
+@pytest.mark.parametrize("mode", ["x11"], ids=["x11"])
 def test_x11_orAbsentFile_runsScrotWithDisplay0(rig, mode):
-    """An absent mode file means x11: scrot with DISPLAY=:0, as the kiosk user."""
+    """An x11 mode file: scrot with DISPLAY=:0, as the kiosk user. (Its absent
+    row moved to test_absentFile_isWayland_runsGrim, US-652-b.)"""
     if mode is not None:
         _setMode(rig, mode)
 

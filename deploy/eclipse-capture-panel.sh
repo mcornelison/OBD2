@@ -4,7 +4,8 @@
 #                             mode (US-650 / F-139)
 #
 # Reads /etc/eclipse/display-mode (absent => $DISPLAY_MODE_DEFAULT from
-# deploy/lib/display-mode-default.sh, x11 today; US-649-a, US-652-a) and captures with
+# deploy/lib/display-mode-default.sh, wayland since US-652-b; US-649-a, US-652-a)
+# and captures with
 # the tool for that stack, run as the kiosk user:
 #   wayland -> grim  with XDG_RUNTIME_DIR=/run/user/<uid> WAYLAND_DISPLAY=wayland-0
 #              (labwc's wlr-screencopy; scrot cannot see a Wayland panel)

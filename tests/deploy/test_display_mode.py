@@ -21,6 +21,10 @@
 #                               | compositor-mode tests are rewritten to the
 #                               | lightdm model; state-file / decoy / pre-flight
 #                               | / read-only / order tests added.
+# 2026-10-25    | Rex (US-652-b) | MOVED PINs: absent => wayland. Tests whose
+#                               | premise is an X11 car write an explicit x11
+#                               | file. The deploy's absent-file convergence
+#                               | (kiosk_mode_converge) runs against the rig.
 # ================================================================================
 ################################################################################
 
@@ -236,6 +240,12 @@ def _setConf(rig: dict, text: str) -> None:
     rig["conf"].write_text(text, encoding="utf-8", newline="\n")
 
 
+def _writeMode(rig: dict, mode: str) -> None:
+    """An EXPLICIT mode file (US-652-b: absent now means wayland)."""
+    rig["modeFile"].parent.mkdir(parents=True, exist_ok=True)
+    rig["modeFile"].write_text(mode + "\n", encoding="utf-8", newline="\n")
+
+
 def _snapshot(rig: dict) -> dict[str, bytes]:
     """Every file under the rig except the systemctl call log."""
     log = rig["state"] / "systemctl.log"
@@ -409,7 +419,18 @@ def test_trigger_appliesTheModesSwap_noLightdmEditNoKitsNoReboot(rig):
     assert not [ln for ln in log if "lightdm" in ln]
 
 
-def test_trigger_absentModeFile_isX11(rig):
+def test_trigger_absentModeFile_isWayland(rig):
+    """MOVED PIN (US-652-b): absent was x11; it is the lib's default, wayland."""
+    result = _runMode(rig, "trigger")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _enabledPaths(rig) == [SOCKET_PATH]
+    assert not (rig["autostart"] / X_READY_DESKTOP).exists()
+
+
+def test_trigger_explicitX11File_isX11(rig):
+    _writeMode(rig, "x11")
+
     result = _runMode(rig, "trigger")
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -430,6 +451,7 @@ def test_trigger_rendersTheUidFromIdOfTheKioskUser(rig):
 
 
 def test_trigger_autostartEntry_writesOnlyTheMarker(rig):
+    _writeMode(rig, "x11")  # MOVED PIN (US-652-b): x11 is explicit now
     _runMode(rig, "trigger")
 
     desktop = (rig["autostart"] / X_READY_DESKTOP).read_text(encoding="utf-8")
@@ -798,8 +820,19 @@ def test_status_consistentWayland_printsOkAndExitsZero(rig):
     )
 
 
-def test_status_absentFile_readsX11_onTodaysCar(rig):
-    """An absent file means x11 this sprint -- today's car is consistent."""
+def test_status_absentFile_readsWayland(rig):
+    """MOVED PIN (US-652-b): an absent file means wayland, so an X11 car with
+    no file is a mismatch until the deploy converges it."""
+    result = _runMode(rig, "status")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "mode file: wayland" in result.stdout
+    assert "MISMATCH: lightdm session is rpd-x, mode wayland needs eclipse-kiosk" in result.stdout
+
+
+def test_status_explicitX11File_onTodaysX11Car_isOk(rig):
+    _writeMode(rig, "x11")
+
     result = _runMode(rig, "status")
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -841,6 +874,7 @@ def test_status_waylandFileButX11Session_exitsNonZeroNamingTheMismatch(rig):
 
 
 def test_status_x11FileButKioskSession_isAMismatch(rig):
+    _writeMode(rig, "x11")  # MOVED PIN (US-652-b): x11 is explicit now
     _setConf(rig, _withSeatKeys(KIOSK, KIOSK))
 
     result = _runMode(rig, "status")
@@ -871,6 +905,7 @@ def test_status_autologinSessionUnset_showsUnset(rig):
 
 
 def test_status_lightdmNotEnabled_andSeveralReasons_joinedByComma(rig):
+    _writeMode(rig, "x11")  # MOVED PIN (US-652-b): x11 is explicit now
     (rig["state"] / "enabled.lightdm.service").unlink()
     (rig["state"] / "enabled.eclipse-compositor.service").touch()
 
@@ -944,7 +979,8 @@ def _kioskSection(out: str) -> str:
 
 @pytest.mark.parametrize(
     "content,expected",
-    [(None, "x11"), ("x11\n", "x11"), ("wayland\n", "wayland")],
+    # MOVED PIN (US-652-b): the absent row was x11.
+    [(None, "wayland"), ("x11\n", "x11"), ("wayland\n", "wayland")],
     ids=["absent", "x11", "wayland"],
 )
 def test_deployDryRun_forcesTheSessionFromTheModeFile(tmp_path, content, expected):
@@ -985,11 +1021,52 @@ def test_deployInstallsTheModeCommandToSbin():
     assert "deploy/eclipse-display-mode.sh" in body
 
 
-def test_deployNeverEnablesWaylandItself():
-    """The car stays on X11: only eclipse-display-mode swaps the display manager."""
+SWITCH_LINE = "eclipse-display-mode wayland --no-reboot"
+
+
+@pytest.mark.parametrize("content", [None, "x11\n", "wayland\n"], ids=["absent", "x11", "wayland"])
+def test_deployDryRun_runsTheSwitchOnlyWhenTheFileIsAbsent(tmp_path, content):
+    """
+    US-652-b (replaces test_deployNeverEnablesWaylandItself): the deploy runs
+    `eclipse-display-mode wayland --no-reboot` exactly once for an ABSENT file
+    and never for an explicit one, which it reports as present, no switch.
+    """
+    modeFile = tmp_path / "display-mode"
+    if content is not None:
+        modeFile.write_text(content, encoding="utf-8")
+
+    section = _kioskSection(_deployDryRun({"KIOSK_MODE_FILE": _posix(modeFile),
+                                           "KIOSK_DETECTED_SESSION": ""}))
+
+    if content is None:
+        assert section.count(SWITCH_LINE) == 1, section
+        assert "no switch" not in section, section
+    else:
+        assert SWITCH_LINE not in section, section
+        assert f"mode file present: {content.strip()}, no switch" in section, section
+
+
+def test_deployDryRun_garbageFile_skipsWithNoSwitch(tmp_path):
+    modeFile = tmp_path / "display-mode"
+    modeFile.write_text("1920x1080\n", encoding="utf-8")
+
+    section = _kioskSection(_deployDryRun({"KIOSK_MODE_FILE": _posix(modeFile),
+                                           "KIOSK_DETECTED_SESSION": ""}))
+
+    assert "WARN" in section and "skip the kiosk-unit install" in section, section
+    assert "--no-reboot" not in section and "no switch" not in section, section
+
+
+def test_deployNeverEnablesTheCompositorOrDisablesLightdm_andNeverReboots():
+    """The switch is the only thing that swaps the display manager; the
+    deploy only ever calls it with --no-reboot, and never restarts lightdm."""
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "enable eclipse-compositor" not in text
     assert "disable lightdm" not in text
+    assert not re.search(r"systemctl\s+(--\S+\s+)*(restart|reload-or-restart|try-restart|stop)\s+lightdm", text)
+    body = _shellFunctionBody(text, "kiosk_mode_converge")
+    calls = re.findall(r"bash '\$MODE_CMD' (\S+)( --no-reboot)?", body)
+    assert calls == [("$DISPLAY_MODE_DEFAULT", " --no-reboot")], calls
 
 
 # ----------------------------------------------------------------------------
@@ -1031,7 +1108,8 @@ KITS = [(SPLASH_INSTALL, "SPLASH"), (DASH_INSTALL, "DASHBOARD")]
 
 
 @pytest.mark.parametrize("script,prefix", KITS)
-@pytest.mark.parametrize("mode,expected", [(None, "x11"), ("x11", "x11"), ("wayland", "wayland")])
+# MOVED PIN (US-652-b): the absent row was x11.
+@pytest.mark.parametrize("mode,expected", [(None, "wayland"), ("x11", "x11"), ("wayland", "wayland")])
 def test_kitInstaller_unforced_takesTheSessionFromTheModeFile(tmp_path, script, prefix, mode, expected):
     result = _runKit(script, prefix, tmp_path, mode=mode)
 
@@ -1108,17 +1186,18 @@ def _shellFunctionBody(text: str, name: str) -> str:
     return text[start : text.index("\n}\n", start)]
 
 
-def test_defaultLib_definesX11AndNothingElseRuns():
+def test_defaultLib_definesWaylandAndNothingElseRuns():
     """
     Given: deploy/lib/display-mode-default.sh
     When:  it is sourced under set -euo pipefail
-    Then:  DISPLAY_MODE_DEFAULT is x11 and its only statement is that assignment.
+    Then:  DISPLAY_MODE_DEFAULT is wayland (US-652-b; was x11) and its only
+           statement is that assignment.
     """
     statements = [
         ln.strip() for ln in DEFAULT_LIB.read_text(encoding="utf-8").splitlines()
         if ln.strip() and not ln.lstrip().startswith("#")
     ]
-    assert statements == ["DISPLAY_MODE_DEFAULT=x11"], statements
+    assert statements == ["DISPLAY_MODE_DEFAULT=wayland"], statements
 
     result = subprocess.run(
         ["bash", "-c", 'set -euo pipefail; . "$1"; printf "%s" "$DISPLAY_MODE_DEFAULT"',
@@ -1126,7 +1205,7 @@ def test_defaultLib_definesX11AndNothingElseRuns():
         capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "x11"
+    assert result.stdout == "wayland"
     assert result.stderr == ""
 
 
@@ -1164,6 +1243,25 @@ def test_grepGate_noAbsentFileDefaultOutsideTheLib():
         assert DEFAULT_LIB_REL in reader.read_text(encoding="utf-8"), (
             f"{reader.relative_to(REPO_ROOT).as_posix()} does not name {DEFAULT_LIB_REL}"
         )
+
+
+DRIVE_CONSOLE = REPO_ROOT / "tools" / "imu" / "drive_console.py"
+
+
+def test_grepGate_driveConsoleReadDisplayMode_keepsNoDefault():
+    """
+    US-652-b extends the gate (Atlas Q1 (c)): tools/imu/drive_console.py
+    readDisplayMode is not a reader of the lib -- tools/ is not deployed -- so
+    its absent branch returns NO literal mode; it raises naming the command.
+    """
+    text = DRIVE_CONSOLE.read_text(encoding="utf-8")
+    start = text.index("def readDisplayMode(")
+    body = text[start : text.index("\ndef ", start + 1)]
+    absent = body[body.index("if not path.exists():") :]
+    absent = absent[: absent.index("\n    mode = ")]
+
+    assert not re.search(r"""return\s+['"](x11|wayland)['"]""", absent), absent
+    assert "raise ValueError(" in absent and "sudo eclipse-display-mode x11|wayland" in absent
 
 
 def test_grepGate_catchesTheOldReadModeBranch():
@@ -1256,7 +1354,7 @@ def test_deployResolver_absentFile_readsTheLibDefault(tmp_path):
     result = _runResolver(tmp_path, _posix(DEFAULT_LIB), tmp_path / "display-mode")
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.endswith("SESS=x11"), result.stdout
+    assert result.stdout.endswith("SESS=wayland"), result.stdout  # MOVED PIN (US-652-b)
 
 
 def test_deployResolver_libAbsent_exitsNonZeroNamingTheLib(tmp_path):
@@ -1275,3 +1373,151 @@ def test_deployKioskStep_passesTheDeployedLibToTheResolver():
     body = _stepBody("step_install_ui_kiosk_units")
     assert '$(kiosk_mode_resolver "${PI_PATH}/' + DEFAULT_LIB_REL + '")' in body
     assert '$(kiosk_mode_resolver "$REPO_ROOT/' + DEFAULT_LIB_REL + '")' in body
+
+
+# ----------------------------------------------------------------------------
+# US-652-b: deploy-pi.sh converges a car with NO mode file (kiosk_mode_converge)
+# ----------------------------------------------------------------------------
+
+# On the desk rig `sudo` just runs its arguments (the env passes straight through).
+FAKE_SUDO = '#!/usr/bin/env bash\nexec "$@"\n'
+
+
+def _runConverge(rig: dict) -> subprocess.CompletedProcess:
+    """deploy-pi.sh's resolver + converge shell, emitted as the kiosk step emits
+    them on the Pi, run against the rig with the REAL eclipse-display-mode.sh."""
+    convBin = rig["root"] / "converge-bin"
+    convBin.mkdir(exist_ok=True)
+    (convBin / "sudo").write_text(FAKE_SUDO, encoding="utf-8", newline="\n")
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    emitter = convBin / "emit.sh"
+    emitter.write_text(
+        _shellFunctionBody(text, "kiosk_mode_resolver") + "\n}\n"
+        + _shellFunctionBody(text, "kiosk_mode_converge") + "\n}\n"
+        + f"kiosk_mode_resolver '{_posix(DEFAULT_LIB)}'\n"
+        + f"kiosk_mode_converge '{_posix(MODE_CMD)}' 'mcornelison'\n",
+        encoding="utf-8", newline="\n",
+    )
+    emitted = subprocess.run(["bash", _posix(emitter)], capture_output=True, text=True,
+                             encoding="utf-8", timeout=30)
+    assert emitted.returncode == 0, emitted.stderr
+    env = dict(os.environ)
+    env.pop("KIOSK_UID", None)
+    env.pop("KIOSK_USER", None)
+    env.update({
+        "PATH": os.pathsep.join([_posix(convBin), _posix(rig["bin"]), os.environ.get("PATH", "")]),
+        "FAKE_STATE": _posix(rig["state"]),
+        "KIOSK_MODE_FILE": _posix(rig["modeFile"]),
+        "KIOSK_TREE": _posix(rig["tree"]),
+        "KIOSK_SYSTEMD_DIR": _posix(rig["systemd"]),
+        "KIOSK_AUTOSTART_DIR": _posix(rig["autostart"]),
+        "KIOSK_LIGHTDM_CONF": _posix(rig["conf"]),
+        "KIOSK_SESSION_FILE": _posix(rig["sessionFile"]),
+        "KIOSK_LABWC_BIN": _posix(rig["labwc"]),
+        "KIOSK_STATE_DIR": _posix(rig["obdState"]),
+        "KIOSK_DETECTED_SESSION": "",
+    })
+    return subprocess.run(["bash", "-c", emitted.stdout + '\nprintf "SESS=%s" "$SESS"\n'],
+                          capture_output=True, text=True, encoding="utf-8", timeout=120, env=env)
+
+
+def _rigSnapshot(rig: dict) -> dict[str, bytes]:
+    """_snapshot without the converge harness's own fake sudo + emitter."""
+    harness = str(rig["root"] / "converge-bin")
+    return {k: v for k, v in _snapshot(rig).items() if not k.startswith(harness)}
+
+
+def test_deployConverge_absentFile_switchesOnceToWayland_noReboot(rig):
+    """
+    Given: a fresh card -- NO mode file, lightdm.conf at rpd-x, X11 units
+    When:  the deploy's kiosk step resolves the mode
+    Then:  `eclipse-display-mode wayland --no-reboot` runs once: priors rpd-x
+           recorded, both [Seat:*] keys eclipse-kiosk, file = wayland, the kits
+           forced to wayland; nothing reboots or restarts lightdm.
+    """
+    result = _runConverge(rig)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.endswith("SESS=wayland"), result.stdout
+    assert result.stdout.count(SWITCH_LINE) == 1, result.stdout
+    assert rig["modeFile"].read_text(encoding="utf-8") == "wayland\n"
+    assert rig["conf"].read_text(encoding="utf-8") == _withSeatKeys(KIOSK, KIOSK)
+    assert rig["stateFile"].read_text(encoding="utf-8") == (
+        "autologin-session=rpd-x\nuser-session=rpd-x\n")
+    kits = (rig["state"] / "kits.log").read_text(encoding="utf-8")
+    assert "splash session=wayland user=mcornelison" in kits
+    assert "dashboard session=wayland user=mcornelison" in kits
+    log = _systemctlLog(rig)
+    assert "reboot" not in log, log
+    assert not [ln for ln in log if ln.split()[0] in ("restart", "stop", "start")], log
+    assert _enabledPaths(rig) == [SOCKET_PATH]
+
+
+@pytest.mark.parametrize("mode", ["x11", "wayland"])
+def test_deployConverge_explicitFile_isNeverChanged(rig, mode):
+    """
+    Given: an EXPLICIT mode file (x11 = the CIO's revert; wayland = today's car)
+           and lightdm.conf at rpd-x
+    When:  the deploy's kiosk step resolves the mode
+    Then:  no switch: the mode file and lightdm.conf are byte-identical, nothing
+           is recorded or enabled, and the file's mode is what the kits get.
+    """
+    _writeMode(rig, mode)
+    modeBefore = rig["modeFile"].read_bytes()
+    confBefore = rig["conf"].read_bytes()
+
+    result = _runConverge(rig)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.endswith(f"SESS={mode}"), result.stdout
+    assert f"mode file present: {mode}, no switch" in result.stdout
+    assert "--no-reboot" not in result.stdout
+    assert rig["modeFile"].read_bytes() == modeBefore
+    assert rig["conf"].read_bytes() == confBefore
+    assert not rig["stateFile"].exists()
+    assert not (rig["state"] / "kits.log").exists()
+    assert _systemctlLog(rig) == []
+
+
+def test_deployConverge_garbageFile_warnsAndSkips_noSwitch(rig):
+    _writeMode(rig, "1920x1080")
+    before = _rigSnapshot(rig)
+
+    result = _runConverge(rig)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.endswith("SESS="), result.stdout
+    assert "WARN" in result.stderr and "skipping kiosk-unit install" in result.stderr
+    assert "--no-reboot" not in result.stdout
+    assert _rigSnapshot(rig) == before
+    assert _systemctlLog(rig) == []
+
+
+@pytest.mark.parametrize("breaker", [_breakLabwc, _breakNoSeatSection],
+                         ids=["labwc-missing", "no-seat-section"])
+def test_deployConverge_switchPreflightFails_printsTheError_noKioskChange(rig, breaker):
+    """
+    Given: no mode file, and the switch's own pre-flight cannot pass
+    When:  the deploy's kiosk step converges
+    Then:  the error is printed, the deploy continues (exit 0) with SESS empty --
+           so no kiosk unit is installed -- and nothing on the rig changed.
+    """
+    breaker(rig)
+    before = _rigSnapshot(rig)
+
+    result = _runConverge(rig)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.endswith("SESS="), result.stdout
+    assert "nothing changed" in result.stderr, result.stderr
+    assert "--no-reboot failed -- deploy continues with no kiosk change" in result.stderr
+    assert _rigSnapshot(rig) == before
+    assert not rig["modeFile"].exists()
+    assert _modeChanges(rig) == []
+
+
+def test_deployKioskStep_convergesRightAfterTheResolver_onThePi():
+    body = _stepBody("step_install_ui_kiosk_units")
+    resolver = body.index('$(kiosk_mode_resolver "${PI_PATH}/')
+    converge = body.index('$(kiosk_mode_converge "${PI_PATH}/${modeCmd}" "${PI_USER}")')
+    assert resolver < converge < body.index("SPLASH_FORCE_SESSION=")

@@ -18,6 +18,8 @@
 #               |                | wayland argv/env via kioskLaunch(); x11 unchanged.
 # 2026-10-23    | Rex (US-894-b) | obdLink is retired from system-status: the
 #               |                | screen's `obd` reads link.ecu.state.
+# 2026-10-25    | Rex (US-652-b) | readDisplayMode keeps NO default: an absent
+#               |                | mode file raises (Atlas Q1 (c)).
 # ================================================================================
 ################################################################################
 """Run bypass -> master -> bypass from a button, with the PRODUCTION collector.
@@ -315,7 +317,8 @@ COLLECTOR = "eclipse-obd"
 DASHBOARD = "eclipse-dashboard"
 WATCHDOG_TIMER = "eclipse-kiosk-watchdog.timer"
 PORT = int(os.environ.get("ARCH058_PORT", "9901"))
-#: US-649-b: the display-mode SSOT (absent => x11), shared with the deploy.
+#: US-649-b: the display-mode SSOT, shared with the deploy (US-652-b: an absent
+#: file raises here -- the console keeps no default).
 DISPLAY_MODE_FILE = Path("/etc/eclipse/display-mode")
 DISPLAY_MODES = ("x11", "wayland")
 CHROMIUM = "/usr/bin/chromium-browser"
@@ -407,8 +410,11 @@ def _stateAgeS(state: dict) -> float | None:  # pragma: no cover
 def readDisplayMode(path: Path = DISPLAY_MODE_FILE) -> str:
     """The kiosk display mode from /etc/eclipse/display-mode (US-649-b).
 
-    The same SSOT the deploy and eclipse-display-mode use: an absent file is
-    ``x11``; anything but ``x11``/``wayland`` raises rather than guessing.
+    The same file the deploy and eclipse-display-mode use, but with NO default
+    (US-652-b, Atlas Q1 (c)): tools/ is not deployed, so it cannot source
+    deploy/lib/display-mode-default.sh, and a guessed mode would launch
+    chromium with the wrong env. An absent file, or anything but
+    ``x11``/``wayland``, raises rather than guessing.
 
     Args:
         path: The mode file.
@@ -417,10 +423,10 @@ def readDisplayMode(path: Path = DISPLAY_MODE_FILE) -> str:
         ``"x11"`` or ``"wayland"``.
 
     Raises:
-        ValueError: The file holds anything else.
+        ValueError: The file is absent or holds anything else.
     """
     if not path.exists():
-        return "x11"
+        raise ValueError(f"{path} absent -- set it with: sudo eclipse-display-mode x11|wayland")
     mode = "".join(path.read_text(encoding="utf-8").split())
     if mode not in DISPLAY_MODES:
         raise ValueError(f"{path} holds {mode!r}, not x11|wayland -- refusing to guess")

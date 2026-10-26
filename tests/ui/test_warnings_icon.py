@@ -29,6 +29,8 @@
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-898-a top-bar warnings icon.
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the tap finds ALERTS by the
 #                               card's id, not its bar name (Iris U2).
+# 2026-10-25    | Ralph (Rex)  | US-652-b -- MOVED PIN: no `cursor: pointer` on the
+#                               icon (the kiosk hides the mouse; Iris RULED Q2).
 # ================================================================================
 ################################################################################
 
@@ -368,7 +370,8 @@ def test_theIconIsAControlWithTheKebabHitBoxPattern():
     css = readCss(DASHBOARD_CSS)
     block = ruleBlock(css, f"#{ICON_ID}")
     assert "position: relative" in block
-    assert "cursor: pointer" in block
+    # MOVED PIN (US-652-b): the `cursor: pointer` assert is dropped -- the kiosk
+    # hides the mouse (Iris RULED Q2); the ::after hit box is what makes it a control.
     after = ruleBlock(css, f"#{ICON_ID}::after")
     assert re.search(r'content:\s*""', after)
     assert "position: absolute" in after
