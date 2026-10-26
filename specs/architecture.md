@@ -2084,6 +2084,12 @@ the failure — only answer it.
   action for any other state reason (NM's own autoconnect owns those), another
   device, or an agent-owned secret (`psk-flags != 0`: no stored key to reuse,
   and asking a person is correct).
+- **Provisioning requirement (US-925-b).** Recovery needs every Wi-Fi profile
+  provisioned with a system-owned secret (`psk-flags=0`); the deploy step
+  (`nmcli -g 802-11-wireless-security.psk-flags`, never the psk field) and the
+  service at start (GetSettings over `ListConnections`) each log ONE `WARNING`
+  line per profile whose psk-flags != 0, and nothing ever modifies a profile
+  or prints a secret.
 - **Why not a dispatcher script.** NetworkManager-dispatcher(8) has no event
   for a failed activation and carries no state reason, so it cannot see this
   failure at all.

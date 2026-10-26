@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-25    | Rex (US-925-a) | Initial
+# 2026-10-26    | Rex (US-925-b) | psk-flags != 0 -> one WARNING per Wi-Fi profile
 # ================================================================================
 ################################################################################
 
@@ -193,9 +194,38 @@ def test_step_neverRestartsNetworkManager_reloadsBrcmfmac_orCallsApt():
 # ================================================================================
 
 
-def _runStep(tmp_path: Path, dryRun: bool, missingPkg: str = "") -> subprocess.CompletedProcess[str]:
+_Profile = tuple[str, str, str, str]  # (uuid, type, connection.id, psk-flags as nmcli prints it)
+
+
+def _nmcliFake(log: Path, profiles: list[_Profile] | None, listFails: bool) -> str:
+    """A bash `nmcli` that answers only the read-only `-g` reads; None defines none."""
+    if profiles is None:
+        return ""
+    rows = " ".join(f"{uuid}:{kind}" for uuid, kind, _, _ in profiles)
+    listing = "return 10" if listFails else f"printf '%s\\n' {rows}"
+    cases = [f'"-g UUID,TYPE connection show") {listing} ;;']
+    for uuid, _, name, flags in profiles:
+        cases.append(f"\"-g connection.id connection show uuid {uuid}\") echo '{name}' ;;")
+        cases.append(
+            f"\"-g 802-11-wireless-security.psk-flags connection show uuid {uuid}\") echo '{flags}' ;;"
+        )
+    return (
+        f"nmcli() {{ echo \"nmcli $*\" >> '{log.as_posix()}'; case \"$*\" in\n"
+        + "\n".join(cases)
+        + "\n*) return 1 ;;\nesac; }\n"
+    )
+
+
+def _runStep(
+    tmp_path: Path,
+    dryRun: bool,
+    missingPkg: str = "",
+    profiles: list[_Profile] | None = None,
+    listFails: bool = False,
+) -> subprocess.CompletedProcess[str]:
     """Run the shipped step body: `remote` evals locally, sudo passes through,
-    dpkg / systemctl are logging fakes, and /etc/systemd/system is a temp dir."""
+    dpkg / systemctl / nmcli are logging fakes, and /etc/systemd/system is a temp dir.
+    With no profiles there is no nmcli at all (as on this desk)."""
     piPath = tmp_path / "pi"
     (piPath / "deploy").mkdir(parents=True, exist_ok=True)
     shutil.copy(UNIT_FILE, piPath / "deploy" / UNIT_NAME)
@@ -210,7 +240,8 @@ def _runStep(tmp_path: Path, dryRun: bool, missingPkg: str = "") -> subprocess.C
         f"dpkg() {{ echo \"dpkg $*\" >> '{log.as_posix()}'; "
         f"[ \"$2\" != '{missingPkg}' ]; }}\n"
         f"systemctl() {{ echo \"systemctl $*\" >> '{log.as_posix()}'; }}\n"
-        f"DRY_RUN={'true' if dryRun else 'false'}\n"
+        + _nmcliFake(tmp_path / "nmcli.txt", profiles, listFails)
+        + f"DRY_RUN={'true' if dryRun else 'false'}\n"
         f"PI_PATH='{piPath.as_posix()}'\n"
         f"{step}\n"
         f"{STEP_NAME}\n"
@@ -276,3 +307,121 @@ def test_realRun_missingPackage_failsLoudNamingIt_installsNothing(tmp_path: Path
     assert f"ERROR: Debian package {missing} is not installed" in result.stdout
     assert not (tmp_path / "units" / UNIT_NAME).exists()
     assert not [c for c in _calls(tmp_path) if c.startswith("systemctl")]
+
+
+# ================================================================================
+# US-925-b: the read-only psk-flags check
+# ================================================================================
+
+UUID_HOME = "3f0c2b1e-8d9a-4c55-9e3e-1a2b3c4d5e6f"
+UUID_PHONE = "7d1e0a42-55b0-4e7e-8a19-0f9e8d7c6b5a"
+UUID_ETH = "11111111-2222-4333-8444-555555555555"
+ALL_SYSTEM_OWNED = "all Wi-Fi secrets system-owned (psk-flags=0)"
+
+
+def _nmcliLines(body: str) -> list[str]:
+    return [ln for ln in _code(body).splitlines() if "nmcli" in ln]
+
+
+def test_pskCheck_neverModifiesAProfile_neverShowsSecrets():
+    """Static pin: the step contains no modify and never requests or reads a psk value."""
+    code = _code(_stepBody(_deployText()))
+    nmcli = _nmcliLines(_stepBody(_deployText()))
+
+    assert nmcli, "the step has no nmcli psk-flags read"
+    assert not re.search(r"nmcli[^\n]*\bcon(nection)?[ \t]+mod(ify)?\b", code)
+    assert not [ln for ln in nmcli if re.search(r"(^|[ \t])(-s|--show-secrets)\b", ln)]
+    assert not re.search(r"802-11-wireless-security\.psk\b(?!-)", code)
+    assert not re.search(r"(^|[ \t,])psk([ \t,:]|$)", code, re.MULTILINE)
+    assert "802-11-wireless-security.psk-flags" in code
+
+
+def test_pskCheck_readsWithNmcliGetValues():
+    reads = [ln for ln in _nmcliLines(_stepBody(_deployText())) if "connection show" in ln]
+    assert reads and all(" -g " in ln for ln in reads)
+
+
+@needsBash
+def test_dryRun_printsThePskFlagsCheck(tmp_path: Path):
+    result = _runStep(tmp_path, dryRun=True)
+
+    assert result.returncode == 0, result.stdout
+    assert "psk-flags check" in result.stdout
+    assert "802-11-wireless-security.psk-flags" in result.stdout
+
+
+@needsBash
+def test_realRun_pskFlagsZeroEverywhere_oneAllSystemOwnedLine_noWarning(tmp_path: Path):
+    profiles = [
+        (UUID_HOME, "802-11-wireless", "Home", "0"),
+        (UUID_ETH, "802-3-ethernet", "eth", "1"),
+    ]
+
+    result = _runStep(tmp_path, dryRun=False, profiles=profiles)
+
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.count(ALL_SYSTEM_OWNED) == 1
+    assert "WARNING" not in result.stdout and "WARN:" not in result.stdout
+    assert UUID_ETH not in (tmp_path / "nmcli.txt").read_text(encoding="utf-8")
+
+
+@needsBash
+@pytest.mark.parametrize("flags", ["1", "2"])
+def test_realRun_agentOwnedProfile_oneWarningNamingIt(tmp_path: Path, flags: str):
+    profiles = [
+        (UUID_HOME, "802-11-wireless", "Home", "0"),
+        (UUID_PHONE, "802-11-wireless", "Phone", flags),
+    ]
+
+    result = _runStep(tmp_path, dryRun=False, profiles=profiles)
+
+    assert result.returncode == 0, result.stdout
+    warnings = [ln for ln in result.stdout.splitlines() if ln.startswith("WARNING:")]
+    assert warnings == [
+        f"WARNING: Wi-Fi profile Phone psk-flags={flags} (agent-owned): "
+        "no-secrets recovery cannot reuse its key"
+    ]
+    assert ALL_SYSTEM_OWNED not in result.stdout
+
+
+@needsBash
+def test_realRun_twoAgentOwnedProfiles_oneWarningEach(tmp_path: Path):
+    profiles = [
+        (UUID_HOME, "802-11-wireless", "Home", "1"),
+        (UUID_PHONE, "802-11-wireless", "Phone", "2"),
+    ]
+
+    result = _runStep(tmp_path, dryRun=False, profiles=profiles)
+
+    warnings = [ln for ln in result.stdout.splitlines() if ln.startswith("WARNING:")]
+    assert [w.split()[3] for w in warnings] == ["Home", "Phone"]
+
+
+@needsBash
+def test_realRun_everyNmcliCallIsAReadOnlyGet(tmp_path: Path):
+    profiles = [(UUID_PHONE, "802-11-wireless", "Phone", "1")]
+
+    _runStep(tmp_path, dryRun=False, profiles=profiles)
+
+    calls = (tmp_path / "nmcli.txt").read_text(encoding="utf-8").splitlines()
+    assert calls and all(c.startswith("nmcli -g ") and " connection show" in c for c in calls)
+    assert not [c for c in calls if "modify" in c or "-s " in c or "--show-secrets" in c]
+
+
+@needsBash
+def test_realRun_nmcliAbsent_oneWarn_deployContinues(tmp_path: Path):
+    result = _runStep(tmp_path, dryRun=False)
+
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.count("the Wi-Fi psk-flags check could not run") == 1
+    assert "enabled + active" in result.stdout
+    assert ALL_SYSTEM_OWNED not in result.stdout
+
+
+@needsBash
+def test_realRun_nmcliListFails_oneWarn_deployContinues(tmp_path: Path):
+    result = _runStep(tmp_path, dryRun=False, profiles=[], listFails=True)
+
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.count("the Wi-Fi psk-flags check could not run") == 1
+    assert ALL_SYSTEM_OWNED not in result.stdout

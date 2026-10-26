@@ -1014,6 +1014,12 @@ step_install_wifi_recover_unit() {
     # (obd2-venv cannot import dbus). Both are checked BEFORE the install, and a
     # missing one FAILS the deploy naming it -- a deploy never installs packages.
     # Runs in both display modes, outside any display-mode branch.
+    #
+    # US-925-b: the recovery reuses a STORED key only (psk-flags=0); an
+    # agent-owned secret needs a person every time. After the install, a
+    # READ-ONLY check reads psk-flags of every Wi-Fi profile with `nmcli -g`
+    # (never the psk field, never a modify) and prints ONE WARNING line per
+    # profile whose psk-flags != 0. No nmcli -> one WARN; the deploy continues.
     echo "--- Step: Installing eclipse-wifi-recover systemd unit (US-925-a, sync-if-changed) ---"
     if $DRY_RUN; then
         echo "DRY-RUN would: dpkg -s python3-dbus python3-gi (FAIL the deploy, naming the package, if either is missing)"
@@ -1021,6 +1027,7 @@ step_install_wifi_recover_unit() {
         echo "DRY-RUN would: sudo systemctl enable eclipse-wifi-recover.service"
         echo "DRY-RUN would: sudo systemctl restart eclipse-wifi-recover.service (start; replaces a running copy)"
         echo "DRY-RUN note: NetworkManager is NOT restarted and brcmfmac is NOT reloaded"
+        echo "DRY-RUN would: psk-flags check -- nmcli -g 802-11-wireless-security.psk-flags connection show uuid <each Wi-Fi profile> (read-only, never the psk); ONE WARNING per profile with psk-flags != 0, else 'all Wi-Fi secrets system-owned (psk-flags=0)'; nmcli unavailable -> one WARN, the deploy continues"
         return 0
     fi
     remote "
@@ -1050,6 +1057,28 @@ step_install_wifi_recover_unit() {
         sudo systemctl enable eclipse-wifi-recover.service
         sudo systemctl restart eclipse-wifi-recover.service
         echo 'eclipse-wifi-recover.service enabled + active.'
+
+        if ! command -v nmcli >/dev/null 2>&1 || ! WIFI_ROWS=\$(nmcli -g UUID,TYPE connection show 2>/dev/null); then
+            echo 'WARN: nmcli unavailable -- the Wi-Fi psk-flags check could not run; the deploy continues.' >&2
+        else
+            AGENT_OWNED=0
+            for row in \$WIFI_ROWS; do
+                [ \"\${row#*:}\" = 802-11-wireless ] || continue
+                uuid=\${row%%:*}
+                name=\$(nmcli -g connection.id connection show uuid \"\$uuid\" 2>/dev/null) || name=\$uuid
+                if ! flags=\$(nmcli -g 802-11-wireless-security.psk-flags connection show uuid \"\$uuid\" 2>/dev/null); then
+                    echo \"WARN: could not read psk-flags of Wi-Fi profile \$name; not checked.\" >&2
+                    continue
+                fi
+                flags=\${flags%% *}
+                case \"\$flags\" in ''|0) continue ;; esac
+                echo \"WARNING: Wi-Fi profile \$name psk-flags=\$flags (agent-owned): no-secrets recovery cannot reuse its key\" >&2
+                AGENT_OWNED=1
+            done
+            if [ \"\$AGENT_OWNED\" = 0 ]; then
+                echo 'all Wi-Fi secrets system-owned (psk-flags=0)'
+            fi
+        fi
     "
 }
 

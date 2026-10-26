@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-25    | Rex (US-925-a) | Initial
+# 2026-10-26    | Rex (US-925-b) | psk-flags != 0 -> one WARNING per Wi-Fi profile
 # ================================================================================
 ################################################################################
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 import ast
 import io
 import logging
+import re
 import sys
 import tokenize
 from pathlib import Path
@@ -622,3 +624,129 @@ def test_onChildExit_convertsTheWaitStatus(caplog: pytest.LogCaptureFixture):
     wifi_recover.onChildExit(1234, 4 << 8, UUID_U)
 
     assert "exit code 4" in caplog.records[0].getMessage()
+
+
+# ================================================================================
+# US-925-b: one WARNING per saved Wi-Fi profile whose psk-flags != 0
+# ================================================================================
+
+
+def _profile(name: str, pskFlags: int | None, kind: str = "802-11-wireless") -> dict:
+    """A GetSettings result: no secrets, so never a `psk` key."""
+    settings: dict = {"connection": {"id": name, "type": kind, "uuid": UUID_U}}
+    if pskFlags is not None:
+        settings["802-11-wireless-security"] = {"key-mgmt": "wpa-psk", "psk-flags": pskFlags}
+    return settings
+
+
+def _warningLines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_agentOwnedWarnings_pskFlagsZero_noWarning():
+    assert wifi_recover.agentOwnedWarnings([_profile("Home", 0), _profile("Open", None)]) == []
+
+
+@pytest.mark.parametrize("pskFlags", [1, 2])
+def test_agentOwnedWarnings_pskFlagsNonZero_oneWarningNamingTheProfile(pskFlags: int):
+    lines = wifi_recover.agentOwnedWarnings([_profile("Home", 0), _profile("Phone", pskFlags)])
+
+    assert lines == [
+        f"Wi-Fi profile Phone psk-flags={pskFlags} (agent-owned): "
+        "no-secrets recovery cannot reuse its key"
+    ]
+
+
+def test_agentOwnedWarnings_onePerProfile_nonWifiIgnored():
+    profiles = [
+        _profile("Phone", 1),
+        _profile("Desk", 2),
+        _profile("eth", 1, kind="802-3-ethernet"),
+    ]
+
+    lines = wifi_recover.agentOwnedWarnings(profiles)
+
+    assert [ln.split()[2] for ln in lines] == ["Phone", "Desk"]
+
+
+def test_reportProfileSecrets_logsOneWarningPerAgentOwnedProfile(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger=wifi_recover.LOGGER_NAME)
+
+    wifi_recover.reportProfileSecrets([_profile("Phone", 1), _profile("Home", 0)])
+
+    assert len(_warningLines(caplog)) == 1
+    assert "Wi-Fi profile Phone psk-flags=1" in _warningLines(caplog)[0]
+    assert "system-owned" not in caplog.text
+
+
+def test_reportProfileSecrets_allSystemOwned_oneInfoLine(caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.INFO, logger=wifi_recover.LOGGER_NAME)
+
+    wifi_recover.reportProfileSecrets([_profile("Home", 0)])
+
+    assert _warningLines(caplog) == []
+    assert [r.getMessage() for r in caplog.records] == [
+        "all Wi-Fi secrets system-owned (psk-flags=0)"
+    ]
+
+
+class _FakeBusObject:
+    def __init__(self, bus: _FakeBus, path: str) -> None:
+        self.bus, self.path = bus, path
+
+    def ListConnections(self, dbus_interface: str) -> list[str]:
+        self.bus.calls.append(("ListConnections", self.path, dbus_interface))
+        return list(self.bus.settings)
+
+    def GetSettings(self, dbus_interface: str) -> dict:
+        self.bus.calls.append(("GetSettings", self.path, dbus_interface))
+        return self.bus.settings[self.path]
+
+
+class _FakeBus:
+    def __init__(self, settings: dict[str, dict]) -> None:
+        self.settings = settings
+        self.calls: list[tuple[str, str, str]] = []
+
+    def get_object(self, busName: str, path: str, introspect: bool = True) -> _FakeBusObject:
+        return _FakeBusObject(self, path)
+
+
+def test_savedConnectionSettings_listsThenGetSettingsEach():
+    bus = _FakeBus({"/s/1": _profile("Home", 0), "/s/2": _profile("Phone", 1)})
+
+    settings = wifi_recover.NmDeviceReader(bus).savedConnectionSettings()
+
+    assert [s["connection"]["id"] for s in settings] == ["Home", "Phone"]
+    assert [c[0] for c in bus.calls] == ["ListConnections", "GetSettings", "GetSettings"]
+    assert bus.calls[0][1:] == (wifi_recover.NM_SETTINGS_PATH, wifi_recover.NM_SETTINGS_IFACE)
+
+
+def test_mainRunsThePskFlagsCheckBeforeSubscribing():
+    mains = [n for n in _tree().body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    source = ast.get_source_segment(MODULE_PATH.read_text(encoding="utf-8"), mains[0])
+
+    assert source is not None
+    assert source.index("reportProfileSecrets(") < source.index("add_signal_receiver(")
+
+
+def _stringTokens() -> list[str]:
+    return [
+        tok.string.strip("'\"")
+        for tok in tokenize.generate_tokens(io.StringIO(MODULE_PATH.read_text("utf-8")).readline)
+        if tok.type == tokenize.STRING
+    ]
+
+
+def test_neverModifiesAProfile_neverReadsOrPrintsAPsk():
+    """Static pin: no `connection modify`, no show-secrets flag, no `psk` field read."""
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    strings = _stringTokens()
+
+    assert not re.search(r"\bcon(nection)?[ \t\"',]+mod(ify)?\b", source)
+    assert not [s for s in strings if s in ("-s", "--show-secrets")]
+    assert "psk" not in strings
+    assert not re.search(r"802-11-wireless-security\.psk\b(?!-)", source)
+    assert not re.search(r"\[[\"']psk[\"']\]", source)

@@ -17,6 +17,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-25    | Rex (US-925-a) | Initial implementation
+# 2026-10-26    | Rex (US-925-b) | psk-flags != 0 -> one WARNING per Wi-Fi profile
 # ================================================================================
 ################################################################################
 
@@ -75,12 +76,16 @@ NM_BUS_NAME = "org.freedesktop.NetworkManager"
 NM_DEVICE_IFACE = "org.freedesktop.NetworkManager.Device"
 NM_ACTIVE_CONNECTION_IFACE = "org.freedesktop.NetworkManager.Connection.Active"
 NM_SETTINGS_CONNECTION_IFACE = "org.freedesktop.NetworkManager.Settings.Connection"
+NM_SETTINGS_IFACE = "org.freedesktop.NetworkManager.Settings"
+NM_SETTINGS_PATH = "/org/freedesktop/NetworkManager/Settings"
 DBUS_PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
 NO_OBJECT_PATH = "/"
 
 WIFI_INTERFACE = "wlan0"
 WIFI_SECURITY_SETTING = "802-11-wireless-security"
 PSK_FLAGS_KEY = "psk-flags"
+CONNECTION_SETTING = "connection"
+WIFI_CONNECTION_TYPE = "802-11-wireless"
 
 NMCLI = "/usr/bin/nmcli"
 JOURNALCTL = "/usr/bin/journalctl"
@@ -333,6 +338,43 @@ def pskFlagsOf(settings: dict[str, Any]) -> int:
     return int(security.get(PSK_FLAGS_KEY, SECRET_FLAG_NONE))
 
 
+def agentOwnedWarnings(profiles: Iterable[dict[str, Any]]) -> list[str]:
+    """One warning line per saved Wi-Fi profile whose secret is not system-owned (US-925-b).
+
+    Recovery works only when NetworkManager stores the key (psk-flags=0); an
+    agent-owned secret needs a person every time.  Pure: no I/O, no logging.
+
+    Args:
+        profiles: GetSettings results (which carry no secrets), one per saved
+            connection; non-Wi-Fi connections are ignored.
+
+    Returns:
+        The warning lines, in profile order; empty when every Wi-Fi secret is
+        system-owned.
+    """
+    lines = []
+    for settings in profiles:
+        connection = settings.get(CONNECTION_SETTING, {})
+        if connection.get("type") != WIFI_CONNECTION_TYPE:
+            continue
+        pskFlags = pskFlagsOf(settings)
+        if pskFlags != SECRET_FLAG_NONE:
+            lines.append(
+                f"Wi-Fi profile {connection.get('id', UNKNOWN)} psk-flags={pskFlags} "
+                "(agent-owned): no-secrets recovery cannot reuse its key"
+            )
+    return lines
+
+
+def reportProfileSecrets(profiles: Iterable[dict[str, Any]]) -> None:
+    """Log ONE WARNING per agent-owned Wi-Fi profile, or one INFO line when there is none."""
+    warnings = agentOwnedWarnings(profiles)
+    for line in warnings:
+        logger.warning(line)
+    if not warnings:
+        logger.info("all Wi-Fi secrets system-owned (psk-flags=0)")
+
+
 # ================================================================================
 # The thin I/O edge
 # ================================================================================
@@ -389,6 +431,14 @@ class NmDeviceReader:
         )
         return uuid, pskFlagsOf(settings)
 
+    def savedConnectionSettings(self) -> list[dict[str, Any]]:
+        """GetSettings of every saved connection; GetSettings carries no secrets."""
+        paths = self._object(NM_SETTINGS_PATH).ListConnections(dbus_interface=NM_SETTINGS_IFACE)
+        return [
+            self._object(str(path)).GetSettings(dbus_interface=NM_SETTINGS_CONNECTION_IFACE)
+            for path in paths
+        ]
+
 
 def buildEvent(
     reader: Any,
@@ -432,6 +482,12 @@ def main() -> int:
     bus = dbus.SystemBus()
     reader = NmDeviceReader(bus)
     memory = [Memory()]
+
+    # US-925-b: the provisioning requirement (psk-flags=0), checked once at start.
+    try:
+        reportProfileSecrets(reader.savedConnectionSettings())
+    except dbus.exceptions.DBusException as exc:
+        logger.warning("could not read the saved connections; psk-flags check not run (%s)", exc)
 
     def launch(argv: tuple[str, ...], uuid: str) -> None:
         # Never blocks the signal loop: GLib reaps the child and reports it.
