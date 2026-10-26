@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.14",
-  "theme": "V0.30 boot and shutdown screens",
-  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 114 (#134) + Iris UIDEV-015 (#133): four-feed boot checklist + event-driven boot logo (US-869-c..g, US-785), full-frame WARNING (US-885-c), shutdown page with progress bar, reverse spin and dim-down, no timers (US-870-a/b/c, US-883-c), LOADING fit (US-760). Pi stays labwc."
+  "version": "V0.30.15",
+  "theme": "V0.30 no-desktop kiosk and boot speed",
+  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 115 (#135): wayland default + no text consoles + getty@tty1 masked + blank cursor (US-652-a..e), EEPROM/config.txt boot-speed keys (US-926-a/b), Wi-Fi no-secrets stored-key retry (US-925-a/b), splash letterbox to the real viewport (US-869-h). EEPROM applies at the next reboot."
 }
