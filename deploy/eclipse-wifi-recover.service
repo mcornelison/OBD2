@@ -1,0 +1,66 @@
+# ==============================================================================
+# File:    eclipse-wifi-recover.service
+# Purpose: Retry a stored-PSK Wi-Fi connection ONCE after NetworkManager fails
+#          it with NO_SECRETS (US-925-a / F-155)
+# Author:  Rex (Ralph Agent)
+# Created: 2026-10-25 -- US-925-a (Atlas design; Atlas RULED Q-925-1)
+#
+# Why
+# ---
+# After a handshake failure NetworkManager walks a stored-PSK connection
+# need-auth -> no secrets -> failed and never retries it. MEASURED on 2 of 25
+# boots: the Pi was offline 8 and 63 minutes, until a power-cycle. The key is
+# still stored; nothing asks NM to use it again. src/pi/network/wifi_recover.py
+# listens for Device.StateChanged (wlan0, FAILED, reason NO_SECRETS) and runs
+# `nmcli connection up uuid U` ONCE per ACTIVATED -- see its docstring for the
+# rearm rule. Recovery, not prevention: the 5 GHz move happens below the
+# supplicant, and band=bg, freq_list and roamoff=1 are already set (MEASURED).
+#
+# Root, on purpose (no User=)
+# ---------------------------
+# NM's network-control polkit action is auth_admin for a caller with no
+# session, so an unprivileged unit could not re-activate the connection. A
+# polkit grant to mcornelison would also reach Chromium, which runs as that
+# user. Precedent: eclipse-rfkill-unblock.service. No polkit rule is added.
+# The sandbox below is what keeps root small: no new privileges, an EMPTY
+# capability bounding set, a read-only OS and /home (the code lives under
+# /home), a private /tmp, and AF_UNIX only (the system bus and the journal).
+#
+# The SYSTEM python, not obd2-venv
+# --------------------------------
+# dbus and gi come from Debian python3-dbus / python3-gi. obd2-venv has
+# include-system-site-packages=false and `import dbus` fails there (MEASURED).
+# deploy-pi.sh's step_install_wifi_recover_unit FAILS the deploy when either
+# package is missing; a deploy never installs packages.
+#
+# PartOf=NetworkManager.service: an NM restart restarts this unit too, so it
+# re-subscribes on the new NM. The subscription is on ANY object path anyway
+# (device paths change when NM restarts).
+#
+# Installation: deploy/deploy-pi.sh step_install_wifi_recover_unit (sync-if-
+# changed + daemon-reload-on-change + enable + restart, every deploy). It never
+# restarts NetworkManager and never reloads brcmfmac, so SSH survives a deploy.
+#
+# Verify:
+#   systemctl is-active eclipse-wifi-recover      # -> active
+#   journalctl -u eclipse-wifi-recover -b         # -> "watching wlan0 ..."
+# ==============================================================================
+
+[Unit]
+Description=Retry a Wi-Fi connection once after a NetworkManager no-secrets failure (US-925-a)
+After=NetworkManager.service
+PartOf=NetworkManager.service
+
+[Service]
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+ExecStart=/usr/bin/python3 /home/mcornelison/Projects/Eclipse-01/src/pi/network/wifi_recover.py
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

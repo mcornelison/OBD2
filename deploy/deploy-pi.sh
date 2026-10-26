@@ -998,6 +998,61 @@ step_install_nm_wifi_powersave() {
     "
 }
 
+step_install_wifi_recover_unit() {
+    # US-925-a / F-155: install eclipse-wifi-recover.service, the one-shot-per-
+    # ACTIVATED retry of a stored-PSK connection NetworkManager failed with
+    # NO_SECRETS (src/pi/network/wifi_recover.py).
+    #
+    # Posture of step_install_nm_wifi_powersave above (cmp -s guard, every
+    # deploy), but this step NEVER restarts NetworkManager and never reloads
+    # brcmfmac: the unit only listens on the bus, so nothing here can sever the
+    # SSH session the deploy runs over. daemon-reload only on a real change.
+    # `restart` (which starts a stopped unit) rather than `start`, so a running
+    # copy never keeps the previous release's code in memory (US-354 class).
+    #
+    # The unit runs the SYSTEM python with Debian python3-dbus + python3-gi
+    # (obd2-venv cannot import dbus). Both are checked BEFORE the install, and a
+    # missing one FAILS the deploy naming it -- a deploy never installs packages.
+    # Runs in both display modes, outside any display-mode branch.
+    echo "--- Step: Installing eclipse-wifi-recover systemd unit (US-925-a, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: dpkg -s python3-dbus python3-gi (FAIL the deploy, naming the package, if either is missing)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-wifi-recover.service /etc/systemd/system/eclipse-wifi-recover.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable eclipse-wifi-recover.service"
+        echo "DRY-RUN would: sudo systemctl restart eclipse-wifi-recover.service (start; replaces a running copy)"
+        echo "DRY-RUN note: NetworkManager is NOT restarted and brcmfmac is NOT reloaded"
+        return 0
+    fi
+    remote "
+        set -e
+        for pkg in python3-dbus python3-gi; do
+            if ! dpkg -s \"\$pkg\" >/dev/null 2>&1; then
+                echo \"ERROR: Debian package \$pkg is not installed -- eclipse-wifi-recover needs it. A deploy never installs packages: install \$pkg on the Pi, then re-deploy.\" >&2
+                exit 1
+            fi
+        done
+
+        SRC='${PI_PATH}/deploy/eclipse-wifi-recover.service'
+        DST='/etc/systemd/system/eclipse-wifi-recover.service'
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'ERROR: eclipse-wifi-recover.service not present in deploy/ on the Pi (sync_tree whitelist?).' >&2
+            exit 1
+        fi
+
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'eclipse-wifi-recover.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            sudo systemctl daemon-reload
+            echo 'eclipse-wifi-recover.service installed + daemon-reload complete.'
+        fi
+
+        sudo systemctl enable eclipse-wifi-recover.service
+        sudo systemctl restart eclipse-wifi-recover.service
+        echo 'eclipse-wifi-recover.service enabled + active.'
+    "
+}
+
 step_enforce_eeprom_power_off_on_halt() {
     # US-253 / SS-T8 / US-926-a: enforce the Pi 5 bootloader EEPROM key table
     # POWER_OFF_ON_HALT=1, NET_INSTALL_AT_POWER_ON=0, NET_INSTALL_ENABLED=0,
@@ -3103,6 +3158,11 @@ step_install_polkit_wifi_scan
 # power-save-disabled). Runs AFTER sync_tree so deploy/nm-disable-wifi-
 # powersave.conf exists on the Pi.
 step_install_nm_wifi_powersave
+
+# US-925-a: the Wi-Fi no-secrets recovery unit. Every deploy, both display
+# modes; never restarts NetworkManager (SSH survives). Runs AFTER sync_tree so
+# deploy/eclipse-wifi-recover.service and src/pi/network/wifi_recover.py exist.
+step_install_wifi_recover_unit
 
 # US-253 / US-926-a: EEPROM key-table enforcement (POWER_OFF_ON_HALT=1,
 # NET_INSTALL_AT_POWER_ON=0, NET_INSTALL_ENABLED=0, BOOT_UART=0). Runs under

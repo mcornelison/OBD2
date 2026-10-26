@@ -2045,6 +2045,49 @@ dead and nothing rules home out: `nmcli` missing or timing out, or the
 `hostname -I` read itself failing (US-776-c).  The shutdown sync drains on
 `UNKNOWN` (§10.6.3).
 
+#### Wi-Fi no-secrets recovery — `eclipse-wifi-recover` (US-925-a, Sprint 115)
+
+**The defect, MEASURED on 2 of 25 boots.** After a handshake failure
+NetworkManager walks a stored-PSK Wi-Fi connection need-auth → no secrets →
+failed and never retries it; the Pi was offline 8 and 63 minutes, until a
+power-cycle. **Recovery, not prevention, is the fix:** the 5 GHz move that
+starts it happens below the supplicant, and `band=bg`, `freq_list` and
+`roamoff=1` are already set (MEASURED), so nothing above the driver can stop
+the failure — only answer it.
+
+- **Service.** `deploy/eclipse-wifi-recover.service` runs
+  `src/pi/network/wifi_recover.py` on the SYSTEM python (`/usr/bin/python3`;
+  dbus + `gi.repository.GLib` from Debian `python3-dbus` / `python3-gi`, which
+  `obd2-venv` cannot import). Root with no `User=` (NM's network-control polkit
+  is `auth_admin` for a session-less caller, and a grant to the kiosk user
+  would reach Chromium too), sandboxed: `NoNewPrivileges`, empty
+  `CapabilityBoundingSet=`, `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `PrivateTmp`, `AF_UNIX` only; `PartOf=NetworkManager.service`. No polkit
+  rule. `deploy-pi.sh step_install_wifi_recover_unit` installs it every
+  deploy (cmp-guarded; fails loud when either Debian package is missing; never
+  restarts NetworkManager or reloads brcmfmac, so SSH survives).
+- **Trigger.** `Device.StateChanged` subscribed by interface + member on ANY
+  object path (device paths change when NM restarts), resolved to the
+  device's `Interface`: wlan0, new state `NM_DEVICE_STATE_FAILED`, reason
+  `NM_DEVICE_STATE_REASON_NO_SECRETS` — **whatever caused it** (a reason-15 or
+  reason-17 disconnect, or the boot race). The preceding disconnect reason and
+  the BSSID before/after come from this boot's wpa_supplicant lines and are
+  only logged, one journal line per event.
+- **Action.** `nmcli connection up uuid U`, launched without blocking the
+  signal loop (GLib reaps it; a non-zero exit is ONE ERROR line with the exit
+  code). `U` is the uuid wlan0 last reached `NM_DEVICE_STATE_ACTIVATED` with,
+  recorded with its psk-flags (GetSettings; GetSecrets is never called).
+- **Rearm rule (no counter, no window, no timer).** At most ONE retry per
+  ACTIVATED; only ACTIVATED re-arms. A second no-secrets failure with no
+  ACTIVATED between is not retried and logs ONE ERROR line; so does a failure
+  of a connection that never activated (a wrong key on a fresh profile). No
+  action for any other state reason (NM's own autoconnect owns those), another
+  device, or an agent-owned secret (`psk-flags != 0`: no stored key to reuse,
+  and asking a person is correct).
+- **Why not a dispatcher script.** NetworkManager-dispatcher(8) has no event
+  for a failed activation and carries no state reason, so it cannot see this
+  failure at all.
+
 #### `pi.companionService` — Pi → server reach (US-151)
 
 Consumed by `src.pi.sync.SyncClient` (US-149) for delta upload to
