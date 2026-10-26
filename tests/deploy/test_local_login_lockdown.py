@@ -21,6 +21,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-25    | Rex          | Initial implementation (US-652-c)
+# 2026-10-25    | Rex          | US-652-d: getty@tty1 mask step (guarded, never
+#               |              | stopped live); no ssh/sshd/serial-getty
+#               |              | disable, mask or stop anywhere in deploy-pi.sh
 # ================================================================================
 ################################################################################
 
@@ -48,6 +51,10 @@ TARGET_DIR = "/etc/systemd/logind.conf.d"
 TARGET_PATH = f"{TARGET_DIR}/51-eclipse-kiosk-vt.conf"
 STEP_NAME = "step_install_logind_kiosk_vt"
 POWERKEY_STEP = "step_install_logind_powerkey"
+GETTY_STEP = "step_mask_getty_tty1"
+GETTY_UNIT = "getty@tty1.service"
+# The two ways in the CIO 2026-10-24 access ruling keeps.
+KEPT_UNIT_PREFIXES = ("ssh", "sshd", "serial-getty")
 
 needsBash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 
@@ -286,3 +293,185 @@ def test_deployPiSh_bashSyntaxValid():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# US-652-d: getty@tty1 masked; sshd and serial-getty@ttyAMA10 untouched.
+# ---------------------------------------------------------------------------
+
+
+def test_gettyStep_masksTty1_guardedOnIsEnabled():
+    """The mask line exists and sits behind an is-enabled != masked guard."""
+    body = _code(_stepBody(_deployText(), GETTY_STEP))
+
+    assert f"systemctl mask {GETTY_UNIT}" in body.replace("${unit}", GETTY_UNIT)
+    assert re.search(r"systemctl is-enabled \$\{unit\}", body)
+    assert "'masked'" in body
+    guardIndex = body.index("is-enabled")
+    assert guardIndex < body.index("sudo systemctl mask"), "the mask runs before its guard"
+
+
+def test_gettyStep_neverStopsTheUnitLive():
+    """Effective next boot: no `stop`, and no `mask --now` (which also stops)."""
+    body = _code(_stepBody(_deployText(), GETTY_STEP))
+
+    assert "--now" not in body
+    assert not re.search(r"systemctl\s+(?:\S+\s+)*(stop|kill|restart)\b", body)
+
+
+def test_gettyStep_isDryRunAware():
+    body = _stepBody(_deployText(), GETTY_STEP)
+    dryRunIndex = body.index("$DRY_RUN")
+
+    assert body.index("return 0", dryRunIndex) < body.index("remote", dryRunIndex)
+
+
+def test_gettyStep_isCalledOnceAtTopLevel_rightAfterTheKioskVtStep():
+    """Both display modes: one un-indented call, outside every if/case."""
+    lines = _deployText().splitlines()
+    calls = [i for i, ln in enumerate(lines) if ln.strip() == GETTY_STEP]
+    kioskVtCalls = [i for i, ln in enumerate(lines) if ln == STEP_NAME]
+
+    assert len(calls) == 1, f"expected one call to {GETTY_STEP}, found {len(calls)}"
+    assert lines[calls[0]] == GETTY_STEP, "the call is indented -- it sits inside a block"
+    before = lines[: calls[0]]
+    opened = sum(1 for ln in before if re.match(r"(if|case)\b", ln))
+    closed = sum(1 for ln in before if re.match(r"(fi|esac)\b", ln))
+    assert opened == closed, "the call sits inside a top-level if/case"
+    between = lines[kioskVtCalls[0] + 1 : calls[0]]
+    assert kioskVtCalls[0] < calls[0]
+    assert all(not ln.strip() or ln.startswith("#") for ln in between), (
+        f"the step is not wired next to {STEP_NAME}"
+    )
+
+
+def _systemctlTargets(text: str, verbs: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Every (verb, unit) a `systemctl <verb> <units...>` in the code acts on."""
+    found = []
+    # [ \t], not \s: one command's arguments never run on past its own line.
+    pattern = rf"systemctl(?:[ \t]+--?\S+)*[ \t]+({'|'.join(verbs)})\b((?:[ \t]+[^\s;&|)\"']+)*)"
+    for match in re.finditer(pattern, _code(text)):
+        for arg in match.group(2).split():
+            if not arg.startswith("-"):
+                found.append((match.group(1), arg))
+    return found
+
+
+def test_systemctlTargets_catchesAKeptUnit():
+    """The scanner below would see the regression it guards against."""
+    sample = (
+        "sudo systemctl disable --now ssh.service\n"
+        "sudo systemctl mask serial-getty@ttyAMA10.service || true\n"
+        "    # sudo systemctl stop sshd   (a comment is not behaviour)\n"
+    )
+    assert _systemctlTargets(sample, ("disable", "mask", "stop")) == [
+        ("disable", "ssh.service"),
+        ("mask", "serial-getty@ttyAMA10.service"),
+    ]
+
+
+def test_deployPiSh_neverDisablesMasksOrStopsSshOrSerialGetty():
+    """
+    Given: the CIO 2026-10-24 access ruling keeps SSH and the debug-UART login
+    When:  every systemctl disable/mask/stop in deploy-pi.sh is read
+    Then:  none targets ssh, sshd or serial-getty -- serial-getty@ttyAMA10
+           stays enabled after a deploy -- and the getty@tty1 mask is the
+           only getty the script masks
+    """
+    targets = _systemctlTargets(_deployText(), ("disable", "mask", "stop"))
+    units = [unit.replace("${unit}", GETTY_UNIT) for _, unit in targets]
+
+    hits = [u for u in units if u.split("@")[0].split(".")[0] in KEPT_UNIT_PREFIXES]
+    assert hits == [], hits
+    # The dry-run echo names the same mask, hence the set.
+    assert {u for u in units if "getty" in u} == {GETTY_UNIT}
+
+
+def test_osTrimManifest_neverTouchesSshOrSerialGetty():
+    """The other unit-masking path a deploy runs keeps the two ways in too."""
+    for line in (DEPLOY_DIR / "os-trim.manifest").read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        unit = line.split("|")[0].strip()
+        assert unit.split("@")[0].split(".")[0] not in KEPT_UNIT_PREFIXES, line
+
+
+def _runGettyStep(tmp_path: Path, state: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """
+    Run the real step body with DRY_RUN=false against a fake `systemctl`:
+    `is-enabled` prints `state` (exiting non-zero, as systemctl does, for
+    anything but enabled); every call is logged.
+    """
+    log = tmp_path / "systemctl.log"
+    step = _stepBody(_deployText(), GETTY_STEP) + "\n}\n"
+    script = (
+        f"LOG='{log.as_posix()}'\n"
+        "systemctl() {\n"
+        "    echo \"$*\" >> \"$LOG\"\n"
+        f"    if [ \"$1\" = is-enabled ]; then echo '{state}'; [ '{state}' = enabled ]; fi\n"
+        "}\n"
+        "sudo() { \"$@\"; }\n"
+        "remote() { eval \"$1\"; }\n"
+        "DRY_RUN=false\n"
+        f"{step}\n"
+        f"{GETTY_STEP}\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return result, calls
+
+
+@needsBash
+@pytest.mark.parametrize("state", ["enabled", "enabled-runtime", "static", "disabled"])
+def test_gettyStep_notMasked_masksItForNextBoot(tmp_path: Path, state: str):
+    result, calls = _runGettyStep(tmp_path, state)
+
+    assert result.returncode == 0, result.stdout
+    assert calls == [f"is-enabled {GETTY_UNIT}", f"mask {GETTY_UNIT}"]
+    assert f"{GETTY_UNIT} masked (effective next boot)." in result.stdout
+
+
+@needsBash
+def test_gettyStep_alreadyMasked_runsNothing(tmp_path: Path):
+    """Negative case: already masked -> only the read; no mask, no stop."""
+    result, calls = _runGettyStep(tmp_path, "masked")
+
+    assert result.returncode == 0, result.stdout
+    assert calls == [f"is-enabled {GETTY_UNIT}"]
+    assert f"{GETTY_UNIT} already masked (no change)." in result.stdout
+
+
+@needsBash
+def test_deployDryRun_printsTheGettyMask(tmp_path: Path):
+    deployDir = tmp_path / "deploy"
+    deployDir.mkdir()
+    for name in ("deploy-pi.sh", "addresses.sh", "os-trim.manifest"):
+        shutil.copy(DEPLOY_DIR / name, deployDir / name)
+    shutil.copytree(DEPLOY_DIR / "labwc", deployDir / "labwc")
+    (deployDir / "deploy.conf").write_text(
+        "PI_HOST=192.0.2.1\nPI_USER=nobody\nPI_PATH=/tmp/will-never-exist\nPI_PORT=22\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = subprocess.run(
+        ["bash", (deployDir / "deploy-pi.sh").as_posix(), "--dry-run"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+
+    out = result.stdout
+    assert result.returncode == 0, out[-2000:]
+    maskLines = [ln for ln in out.splitlines() if ln.startswith(f"DRY-RUN would: systemctl mask {GETTY_UNIT}")]
+    assert maskLines, out[-2000:]
+    assert "not stopped live" in maskLines[0]

@@ -780,6 +780,33 @@ step_install_logind_kiosk_vt() {
     "
 }
 
+step_mask_getty_tty1() {
+    # US-652-d: getty@tty1 runs today behind the kiosk VT (Atlas MEASURED), a
+    # text login one VT switch away. CIO 2026-10-24 access ruling: mask it;
+    # sshd and serial-getty@ttyAMA10 (the debug-UART login) stay untouched.
+    # Masks only when is-enabled does not already print masked, and NEVER
+    # stops the unit live -- the mask takes effect on the next boot. Lives here,
+    # not in eclipse-display-mode.sh (the mode command masks nothing).
+    echo "--- Step: Masking getty@tty1 (US-652-d) ---"
+    local unit="getty@tty1.service"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would: systemctl mask ${unit} (unless already masked; effective next boot, not stopped live)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        GETTY_STATE=\$(systemctl is-enabled ${unit} 2>/dev/null || true)
+        if [ \"\$GETTY_STATE\" = 'masked' ]; then
+            echo '${unit} already masked (no change).'
+        else
+            sudo systemctl mask ${unit}
+            echo '${unit} masked (effective next boot).'
+        fi
+    "
+}
+
 step_install_polkit_poweroff() {
     # US-341 / I-036: install polkit rule granting mcornelison the
     # org.freedesktop.login1.power-off action without interactive auth.
@@ -3039,6 +3066,11 @@ step_install_logind_powerkey
 # and posture as the power-key drop-in: unconditional, both display modes, no
 # logind restart. Runs AFTER sync_tree so deploy/eclipse-kiosk-vt.conf exists.
 step_install_logind_kiosk_vt
+
+# US-652-d: mask getty@tty1, the text login behind the kiosk VT. Unconditional,
+# both display modes, never stopped live (effective next boot). sshd and
+# serial-getty@ttyAMA10 are the kept ways in and are never touched here.
+step_mask_getty_tty1
 
 # US-341 / I-036: polkit rule granting mcornelison the
 # org.freedesktop.login1.power-off action.  Without this rule

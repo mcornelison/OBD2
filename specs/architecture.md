@@ -2535,6 +2535,20 @@ quit.
   logind -- it takes effect on the next boot. It ships through the existing
   `deploy/eclipse-*.conf` rsync include and the tar fallback's `./deploy`.
   `HandlePowerKey` stays the power-key drop-in's alone.
+  **getty@tty1 is masked (US-652-d).** `NAutoVTs=0` does not cover tty1:
+  `getty@tty1` ran behind the kiosk VT (Atlas MEASURED), a text login one VT
+  switch away. `step_mask_getty_tty1`, called right after
+  `step_install_logind_kiosk_vt` in both modes, runs `systemctl mask
+  getty@tty1.service` only when `systemctl is-enabled` does not already print
+  `masked` (a masked unit runs nothing and prints `already masked (no
+  change)`); it never stops the unit live -- no `stop`, no `--now` -- so the
+  mask takes effect on the next boot. It lives in `deploy-pi.sh`, not the mode
+  command (which masks nothing). The two kept ways in are **sshd** and
+  **`serial-getty@ttyAMA10`** (the debug-UART login): `deploy-pi.sh` never
+  disables, masks or stops ssh, sshd or serial-getty, and
+  `deploy/os-trim.manifest` lists neither (pinned by
+  `tests/deploy/test_local_login_lockdown.py`). Revert: `sudo systemctl unmask
+  getty@tty1.service` and drop the step.
 - **`eclipse-compositor.service` is retired** (CIO 2026-10-16; US-649-d removed it
   from the deploy tree). The US-649-b system unit ran labwc itself with
   `PAMName=login` and had to do every display-manager duty by hand; the
