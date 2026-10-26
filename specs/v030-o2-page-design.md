@@ -19,7 +19,7 @@
 | O-3 | Sample rate | **Show the trace at the real rate.** ~~Upgrade when faster sampling arrives~~: **no faster polling** (Spool 2026-10-13; tiers banked, R34) |
 | O-4 | Purpose | Both: closed-loop + catalyst (catalyst held, §4.3) |
 | O-5 | Layout | **A · Front and rear stacked** (shared time axis) |
-| O-6 | Rear + catalyst verdicts | **Held** (CIO 2026-10-13): chips read `not rated yet` |
+| O-6 | Rear + catalyst verdicts | **Held** (CIO 2026-10-13): chips read `not rated` (was `not rated yet`; `yet` dropped by the CIO 2026-10-26, no promise words) |
 
 **Iris rule attached to O-3:** the trace draws **one dot per real sample, never a joined line.** At ~2.2 s per sample a line would still draw a swing that was never measured.
 
@@ -29,22 +29,24 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│ FRONT · BEFORE CAT                [SWITCHING] │
+│ FRONT  BEFORE CAT                 [SWITCHING] │
 │ 0.78 V   2 s old · 1 sample / ~2.2 s          │ ~105
 │ •  •    •  •   • •   •  •    •  • •   •  •   │ trace, last 5 min, dashed 0.45 V mid
 ├──────────────────────────────────────────────┤
-│ REAR · AFTER CAT              [not rated yet] │
+│ REAR  AFTER CAT                   [not rated] │
 │ 0.18 V   1 s old · 1 sample / ~2.2 s          │ ~105
 │ • • •  • • • • • •  • • • • • • • •  • • •    │
 ├──────────────────────────────────────────────┤
-│ CATALYST                      [not rated yet] │ ~30
+│ CATALYST                          [not rated] │ ~30
 └──────────────────────────────────────────────┘
 ```
 
-- Voltage `--fs-primary`; age + sample rate `--fs-meta` (**the rate is always stated**, from the provider).
-- Trace 456 × 44: 5-minute window (~136 dots at today's rate), 0–1 V, dashed mid-line at 0.45 V; dots only.
+- Section labels `FRONT  BEFORE CAT` / `REAR  AFTER CAT` / `CATALYST`: Michroma `--fs-meta`, a double space, no middle dot (OEM finding).
+- Voltage `--fs-primary`, 2 dp + ` V`. Meta line `--font-mono` `--fs-meta`: `<n> s old · 1 sample / ~<N> s · last 5 min`, with N = the provider's `samplePeriodSec` to 1 dp (**the rate is always stated**, from the provider).
+- Trace 456 × 44 (`--o2-trace-h: 44px`): the provider's window (5 min, ~136 dots at today's rate), 0–1 V, a dashed mid-line at the provider's **`midlineV`** (0.45, Atlas A1: one home in `o2_state.py`); dots only. The page holds no threshold number.
 - **Live verdict** chip: `--fs-label` `--font-display`, **no state colour** (the verdict is a description, not a severity; STUCK is not a STOP).
-- **Withheld verdict** chip (`open loop`, `not enough data yet`, `unclear`, `not rated yet`): dashed outline, `--text-tertiary`. Each is a different reason, and the chip says which.
+- **Withheld verdict** chip: lower case, `--font-mono` `--fs-label` (the Michroma subset has no a–z), dashed outline, `--text-tertiary`. **The word is the provider's reason code with `_` → space:** `open_loop` → `open loop`, `not_enough_data` → `not enough data`, `unclear`, `not_rated` → `not rated`. Each is a different reason, and the chip says which. A new reason code renders readably with no page change.
+- **No promise words** (CIO 2026-10-26: `yet` dropped): the chip says why there is no verdict, never that one is coming.
 
 ## 4. Behaviour
 
@@ -52,11 +54,14 @@
 - Voltages step per reading with their age. **No AFR anywhere** (narrowband).
 - **Trace:** one dot per real sample at its own timestamp; never interpolated or joined.
 - Stale / null: dim + age / `--` + reason (shared rule: a stale value renders `last.value` dimmed, Driving §4.4).
+- **`states/o2` missing or unreadable:** every value `--` with the reason `no source` (the Driving page's word), never `0.00 V`.
 
 ### 4.2 Front verdict (Spool 2026-10-13; provider-derived, the page renders the word)
 
 **Gate:** a verdict only when `FUEL_SYSTEM_STATUS` = closed loop (value 2 on this car, encoding derived by correlation) **and** coolant ≥ 85 °C. Otherwise the chip reads `open loop`.
-**Window:** the last 5 minutes, **≥ 60 gated front samples** (~2.2 min of closed loop). Fewer: `not enough data yet`.
+- **Per sample (Atlas + Spool, 2026-10-26):** a front sample is gated by the latest `FUEL_SYSTEM_STATUS` and `COOLANT_TEMP` readings at or before the sample's event ts, each not stale (Atlas), and from the same poll cycle, within 1.1 s of the sample (Spool). Otherwise the sample is ungated.
+
+**Window:** the last 5 minutes, **≥ 60 gated front samples** (~2.2 min of closed loop). Fewer: `not enough data`.
 
 | Verdict | Rule (fractions of gated samples in the window) |
 |---|---|
@@ -70,7 +75,7 @@
 - **What this rate cannot tell:** switching **speed** (a lazy, ageing sensor). That needs ≥ 4 Hz on one PID, which §2 rules out. The page must not imply it.
 
 ### 4.3 Rear and catalyst: held (CIO 2026-10-13)
-- Both chips read **`not rated yet`**. The rear voltage and its dot trace stay.
+- Both chips read **`not rated`**. The rear voltage and its dot trace stay.
 - Why (Spool): the rear sits **low on all 15 drives** (avg 0.15–0.26 V, 63–88 % of samples < 0.3 V), and the catalyst monitor was NOT READY at the 09-26 test. A simple rule would show CHECK CATALYST from day one, and this data cannot separate a tired cat, an exhaust leak near the sensor and an old sensor. The CIO's exhaust project replaces the cat; Spool validates the rule after it is installed.
 - Void if the rear readings turn out not to be the downstream sensor (config still calls 0x15 "support uncertain").
 
@@ -87,13 +92,14 @@
 
 ## 6. Acceptance criteria (draft)
 1. Dots only: no polyline/path joins samples; rate text equals the provider's sample period.
-2. Each front-verdict fixture shows the provider's word; the page computes no fraction (grep gate: no `0.30`, `0.45`, `0.60`, `0.90` in `carousel.js`).
-3. Open-loop and cold-closed-loop fixtures: front chip `open loop`.
-4. Under 60 gated samples: front chip `not enough data yet`.
-5. Rear and catalyst chips read `not rated yet` in every fixture.
+2. Each front-verdict fixture shows the provider's word; the page computes no fraction (grep gate: no `0.30`, `0.45`, `0.60`, `0.90` and no `AFR` in O2 code in `carousel.js`). The mid-line is drawn from `midlineV`.
+3. Open-loop and cold-closed-loop fixtures: front chip = the provider's reason (`open loop`, or the S1 ruling's word), by the `_` → space rule.
+4. Under 60 gated samples: front chip `not enough data`.
+5. Rear and catalyst chips read `not rated` in every fixture.
 6. No AFR value or label anywhere on the page.
-7. No clipping; voltages ≥ 34 px. Live verdict chips carry no state colour.
-8. No literal colour or px in this page's CSS.
+7. No clipping, **proven by rule** (the render harness resolves the cascade, not layout; precedent `test_engine_history_render.py`): no O2 box has a fixed height except the trace (`--o2-trace-h`), and no O2 rule sets `overflow: hidden`. On the glass: an on-Pi screenshot of the `switching` fixture shows both rows and both traces whole (bigDoD). Voltages ≥ 34 px. Live verdict chips carry no state colour.
+8. No literal colour in this page's CSS; px only inside `#o2-card` custom properties.
+8a. `states/o2` missing ⇒ `--` + `no source`, never `0.00 V`.
 9. **DoD (R15): CIO judgement in the car.**
 
 ## 7. Fixtures
@@ -110,7 +116,7 @@ Wideband AFR (no sensor) · bank 2 sensors (4-cylinder, one bank) · switching-s
 ## OEM mockup findings (2026-10-15)
 Mockup: `proposals/2026-10-15-v030-o2-page-oem.html`.
 - **Section labels have no middle dot:** `FRONT  BEFORE CAT` (218.5 px at 15 px) and `REAR  AFTER CAT`, double-spaced, because the Michroma subset has no `·` (same as Motion's `GRADE  LAST 15 MIN`).
-- **Chip fonts:** the live verdict chips (`SWITCHING`, `STUCK LEAN` …) are Michroma. The withheld chips are lower case (`not enough data yet`, `open loop`), so they are `--font-body`: the Michroma subset has no a-z.
+- **Chip fonts:** the live verdict chips (`SWITCHING`, `STUCK LEAN` …) are Michroma. The withheld chips are lower case (`not enough data`, `open loop`), so they are `--font-mono`: the Michroma subset has no a-z. *(Corrected 2026-10-26, S117 review: this line said `--font-body`, a token that doesn't exist; tokens.css has only `--font-mono` and `--font-display`.)*
 - **Window on the glass:** `last 5 min` ends the meta line, since the trace has no axis labels.
 - **Page dots** follow the page list. With O2 built, the strip has 10 dots (S105 order plus O2).
 - ⚠️ **Open (Spool/Atlas): the cold-closed-loop fixture.** The loop is really closed and only the < 85 °C coolant gate fails, but the withheld chip reads `open loop`, which is false. Proposed: a separate reason `warming up`. The reason text is the provider's, not the page's.
