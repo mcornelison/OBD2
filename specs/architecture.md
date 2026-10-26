@@ -2584,9 +2584,32 @@ Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
   `plymouth-set-default-theme -R eclipse`. With `auto_initramfs=1` the `-R`
   rebuilds the initramfs and the z50-raspi-firmware hook copies it to
   `/boot/firmware`; plymouthd.conf carries the choice across kernel updates.
-- **config.txt `disable_splash=1`**, appended section-aware (an `[all]` is opened
-  if the file ends in e.g. `[cm4]`) under a marker comment, unless an effective
-  `disable_splash=1` is already there.
+- **config.txt `disable_splash=1`, `camera_auto_detect=0`, `display_auto_detect=0`**
+  (US-926-b, Sprint 115) -- the three keys set-boot-screen owns, all written
+  through **`deploy/lib/config-txt-keys.sh`, the ONE config.txt key writer**
+  (`config_txt_set_key`; moved out of set-boot-screen.sh, Atlas Q6; the
+  `deploy/lib/cmdline-tokens.sh` pattern -- the lib missing is a loud exit 1 with
+  nothing written). The writer is section-aware (only the top level, `[all]` and
+  `[pi5]` reach a Pi 5): an effective line with another value is **rewritten in
+  place**, never shadowed (stock RPi OS has `camera_auto_detect=1` /
+  `display_auto_detect=1` in its top block -> `=0` on the same lines); an absent
+  key is appended under a marker comment (an `[all]` opened if the file ends in
+  e.g. `[cm4]`); one first-write-wins backup (`config.txt.boot-screen-bak`),
+  verify after write, and a file already right is left byte-identical. The two
+  auto-detect keys stop the firmware's BSC_A/BSC_B "no ACK" I2C probes for a
+  camera and a DSI panel right before Starting OS (Atlas MEASURED 2026-10-24);
+  this car has neither. They are applied before `disable_splash`, so an `[all]`
+  the script opens belongs to them. config.txt edits never trigger the initramfs
+  `-R`. **Their undo** -- needed only if a camera or a DSI panel is ever fitted
+  (the HDMI35 is HDMI and needs neither; Atlas 2026-10-25) -- is the same writer
+  setting each back to 1: `. deploy/lib/config-txt-keys.sh;
+  config_txt_set_key /boot/firmware/config.txt camera_auto_detect 1 <backup>
+  "<marker>"` (and `display_auto_detect`); a 0 -> 1 -> 0 round trip is
+  byte-identical. **Not yet migrated:** `deploy/enable-rtc-charging.sh` writes
+  `rtc_bbat_vchg=<uV>` as a token inside a `dtparam=` comma list with its own
+  `sectionAtEof` writer -- a shape the lib (standalone `key=value` lines only)
+  has no mode for; recorded debt. `max_framebuffers` and set-gpu-cma.sh's
+  `dtoverlay=vc4-kms-v3d` are never touched.
 - **cmdline.txt tokens** `loglevel=3` and `vt.global_cursor_default=0` added,
   `console=tty1` removed -- through `deploy/lib/cmdline-tokens.sh` (US-885-a), so
   it and `set-display-mode.sh`'s `video=` pin give their union in either order.
@@ -2605,9 +2628,14 @@ Plymouth in each, ADR §11.3; no `--retain-splash` anywhere, Atlas F1). It owns:
 - **Revert:** `sudo bash deploy/set-boot-screen.sh --revert` (independent of display
   mode) backs up the initramfs pair, runs `plymouth-set-default-theme -R <the
   recorded prior theme>` (`pix` if there is no record), removes the installed
-  theme and the record, removes its config.txt block and the tokens it added, and
-  puts `console=tty1` back in its original place -- both files byte-identical to
-  before when nothing else edited them. It never restores the initramfs from a
+  theme and the record, removes its config.txt `disable_splash` block (or, when
+  apply rewrote an existing `disable_splash` line in place, puts its prior value
+  back through the writer) and the tokens it added, and puts `console=tty1` back
+  in its original place -- both files byte-identical to before when nothing else
+  edited them, but for the two auto-detect keys: `--revert` leaves
+  `camera_auto_detect=0` / `display_auto_detect=0` alone (Atlas AGREED
+  2026-10-25: one revert per concern; undoing the boot screen must not slow the
+  boot or touch hardware detection). It never restores the initramfs from a
   `.bak` (a kernel update may have happened in between; `-R` rebuilds it).
 
 #### Panel capture: `eclipse-capture-panel` (US-650)

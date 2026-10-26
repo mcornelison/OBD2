@@ -15,8 +15,12 @@
 #      carries plymouth + the theme; -R rebuilds the initramfs and the
 #      z50-raspi-firmware hook copies it to /boot/firmware. The choice survives
 #      kernel updates via plymouthd.conf, so no extra hook is needed.
-#   2. config.txt `disable_splash=1` (no rainbow), section-aware like
-#      enable-rtc-charging.sh: only the top level, [all] and [pi5] reach a Pi 5.
+#   2. config.txt `disable_splash=1` (no rainbow), plus `camera_auto_detect=0`
+#      and `display_auto_detect=0` (US-926-b: no camera / DSI-panel I2C probe
+#      before Starting OS -- this car has neither) -- all through
+#      deploy/lib/config-txt-keys.sh, the ONE config.txt key writer, which is
+#      section-aware (only the top level, [all] and [pi5] reach a Pi 5) and
+#      rewrites an effective line with another value in place.
 #   3. cmdline.txt `loglevel=3` and `vt.global_cursor_default=0` added and
 #      `console=tty1` removed -- all through deploy/lib/cmdline-tokens.sh, the
 #      ONE cmdline editor, so set-display-mode.sh's video= pin and these tokens
@@ -44,11 +48,22 @@
 #
 # THE REVERT restores what apply changed and nothing else: the boot-screen
 # tokens it added are removed, console=tty1 is put back where it was, the
-# config.txt block it appended is removed (both files byte-identical to before
-# when nothing else edited them), and -R rebuilds with the theme RECORDED before
+# config.txt disable_splash block it appended is removed -- or, when apply
+# rewrote an existing disable_splash line in place, that line's prior value is
+# put back (both files byte-identical to before when nothing else edited them),
+# and -R rebuilds with the theme RECORDED before
 # the first install (pix if there is no record). It never restores the
 # initramfs from a .bak: a kernel update may have happened in between, and -R
 # builds a correct one.
+#
+# The revert leaves camera_auto_detect=0 / display_auto_detect=0 alone (Atlas
+# 2026-10-25: one revert per concern -- undoing the boot screen must not slow
+# the boot or touch hardware detection). Their undo, needed only if a camera or
+# a DSI panel is fitted (the HDMI35 is HDMI and needs neither), is the same
+# writer setting each back to 1:
+#   . deploy/lib/config-txt-keys.sh
+#   config_txt_set_key /boot/firmware/config.txt camera_auto_detect 1 \
+#       /boot/firmware/config.txt.boot-screen-bak "# <why>"
 #
 # Usage (run directly on the Pi):
 #   sudo bash deploy/set-boot-screen.sh            # apply
@@ -107,6 +122,12 @@ CONFIG_KEY="disable_splash"
 CONFIG_LINE="${CONFIG_KEY}=1"
 CONFIG_MARKER="# eclipse set-boot-screen (US-885-b): no rainbow at power-on -- undo with set-boot-screen.sh --revert"
 
+# No camera / DSI-panel auto-detect probe at boot (US-926-b). Applied BEFORE
+# disable_splash, so an [all] this script opens belongs to these lines and the
+# disable_splash block --revert removes never carries it. --revert leaves them.
+AUTODETECT_KEYS="camera_auto_detect=0 display_auto_detect=0"
+AUTODETECT_MARKER="# eclipse set-boot-screen (US-926-b): no camera/DSI auto-detect probe at boot -- undo: config-txt-keys.sh sets it back to 1"
+
 ADD_TOKENS="loglevel=3 vt.global_cursor_default=0"
 REMOVE_TOKEN="console=tty1"
 
@@ -140,6 +161,16 @@ if [ ! -r "$CMDLINE_TOKENS_LIB" ]; then
 fi
 # shellcheck source=lib/cmdline-tokens.sh
 . "$CMDLINE_TOKENS_LIB"
+
+# The ONE config.txt key writer (US-926-b).
+CONFIG_TXT_KEYS_LIB="${SELF_DIR}/lib/config-txt-keys.sh"
+if [ ! -r "$CONFIG_TXT_KEYS_LIB" ]; then
+    echo "ERROR: shared config.txt helper not found at '${CONFIG_TXT_KEYS_LIB}'." >&2
+    echo "       Nothing was written." >&2
+    exit 1
+fi
+# shellcheck source=lib/config-txt-keys.sh
+. "$CONFIG_TXT_KEYS_LIB"
 
 # ---- preflight: refuse before anything is written ----
 
@@ -260,109 +291,42 @@ rebuildInitramfs() {
     exit 4
 }
 
-# ---- config.txt ----
-
-# The EFFECTIVE disable_splash value: the last one in a section that reaches a
-# Pi 5 (top level, [all], [pi5]); "" if none.
-effectiveDisableSplash() {
-    awk -v key="$CONFIG_KEY" '
-        { t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t\r]+$/, "", t) }
-        t ~ /^\[/ { section = tolower(t); next }
-        (section == "" || section == "[all]" || section == "[pi5]") && index(t, key) == 1 {
-            rest = substr(t, length(key) + 1)
-            if (rest ~ /^[ \t]*=/) { sub(/^[ \t]*=[ \t]*/, "", rest); last = rest }
-        }
-        END { print last }
-    ' "$1"
-}
-
-# The section in effect at EOF, lowercased ("" = top level).
-sectionAtEof() {
-    awk '
-        { t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t) }
-        t ~ /^\[/ { section = tolower(t) }
-        END { print section }
-    ' "$1"
-}
+# ---- config.txt (through deploy/lib/config-txt-keys.sh) ----
 
 applyConfig() {
-    local header="" tmp
-    if [ "$(effectiveDisableSplash "$CONFIG")" = "1" ]; then
-        echo "${CONFIG_LINE} already effective in ${CONFIG} -- no change."
-        return 0
-    fi
-
-    if [ ! -f "$CONFIG_BACKUP" ]; then
-        if ! cp "$CONFIG" "$CONFIG_BACKUP"; then
-            echo "ERROR: could not write backup ${CONFIG_BACKUP}; ${CONFIG} unchanged." >&2
-            return 2
-        fi
-        echo "Backed up ${CONFIG} -> ${CONFIG_BACKUP}."
-    fi
-
-    # Appending inside e.g. [cm4] would write a line a Pi 5 never reads.
-    case "$(sectionAtEof "$CONFIG")" in
-        ''|'[all]'|'[pi5]') ;;
-        *) header="[all]" ;;
-    esac
-
-    tmp="$(dirname "$CONFIG")/.config.txt.eclipse-boot-screen-tmp.$$"
-    if ! awk -v marker="$CONFIG_MARKER" -v hdr="$header" -v param="$CONFIG_LINE" \
-            '{ print } END { print marker; if (hdr != "") print hdr; print param }' \
-            "$CONFIG" > "$tmp" || ! mv "$tmp" "$CONFIG"; then
-        rm -f "$tmp"
-        echo "ERROR: failed to install the updated ${CONFIG}." >&2
-        return 2
-    fi
-
-    if [ "$(effectiveDisableSplash "$CONFIG")" != "1" ]; then
-        echo "ERROR: post-write verification failed -- no effective ${CONFIG_LINE} in ${CONFIG}." >&2
-        echo "       Restore with: sudo cp ${CONFIG_BACKUP} ${CONFIG}" >&2
-        return 2
-    fi
-    echo "Applied ${CONFIG_LINE} to ${CONFIG}."
-    return 0
+    local pair rc
+    for pair in $AUTODETECT_KEYS; do
+        config_txt_set_key "$CONFIG" "${pair%%=*}" "${pair#*=}" "$CONFIG_BACKUP" "$AUTODETECT_MARKER"
+        rc=$?
+        [ "$rc" -eq 0 ] || return "$rc"
+    done
+    config_txt_set_key "$CONFIG" "$CONFIG_KEY" "1" "$CONFIG_BACKUP" "$CONFIG_MARKER"
 }
 
+# Undo disable_splash only: remove the block apply appended, or -- when apply
+# rewrote an existing line in place -- put that line's pre-apply value (from
+# the first-write-wins backup) back the same way. The auto-detect keys stay.
 revertConfig() {
-    local tmp
-    if ! grep -qxF -- "$CONFIG_MARKER" "$CONFIG"; then
-        echo "No set-boot-screen block in ${CONFIG} -- no change."
-        rm -f "$CONFIG_BACKUP"
-        return 0
-    fi
-
-    # Drop the marker and the lines apply wrote after it ([all] if it opened
-    # one, then the param); stop at the first line that is not ours.
-    tmp="$(dirname "$CONFIG")/.config.txt.eclipse-boot-screen-tmp.$$"
-    if ! awk -v marker="$CONFIG_MARKER" -v param="$CONFIG_LINE" '
-            $0 == marker { skip = 1; next }
-            skip && $0 == "[all]" { next }
-            skip && $0 == param { skip = 0; next }
-            { skip = 0; print }
-        ' "$CONFIG" > "$tmp"; then
-        rm -f "$tmp"
-        echo "ERROR: failed to compose the reverted ${CONFIG}; unchanged." >&2
-        return 2
-    fi
-
-    # awk ends every line with a newline. When what is left equals the backup
-    # but for that, install the backup's exact bytes.
-    if [ -f "$CONFIG_BACKUP" ] && [ "$(cat "$tmp")" = "$(cat "$CONFIG_BACKUP")" ]; then
-        cp "$CONFIG_BACKUP" "$tmp" || { rm -f "$tmp"; return 2; }
-    fi
-
-    if ! mv "$tmp" "$CONFIG"; then
-        rm -f "$tmp"
-        echo "ERROR: failed to install the reverted ${CONFIG}." >&2
-        return 2
-    fi
+    local prior rc
     if grep -qxF -- "$CONFIG_MARKER" "$CONFIG"; then
-        echo "ERROR: post-write verification failed -- the set-boot-screen block is still in ${CONFIG}." >&2
-        return 2
+        config_txt_remove_block "$CONFIG" "$CONFIG_MARKER" "$CONFIG_LINE" "$CONFIG_BACKUP" || return $?
+        echo "Removed ${CONFIG_LINE} (set-boot-screen block) from ${CONFIG}."
+    elif [ -f "$CONFIG_BACKUP" ] \
+        && prior="$(config_txt_effective "$CONFIG_BACKUP" "$CONFIG_KEY")" \
+        && [ -n "$prior" ] && [ "$prior" != "1" ] \
+        && [ "$(config_txt_effective "$CONFIG" "$CONFIG_KEY")" = "1" ]; then
+        config_txt_set_key "$CONFIG" "$CONFIG_KEY" "$prior" "$CONFIG_BACKUP" "$CONFIG_MARKER"
+        rc=$?
+        if [ "$rc" -eq 1 ]; then
+            echo "WARN: ${CONFIG_KEY} was '${prior}' before apply and is not restorable by the writer;" >&2
+            echo "WARN: set it by hand from ${CONFIG_BACKUP} if it matters." >&2
+        elif [ "$rc" -ne 0 ]; then
+            return "$rc"
+        fi
+    else
+        echo "No set-boot-screen block in ${CONFIG} -- no change."
     fi
     rm -f "$CONFIG_BACKUP"
-    echo "Removed ${CONFIG_LINE} (set-boot-screen block) from ${CONFIG}."
     return 0
 }
 
