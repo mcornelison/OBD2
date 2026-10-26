@@ -2489,6 +2489,38 @@ quit.
   rsync `--include=deploy/labwc/` + `--include=deploy/labwc/***` (a lone directory
   include ships it empty), likewise `deploy/wayland-sessions/`; tar
   `./deploy/labwc` and `./deploy/wayland-sessions`.
+- **No cursor in the frames labwc owns (US-652-e, Sprint 115; Atlas RULED
+  2026-10-25).** CSS `cursor: none` hides the pointer only inside Chromium; labwc
+  draws the frames from its start until Chromium first maps, and the splash ->
+  dashboard hand-off (Atlas MEASURED 2026-10-25). So the session names a blank
+  cursor theme:
+  - **The environment file:** `deploy/labwc/environment`, exactly one line,
+    `XCURSOR_THEME=eclipse-blank` (labwc parses `environment` in its `-C` config
+    dir; the default `XCURSOR_PATH` includes `/usr/share/icons`).
+    `step_install_kiosk_session` installs it to `/etc/eclipse/labwc/environment`
+    sync-if-changed beside `rc.xml` and `autostart`, and fails the deploy (exit
+    12) when it is missing, like `rc.xml`.
+  - **The theme:** `/usr/share/icons/eclipse-blank` -- an `index.theme` with NO
+    `Inherits=` (inheriting would fall back to a visible cursor), ONE fully
+    transparent Xcursor image (24x24, labwc's default `XCURSOR_SIZE`, every pixel
+    alpha 0) in `cursors/`, and a symlink to it for every name in
+    `/usr/share/icons/Adwaita/cursors` (listed at run time), with `default` and
+    `left_ptr` always present.
+  - **The generator:** `deploy/make-blank-cursor-theme.py`, stdlib-only, run as
+    root with `/usr/bin/python3` by `step_install_blank_cursor_theme` every
+    deploy, in BOTH display modes (the theme is inert unless the eclipse labwc
+    session names it). It is a generator, never a committed binary; it writes by
+    temp + rename, so a re-run is byte-identical and prints `already current`.
+    A missing Adwaita cursors dir is one WARN; a theme that cannot be written
+    exits non-zero naming the icons dir, and because the step runs BEFORE
+    `step_install_kiosk_session` the deploy halts (set -e) before the
+    environment could name a missing theme. It ships by EXACT name: rsync
+    `--include=deploy/make-blank-cursor-theme.py` (never a `deploy/*.py` glob);
+    the tar fallback ships `./deploy` whole.
+  - **Why not HideCursor:** labwc's `HideCursor` action is one-shot and the next
+    pointer input undoes it (REJECTED by Atlas).
+  - **Revert:** delete the `XCURSOR_THEME` line from `deploy/labwc/environment`
+    and deploy; the theme dir left behind in `/usr/share/icons` is inert.
 - **`eclipse-compositor.service` is retired** (CIO 2026-10-16; US-649-d removed it
   from the deploy tree). The US-649-b system unit ran labwc itself with
   `PAMName=login` and had to do every display-manager duty by hand; the
