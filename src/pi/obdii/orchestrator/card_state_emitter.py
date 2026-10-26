@@ -141,6 +141,8 @@
 # 2026-10-26    | Rex (US-904-a)| _emitGearState attaches gearHint's
 #               |              | (hintGear, hintDirection); observeGearInput
 #               |              | keeps the previous SPEED reading too.
+# 2026-10-26    | Rex (US-891-a)| states/o2 written beside obd-live on EVERY
+#               |              | tick (not on change), so `stale` can flip.
 # ================================================================================
 ################################################################################
 
@@ -420,6 +422,8 @@ class CardStateEmitterMixin:
     # US-889-a: the states/engine-history writer; the history itself lives in
     # the obd-live tracker. CLASS default for the same reason as above.
     _engineHistoryEmitter: Any = None
+    # US-891-a: the states/o2 writer; the samples live in the obd-live tracker.
+    _o2Emitter: Any = None
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -860,6 +864,13 @@ class CardStateEmitterMixin:
         except Exception as e:  # noqa: BLE001 -- must not fail boot
             logger.warning("engine-history emitter init skipped: %s", e)
             self._engineHistoryEmitter = None
+        try:
+            from pi.obdii.o2_state import makeO2Emitter
+
+            self._o2Emitter = makeO2Emitter(statesDir)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("o2 emitter init skipped: %s", e)
+            self._o2Emitter = None
 
     def observeObdLiveReading(self, reading: Any) -> None:
         """Record one realtime reading for states/obd-live (the reading seam)."""
@@ -937,6 +948,11 @@ class CardStateEmitterMixin:
             history = tracker.engineHistoryIfChanged()
             if history is not None:
                 historyEmitter(history, nowUtc=nowUtc)
+        # US-891-a (Atlas A1): states/o2 is written on EVERY tick, never only on
+        # change -- its per-sensor `stale` must flip while the feed is quiet.
+        o2Emitter = self._o2Emitter
+        if o2Emitter is not None:
+            o2Emitter(tracker.o2Snapshot(), nowUtc=nowUtc, staleSec=self._obdLiveStaleSec)
         return payload
 
     # --------------------------------------------------------- states/alerts

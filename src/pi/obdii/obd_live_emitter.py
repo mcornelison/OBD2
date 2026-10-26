@@ -32,6 +32,8 @@
 #                                the write failed) for the alerts arbiter (Q18).
 # 2026-10-20    | Rex (US-897-b4) | Public eventUtc alias + bandResultFor (under
 #                                the lock) for the arbiter's RPM peak.
+# 2026-10-26    | Rex (US-891-a) | The tracker owns the O2History (states/o2):
+#                                each fresh reading feeds it; o2Snapshot.
 # ================================================================================
 ################################################################################
 
@@ -79,6 +81,7 @@ from pi.obdii.band_producer import (
 )
 from pi.obdii.engine_history import EngineHistory, EngineHistorySettings
 from pi.obdii.fuel_status import FUEL_LOOP_OPEN, fuelLoopState
+from pi.obdii.o2_state import O2History, O2Settings, O2Snapshot
 from pi.obdii.units import canonicalUnit
 
 __all__ = [
@@ -179,6 +182,7 @@ class ObdLiveTracker:
         self._latest: dict[str, ObdLiveObservation] = {}
         self._bands = BandProducer(BandSettings.fromConfig(config))
         self._engineHistory = EngineHistory(EngineHistorySettings.fromConfig(config))
+        self._o2History = O2History(O2Settings.fromConfig(config))
         self._mafScale = _mafScale(config)
         self._lock = threading.Lock()
 
@@ -215,6 +219,8 @@ class ObdLiveTracker:
             self._engineHistory.observe(
                 name, value, eventUtc, None if band is None else band["band"], unit
             )
+            # US-891-a: the O2 samples at their own event time (Atlas A1 seam).
+            self._o2History.observe(name, value, eventUtc)
             self._latest[name] = ObdLiveObservation(
                 value=value,
                 unit=unit,
@@ -241,6 +247,11 @@ class ObdLiveTracker:
         with self._lock:
             history: dict[str, Any] | None = self._engineHistory.snapshotIfChanged()
         return history
+
+    def o2Snapshot(self) -> O2Snapshot:
+        """The states/o2 samples (US-891-a), copied under the lock."""
+        with self._lock:
+            return self._o2History.snapshot()
 
     def _eventUtc(self, timestamp: datetime) -> datetime:
         """A reading's capture time as aware UTC (naive means the declared zone)."""

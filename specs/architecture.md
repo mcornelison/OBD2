@@ -6755,6 +6755,44 @@ US-890-b, below).
   (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
   produce, not a copy of the target vocabulary (US-888-b).
 
+#### `states/o2` -- front/rear O2 samples, staleness and the verdict (US-891-a/b)
+
+**Producer (US-891-a, Atlas A1 RULED 2026-10-26):** `src/pi/obdii/o2_state.py`. The
+`O2History` is owned and fed inside `ObdLiveTracker.observeReading`, exactly as
+`EngineHistory` is, so it sees every O2_B1S1 (front) and O2_B1S2 (rear) reading at the
+obd-live seam with the reading's event time as aware UTC (`ObdLiveTracker._eventUtc`).
+`_emitObdLiveState` then writes `states/o2` through `makeO2Emitter` on EVERY card tick,
+right after obd-live, even when no O2 reading arrived, so `stale` can flip. It does not
+copy engine-history's write-only-on-change. The write is atomic (`writeStateAtomic`) and
+best-effort: a failure logs and never raises. No SQLite, schema, sync or poll-list change.
+
+**Shape:** `{front: {value, ts, stale, reason, last, samples: [{v, ts}]}, rear: {...},
+samplePeriodSec, windowSec, midlineV, rearVerdict: 'not_rated', catalystVerdict:
+'not_rated', ts}`.
+
+- **Timestamps.** Each sample `ts` and each sensor `ts` is the reading's own event time
+  (`LoggedReading.timestamp`), in the obd-live format. The top-level `ts` is the write
+  time, as in engine-history.
+- **Stale follows obd-live exactly** ("value always means CURRENT"). At each emit a
+  sensor is stale when its latest reading is older than `pi.display.stale.obdLiveSec`
+  (no O2 stale key). Fresh: `{value, ts, stale: false, reason: null, last: null}`.
+  Stale: `{value: null, ts (of the last reading), stale: true, reason: 'stale', last:
+  {value}}`, so the page can dim the last value with its age. Never read: `{value: null,
+  ts: null, stale: false, reason: 'not_read', last: null, samples: []}`. The samples are
+  history and stay in the list while stale.
+- **Window.** `pi.display.o2.windowSec` (validator DEFAULTS only, 300 s: spec
+  v030-o2-page-design s4.2, Spool 2026-10-13; not in config.json). The samples are those
+  with event ts at or after `write time - windowSec`; older ones are gone on the next
+  build. Published as `windowSec`, so the page never hard-codes 5 minutes.
+- **samplePeriodSec is MEASURED, never configured**: the median of consecutive deltas of
+  the front samples' full-precision event times inside the window, rounded to 0.1 s;
+  null with fewer than 2 samples. The median means one dropped poll does not move it
+  (~2.2 s on this car, Spool).
+- **`midlineV` = 0.45 V** has one home, `MIDLINE_V` in `o2_state.py` (spec s4.2). The
+  page draws its dashed mid-line from it.
+- A non-numeric value (string, bool, NaN, infinity) is dropped, never stored as 0.
+- Rear and catalyst verdicts are held (CIO 2026-10-13, spec s4.3): always `not_rated`.
+
 #### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
 
 **Producer:** `src/pi/obdii/alerts_arbiter.py`, run inside the eclipse-obd process (Atlas

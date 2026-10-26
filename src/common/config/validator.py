@@ -191,6 +191,8 @@
 #                                2026-10-22 <= 5 mph); finite, > 0.
 # 2026-10-23    | Rex (US-878-c)| pi.display.autoDim.overrideLevel None (auto);
 #                                None or finite in [minLevel, 1.0].
+# 2026-10-26    | Rex (US-891-a)| pi.display.o2.windowSec 300 (spec v030-o2
+#                                s4.2, Spool 2026-10-13); finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -971,6 +973,10 @@ DEFAULTS: dict[str, Any] = {
     # (2 h) (Atlas S104 ruling 1, 2026-10-14).
     'pi.display.engineHistory.intervalSec': 30,
     'pi.display.engineHistory.maxPoints': 240,
+    # US-891-a (F-127): states/o2 publishes the newest windowSec of front and
+    # rear O2 samples -- the last 5 minutes (spec v030-o2-page-design s4.2,
+    # Spool 2026-10-13; Atlas A1 (b): this key's one home).
+    'pi.display.o2.windowSec': 300,
     # US-890-b (F-127): states/obd-live publishes params.MAF.scale = {max: this}
     # and the Fuel card's airflow bar runs 0..max (Atlas S104 ruling 2). Spool
     # 2026-10-14 (pm/inbox/2026-10-14-from-spool-S104-Fuel-page-MAF-scale-0-160-
@@ -1175,6 +1181,7 @@ class ConfigValidator:
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
         self._validateEngineHistory(config)
+        self._validateO2Window(config)
         self._validateMafScale(config)
         self._validateTripGap(config)
         self._validateStaleImu(config)
@@ -2107,6 +2114,35 @@ class ConfigValidator:
                     f"{key} must be a finite number > 0 (got {val!r})",
                     missingFields=[key],
                 )
+
+    def _validateO2Window(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.o2.windowSec (US-891-a): a finite number > 0.
+
+        A zero or negative window keeps no O2 sample, so the trace would be
+        empty forever. An absent key is skipped (a custom defaults set may not
+        supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.display.o2.windowSec'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
 
     def _validateMafScale(self, config: dict[str, Any]) -> None:
         """Validate pi.display.scale.mafMaxGs (US-890-b): a finite number > 0.
