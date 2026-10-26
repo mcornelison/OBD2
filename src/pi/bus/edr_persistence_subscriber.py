@@ -41,6 +41,8 @@
 #               |              | configured 2 on drive 96 (loop ran 40.5 Hz, not
 #               |              | 50); the grid stores persistHz whatever the loop
 #               |              | rate, aligned to UTC so rows line up with ECU data.
+# 2026-10-26    | Rex (US-906) | Light-row gain label from sensor_reader's one
+#               |              | table (tslGainLabel); the private copy is gone.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +66,7 @@ from common.config.validator import DEFAULT_IMU_SAMPLE_HZ as _DEFAULT_IMU_SAMPLE
 from common.edr.sensor_schema import SCHEMA_VERSION
 from common.time.helper import CANONICAL_ISO_FORMAT
 from pi.obdii.drive_id import getCurrentDriveId
+from pi.sensors import sensor_reader
 from src.pi.data import sync_log
 
 from .edr_log_gate import EdrLogGate
@@ -97,14 +100,8 @@ _LIGHT_PREFIX = "raw.light."
 # the chip reports a register code. An unrecognised code maps to None -- it is
 # not evidence of a gain setting, and inventing one would be a fabricated
 # context, which is the defect class this story exists to close.
-_GAIN_LABELS = {0x00: "low", 0x10: "med", 0x20: "high", 0x30: "max"}
-
-
-def _gainLabel(code):
-    """TSL2591 gain register code -> the schema's text label, or None."""
-    if not isinstance(code, int) or isinstance(code, bool):
-        return None
-    return _GAIN_LABELS.get(code)
+# US-906: the label comes from sensor_reader.tslGainLabel, the ONE gain table,
+# looked up at call time so stored labels can never disagree with the reader.
 
 # The fields that make up one assembled row per seq. A burst is "complete" when
 # all of a table's fields have arrived under the same seq (the reader publishes
@@ -608,7 +605,7 @@ class EdrPersistenceSubscriber:
         # NULL -- an honest gap. The context is diagnostic and its absence must
         # never cost us the READING.
         rng = fields.get("range") or (None, None)
-        gain = _gainLabel(rng[0] if len(rng) > 0 else None)
+        gain = sensor_reader.tslGainLabel(rng[0] if len(rng) > 0 else None)
         integrationMs = rng[1] if len(rng) > 1 and isinstance(rng[1], int) else None
         # ARCH-030: reused connection, still committed per row (black-box durability).
         conn = self._writeConn()
