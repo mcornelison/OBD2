@@ -2227,8 +2227,13 @@ step_install_splash_assets() {
     # ONLY deployed copy (one image, two consumers, no twin; spec §1.2). The kit
     # has no copy, so it is copied in below AFTER the refresh and cmp-verified,
     # and keep-listed beside version.txt so the next refresh does not prune it.
-    local keepAssets="version.txt warning.png"
+    # stage-scale.js (US-869-h, Atlas 2026-10-26): the ONE letterbox, shared
+    # with the dashboard kit. Its only source is src/pi/ui/stage-scale.js -- no
+    # kit carries a copy -- so it takes warning.png's footing: copied in below
+    # AFTER the refresh, cmp-verified, keep-listed so the refresh never prunes it.
+    local keepAssets="version.txt warning.png stage-scale.js"
     local warningSrc="${PI_PATH}/deploy/plymouth/eclipse/warning.png"
+    local stageScaleSrc="${PI_PATH}/src/pi/ui/stage-scale.js"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2
         return 0
@@ -2247,6 +2252,7 @@ step_install_splash_assets() {
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         echo "DRY-RUN would: write ${installDir}/version.txt = ${splashVersion}"
         echo "DRY-RUN would: copy ${warningSrc} -> ${installDir}/warning.png (cmp-verified)"
+        echo "DRY-RUN would: copy ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)"
         return 0
     fi
     remote "
@@ -2263,6 +2269,13 @@ step_install_splash_assets() {
             false
         }
         echo 'copied ${warningSrc} -> ${installDir}/warning.png (cmp-verified)'
+        sudo install -m 0644 '${stageScaleSrc}' '${installDir}/stage-scale.js'
+        cmp -s '${stageScaleSrc}' '${installDir}/stage-scale.js' || {
+            echo 'ERROR: ${installDir}/stage-scale.js does not match ${stageScaleSrc} after install' >&2
+            echo 'ERROR: the splash would draw unscaled or on a stale letterbox; fix the write path and re-deploy.' >&2
+            false
+        }
+        echo 'copied ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)'
     "
 }
 
@@ -2284,9 +2297,12 @@ step_install_dashboard_assets() {
     # the splash kiosk unit -- and is started by the splash OnSuccess= hand-off.
     #
     # US-495 (S2/F-111): force-refresh via deploy/asset-refresh.sh, same as
-    # the splash step. NO keep-list here -- /opt/dashboard has exactly one
-    # installer (this step and the kit's install.sh ship the identical three
-    # files), so anything else in there is a retired generation and gets pruned.
+    # the splash step. /opt/dashboard has exactly one installer (this step and
+    # the kit's install.sh ship the identical files), so anything else in there
+    # is a retired generation and gets pruned. The keep-list is stage-scale.js
+    # alone (US-869-h): the ONE letterbox, src/pi/ui/stage-scale.js, shared with
+    # the splash kit -- copied in AFTER the refresh and cmp-verified, the
+    # splash step's warning.png pattern.
     #
     # Runs AFTER sync_tree so ${PI_PATH}/src/pi/ui/dashboard/ exists.
     echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
@@ -2298,20 +2314,31 @@ step_install_dashboard_assets() {
     # /opt/dashboard -- i.e. the repo would look compliant while the deployed
     # artifact shipped the face bare.
     local assets="dashboard.html dashboard.css carousel.js OFL.txt"
+    local keepAssets="stage-scale.js"
+    local stageScaleSrc="${PI_PATH}/src/pi/ui/stage-scale.js"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: dashboard assets not found at $assetSrc -- skipping; deploy continues (A-9)." >&2
         return 0
     fi
     if $DRY_RUN; then
         echo "DRY-RUN would: source ${PI_PATH}/deploy/asset-refresh.sh"
-        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/dashboard ${installDir} '${assets}'"
+        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/dashboard ${installDir} '${assets}' '${keepAssets}'"
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
+        echo "DRY-RUN would: copy ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)"
         return 0
     fi
     remote "
         set -e
         . '${PI_PATH}/deploy/asset-refresh.sh'
-        refresh_asset_dir '${PI_PATH}/src/pi/ui/dashboard' '${installDir}' '${assets}'
+        refresh_asset_dir '${PI_PATH}/src/pi/ui/dashboard' '${installDir}' \
+                          '${assets}' '${keepAssets}'
+        sudo install -m 0644 '${stageScaleSrc}' '${installDir}/stage-scale.js'
+        cmp -s '${stageScaleSrc}' '${installDir}/stage-scale.js' || {
+            echo 'ERROR: ${installDir}/stage-scale.js does not match ${stageScaleSrc} after install' >&2
+            echo 'ERROR: the dashboard would draw unscaled or on a stale letterbox; fix the write path and re-deploy.' >&2
+            false
+        }
+        echo 'copied ${stageScaleSrc} -> ${installDir}/stage-scale.js (cmp-verified)'
     "
 }
 

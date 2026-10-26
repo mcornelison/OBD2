@@ -283,6 +283,21 @@ for asset in dashboard.html dashboard.css carousel.js; do
   fi
 done
 
+# US-869-h: the ONE letterbox, src/pi/ui/stage-scale.js, shared with the
+# splash kit. It has no copy in this kit dir: install it from its one source and
+# cmp-verify the bytes, as deploy-pi.sh does (a stale copy draws the page
+# unscaled or on an old scale).
+STAGE_SCALE_SRC="$SCRIPT_DIR/../stage-scale.js"
+if [[ -f "$STAGE_SCALE_SRC" ]]; then
+  install -m 0644 "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js"
+  cmp -s "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js" || {
+    echo "ERROR: $INSTALL_DIR/stage-scale.js does not match $STAGE_SCALE_SRC after install" >&2
+    exit 1
+  }
+else
+  echo "WARN: asset missing, skipped: $STAGE_SCALE_SRC" >&2
+fi
+
 echo "==> Installing systemd unit ($SESSION_TYPE variant)"
 install_unit "$DASH_VARIANT" "$SYSTEMD_DIR/eclipse-dashboard.service"
 

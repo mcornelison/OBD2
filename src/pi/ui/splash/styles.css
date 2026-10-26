@@ -24,6 +24,8 @@
  *          splash-shutdown.svg are retired, so these rules are the only motion.
  * Changed: 2026-10-25 -- US-652-b: the one cursor rule, `html, html *` none
  *          !important, replaces the root rule's own cursor declaration.
+ * Changed: 2026-10-26 -- US-869-h: the letterbox -- a 480x320 #stage scaled by
+ *          --scale (stage-scale.js), centred in #splash-stage.
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -95,8 +97,25 @@ html, body {
   background: var(--bg); overflow: hidden;
 }
 
+/* --- The letterbox (US-869-h; the dashboard's US-482 #screen/#stage) ----------
+   The page is authored at a fixed 480x320 design box (#stage) and scaled as ONE
+   unit to the real panel -- 1280x720 in the car, so 2.25x with 100 px black bars
+   left and right. stage-scale.js (the one letterbox, shared with the dashboard)
+   sets --scale on load + resize. #splash-stage is the full-viewport black frame
+   that centres #stage; #stage is transformed, so it is the containing block for
+   every absolute rule below -- their px offsets are design-box px, unchanged.
+   #amber-ring and #warning sit OUTSIDE #stage and frame the whole viewport. */
 #splash-stage {
   position: relative; width: 100vw; height: 100vh; background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+}
+
+#stage {
+  position: relative;
+  flex: 0 0 auto;
+  width: 480px; height: 320px;
+  transform: scale(var(--scale, 1));
+  transform-origin: center center;
 }
 
 /* The inline logo (US-785) is invisible through phase 0b and fades in as the

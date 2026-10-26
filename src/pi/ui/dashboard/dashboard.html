@@ -4,8 +4,9 @@
 <meta charset="utf-8"/>
 <!-- US-482 letterbox scaling: the viewport is the REAL panel (device-width), not
      the old hard-coded 480x320. The fixed 480x320 design box (#stage) is scaled
-     to fit by carousel.js so the UI fills a 1080p panel instead of rendering in
-     a corner (CIO-locked LETTERBOX 2026-07-21). -->
+     to fit by stage-scale.js (US-869-h; carousel.js calls it) so the UI fills
+     the panel -- 1280x720 in the car -- instead of rendering in a corner
+     (CIO-locked LETTERBOX 2026-07-21). -->
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
 <title>Eclipse OBD-II Dashboard</title>
 <!-- US-399 carousel shell (F-092). Served same-origin by eclipse-states-http at
@@ -21,7 +22,7 @@
 <body>
   <!-- US-482 letterbox frame: #screen is the full-viewport black bezel; #stage
        is the exact 480x320 design box, centered + uniformly scaled as ONE unit
-       (carousel.js sets --scale on resize). Everything below renders INSIDE the
+       (stage-scale.js sets --scale on load + resize). Everything below renders INSIDE the
        transformed #stage, so the shipped 480x320 layout is unchanged -- only the
        outer scale fills the panel. Black bars read as bezel, not a gap. -->
   <div id="screen">
@@ -657,6 +658,9 @@
     // actually stored rather than the value cached when the unit started.
     window.DISPLAY_SETTINGS = "__DISPLAY_SETTINGS__";
   </script>
+  <!-- US-869-h: the ONE letterbox (src/pi/ui/stage-scale.js, copied into this
+       kit by the deploy) BEFORE carousel.js, which reads it at load. -->
+  <script src="stage-scale.js"></script>
   <script src="carousel.js"></script>
 </body>
 </html>

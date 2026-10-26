@@ -17,6 +17,10 @@
        dashboard stays up and a blip that ends in cancelled paints nothing. The
        page holds no timer of its own. -->
   <div id="splash-stage" style="visibility:hidden">
+    <!-- US-869-h: #stage is the 480x320 design box, scaled as ONE unit to the
+         real panel by stage-scale.js (the dashboard's US-482 letterbox), centred
+         in #splash-stage. -->
+    <div id="stage">
     <!-- 3-rhombus brand mark, INLINE (US-870-c): index.html's logo markup
          verbatim, with no <style> (pinned by tests/ui/test_shutdown_spins.py).
          #logo is the group styles.css turns: the reverse spin loops while the
@@ -79,6 +83,7 @@
     <!-- HTML text overlays (absolute-positioned via styles.css). -->
     <div id="wordmark" class="overlay">ECLIPSE OBD-II<span id="warn-glyph"></span></div>
     <div id="version-chip" class="overlay">V?.?.?</div>
+    </div>
   </div>
 
   <script>
@@ -86,6 +91,13 @@
     // previewed from file:// the placeholder stays as-is and the shutdown-state
     // polls fail closed and the stage stays hidden.
     window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+  </script>
+  <!-- US-869-h: the ONE letterbox (src/pi/ui/stage-scale.js, copied into this
+       kit by the deploy) scales #stage on load and on resize; no timer. Absent,
+       the guard leaves the page unscaled rather than throwing. -->
+  <script src="stage-scale.js"></script>
+  <script>
+    if (window.EclipseStageScale) window.EclipseStageScale.bindStageScale(document, window);
   </script>
   <!-- motion-gate.js BEFORE the poller: every close-out wait asks it whether
        the animation's (or the fade's) end event will fire at all (Atlas G2). -->

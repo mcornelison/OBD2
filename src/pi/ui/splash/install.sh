@@ -296,6 +296,21 @@ for asset in index.html shutdown.html \
   fi
 done
 
+# US-869-h: the ONE letterbox, src/pi/ui/stage-scale.js, shared with the
+# dashboard kit. It has no copy in this kit dir: install it from its one source and
+# cmp-verify the bytes, as deploy-pi.sh does (a stale copy draws the page
+# unscaled or on an old scale).
+STAGE_SCALE_SRC="$SCRIPT_DIR/../stage-scale.js"
+if [[ -f "$STAGE_SCALE_SRC" ]]; then
+  install -m 0644 "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js"
+  cmp -s "$STAGE_SCALE_SRC" "$INSTALL_DIR/stage-scale.js" || {
+    echo "ERROR: $INSTALL_DIR/stage-scale.js does not match $STAGE_SCALE_SRC after install" >&2
+    exit 1
+  }
+else
+  echo "WARN: asset missing, skipped: $STAGE_SCALE_SRC" >&2
+fi
+
 echo "==> Sweeping retired units (D-2 splash-shutdown, D-3 original boot)"
 rm -f "$SYSTEMD_DIR/splash-shutdown.service"
 

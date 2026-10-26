@@ -266,13 +266,25 @@
     parkedOffS: 3,                // ...and not-idle this long to give it back
   };
 
-  // US-482 letterbox scaling: the UI is authored at a fixed STAGE_W x STAGE_H
-  // design box (#stage) and uniformly scaled to fill the real panel (device
-  // resolution varies -- the Pi outputs 1080p). LETTERBOX = a single uniform
-  // scale of the EXACT 480x320 layout, centered, with black bars on the aspect
-  // mismatch (CIO-locked 2026-07-21). No layout reflow -- scaled as one unit.
-  var STAGE_W = 480;          // design-box width  (px) -- matches #stage in css
-  var STAGE_H = 320;          // design-box height (px) -- matches #stage in css
+  // US-482 letterbox scaling: the UI is authored at a fixed 480x320 design box
+  // (#stage) and uniformly scaled to fill the real panel. US-869-h: the formula
+  // lives in ONE file, src/pi/ui/stage-scale.js, shared with the splash pages.
+  // In the browser dashboard.html loads it first (window.EclipseStageScale);
+  // under node it is required beside this kit. Absent, the page stays unscaled
+  // (CSS --scale defaults to 1) rather than throwing.
+  var StageScale = resolveStageScale(global);
+
+  function resolveStageScale(g) {
+    if (g && g.EclipseStageScale) return g.EclipseStageScale;
+    if (typeof require === "function") {
+      try {
+        return require("../stage-scale.js");
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
 
   // -------------------------------------------------------------------------
   // Pure carousel logic -- no DOM, node-testable (S-2).
@@ -301,16 +313,6 @@
     var t = threshold == null ? SWIPE_THRESHOLD_PX : threshold;
     if (Math.abs(dx) < t) return 0;
     return dx < 0 ? 1 : -1;
-  }
-
-  // US-482 uniform letterbox scale for the fixed STAGE_W x STAGE_H design box in
-  // a viewport of (w x h): the LARGEST scale that still fits BOTH axes, so the
-  // whole 480x320 UI stays visible + centered with black bars on the mismatch.
-  // A degenerate (<=0 / non-finite) viewport falls back to 1 -- a transient 0x0
-  // layout pass must never collapse the UI to nothing.
-  function computeStageScale(w, h) {
-    if (!(w > 0) || !(h > 0)) return 1;
-    return Math.min(w / STAGE_W, h / STAGE_H);
   }
 
   // Honest-instrument classifier: the shell decides only AVAILABILITY. A null
@@ -5986,7 +5988,6 @@
     clampIndex: clampIndex,
     nextIndex: nextIndex,
     swipeDirection: swipeDirection,
-    computeStageScale: computeStageScale,
     cardAvailability: cardAvailability,
     noDataView: noDataView,
     vehicleConnected: vehicleConnected,
@@ -6170,8 +6171,6 @@
     NAV_GLIDE_MS: NAV_GLIDE_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     CAROUSEL_DEFAULTS: CAROUSEL_DEFAULTS,
-    STAGE_W: STAGE_W,
-    STAGE_H: STAGE_H,
     LONG_PRESS_MS: LONG_PRESS_MS,
     LONG_PRESS_ARM_MS: LONG_PRESS_ARM_MS,
     LONG_PRESS_MOVE_PX: LONG_PRESS_MOVE_PX,
@@ -7642,14 +7641,11 @@
     }
 
     // US-482 letterbox: uniformly scale the fixed 480x320 #stage design box to
-    // fill the real panel. The transformed #stage becomes the containing block
-    // for its fixed/absolute descendants, so the shipped layout inside it is
-    // untouched -- only the outer scale changes. Idempotent + null-safe.
+    // fill the real panel. The dashboard's call site; the formula and the write
+    // are stage-scale.js's (US-869-h). Idempotent + null-safe; with the shared
+    // file absent nothing is written and --scale keeps its CSS default of 1.
     function applyStageScale() {
-      var stage = document.getElementById("stage");
-      if (!stage) return;
-      var scale = computeStageScale(window.innerWidth, window.innerHeight);
-      stage.style.setProperty("--scale", String(scale));
+      if (StageScale) StageScale.applyStageScale(document, window);
     }
 
     // US-542 AC-1: the wall clock, moved off the retired parked face into the
