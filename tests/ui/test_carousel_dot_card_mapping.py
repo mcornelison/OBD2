@@ -56,6 +56,8 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
 #               |              | (9 -> 8); System Status is the trailing card (index
 #               |              | 7).
+# 2026-10-26    | Ralph (Rex)  | US-891-c -- MOVED PIN: the O2 card joins at index 4
+#               |              | (8 -> 9); Motion..System Status each +1.
 # ================================================================================
 ################################################################################
 
@@ -98,8 +100,10 @@ _NODE_ONLY = pytest.mark.skipif(
 # Alerts, System Status and Battery each moved +1 (Battery is index 8, last).
 # MOVED PIN (US-894-e): the Battery card is retired (9 -> 8); System Status
 # is the trailing card, index 7. No index before it moved.
+# MOVED PIN (US-891-c): the O2 card joins at index 4, between Fuel and Motion;
+# Motion..System Status each moved +1 (Light 6, System Status 8).
 _CARD_SET = [
-    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Light", "Alerts",
     "System Status",
 ]
 
@@ -349,7 +353,8 @@ class TestGatedCardOwnsNoDot:
         # US-889-b: 7 (Engine at 1). US-896-a: 8 (NAV at 1).
         # US-893-b: Battery is the trailing card, index 8.
         # US-894-e: Battery is retired; System Status trails, index 7.
-        assert _dotLabel(7) not in _visibleDots(surface)
+        # MOVED PIN (US-891-c): O2 at 4; System Status trails, index 8.
+        assert _dotLabel(8) not in _visibleDots(surface)
 
     def test_midRowGatedCard_contributesNoDot(self):
         """
@@ -368,10 +373,12 @@ class TestGatedCardOwnsNoDot:
         # US-896-a: +1 again behind the NAV card (Battery is index 7).
         # US-893-b: Light (index 5) is the mid-row card now; Battery is last.
         # MOVED PIN (US-894-e): Battery is retired; System Status is last (7).
+        # MOVED PIN (US-891-c): O2 at 4; Light is 6, System Status last (8).
         assert _visibleCards(surface) == [
-            "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
+            "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Alerts",
+            "System Status",
         ]
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 6, 7)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 7, 8)]
 
     @pytest.mark.parametrize(
         "index,card",
@@ -381,9 +388,10 @@ class TestGatedCardOwnsNoDot:
         # US-896-a: the NAV card at 1; Engine..System Status +1, Battery (7) gated.
         # US-893-b: Light (5) is the gated mid-row card; Alerts..Battery +1.
         # MOVED PIN (US-894-e): Battery (8) is retired.
+        # MOVED PIN (US-891-c): O2 at 4; Motion..System Status +1, Light (6) gated.
         [
-            (0, "Driving"), (1, "Navigation"), (2, "Engine"), (3, "Fuel"), (4, "Motion"),
-            (6, "Alerts"), (7, "System Status"),
+            (0, "Driving"), (1, "Navigation"), (2, "Engine"), (3, "Fuel"), (4, "O2"),
+            (5, "Motion"), (7, "Alerts"), (8, "System Status"),
         ],
     )
     def test_midRowGate_everySurvivingDotStillLandsOnItsOwnCard(self, index: int, card: str):
@@ -418,7 +426,8 @@ class TestGatedCardOwnsNoDot:
         # the landing card (Driving), not the home slot. US-889-b: index 5.
         # US-890-a: index 6 (the Fuel card at 2). US-896-a: 7 (the NAV card at 1).
         # US-893-b: the gated mid-row card is Light, index 5.
-        after = _boot(markupPath=_gatedMarkup("Light"), steps=_clickDot(5))
+        # MOVED PIN (US-891-c): Light is index 6 (O2 at 4).
+        after = _boot(markupPath=_gatedMarkup("Light"), steps=_clickDot(6))
         assert _landedCard(after) == _landedCard(before) == "Driving"
         assert _activeDot(after) == _dotLabel(0)
 
@@ -436,7 +445,8 @@ class TestGatedCardOwnsNoDot:
         del routes["/system-status"]
         surface = _boot(markupPath=_gatedMarkup("Light"), routes=routes)
         assert "Light" not in _visibleCards(surface)
-        assert _dotLabel(5) not in _visibleDots(surface)  # US-893-b: Light, index 5
+        # MOVED PIN (US-891-c): Light is index 6 (was 5, US-893-b).
+        assert _dotLabel(6) not in _visibleDots(surface)
 
     def test_aCardRevealedAtRuntimeGetsItsDotBack(self):
         """
@@ -469,13 +479,14 @@ class TestGatedCardOwnsNoDot:
 
         tapped = _boot(
             markupPath=_gatedMarkup("Light"),
-            steps=[*reveal, {"clickNth": {"selector": ".dot", "index": 5}}],
+            steps=[*reveal, {"clickNth": {"selector": ".dot", "index": 6}}],
         )
         # US-888-a: Battery is absolute index 4 behind the Driving card.
         # US-889-b: index 5 behind the Engine card. US-890-a: 6 behind Fuel.
         # US-896-a: 7 behind the NAV card. US-893-b: the gated card is Light, 5.
+        # MOVED PIN (US-891-c): Light is 6 behind the O2 card.
         assert _landedCard(tapped) == "Light"
-        assert _activeDot(tapped) == _dotLabel(5)
+        assert _activeDot(tapped) == _dotLabel(6)
 
 
 # ---------------------------------------------------------------------------
@@ -530,18 +541,20 @@ class TestOneCardRegistry:
         # US-893-b: Spare is 5 and the gated Light 6; Alerts..Battery are 7-9.
         # MOVED PIN (US-894-e): Battery is retired, so this markup is NINE
         # cards; Alerts and System Status are 7-8.
+        # MOVED PIN (US-891-c): O2 at 4, so this markup is TEN cards; Spare is
+        # 6, the gated Light 7, Alerts and System Status 8-9.
         expected = [
-            "Driving", "Navigation", "Engine", "Fuel", "Motion", "Spare", "Alerts",
+            "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Spare", "Alerts",
             "System Status",
         ]
 
         surface = _boot(markupPath=markup)
         assert _visibleCards(surface) == expected
-        # Nine cards, so nine dots exist; the gated one (absolute index 6) is
+        # Ten cards, so ten dots exist; the gated one (absolute index 7) is
         # the only one absent.
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 7, 8)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 6, 8, 9)]
 
-        for index, card in zip((0, 1, 2, 3, 4, 5, 7, 8), expected, strict=True):
+        for index, card in zip((0, 1, 2, 3, 4, 5, 6, 8, 9), expected, strict=True):
             surface = _boot(markupPath=markup, steps=_clickDot(index))
             assert _landedCard(surface) == card, f"dot {index} did not reach {card}"
             assert _activeDot(surface) == _dotLabel(index)

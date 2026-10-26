@@ -42,6 +42,7 @@
 # 2026-10-26    | Ralph (Rex)  | US-904-b -- the provider's gear hint drawn hollow
 #               |              | with an SVG arrow; MOVED PINS: gear view keys,
 #               |              | fixture list (+2 hint fixtures).
+# 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
 # ================================================================================
 ################################################################################
 
@@ -94,8 +95,9 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
 # MOVED PIN (US-894-e): the Battery card is retired (9 -> 8); its cell is
 # the System page's UPS row.
+# MOVED PIN (US-891-c): the O2 card joins between Fuel and Motion (8 -> 9).
 CARD_ORDER = [
-    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Light", "Alerts",
     "System Status",
 ]
 
@@ -309,9 +311,10 @@ def test_drivingCard_isNamedDriving_andInheritsNoHomeSlotMachinery():
 def test_motionSlot_sitsAtIndexFour():
     # MOVED PIN (US-892-b): the Home card (and its pinned-verbatim markup)
     # retired; the Motion card took its slot, index 4, after NAV, Engine and
-    # Fuel (CIO E-2 order).
+    # Fuel (CIO E-2 order). MOVED PIN (US-891-c): the O2 card took index 4,
+    # between Fuel and Motion, so Motion is index 5.
     html = _read(_HTML)
-    assert 'id="motion-card"' in _sectionTags(html)[4]
+    assert 'id="motion-card"' in _sectionTags(html)[5]
 
 
 def test_drivingFacts_doNotUseTheTileClass():

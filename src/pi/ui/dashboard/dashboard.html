@@ -399,6 +399,45 @@
           </div>
         </div>
       </section>
+      <!-- US-891-c (F-127; specs/v030-o2-page-design.md s3, layout A, stacked):
+           the O2 page, between Fuel and Motion (O-1). carousel.js
+           (`renderO2Card`) paints every value from states/o2 ALONE: the
+           volts row, the meta line, the dot trace and the chips. No
+           `data-state`: each value carries its own '--' + reason, and the
+           skeleton ships the no-source faces. Labels are Michroma, double
+           spaced (the subset has no middle dot). -->
+      <section class="card" id="o2-card" aria-label="O2" data-page-name="O2">
+        <div class="card-body">
+          <div class="o2-sensor o2-front">
+            <div class="o2-head">
+              <span class="o2-label">FRONT  BEFORE CAT</span>
+              <span class="o2-chip" data-live="false">no source</span>
+            </div>
+            <div class="o2-row" data-none="true" data-stale="false">
+              <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
+              <span class="o2-meta">no source</span>
+            </div>
+            <svg class="o2-trace" viewBox="0 0 456 44" aria-hidden="true"></svg>
+          </div>
+          <div class="o2-sensor o2-rear">
+            <div class="o2-head">
+              <span class="o2-label">REAR  AFTER CAT</span>
+              <span class="o2-chip" data-live="false">no source</span>
+            </div>
+            <div class="o2-row" data-none="true" data-stale="false">
+              <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
+              <span class="o2-meta">no source</span>
+            </div>
+            <svg class="o2-trace" viewBox="0 0 456 44" aria-hidden="true"></svg>
+          </div>
+          <div class="o2-cat">
+            <div class="o2-head">
+              <span class="o2-label">CATALYST</span>
+              <span class="o2-chip" data-live="false">no source</span>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- US-892-b (F-127; specs/v030-motion-page-design.md s3/s4, layout A):
            the MOTION card, after NAV, Engine and Fuel (CIO E-2 order). It
            replaces the interim Home/MOTION card: the live face (tape, g tile,

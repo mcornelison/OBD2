@@ -40,6 +40,7 @@
 # 2026-10-23    | Rex (US-869-a) | MOVED PIN (US-869-a): the fixture set gains
 #               |                | sensor-absent (9 -> 10 cases); the page reads
 #               |                | sensor_absent as 'sensor not found', first.
+# 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
 # ================================================================================
 ################################################################################
 
@@ -526,12 +527,13 @@ def _sectionTags(html: str) -> list[str]:
 def test_slot_lightIsRightAfterMotion():
     """E-2 / Iris Q6: Driving, NAV, Engine, Fuel, Motion, Light, then the
     INTERIM Alerts / System tail. MOVED PIN (US-894-e): the Battery card
-    is retired (9 -> 8)."""
+    is retired (9 -> 8). MOVED PIN (US-891-c): the O2 card joins between Fuel
+    and Motion (8 -> 9), so Light is index 6."""
     tags = _sectionTags(_read(_HTML))
     labels = [re.search(r'aria-label="([^"]+)"', t).group(1) for t in tags]
-    assert labels == ["Driving", "Navigation", "Engine", "Fuel", "Motion", "Light",
+    assert labels == ["Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Light",
                       "Alerts", "System Status"]
-    tag = tags[5]
+    tag = tags[6]
     for attr in ('id="light-card"', 'data-state="light"', 'data-page-name="LIGHT"'):
         assert attr in tag, attr
 

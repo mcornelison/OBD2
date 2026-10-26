@@ -2211,6 +2211,75 @@ html, body {
   color: var(--text-secondary); white-space: nowrap;
 }
 
+/* US-891-c (F-127; specs/v030-o2-page-design.md s3, layout A): the O2 page --
+   FRONT and REAR stacked, each a head (label + chip), the volts row and the
+   dot trace, then the CATALYST head. Tokens only: no literal colour, and the
+   one px is the trace height (spec s3); every other length is em or a token.
+   No box has a fixed height except the trace and nothing hides overflow, so
+   a long line wraps rather than clips. Labels and the live chip are Michroma;
+   the withheld chip is lower case, so --font-mono (the subset has no a-z).
+   The live chip carries no state colour: a verdict is a description, not a
+   severity. Stale dims the last value (shared rule). */
+#o2-card {
+  --o2-trace-h: 44px;           /* the trace (spec s3: 456 x 44) */
+  --o2-stale-opacity: 0.4;      /* stale = dimmed (shared rule) */
+  --o2-line: 1;                 /* value + chip line boxes */
+  --o2-note-line: 1.2;          /* label / meta line boxes */
+}
+#o2-card .card-body { display: flex; flex-direction: column; }
+#o2-card .o2-sensor,
+#o2-card .o2-cat {
+  flex: none; display: flex; flex-direction: column; gap: 0.15em; padding-block: 0.2em;
+  min-width: 0;
+}
+#o2-card .o2-sensor + .o2-sensor,
+#o2-card .o2-cat { border-top: thin solid var(--line); }
+#o2-card .o2-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5em;
+  min-width: 0;
+}
+#o2-card .o2-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--o2-note-line);
+  color: var(--text-secondary); white-space: pre;
+}
+#o2-card .o2-chip {
+  font-size: var(--fs-label); line-height: var(--o2-line); white-space: nowrap;
+  padding-block: 0.15em; padding-inline: 0.4em; border-radius: calc(var(--radius) * 0.6);
+}
+#o2-card .o2-chip[data-live="true"] {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  letter-spacing: 0; color: var(--text-primary); border: thin solid var(--text-secondary);
+}
+#o2-card .o2-chip[data-live="false"] {
+  font-family: var(--font-mono); color: var(--text-tertiary);
+  border: thin dashed var(--text-tertiary);
+}
+#o2-card .o2-row {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.5em; min-width: 0;
+}
+#o2-card .o2-line { white-space: nowrap; line-height: var(--o2-line); }
+#o2-card .o2-value {
+  font-weight: 600; font-size: var(--fs-primary); line-height: var(--o2-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#o2-card .o2-unit {
+  font-size: var(--fs-label); color: var(--text-secondary); white-space: pre;
+}
+#o2-card .o2-row[data-none="true"] .o2-value { color: var(--text-tertiary); }
+#o2-card .o2-row[data-stale="true"] .o2-line { opacity: var(--o2-stale-opacity); }
+#o2-card .o2-meta {
+  font-family: var(--font-mono); font-size: var(--fs-meta); line-height: var(--o2-note-line);
+  font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 0;
+}
+#o2-card .o2-trace {
+  display: block; width: 100%; height: var(--o2-trace-h); overflow: visible;
+}
+#o2-card .o2-trace-mid {
+  stroke: var(--text-tertiary); stroke-width: 1; stroke-dasharray: 4 4; fill: none;
+}
+#o2-card .o2-trace-dot { fill: var(--accent); }
+
 /* US-892-b (F-127; specs/v030-motion-page-design.md s3/s4, layout A): the
    Motion card's top two bands -- PITCH beside the 15-minute GRADE graph, then
    the two g cells with this drive's peaks. Tokens only; geometry with no

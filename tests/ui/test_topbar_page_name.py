@@ -27,6 +27,7 @@
 #                               card (bar name MOTION).
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired; BATTERY
 #                               leaves the bar-name map.
+# 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card's bar name joins BAR_NAMES.
 # ================================================================================
 ################################################################################
 
@@ -80,6 +81,8 @@ BAR_NAMES = {
     "Fuel": "FUEL",
     # MOVED PIN (US-892-b): the Motion card replaces the Home card (same bar name).
     "Motion": "MOTION",
+    # MOVED PIN (US-891-c): the O2 card, between Fuel and Motion (O2 spec s3).
+    "O2": "O2",
     "Alerts": "ALERTS",
     "System Status": "SYSTEM",
     # MOVED PIN (US-894-e): the Battery card is retired (9 cards -> 8); its

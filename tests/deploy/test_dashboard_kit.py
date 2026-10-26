@@ -55,6 +55,7 @@
 #                               (the drill is deleted, US-759), so the retired-
 #                               tile pins read `tiles` undefined; the count's
 #                               level is `issues` (AC 7).
+# 2026-10-26    | Ralph (Rex)  | US-891-c -- MOVED PIN: the O2 card slot (8 -> 9 cards).
 # ================================================================================
 ################################################################################
 
@@ -134,10 +135,12 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     # (E-2, Iris Q6) -- still 9 cards.
     # MOVED PIN (US-894-e): the Battery card is retired (its cell is the System
     # page's UPS row) -- 9 -> 8 cards.
-    assert html.count('class="card"') == 8
+    # MOVED PIN (US-891-c): the O2 card lands between Fuel and Motion (O2 spec
+    # O-1) -- 8 -> 9 cards.
+    assert html.count('class="card"') == 9
     labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
     assert labels == [
-        "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+        "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Light", "Alerts",
         "System Status",
     ]
     assert 'data-state="system-status"' in html

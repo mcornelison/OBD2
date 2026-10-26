@@ -5632,6 +5632,133 @@
     return view;
   }
 
+  // --- US-891-c O2 page (F-127) ------------------------------------------------
+  //
+  // specs/v030-o2-page-design.md s3-s4 (layout A, stacked): per sensor the
+  // volts, their age and the provider's sample rate, a dot trace of the
+  // provider's window, and the verdict chips. A PURE CONSUMER of states/o2
+  // (src/pi/obdii/o2_state.py): the provider owns staleness, the window, the
+  // mid-line volts and every verdict, and this page holds no threshold. A stale
+  // sensor renders `last.value` dimmed with its age (drivingReading's rule), a
+  // null one '--' + the provider's reason, and no states/o2 at all '--' +
+  // 'no source' (the Driving page's word), never a zero.
+  var O2_NO_SOURCE = "no source";
+  // The trace frame (spec s3: 456 x 44, 0-1 V) and the OEM mockup's edge pad
+  // and dot radius (proposals/2026-10-15-v030-o2-page-oem.html), in viewBox
+  // units. A volt outside 0-1 sits on the edge it passed.
+  var O2_TRACE_W = 456;
+  var O2_TRACE_H = 44;
+  var O2_TRACE_PAD = 3;
+  var O2_TRACE_V_MIN = 0;
+  var O2_TRACE_V_MAX = 1;
+  var O2_DOT_R = 1.9;
+  var O2_VOLTS_DECIMALS = 2;
+  var O2_PERIOD_DECIMALS = 1;
+  var O2_SEC_PER_MIN = 60;
+  var O2_MS_PER_SEC = 1000;
+
+  // A provider token as words: '_' -> space (gearReasonText's fallback).
+  function o2Words(token) {
+    return typeof token === "string" && token ? token.replace(/_/g, " ") : O2_NO_SOURCE;
+  }
+
+  // One chip from the provider's fields. A reason means the verdict is
+  // withheld, and the chip says which reason in lower case; no reason and a
+  // verdict means a live word, upper case. Rear and catalyst publish only a
+  // held token (no reason field), so they arrive here as the reason.
+  function o2Chip(verdict, reason) {
+    if (typeof reason === "string" && reason) return { text: o2Words(reason), live: false };
+    if (typeof verdict === "string" && verdict) {
+      return { text: o2Words(verdict).toUpperCase(), live: true };
+    }
+    return { text: O2_NO_SOURCE, live: false };
+  }
+
+  // "<n> s" since the reading's own ts: clock arithmetic, not a staleness
+  // decision (the provider made that).
+  function o2AgeText(ts, nowMs) {
+    var t = typeof ts === "string" ? Date.parse(ts) : NaN;
+    if (isNaN(t)) return "--";
+    return Math.max(0, Math.round((nowMs - t) / O2_MS_PER_SEC)) + " s";
+  }
+
+  // The meta line's full form (Iris, PR #136): age, the provider's measured
+  // sample period and the provider's window in minutes.
+  function o2MetaText(ageText, data) {
+    var period = isNum(data.samplePeriodSec)
+      ? data.samplePeriodSec.toFixed(O2_PERIOD_DECIMALS) : "--";
+    var mins = isNum(data.windowSec)
+      ? String(Number((data.windowSec / O2_SEC_PER_MIN).toFixed(1))) : "--";
+    return ageText + " old · 1 sample / ~" + period + " s · last " + mins + " min";
+  }
+
+  function o2NotRead(reason) {
+    return { text: "--", unit: "", stale: false, none: true, meta: reason };
+  }
+
+  // One sensor's value row. `data` is the whole payload (rate and window).
+  function o2Reading(sensor, data, nowMs) {
+    if (!isObj(sensor)) return o2NotRead(drivingReasonText(null));
+    var volts = sensor.value;
+    if (sensor.stale === true) {
+      volts = isObj(sensor.last) ? sensor.last.value : null;
+      if (!isNum(volts)) return o2NotRead(drivingReasonText(sensor.reason));
+    } else if (!isNum(volts)) {
+      return o2NotRead(drivingReasonText(sensor.reason));
+    }
+    return {
+      text: volts.toFixed(O2_VOLTS_DECIMALS), unit: " V", stale: sensor.stale === true,
+      none: false, meta: o2MetaText(o2AgeText(sensor.ts, nowMs), data),
+    };
+  }
+
+  // One sensor's dots: each sample at its own ts across the provider's
+  // window, which ends at the provider's write `ts`. The dashed mid-line is
+  // the provider's `midlineV`, drawn only when published. Dots only.
+  function o2Trace(sensor, data) {
+    var trace = { midY: null, dots: [] };
+    function y(v) {
+      var c = Math.min(O2_TRACE_V_MAX, Math.max(O2_TRACE_V_MIN, v));
+      var f = (c - O2_TRACE_V_MIN) / (O2_TRACE_V_MAX - O2_TRACE_V_MIN);
+      return Number((O2_TRACE_PAD + (O2_TRACE_H - 2 * O2_TRACE_PAD) * (1 - f)).toFixed(1));
+    }
+    if (isNum(data.midlineV)) trace.midY = y(data.midlineV);
+    var endMs = typeof data.ts === "string" ? Date.parse(data.ts) : NaN;
+    var samples = isObj(sensor) && Array.isArray(sensor.samples) ? sensor.samples : [];
+    if (isNaN(endMs) || !isNum(data.windowSec) || data.windowSec <= 0) return trace;
+    var spanMs = data.windowSec * O2_MS_PER_SEC;
+    for (var i = 0; i < samples.length; i++) {
+      var s = samples[i];
+      var t = isObj(s) && typeof s.ts === "string" ? Date.parse(s.ts) : NaN;
+      if (isNaN(t) || !isNum(s.v)) continue;
+      var f = Math.min(1, Math.max(0, 1 - (endMs - t) / spanMs));
+      trace.dots.push({ x: Number((O2_TRACE_W * f).toFixed(1)), y: y(s.v) });
+    }
+    return trace;
+  }
+
+  // The O2 card's whole view from states/o2 alone (null when unread).
+  function o2View(data, nowMs) {
+    if (!isObj(data)) {
+      var none = { reading: o2NotRead(O2_NO_SOURCE), trace: { midY: null, dots: [] },
+        chip: o2Chip(null, null) };
+      return { front: none, rear: none, catalyst: { chip: o2Chip(null, null) } };
+    }
+    return {
+      front: {
+        reading: o2Reading(data.front, data, nowMs),
+        trace: o2Trace(data.front, data),
+        chip: o2Chip(data.frontVerdict, data.frontReason),
+      },
+      rear: {
+        reading: o2Reading(data.rear, data, nowMs),
+        trace: o2Trace(data.rear, data),
+        chip: o2Chip(null, data.rearVerdict),
+      },
+      catalyst: { chip: o2Chip(null, data.catalystVerdict) },
+    };
+  }
+
   // --- US-889-c Engine card, the scroll half (F-127) -------------------------
   //
   // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
@@ -6118,6 +6245,8 @@
     fuelResetNext: fuelResetNext,
     fuelMpgResetView: fuelMpgResetView,
     fuelResetAllowed: fuelResetAllowed,
+    o2View: o2View,
+    o2Chip: o2Chip,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -7267,6 +7396,56 @@
           sub.hidden = !v.sub;
         }
       }
+    }
+
+    // --- US-891-c O2 page DOM render (browser only) -------------------------
+
+    // One chip: its words, and data-live picks the face (the stylesheet: live
+    // Michroma outlined, withheld mono dashed). Never a state colour.
+    function paintO2Chip(chip, v) {
+      if (!chip || !v) return;
+      chip.textContent = v.text;
+      chip.setAttribute("data-live", v.live ? "true" : "false");
+    }
+
+    // One sensor section: chip, value row, and the trace rebuilt per paint
+    // from `o2Trace` -- one circle per sample, nothing joining them.
+    function paintO2Sensor(section, s) {
+      if (!section || !s) return;
+      paintO2Chip(section.querySelector(".o2-chip"), s.chip);
+      var row = section.querySelector(".o2-row");
+      if (row) {
+        row.setAttribute("data-none", s.reading.none ? "true" : "false");
+        row.setAttribute("data-stale", s.reading.stale ? "true" : "false");
+        var value = row.querySelector(".o2-value");
+        if (value) value.textContent = s.reading.text;
+        var unit = row.querySelector(".o2-unit");
+        if (unit) unit.textContent = s.reading.unit;
+        var meta = row.querySelector(".o2-meta");
+        if (meta) meta.textContent = s.reading.meta;
+      }
+      var svg = section.querySelector(".o2-trace");
+      if (!svg) return;
+      svg.textContent = "";
+      if (s.trace.midY !== null) {
+        svg.appendChild(svgEl("line", {
+          class: "o2-trace-mid", x1: 0, y1: s.trace.midY, x2: O2_TRACE_W, y2: s.trace.midY,
+        }));
+      }
+      for (var i = 0; i < s.trace.dots.length; i++) {
+        svg.appendChild(svgEl("circle", {
+          class: "o2-trace-dot", cx: s.trace.dots[i].x, cy: s.trace.dots[i].y, r: O2_DOT_R,
+        }));
+      }
+    }
+
+    // US-891-c: paint the O2 card from `o2View`.
+    function renderO2Card(card, view) {
+      if (!card || !view) return;
+      paintO2Sensor(card.querySelector(".o2-front"), view.front);
+      paintO2Sensor(card.querySelector(".o2-rear"), view.rear);
+      var cat = card.querySelector(".o2-cat");
+      if (cat) paintO2Chip(cat.querySelector(".o2-chip"), view.catalyst.chip);
     }
 
     // --- US-893-b Light page DOM render (browser only) ----------------------
@@ -8582,6 +8761,8 @@
       // states/grade-history, polled on the 4 Hz tick like the other states.
       var motionCard = document.getElementById("motion-card");
       var lastGradeHistory = null;
+      // US-891-c: the O2 card, between Fuel and Motion; states/o2 on the tick.
+      var o2Card = document.getElementById("o2-card");
       // US-888-a: the Driving card is the LANDING card (R5, `data-landing`).
       // The engine-state edge below returns the carousel HERE; `lastIdle`
       // edge-triggers it so it fires only on a state CHANGE -- it never fights
@@ -9618,6 +9799,8 @@
           fuelMpgView(await stateOnce("fuel-economy")),
           fuelReset, fuelResetAllowed(lastFuelEconomy), fuelConfirmSec()
         ));
+        // US-891-c: the O2 page from states/o2 alone, on this tick's one clock.
+        renderO2Card(o2Card, o2View(await stateOnce("o2"), nowMs));
         // US-896-b: the NAV trip from the SAME system-status every other
         // surface on this tick read (cached); the page does no time arithmetic.
         renderNavTrip(navCard, navTripView(await stateOnce("system-status")));
