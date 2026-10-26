@@ -69,11 +69,17 @@ The **default page** (R5): readable at a glance while driving with **no touch**.
 | Gear state | Glyph |
 |---|---|
 | Measured gear (1–5, N, P per the emitter) | solid, `--text-primary` |
-| Between gears **with** a hint | **hollow outline** of the hinted gear + `↑`/`↓` arrow, `--text-secondary` |
+| Between gears **with** a hint | **hollow outline** of the hinted gear + an up/down arrow, `--text-secondary` (drawn as below) |
 | Between gears, **no** hint | `--` |
 | Measured gear changes | 0.35 s **glide** (fade + 14 px rise), on change only, not on every reading; reduced-motion ⇒ instant |
 
 The reason line under `--` is **dropped on this page** (glance view); detail keeps it.
+
+**How the hint is drawn (S117 review, 2026-10-26).** The gear face is Michroma, and its 38-glyph subset has no arrow characters, so the arrow is a **shape**, never text:
+- **Hollow digit:** `.drv-gear-hint { color: transparent; -webkit-text-stroke: var(--drv-hint-stroke) var(--text-secondary); }`, with `--drv-hint-stroke: 3px` declared on `#driving-card`. Same face, size and position as the solid gear, so a hint and a measured gear differ only in fill. They are never identical.
+- **Arrow:** an inline SVG triangle, `<svg class="drv-hint-arrow" viewBox="0 0 10 10">`, path `M5 0 L10 10 L0 10 Z` for up and the same path flipped for down, `fill: currentColor` in `--text-secondary`, in a `var(--drv-hint-arrow)` = 30px square box. It is absolutely positioned at `left: calc(100% + var(--drv-gap))`, centred vertically on the digit, so the digit sits exactly where a solid gear draws and nothing moves when the hint turns solid.
+- **Fit (computed):** the widest digit is 0.951 em × 120 px = 114 px. Centred in the 208 px centre column (448 body − 2 × 120), its right edge is at x 161 and the arrow runs 167–197: inside 208, with 11 px spare.
+- carousel.js and dashboard.html contain no `↑`/`↓` character. The only new px are `--drv-hint-stroke` and `--drv-hint-arrow`, in the `#driving-card` custom-property block.
 
 **Hint rule (Spool 2026-10-13; computed by `gear_state_emitter`, published as `hintGear` + `hintDirection` on `states/gear`, names approved by Atlas G-2).** A hint exists only when **all** hold:
 - the gear reason is in {`no_band_match`, `ambiguous`, `settling`};
@@ -86,7 +92,7 @@ The reason line under `--` is **dropped on this page** (glance view); detail kee
 | latest RPM > RPM at G, and speed falling | hollow **G−1** + `↓` |
 | anything else (e.g. braking with the clutch in drops both) | `--` |
 
-Clamped to 1..5. **A hint never becomes solid**; only gear derivation makes a solid gear. The page renders the two fields and computes nothing.
+**A hint outside 1..5 is no hint (null); a hint never equals G** (Spool 2026-10-26, replacing "clamped to 1..5": a clamp would show a hollow 5 while in 5th). **A hint never becomes solid**; only gear derivation makes a solid gear. The page renders the two fields and computes nothing.
 
 ### 4.3 Engine numbers (coolant, intake air, battery)
 - **Always colour-coded**: `--green-ok` / `--amber-warn` / `--critical-red`.
