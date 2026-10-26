@@ -10164,6 +10164,33 @@ The pytest wrapper `tests/deploy/test_deploy_pi_eeprom_config.py` runs the
 bash test in the fast suite so a regression in either the production script
 or the mock harness shows up alongside other deploy regressions.
 
+**The EEPROM key table (US-926-a, Sprint 115) [Atlas Rule 10].** The same
+script enforces ONE table of keys, each with its source in a comment:
+`POWER_OFF_ON_HALT=1` (above), and the boot-speed keys
+`NET_INSTALL_AT_POWER_ON=0`, `NET_INSTALL_ENABLED=0` and `BOOT_UART=0` (Atlas
+MEASURED 2026-10-24: firmware reached 'Starting OS' at 13.5 s against a ~7 s
+floor, RPi WP-1). It reads `rpi-eeprom-config` once and compares every key,
+logging one line per key (`already set` / `X -> Y` / `absent -> Y`;
+`POWER_OFF_ON_HALT` keeps its earlier wording). All right means no apply.
+Otherwise there is ONE `--apply` that **merges, never rebuilds**: the applied
+file is the running config as read, with only the table keys rewritten in place
+or appended when absent. Every other line (`WAKE_ON_GPIO`, `BOOT_ORDER`,
+comments, blank lines) stays byte-identical and in order. This is because
+`--apply` replaces the whole config, so a second apply would rebuild from the
+unchanged running config and drop the first one's staged change (Atlas MEASURED
+Q3, Spool). **The bootloader moves with it:** `--apply` writes the config into
+the LATEST packaged image. The first real apply therefore also moves this car's
+bootloader 2026/05/11 -> 2026/05/26 (Atlas Q5, ruled: accept and name it). The
+script logs that image from `rpi-eeprom-update -l` before the apply, and never
+runs `rpi-eeprom-update -a`. **Never in the table:** `PSU_MAX_CURRENT` (Atlas
+MEASURED: `usb_pd_init` costs 6 ms, so there is nothing to win, and 5 A is unrated
+for the car buck, per Spool; out unless the CIO grounds it), `max_framebuffers`
+(never 0: WP-1 p.10), and `BOOT_ORDER`. Exit codes are unchanged: 1 means the tool
+is missing, 2 means the read or apply failed and the EEPROM config is unchanged, and
+the deploy stops. Tests: `tests/deploy/test_eeprom_power_off_on_halt.sh` adds
+today's car (one apply, all five live keys kept) and the `PSU_MAX_CURRENT`
+pass-through. `test_deploy_pi_eeprom_config.py` pins the table and the step label.
+
 **What is still pending (IRL, out of code scope).** The 5-cycle IRL
 acceptance drill — graceful `systemctl poweroff` → external power off →
 wait → external power on → unattended Pi boot, **five times in a row** — is
