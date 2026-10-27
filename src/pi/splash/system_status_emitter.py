@@ -59,6 +59,9 @@
 # 2026-10-27    | Rex (US-917-b)| the always-present sync.priorCustody (the last
 #               |              | key-off's custody, read once at start) and
 #               |              | sync.syncedThisBoot (sync-activity delivered).
+# 2026-10-27    | Rex (US-917-c)| the `sync` verdict member (spec s4.3.1 S1-S3),
+#               |              | appended last; the builder takes the S3
+#               |              | threshold and the local zone.
 # ================================================================================
 ################################################################################
 
@@ -70,11 +73,14 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
 
 # US-917-b: the prior-boot matching rule and the record names live with their
 # writers; the vocabularies are imported from their owners, never copied.
 from pi.diagnostics import boot_progress
+
+# US-917-c: the priorShutdown verdict words, from the block's producer.
+from pi.diagnostics.prior_shutdown_summary import VERDICT_CLEAN, VERDICT_UNGRACEFUL
 from pi.power.power_watch.contract import OutcomeKind
 from pi.power.power_watch.sync_custody import CUSTODY_RECORD_FILENAME
 
@@ -187,6 +193,7 @@ __all__ = [
     "VERDICT_CAPTURE",
     "VERDICT_MEMBER_ORDER",
     "VERDICT_PI",
+    "VERDICT_SYNC",
     "VERDICT_WIFI",
     "LinkLayerTracker",
     "buildSystemStatusState",
@@ -487,20 +494,35 @@ def _publishLinkChain(link: dict | None) -> dict[str, dict[str, str | None]]:
 
 
 # US-877-b: the verdict's members, in their fixed publish order (Iris s4.1).
-# No `sync` member (Atlas 877-b-1: no sourced threshold) and no UPS battery
-# member (Spool + Atlas P5: no grounded band) -- both banked, never improvised.
-# A UPS GAUGE fault is a feed fault: it is the `sensor` member (US-869-c),
-# amber on the DATA row, never on the UPS row (Atlas R7).
+# No UPS battery member (Spool + Atlas P5: no grounded band) -- banked, never
+# improvised. A UPS GAUGE fault is a feed fault: it is the `sensor` member
+# (US-869-c), amber on the DATA row, never on the UPS row (Atlas R7). `sync`
+# (US-917-c, CIO 2026-10-27) is appended last: spec s4.3.1 cases S1-S3.
 VERDICT_BT = "bt"
 VERDICT_ADAPTER = "adapter"
 VERDICT_CAPTURE = "capture"
 VERDICT_SENSOR = "sensor"
 VERDICT_WIFI = "wifi"
 VERDICT_PI = "pi"
+VERDICT_SYNC = "sync"
 VERDICT_MEMBER_ORDER: tuple[str, ...] = (
     VERDICT_BT, VERDICT_ADAPTER, VERDICT_CAPTURE, VERDICT_SENSOR, VERDICT_WIFI,
-    VERDICT_PI,
+    VERDICT_PI, VERDICT_SYNC,
 )
+
+# US-917-c: the custody verdicts that mean the last key-off's sync did not
+# finish. Named, never "anything but DELIVERED": an unread verdict is null and
+# never an issue.
+_SYNC_NOT_FINISHED_VERDICTS: frozenset[str] = frozenset(
+    {BACKLOG_OUTSTANDING, BACKLOG_UNKNOWN}
+)
+# The S3 'last sent' date rule is the System DATA row's (spec s4.3); these
+# mirror carousel.js STAMP_MONTHS (US-559), which a Python module cannot import.
+_STAMP_MONTHS: tuple[str, ...] = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+_NOON_HOUR = 12
 
 # Mirror pi.obdii.capture_health's feed names, STATE_STALLED, STATE_FAULTED
 # and the two FEED_REASON_* tokens (pinned equal by test; importing pi.obdii
@@ -659,6 +681,107 @@ def _piReason(pi: dict, overLimit: list[str]) -> str:
     return f"Over limit: {', '.join(names)}."
 
 
+def _asCount(value: object) -> int | None:
+    """A row count as published, or None when it is not one (bool excluded)."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _parseIsoUtc(value: str | None) -> datetime | None:
+    """A canonical-UTC stamp as an aware datetime; None when it does not parse."""
+    try:
+        return datetime.strptime(str(value), _ISO_FMT).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _lastSentWords(
+    lastOkTs: str | None, nowIso: str | None, localZone: tzinfo | None,
+) -> str | None:
+    """S3's 'last sent' by the DATA row's date rule (spec s4.3), in local time.
+
+    Same local day -> ``6:42 PM``; the local day before -> ``yesterday``;
+    older -> ``Oct 12``; no sync on record -> ``never``. None when a stamp does
+    not parse: a time the instrument cannot place is never printed.
+    """
+    if lastOkTs is None:
+        return "never"
+    sent, now = _parseIsoUtc(lastOkTs), _parseIsoUtc(nowIso)
+    if sent is None or now is None:
+        return None
+    # astimezone(None) is the host's local time -- the clock the kiosk page's
+    # own fmtTimeOfDay reads, so this and the DATA row's 'synced' agree.
+    sent, now = sent.astimezone(localZone), now.astimezone(localZone)
+    if sent.date() == now.date():
+        meridiem = "AM" if sent.hour < _NOON_HOUR else "PM"
+        return f"{sent.hour % _NOON_HOUR or _NOON_HOUR}:{sent.minute:02d} {meridiem}"
+    if sent.date() == now.date() - timedelta(days=1):
+        return "yesterday"
+    return f"{_STAMP_MONTHS[sent.month - 1]} {sent.day:02d}"
+
+
+def _syncReason(
+    *,
+    sync: dict,
+    wifi: dict,
+    priorShutdown: dict | None,
+    driveState: str | None,
+    nowIso: str | None,
+    syncStaleThresholdS: float | None,
+    localZone: tzinfo | None,
+) -> str | None:
+    """The sync member's reason by spec s4.3.1 (US-917-c), first case wins.
+
+    S1 the last key-off's sync did not finish; S2 the last stop was cut off;
+    S3 parked at home and not getting through. S1/S2 clear once this boot has
+    delivered; S3 clears when ``lastOkTs`` is fresh. Driving is never a case,
+    and a null or unread fact is never an issue.
+
+    Returns:
+        The provider-written reason, or None when no case holds.
+    """
+    rows = _asCount(sync.get("rowsWaiting"))
+    priorVerdict = priorShutdown.get("verdict") if isinstance(priorShutdown, dict) else None
+    if sync.get("syncedThisBoot") is not True:
+        custody = sync.get("priorCustody")
+        if (
+            priorVerdict == VERDICT_CLEAN
+            and isinstance(custody, dict)
+            and custody.get("current") is True
+            and custody.get("verdict") in _SYNC_NOT_FINISHED_VERDICTS
+            and custody.get("kind") not in PRIOR_CUSTODY_AWAY_KINDS
+        ):
+            kept = _asCount(custody.get("outstandingRows"))
+            if custody.get("countIsComplete") is True and kept is not None:
+                return f"Last sync didn't finish · {kept:,} rows kept"
+            return "Last sync didn't finish · row count unknown"
+        # S2: the custody record predates the cut-off stop, so it is not read.
+        if priorVerdict == VERDICT_UNGRACEFUL and (rows is None or rows > 0):
+            waiting = "rows not read" if rows is None else f"{rows:,} rows waiting"
+            return f"Last stop was cut off · sync result unknown · {waiting}"
+    # S3: 'parked' is not recording, by isSyncStaleWhileDriving's own source.
+    if (
+        syncStaleThresholdS is None
+        or driveState == "recording"
+        or wifi.get("home") is not True
+        or rows is None
+        or rows <= 0
+    ):
+        return None
+    lastOkTs = sync.get("lastOkTs")
+    if lastOkTs is not None:
+        sent, now = _parseIsoUtc(lastOkTs), _parseIsoUtc(nowIso)
+        if sent is None or now is None:
+            return None
+        if (now - sent).total_seconds() <= syncStaleThresholdS:
+            return None
+    lastSent = _lastSentWords(lastOkTs, nowIso, localZone)
+    if lastSent is None:
+        return None
+    return f"Not syncing at home · {rows:,} rows waiting · last sent {lastSent}"
+
+
 def buildSystemVerdict(
     *,
     link: dict | None,
@@ -666,6 +789,12 @@ def buildSystemVerdict(
     captureHealth: dict | None,
     piHealth: dict | None,
     driveState: str | None,
+    sync: dict | None = None,
+    wifi: dict | None = None,
+    priorShutdown: dict | None = None,
+    nowIso: str | None = None,
+    syncStaleThresholdS: float | None = None,
+    localZone: tzinfo | None = None,
 ) -> dict:
     """Name every counted system issue (US-877-b; Atlas Y-6, P4/P6, E3).
 
@@ -683,6 +812,17 @@ def buildSystemVerdict(
             provider's verdict -- never re-compared here).
         driveState: ``recording`` / ``idle`` -- bt ``retrying`` counts only
             while recording (Atlas E3), evaluated each call, never latched.
+            Also S3's 'parked' (not recording, US-917-c).
+        sync: US-917-c: the published ``sync`` block (lastOkTs, rowsWaiting,
+            priorCustody, syncedThisBoot); None is no sync member.
+        wifi: US-917-c: the published ``wifi`` block (S3 reads ``home``).
+        priorShutdown: US-917-c: the published ``priorShutdown`` block (S1
+            needs ``clean``, S2 ``ungraceful``).
+        nowIso: US-917-c: the publish instant, S3's 'now'.
+        syncStaleThresholdS: US-917-c: ``pi.dashboard.syncStaleThresholdSeconds``
+            -- S3 needs ``lastOkTs`` older than this. None: S3 is not judged.
+        localZone: US-917-c: the zone S3's 'last sent' is printed in; None is
+            the host's local time, as the kiosk page's own clock.
 
     Returns:
         ``{"issueCount": int, "members": [{"key", "reason"}]}``, members in
@@ -724,6 +864,18 @@ def buildSystemVerdict(
     overLimit = list(pi.get("overLimit") or [])
     if overLimit:
         members.append({"key": VERDICT_PI, "reason": _piReason(pi, overLimit)})
+    if isinstance(sync, dict):
+        syncReason = _syncReason(
+            sync=sync,
+            wifi=wifi if isinstance(wifi, dict) else {},
+            priorShutdown=priorShutdown,
+            driveState=driveState,
+            nowIso=nowIso,
+            syncStaleThresholdS=syncStaleThresholdS,
+            localZone=localZone,
+        )
+        if syncReason is not None:
+            members.append({"key": VERDICT_SYNC, "reason": syncReason})
     return {"issueCount": len(members), "members": members}
 
 
@@ -826,6 +978,8 @@ def buildSystemStatusState(
     syncedThisBoot: bool = False,
     piHealth: dict | None = None,
     captureHealth: dict | None = None,
+    syncStaleThresholdS: float | None = None,
+    localZone: tzinfo | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -925,6 +1079,11 @@ def buildSystemStatusState(
             THIS tick, handed in-process (Atlas P6) -- only its ``feeds`` are
             read, by :func:`buildSystemVerdict`. None (dark / failed) is no
             capture member.
+        syncStaleThresholdS: US-917-c: ``pi.dashboard.syncStaleThresholdSeconds``
+            for the sync member's S3 case; None (not supplied) does not judge
+            S3. Not the ``stale`` flag, which the caller decides.
+        localZone: US-917-c: the zone S3's 'last sent' prints in; None is the
+            host's local time.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -1052,6 +1211,12 @@ def buildSystemStatusState(
         captureHealth=captureHealth,
         piHealth=state["pi"],
         driveState=driveState,
+        sync=state["sync"],
+        wifi=state["wifi"],
+        priorShutdown=priorShutdown,
+        nowIso=nowIso,
+        syncStaleThresholdS=syncStaleThresholdS,
+        localZone=localZone,
     )
     return state
 
@@ -1101,6 +1266,7 @@ def makeSystemStatusEmitter(
     syncLockPath: str = push_lock.DEFAULT_LOCK_PATH,
     dataDir: str = DEFAULT_DATA_DIR,
     bootIdFn: Callable[[], str] = boot_progress.readBootId,
+    localZone: tzinfo | None = None,
 ) -> Callable[..., dict | None]:
     """Build the system-status emit callable owned by the orchestrator (A-3).
 
@@ -1112,7 +1278,8 @@ def makeSystemStatusEmitter(
     Args:
         statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
         syncStaleThresholdS: Stale-while-driving threshold in seconds (Spool S-3;
-            config-supplied -- no fabricated default).
+            config-supplied -- no fabricated default). US-917-c: also the sync
+            member's S3 bound (parked at home, not getting through).
         nowIsoFn: Injected clock for ``ts`` (default UTC now, second resolution).
         syncLockPath: US-917-a: the push lock probed for ``sync.inProgress``
             (default the one every pusher takes); sync-activity is read from
@@ -1121,6 +1288,8 @@ def makeSystemStatusEmitter(
             boot_progress trail (default relative to the service's working
             directory, as boot_progress's own default is).
         bootIdFn: US-917-b: this boot's id, for the prior-ids file's stamp.
+        localZone: US-917-c: the zone S3's 'last sent' prints in; None (the
+            default) is the host's local time, the clock the kiosk page reads.
 
     Returns:
         The emit callable. It returns the payload it wrote, or None when the
@@ -1216,6 +1385,8 @@ def makeSystemStatusEmitter(
                 syncedThisBoot=syncedThisBoot(),
                 piHealth=piHealth,
                 captureHealth=captureHealth,
+                syncStaleThresholdS=syncStaleThresholdS,
+                localZone=localZone,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

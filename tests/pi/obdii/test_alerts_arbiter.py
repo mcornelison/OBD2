@@ -22,6 +22,8 @@
 # 2026-10-22    | Rex (US-877-c) | The SYSTEM source: sources.system not_read ->
 #                                assessed; one inert WATCH per verdict member,
 #                                removed when it clears; ack, order, icon.
+# 2026-10-27    | Rex (US-917-c) | MOVED PIN: SYSTEM_TITLES gains sync; each sync
+#                                case is one WATCH and icon.count == issueCount.
 # ================================================================================
 ################################################################################
 
@@ -1909,6 +1911,8 @@ def test_system_titleTable_isIrisWords_atMost21Chars() -> None:
         "sensor": "SENSOR FAULT",
         "wifi": "WIFI NOT READ",
         "pi": "PI OVER LIMIT",
+        # MOVED PIN (US-917-c): the sync member's title (Iris 2026-10-27).
+        "sync": "SYNC NOT COMPLETE",
     }
     assert all(len(title) <= 21 for title in aa.SYSTEM_TITLES.values())
 
@@ -1941,6 +1945,52 @@ def test_system_titleTable_coversEveryVerdictMemberKey() -> None:
     from pi.splash.system_status_emitter import VERDICT_MEMBER_ORDER
 
     assert set(aa.SYSTEM_TITLES) == set(VERDICT_MEMBER_ORDER)
+
+
+def _syncCasePayloads() -> dict[str, dict[str, Any]]:
+    """US-917-c: system-status payloads built by the real builder, one per
+    sync case (the provider tests' own inputs), plus one beside two others."""
+    from tests.pi.splash import test_system_status_emitter as sse_tests
+
+    return {
+        "s1": sse_tests._syncState(**sse_tests._S1_STATE),
+        "s2": sse_tests._syncState(**sse_tests._S2_STATE),
+        "s3": sse_tests._syncState(**sse_tests._S3_STATE),
+        "s1-with-wifi-and-pi": sse_tests._syncState(
+            **sse_tests._S1_STATE, wifiAvailable=False, wifiUnavailableReason="read_failed",
+            piHealth=sse_tests._pi(cpuTempC=90.0, overLimit=["cpuTemp"]),
+        ),
+    }
+
+
+@pytest.mark.parametrize("case", ["s1", "s2", "s3", "s1-with-wifi-and-pi"])
+def test_system_syncMember_a7_isOneWatch_iconCountEqualsIssueCount(case: str) -> None:
+    """A7 (US-917-c): an arbiter fed the builder's payload lists
+    system:sync:watch titled SYNC NOT COMPLETE with the member's reason, and
+    the icon counts exactly the verdict's issues (the ▲ == System n ISSUES)."""
+    payload = _syncCasePayloads()[case]
+    (syncMember,) = [m for m in payload["verdict"]["members"] if m["key"] == "sync"]
+    arbiter = _arbiter()
+
+    arbiter.observeSystemStatus(payload)
+    state = _buildSys(arbiter)
+
+    (entry,) = [e for e in state["entries"] if e["key"] == "sync"]
+    assert entry["id"] == "system:sync:watch"
+    assert entry["tier"] == "watch"
+    assert entry["title"] == "SYNC NOT COMPLETE"
+    assert entry["sentence"] == syncMember["reason"]
+    assert len(state["entries"]) == payload["verdict"]["issueCount"]
+    assert state["icon"]["count"] == payload["verdict"]["issueCount"]
+
+
+def test_system_syncMember_clears_entryRemoved() -> None:
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_syncCasePayloads()["s1"])
+
+    arbiter.observeSystemStatus(_systemStatus([], ts=_SYS_T1))
+
+    assert _buildSys(arbiter)["entries"] == []
 
 
 def test_system_everyMember_isWatch_neverStop_neverTakesOver_neverCodeAlert() -> None:

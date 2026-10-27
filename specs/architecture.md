@@ -7033,7 +7033,8 @@ legacy AlertManager owns that section (config.json).
   so a system entry never takes over, never pulses and is never in `codeAlert`; it counts
   toward the icon. Title from the arbiter's table (`SYSTEM_TITLES`): bt `BLUETOOTH NOT LINKED`,
   adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, sensor `SENSOR FAULT`
-  (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
+  (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`, sync
+  `SYNC NOT COMPLETE` (US-917-c, Iris; one title for S1, S2 and S3). `sentence` = the member's `reason` verbatim (the page composes nothing);
   `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
   A key not in the table is skipped with one WARNING per key (A5).
 - **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
@@ -8712,7 +8713,8 @@ its own event-time ts:
 
 **`verdict` — every counted issue, named (US-877-b; Atlas Y-6, P4/P6/P7, E3).**
 Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
-`adapter`, `capture`, `sensor`, `wifi`, `pi` (`sensor` from US-869-c):
+`adapter`, `capture`, `sensor`, `wifi`, `pi`, `sync` (`sensor` from US-869-c,
+`sync` from US-917-c):
 
 ```json
 "verdict": {"issueCount": 1,
@@ -8724,6 +8726,11 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
   fixture generator calls it too). `buildSystemStatusState` calls it on the
   blocks it has just published (`link`, `source.wifi`, `pi`) plus its
   `captureHealth` parameter (builder, `emit()` and the orchestrator call).
+  US-917-c adds keyword inputs for the `sync` member: the published `sync`,
+  `wifi` and `priorShutdown` blocks, `nowIso`, `syncStaleThresholdS` (None: S3
+  not judged) and `localZone` (None: the host's local time, the clock the
+  kiosk page reads). `makeSystemStatusEmitter` passes its own
+  `syncStaleThresholdS`.
 - **Members, each from a provider field — never a page comparison.** A null /
   not-read value is never an issue.
   - `bt`: `link.bt` `down`; or `retrying` ONLY while `drive.state` is
@@ -8761,10 +8768,41 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
   - `wifi`: `source.wifi.reason == "read_failed"` only. `nmcli_absent`,
     `not_read` and a measured WiFi down never count — absence is not an issue.
   - `pi`: `pi.overLimit` non-empty (the provider's verdict, never re-compared).
+  - `sync` (US-917-c; spec v030-system-page-design §4.3.1, CIO 2026-10-27):
+    ONE member, the first case that holds, `{"key": "sync", "reason"}`:
+    - **S1** last key-off's sync didn't finish: `priorShutdown.verdict ==
+      "clean"` AND `sync.priorCustody.current` true AND its `verdict` is
+      `OUTSTANDING` or `UNKNOWN` (named; a null verdict never counts) AND its
+      `kind` not in `PRIOR_CUSTODY_AWAY_KINDS` (`away`, legacy
+      `server_unavailable`) → `Last sync didn't finish · <n> rows kept`, or
+      `… · row count unknown` when `countIsComplete` is not true or the count
+      is null.
+    - **S2** last stop cut off: `priorShutdown.verdict == "ungraceful"` AND
+      `sync.rowsWaiting` > 0 or null → `Last stop was cut off · sync result
+      unknown · <n> rows waiting` (`rows not read` when null). The custody
+      record is from an older shutdown and is NOT read. `no_record` or an
+      unread `priorShutdown` is neither S1 nor S2.
+    - S1 and S2 clear on `sync.syncedThisBoot`.
+    - **S3** not getting through at home: parked (`drive.state` not
+      `recording`, the source `isSyncStaleWhileDriving` reads) AND
+      `wifi.home` true AND `rowsWaiting` > 0 AND `lastOkTs` null or older than
+      `syncStaleThresholdS` (strictly) → `Not syncing at home · <n> rows
+      waiting · last sent <when>`, `<when>` by the DATA row's date rule in
+      local time: same day `9:14 PM`, the day before `yesterday`, older
+      `Oct 12`, null `never`. Clears on a fresh `lastOkTs`. An unparseable
+      stamp is not judged.
+    - `<n>` comma-grouped. Driving is never a case; `sync.stale` and
+      `isSyncStaleWhileDriving` are not inputs and are unchanged;
+      `edrRowsWaiting` never counts.
+    - **Config guard (Atlas G4):** `validateObdConfig` rejects an EFFECTIVE
+      `pi.dashboard.syncStaleThresholdSeconds` (else
+      `DEFAULT_SYNC_STALE_THRESHOLD_SECONDS`, 120) that is not greater than
+      the effective `pi.sync.intervalSeconds` (else the validator default,
+      60) with a `ConfigValidationError` naming both keys. At or below the
+      interval, S3 would flicker between two normal pushes.
   - **Not counted:** ECU silent (`connecting`), away from home, any null. No
-    `sync` member (877-b-1: no sourced threshold) and no UPS battery member
-    (P5: no grounded band) — both banked. A UPS **gauge** fault is the
-    `sensor` member's, not a UPS member (US-869-c).
+    UPS battery member (P5: no grounded band), banked. A UPS **gauge** fault is
+    the `sensor` member's, not a UPS member (US-869-c).
 - **`reason` is the finished sentence** (Iris 2026-10-19 words; the page
   composes nothing): bt retrying `Link dropped. Retrying.`; bt down `Not
   linked. Check the OBD dongle.`; adapter `Bluetooth up; adapter not

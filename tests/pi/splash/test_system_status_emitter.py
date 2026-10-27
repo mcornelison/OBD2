@@ -45,6 +45,8 @@
 #               |              | inProgress; sync.inProgress follows the lock.
 # 2026-10-27    | Rex (US-917-b)| MOVED PIN: the two exact sync pins gain
 #               |              | priorCustody + syncedThisBoot; the relay tests.
+# 2026-10-27    | Rex (US-917-c)| MOVED PIN: VERDICT_MEMBER_ORDER ends in sync;
+#               |              | the sync member's S1-S3 cases (A1-A6).
 # ================================================================================
 ################################################################################
 
@@ -52,10 +54,16 @@
 
 import json
 import os
+from datetime import timedelta, timezone
 
 import pytest
 
 from pi.diagnostics import boot_progress
+from pi.diagnostics.prior_shutdown_summary import (
+    VERDICT_CLEAN,
+    VERDICT_NO_RECORD,
+    VERDICT_UNGRACEFUL,
+)
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.power.power_watch.contract import OutcomeKind
 from pi.power.power_watch.sync_custody import CUSTODY_RECORD_FILENAME
@@ -71,6 +79,7 @@ from pi.splash.system_status_emitter import (
     RUN_MODE_REPLAY,
     RUN_MODE_SIMULATE,
     SYSTEM_STATUS_FILENAME,
+    VERDICT_SYNC,
     LinkLayerTracker,
     buildSystemStatusState,
     buildSystemVerdict,
@@ -1430,7 +1439,7 @@ def test_verdict_adapter_onlyWhileBtUp():
 
 def test_verdict_fixedOrder_countIsLen_andNoSyncKeyEver():
     """Every member at once, in the fixed order; issueCount == len(members);
-    no sync member exists (Atlas 877-b-1) however bad sync is."""
+    no sync member without a sync input (US-917-c: the S1-S3 tests below)."""
     everything = {
         "captureHealth": _capture(obd="stalled"),
         "wifiSource": {"available": False, "reason": "read_failed"},
@@ -1467,12 +1476,20 @@ def test_builder_noSyncMember_evenWithASyncThatNeverSucceeded():
     assert "sync" not in _keys(state["verdict"])
 
 
-def test_verdict_memberOrderConstant_isBtAdapterCaptureSensorWifiPi():
-    from pi.splash.system_status_emitter import VERDICT_MEMBER_ORDER, VERDICT_SENSOR
+def test_verdict_memberOrderConstant_isBtAdapterCaptureSensorWifiPiSync():
+    from pi.splash.system_status_emitter import (
+        VERDICT_MEMBER_ORDER,
+        VERDICT_SENSOR,
+        VERDICT_SYNC,
+    )
 
     # MOVED PIN (US-869-c): `sensor` sits after `capture` (Atlas R2).
     assert VERDICT_SENSOR == "sensor"
-    assert VERDICT_MEMBER_ORDER == ("bt", "adapter", "capture", "sensor", "wifi", "pi")
+    # MOVED PIN (US-917-c): `sync` is appended last.
+    assert VERDICT_SYNC == "sync"
+    assert VERDICT_MEMBER_ORDER == (
+        "bt", "adapter", "capture", "sensor", "wifi", "pi", "sync",
+    )
 
 
 def test_verdict_aMembersKeyStaysPut_whenItsReasonChangesMidEpisode():
@@ -2037,3 +2054,319 @@ def test_syncedThisBoot_aPushThatDeliveredNothing_staysFalse(tmp_path):
 
     assert _sync(_custodyEmitter(tmp_path, str(tmp_path / "data"), statesDir))[
         "syncedThisBoot"] is False
+
+
+# --------------------------------------------------------------------------
+# US-917-c: the `sync` verdict member, cases S1-S3 (specs/v030-system-page-
+# design.md s4.3.1). A fixed -05:00 zone stands in for the Pi's local time, so
+# a UTC day boundary and the local one differ in these fixtures.
+# --------------------------------------------------------------------------
+
+_LOCAL = timezone(timedelta(hours=-5))
+_THRESHOLD_S = 120.0
+# lastOkTs 9:14:00 PM local on Oct 26 == 02:14:00Z on Oct 27.
+_S3_LAST_OK = "2026-10-27T02:14:00Z"
+_S3_NOW_121 = "2026-10-27T02:16:01Z"  # 121 s later, the same local day
+_S3_NOW_60 = "2026-10-27T02:15:00Z"   # 60 s later
+
+
+def _priorShutdown(verdict: str) -> dict:
+    return {"verdict": verdict, "reason": None, "lastStage": None, "label": "x"}
+
+
+def _custody(**overrides) -> dict:
+    """The S1 block: the last key-off at home, server down, 240 rows kept."""
+    block = {
+        "verdict": BACKLOG_OUTSTANDING, "outstandingRows": 240, "countIsComplete": True,
+        "kind": OutcomeKind.AT_HOME_SERVER_DOWN.value, "ts": "2026-10-26T23:00:00Z",
+        "current": True,
+    }
+    block.update(overrides)
+    return block
+
+
+def _syncState(**overrides) -> dict:
+    """Parked at home, everything synced and fresh: no member -- only the
+    named inputs changed."""
+    kwargs = {
+        "syncLastOkTs": _S3_LAST_OK, "syncStale": False, "powerSource": "external",
+        "driveState": "idle", "driveId": None, "nowIso": _S3_NOW_60,
+        "link": _chain(), "captureHealth": _capture(), "piHealth": _pi(),
+        "wifiAvailable": True, "wifiSsid": "HomeNet", "wifiRssiDbm": -50,
+        "wifiHome": True, "wifiTs": _S3_NOW_60,
+        "syncRowsWaiting": 0, "syncEdrRowsWaiting": 0, "syncNotCounted": [],
+        "priorShutdown": _priorShutdown(VERDICT_CLEAN),
+        "syncStaleThresholdS": _THRESHOLD_S, "localZone": _LOCAL,
+    }
+    kwargs.update(overrides)
+    return buildSystemStatusState(**kwargs)
+
+
+def _syncMembers(state: dict) -> list[dict]:
+    return [m for m in state["verdict"]["members"] if m["key"] == VERDICT_SYNC]
+
+
+def _syncReason(state: dict) -> str | None:
+    members = _syncMembers(state)
+    assert len(members) <= 1
+    return members[0]["reason"] if members else None
+
+
+_S1_STATE = {"syncPriorCustody": _custody()}
+_S2_STATE = {
+    "priorShutdown": _priorShutdown(VERDICT_UNGRACEFUL), "syncRowsWaiting": 240,
+    "syncPriorCustody": _custody(verdict=BACKLOG_DELIVERED),
+}
+_S3_STATE = {"syncRowsWaiting": 300, "nowIso": _S3_NOW_121}
+
+
+def test_syncMember_everythingFine_noMember():
+    state = _syncState()
+    assert _syncMembers(state) == []
+    assert state["verdict"]["issueCount"] == 0
+
+
+def test_syncMember_a1_s1_lastKeyOffDidNotFinish_countsOne():
+    state = _syncState(**_S1_STATE)
+
+    assert state["verdict"] == {
+        "issueCount": 1,
+        "members": [{"key": "sync", "reason": "Last sync didn't finish · 240 rows kept"}],
+    }
+
+
+def test_syncMember_s1_countIsCommaGrouped():
+    state = _syncState(syncPriorCustody=_custody(outstandingRows=1240))
+    assert _syncReason(state) == "Last sync didn't finish · 1,240 rows kept"
+
+
+def test_syncMember_s1_countIncomplete_rowCountUnknown():
+    for custody in (_custody(countIsComplete=False), _custody(outstandingRows=None)):
+        state = _syncState(syncPriorCustody=custody)
+        assert _syncReason(state) == "Last sync didn't finish · row count unknown", custody
+
+
+def test_syncMember_s1_unknownVerdict_isAlsoNotFinished():
+    state = _syncState(syncPriorCustody=_custody(verdict=BACKLOG_UNKNOWN, countIsComplete=False))
+    assert _syncReason(state) == "Last sync didn't finish · row count unknown"
+
+
+@pytest.mark.parametrize("custody", [
+    pytest.param(_custody(verdict=BACKLOG_DELIVERED), id="delivered"),
+    pytest.param(_custody(verdict=None), id="verdict-not-read"),
+    pytest.param(_custody(kind=OutcomeKind.AWAY.value), id="away-skip"),
+    pytest.param(_custody(kind=OutcomeKind.SERVER_UNAVAILABLE.value), id="legacy-away-skip"),
+    pytest.param(_custody(current=False), id="an-older-boots-record"),
+    pytest.param(None, id="no-custody-on-record"),
+])
+def test_syncMember_s1_negatives_noMember(custody):
+    assert _syncMembers(_syncState(syncPriorCustody=custody)) == []
+
+
+@pytest.mark.parametrize("prior", [
+    pytest.param(_priorShutdown(VERDICT_NO_RECORD), id="no-record"),
+    pytest.param(None, id="prior-shutdown-not-read"),
+])
+def test_syncMember_s1_needsACleanPriorShutdown(prior):
+    assert _syncMembers(_syncState(priorShutdown=prior, **_S1_STATE)) == []
+
+
+def test_syncMember_a2_s2_cutOff_custodyVerdictNotUsed():
+    """The custody record says DELIVERED -- from an OLDER shutdown -- and is
+    not used: the cut-off stop's words, with the live rows waiting."""
+    state = _syncState(**_S2_STATE)
+
+    assert state["verdict"]["members"] == [{
+        "key": "sync",
+        "reason": "Last stop was cut off · sync result unknown · 240 rows waiting",
+    }]
+    assert state["verdict"]["issueCount"] == 1
+
+
+def test_syncMember_s2_rowsNotRead_andCommaGrouped():
+    notRead = _syncState(**{**_S2_STATE, "syncRowsWaiting": None})
+    many = _syncState(**{**_S2_STATE, "syncRowsWaiting": 12345})
+
+    assert _syncReason(notRead) == "Last stop was cut off · sync result unknown · rows not read"
+    assert _syncReason(many) == (
+        "Last stop was cut off · sync result unknown · 12,345 rows waiting"
+    )
+
+
+def test_syncMember_s2_nothingWaiting_noMember_evenWithAnOutstandingCustody():
+    state = _syncState(**{
+        **_S2_STATE, "syncRowsWaiting": 0, "syncPriorCustody": _custody(),
+    })
+    assert _syncMembers(state) == []
+
+
+def test_sync_member_s3_at_home_not_getting_through():
+    """Exit test (A3): parked at home, 300 rows, last sent 121 s ago -> S3;
+    60 s ago -> no member."""
+    stuck = _syncState(**_S3_STATE)
+    fresh = _syncState(syncRowsWaiting=300, nowIso=_S3_NOW_60)
+
+    assert stuck["verdict"] == {
+        "issueCount": 1,
+        "members": [{
+            "key": "sync",
+            "reason": "Not syncing at home · 300 rows waiting · last sent 9:14 PM",
+        }],
+    }
+    assert _syncMembers(fresh) == []
+
+
+def test_syncMember_s3_exactlyTheThreshold_isNotOlder():
+    state = _syncState(syncRowsWaiting=300, nowIso="2026-10-27T02:16:00Z")
+    assert _syncMembers(state) == []
+
+
+@pytest.mark.parametrize(("lastOkTs", "nowIso", "lastSent"), [
+    pytest.param("2026-10-27T02:14:00Z", "2026-10-27T13:00:00Z", "yesterday",
+                 id="a3b-yesterday-local-same-utc-day"),
+    pytest.param("2026-10-12T19:40:00Z", "2026-10-27T13:00:00Z", "Oct 12", id="older"),
+    pytest.param("2026-10-02T19:40:00Z", "2026-10-27T13:00:00Z", "Oct 02", id="older-padded"),
+    pytest.param("2026-10-27T05:05:00Z", "2026-10-27T13:00:00Z", "12:05 AM", id="after-midnight"),
+    pytest.param("2026-10-27T17:00:00Z", "2026-10-27T17:30:00Z", "12:00 PM", id="noon"),
+    pytest.param(None, "2026-10-27T13:00:00Z", "never", id="never"),
+])
+def test_syncMember_s3_lastSent_followsTheDataRowDateRule(lastOkTs, nowIso, lastSent):
+    state = _syncState(syncLastOkTs=lastOkTs, nowIso=nowIso, syncRowsWaiting=300)
+    assert _syncReason(state) == f"Not syncing at home · 300 rows waiting · last sent {lastSent}"
+
+
+def test_syncMember_s3_rowsCommaGrouped():
+    state = _syncState(**{**_S3_STATE, "syncRowsWaiting": 91234})
+    assert _syncReason(state) == (
+        "Not syncing at home · 91,234 rows waiting · last sent 9:14 PM"
+    )
+
+
+def test_syncMember_a4_recording_neverACase():
+    """Driving is never a case -- away or at home, however old the sync."""
+    thirtyMin = "2026-10-27T02:44:00Z"
+    away = _syncState(
+        driveState="recording", driveId=7, wifiHome=False, syncRowsWaiting=300,
+        nowIso=thirtyMin, syncStale=True,
+    )
+    home = _syncState(
+        driveState="recording", driveId=7, syncRowsWaiting=300, nowIso=thirtyMin,
+        syncStale=True,
+    )
+    assert _syncMembers(away) == []
+    assert _syncMembers(home) == []
+    # The stale flag is left as the caller judged it, not a member input.
+    assert away["sync"]["stale"] is True
+
+
+@pytest.mark.parametrize(("wifi", "rows"), [
+    pytest.param({"wifiHome": False}, 900, id="a5-parked-away"),
+    pytest.param({"wifiHome": None}, 900, id="home-not-read"),
+    pytest.param({"wifiAvailable": False}, 900, id="wifi-not-read"),
+    pytest.param({}, 0, id="nothing-waiting"),
+    pytest.param({}, None, id="rows-not-read"),
+])
+def test_syncMember_s3_negatives(wifi, rows):
+    state = _syncState(**{**_S3_STATE, **wifi, "syncRowsWaiting": rows})
+    assert _syncMembers(state) == []
+
+
+def test_syncMember_s3_noThresholdSupplied_isNotJudged():
+    state = _syncState(**{**_S3_STATE, "syncStaleThresholdS": None})
+    assert _syncMembers(state) == []
+
+
+def test_syncMember_a6_s1AndS2_clearOnSyncedThisBoot():
+    assert _syncMembers(_syncState(**_S1_STATE, syncedThisBoot=True)) == []
+    assert _syncMembers(_syncState(**_S2_STATE, syncedThisBoot=True)) == []
+
+
+def test_syncMember_a6_s3_clearsOnAFreshLastOkTs():
+    stuck = _syncState(**_S3_STATE)
+    delivered = _syncState(**{**_S3_STATE, "syncLastOkTs": "2026-10-27T02:16:00Z"})
+
+    assert _syncMembers(stuck) != []
+    assert _syncMembers(delivered) == []
+
+
+def test_syncMember_s3_stillShows_afterS1ClearedOnADelivery_ifStuckAgain():
+    """syncedThisBoot clears S1/S2 only; S3 is judged on its own facts."""
+    state = _syncState(**_S1_STATE, **_S3_STATE, syncedThisBoot=True)
+    assert _syncReason(state) == "Not syncing at home · 300 rows waiting · last sent 9:14 PM"
+
+
+def test_syncMember_oneMember_s1WinsOverS3():
+    state = _syncState(**_S1_STATE, **_S3_STATE)
+
+    assert [m["key"] for m in state["verdict"]["members"]] == ["sync"]
+    assert _syncReason(state) == "Last sync didn't finish · 240 rows kept"
+
+
+def test_syncMember_sitsLast_afterEveryOtherMember():
+    state = _syncState(
+        **_S1_STATE,
+        wifiAvailable=False, wifiUnavailableReason="read_failed",
+        piHealth=_pi(cpuTempC=90.0, overLimit=["cpuTemp"]),
+    )
+    assert [m["key"] for m in state["verdict"]["members"]] == ["wifi", "pi", "sync"]
+    assert state["verdict"]["issueCount"] == 3
+
+
+def test_syncMember_edrRowsNeverCount():
+    state = _syncState(**{**_S3_STATE, "syncRowsWaiting": 0, "syncEdrRowsWaiting": 5000})
+    assert _syncMembers(state) == []
+
+
+def test_syncMember_awayKindsAreThePublishedSet():
+    for kind in PRIOR_CUSTODY_AWAY_KINDS:
+        assert _syncMembers(_syncState(syncPriorCustody=_custody(kind=kind))) == []
+
+
+def test_emitter_forwardsTheThresholdAndZone_s3ShipsInTheFile(tmp_path):
+    """Wiring trap: the emitter's own threshold reaches the member."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=_THRESHOLD_S,
+        nowIsoFn=lambda: _S3_NOW_121, syncLockPath=str(tmp_path / "run" / "sync.lock"),
+        dataDir=str(tmp_path / "data"), bootIdFn=lambda: "boot", localZone=_LOCAL,
+    )
+
+    payload = emit(
+        syncLastOkTs=_S3_LAST_OK, powerSource="external", driveState="idle", driveId=None,
+        wifiAvailable=True, wifiSsid="HomeNet", wifiRssiDbm=-50, wifiHome=True,
+        syncRowsWaiting=300,
+    )
+
+    assert payload is not None
+    assert _syncReason(payload) == (
+        "Not syncing at home · 300 rows waiting · last sent 9:14 PM"
+    )
+    with open(tmp_path / "states" / SYSTEM_STATUS_FILENAME, encoding="utf-8") as fh:
+        assert json.load(fh)["verdict"] == payload["verdict"]
+
+
+def test_emitter_s1_fromTheRecordsOnDisk_clearsAfterTheFirstDelivery(tmp_path):
+    """The key-off left OUTSTANDING 240 (prior boot) after a clean prior
+    shutdown -> S1; a delivery this boot clears it."""
+    dataDir = str(tmp_path / "data")
+    statesDir = str(tmp_path / "states")
+    lockPath = str(tmp_path / "run" / "sync.lock")
+    _keyOffRecords(dataDir)
+    emit = _custodyEmitter(tmp_path, dataDir, statesDir)
+
+    def reason():
+        payload = emit(
+            syncLastOkTs=None, powerSource="external", driveState="idle", driveId=None,
+            priorShutdown=_priorShutdown(VERDICT_CLEAN),
+        )
+        assert payload is not None
+        return _syncReason(payload)
+
+    before = reason()
+    with push_lock.holdPushLock(
+        push_lock.INTERVAL_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+    ) as session:
+        session.rowsDelivered = 240
+    after = reason()
+
+    assert before == "Last sync didn't finish · 240 rows kept"
+    assert after is None
