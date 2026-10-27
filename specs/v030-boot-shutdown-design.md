@@ -147,16 +147,29 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
 
 | Step | On the glass |
 |---|---|
-| Key off | **paints on the first `flushing` or `powering_off` read, never on `grace`** (Atlas 2026-10-23): during grace the dashboard stays up, and a blip ends in `cancelled` with nothing painted. Then: logo, **reverse spin** at 0.75 (≥ 1 rotation; keeps spinning while the bar < 100 %) + **progress bar** with ticks `0 · 25 · 50 · 75 · 100 %` (`--font-mono` `--fs-meta`) + the label (§2.2) |
+| Key off | **paints on the first `flushing` or `powering_off` read, never on `grace`** (Atlas 2026-10-23): during grace the dashboard stays up, and a blip ends in `cancelled` with nothing painted. Then: logo, **reverse spin** at 0.75 (**≥ 2 rotations**, CIO 2026-10-27; keeps spinning while the bar < 100 %) + **progress bar** with ticks `0 · 25 · 50 · 75 · 100 %` (`--font-mono` `--fs-meta`) + the label (§2.2) |
 | **At home** | **0–75 % = the `drain` step, by sync**: `confirmed ÷ waitingAtKeyOff` (§3) · **75–100 % = the steps after the drain**, evenly (`drain close`, `custody`, `monthly_test_hold` when due, `poweroff`). Steps before the drain (`shed`) fill nothing. A marker at 75 %. |
 | **Away**, or the VCELL fast path (no drain) | **0–100 % = `index ÷ of`** (quick). **Never a 0 % sync bar** (F-155 at-home sync). |
 | **Sync ended with rows left** (stall, server down, the fast path cutting the drain, …) | the fill jumps to the 75 % marker, and the **unfilled stretch of the sync part is drawn amber**: the rows kept, shown as a length. The label says why and how many (§2.2); the steps continue from 75 %. `index` never goes backwards (Atlas D1). Unsent rows stay queued. **No new timeout:** `pi.homeNetwork.stallSec` (60 s) is the one number (Atlas S-2) |
-| Close-out | at 100 %: one last **dim** spin (0.25, `--bright-low`) → the **dim-down** → **fade to black** → power off. The dim-down is page CSS (US-870-c, 2026-10-25; `splash-shutdown.svg` is deleted): `@keyframes dim-down { from { filter: brightness(var(--bright-low)) } to { filter: brightness(0) } }`, one run of `var(--t-fade)`, linear, fill-mode both, on the logo. It starts on the dim spin's `animationend`, and its own `animationend` starts the stage fade (`var(--t-fade)`). The logo does not rotate during it (it rests at the dim spin's end pose). No reversed light ramp (it would flash up to `--bright-max`) and no rhombus collapse (the bloom is retired, C-Iris-3). `#mark` is shown on `body.animating` **on the shutdown page only**; the boot page's phase 0b opacity-0 rule is unchanged |
+| Close-out | at 100 % **shown** and **≥ 2 completed reverse turns** (§2.1, CIO 2026-10-27): one last **dim** spin (0.25, `--bright-low`) → the **dim-down** → **fade to black** → power off. The dim-down is page CSS (US-870-c, 2026-10-25; `splash-shutdown.svg` is deleted): `@keyframes dim-down { from { filter: brightness(var(--bright-low)) } to { filter: brightness(0) } }`, one run of `var(--t-fade)`, linear, fill-mode both, on the logo. It starts on the dim spin's `animationend`, and its own `animationend` starts the stage fade (`var(--t-fade)`). The logo does not rotate during it (it rests at the dim spin's end pose). No reversed light ramp (it would flash up to `--bright-max`) and no rhombus collapse (the bloom is retired, C-Iris-3). `#mark` is shown on `body.animating` **on the shutdown page only**; the boot page's phase 0b opacity-0 rule is unchanged |
 | **Key back on** | `phase: cancelled`: the page exits on that poll, as shipped, and the dashboard underneath returns without a reboot |
 
 ### 2.1 Rules
 - **Every percentage comes from a real stage**: confirmed rows, or completed shutdown steps. Never a timer, never an estimate. A stall **looks** stalled (US-795 wording).
 - **Fill colour:** sync and step progress are unbanded, so the fill is `--accent`. Amber (`--amber-warn`) only for a sync that ended with rows kept at home. Empty track `--surface`, ticks and marker `--line`.
+- **Three turns minimum, then the vanish (CIO 2026-10-27).**
+  - relay(CIO, key-off #1, 2026-10-27): *"I was hoping for the animation to make at least its full three rotations and do a vanish but it did a quick one rotation and then hop to the warning screen"*. **CIO ruled (via Marcus, 2026-10-27): always 3 full turns + the vanish, even with nothing to sync.** This reopens US-870.
+  - **Counted from events, not a clock.** The page counts the reverse spin's `animationiteration` events. The dim spin starts on the first iteration boundary where both hold: **≥ 2 completed reverse turns**, and **the fill's `transitionend` at 100 % has fired** (the bar is seen full).
+  - So the shortest close-out is 2 reverse turns + 1 dim turn = 3 × `--t-spin` + dim-down `--t-fade` + stage fade `--t-fade` = **10.0 s** at today's tokens (3.0 s, 0.5 s). The no-timer rule holds: no wait is placed on a clock.
+  - Reduced motion is unchanged: no spins, and the dim-down + fade run on the 100 % read.
+  - **The poweroff must wait for the page** (Atlas's design, S118). Without the wait the power still cuts mid-turn, and the page minimum changes nothing. The page's side of the contract: it signals done **exactly once**, on the stage fade's `transitionend`.
+  - relay(CIO, ruled 2026-10-27, via Marcus): poweroff waits on that event, bounded by `totalCap`, and never on the VCELL-floor path.
+- **The fill moves smoothly (CIO 2026-10-27).**
+  - relay(CIO, key-off #2): *"I did see the progress bar go from 25, then 75 and then it went off. It never actually made it to 100 … I would like to see the status bar be smooth not jumpy"*.
+  - **Rule:** `#bar-fill { transition: width var(--t-bar) ease-out; }`, with **`--t-bar: 0.6s`** declared once in `styles.css` beside `--t-spin` / `--t-fade`. The amber stretch uses the same transition.
+  - **This is not a timer.** Nothing waits on it except through its own `transitionend` event, the same as `--t-fade`.
+  - **It never runs ahead of the truth:** it glides to the value just read, never past it, and rests there until the next read. The never-draws-less rule holds.
+  - **The glide is not an invented measurement.** The bar shows steps done, not a sensor. So the O2 / Engine rule against interpolation (which protects measurements) doesn't apply. Every value the glide *ends* on is real.
 - **Missing data never fakes progress:** before `sync{}` or `step{}` has a value the bar is empty and the label is blank. If a field goes unreadable mid-shutdown, the bar holds its last real value.
 - **The page exits only on `cancelled` or at power-off. No timer ends it** (CIO 2026-10-23, verbatim: *"Remove it"*, the no-timer rule applied to shutdown). The shipped 60 s `BLACK_TAIL_CAP` goes: at home the drain runs to completion (ARCH-065) and can outlast 60 s, and the page must stay up for all of it.
   - **Two fault exits stay, on events, not counts** (Atlas 2026-10-23):
@@ -274,6 +287,13 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 12. No literal colour or px in splash CSS: every value resolves to `tokens.css`, which the splash links. Today's `splash/styles.css` fails this (its own token copies at old values, `#000`, 10–14 px text). The one exception is `warning-480x320.png`, a baked image.
 13. **DoD (R15): CIO in the car, key-on and key-off, on the labwc stack.**
 
+### 5a. Acceptance additions (US-870 reopen, CIO 2026-10-27)
+- **Three turns.** On fixture `nothing-to-sync` (`step` reads `index == of` on the first poll), the event log shows 2 reverse `animationiteration` events, then the dim spin, then `dim-down`, then the stage fade. Run in the render harness with synthetic animation events, as US-870-c's tests do.
+- **Seen full.** The dim spin never starts before the fill's `transitionend` at 100 %.
+- **Smooth.** `#bar-fill` declares `transition` on `width` naming `var(--t-bar)`; `--t-bar` is declared once in `styles.css`; the page script holds no duration literal. A 25 → 75 read writes the width once (75 %), with no JS steps in between.
+- **Done once.** The page signals done exactly once, after the stage fade's `transitionend`, and never on `cancelled`.
+- **bigDoD, CIO at key-off with nothing to sync:** three turns and the vanish are seen, and the bar is seen at 100 % before the dim spin.
+
 ## 6. US-551 and US-760
 
 - **US-551 (splash visual verify) folds into AC 1, 2 and 13**: they are that check, run on the stack that ships. It closes when US-651 validates on labwc (the 10-13 proposal stands).
@@ -293,6 +313,8 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 | ~~`--retain-splash`~~: **confirmed stale** (Atlas F1); the black gap is measured on the cold key-on | Ralph (US-885) |
 | `sync.state` + `sync.outcome` names (the uptime field is moot under R2) | Atlas |
 | ~~The Plymouth theme path~~: **accepted**, `deploy/plymouth/eclipse/` (Atlas F1) | — |
+| **Poweroff waits on the page's done event** (US-870 reopen, CIO-ruled 2026-10-27): bounded by `totalCap`, never on the VCELL-floor path | Atlas (S118) |
+| Which pipeline steps report the 25 → 75 values the CIO saw at key-off #2, so the bar's values stay real | Atlas |
 
 ## 8. Out of scope
 The boot-time target itself (R4: set by the CIO after the baseline) · OS boot-speed work (US-858/859/866; this spec only needs their splash hook) · lighter renderer (US-867, research only) · the labwc switch (S113).

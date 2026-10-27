@@ -28,6 +28,8 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 
 ## 3. Layout (480 × 320; body 258; ≈ 246 used)
 
+> ⚠️ **Superseded in part by §3a (CIO in car, 2026-10-27):** the health block, UPDATED, TILT FIX and the band spacing change. The rest of §3 holds.
+
 ```
 ┌──────────────────────────────────────────────┐
 │ PITCH        GRADE  LAST 15 MIN               │
@@ -54,6 +56,41 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 | Health block | **2 × 2 grid**, label over value, columns **`1fr max-content`**, 8 px gap. Left column UPDATED / TILT FIX, right column COMPASS / GYRO | **Re-measured in mono 2026-10-19 (C3).** The right column's widest value is `not calibrated` = **168.6 px**, so the left column gets 448 − 8 − 168.6 = **271.4 px**. TILT FIX is split by size (§4.4): `−10.00°` at `--fs-label` (84.3 px) + 6 px + `from 999 stops` at `--fs-meta` (126.4 px) = **216.7 px**, 54.7 px spare. The worst case is set by the provider's bound, `pi.sensors.imu.zuptWindowStops` (20 as shipped), with 3 digits allowed, not by an invented 9,999 (Atlas C3). The spec's earlier 254.9 px figure was measured in DejaVu Sans, not the mono face the build uses, and is superseded |
 | Reason sub-lines | `--fs-meta`, `--text-secondary` | **A reason never sizes a column** (Atlas C3): `contain: inline-size` on the reason element, so it adds 0 to max-content and wraps inside its own column. Measured: `calibration not published` = 225.8 px and `orientation unresolved` = 198.7 px would each push the left column under 265 px as max-content |
 | Grade label | Michroma `--fs-meta` | `GRADE  LAST 15 MIN` (229 px). **No `·`**: the Michroma subset is A-Z 0-9 space hyphen only, so a middle dot would fall back to another font mid-label |
+
+## 3a. Re-lay (CIO in car 2026-10-27, UIDEV-017)
+
+The CIO had to scroll to reach COMPASS `calibrated` (relay, 2026-10-27: *"The word compass calibrated is off the screen and I have to scroll to get to it"*). **The card body is 254 px** = 320 − 34 (`--bar-h`) − 16 (`--dots-h`) − 2 × 8 (`--card-pad-y`); the title row is retired (US-887-c). Earlier sizes in this spec used 258. Built, the page is ~310 px: top band ~96 + G band ~96 + health 2 × 2 ~105 + gaps. §3's "≈ 246" missed the band padding.
+
+```
+┌──────────────────────────────────────────────┐
+│ PITCH        GRADE  LAST 15 MIN               │ 92
+│ +3.1°        ╭──╮      ╭──●  +5.0%           │
+│ nose up   ─ ─│─ ─╰─ ─ ─╯─ ─ ─ ─ (zero)       │
+├──────────────────────────────────────────────┤
+│ ACCEL                   CORNER R              │ 92
+│ 0.31 g                  0.22 g                │
+│ peak ▲0.31 ▼0.38        peak L0.27 R0.31      │
+├──────────────────────────────────────────────┤
+│ COMPASS                 GYRO                  │ 53
+│ calibrated              plausible ›           │
+└──────────────────────────────────────────────┘
+```
+
+- **UPDATED leaves this page.** It moves to System `LAST UPDATED` (System §4.6.3, the CIO's one-place ask). Staleness stays visible here through the shared rule: a stale card dims as a whole.
+- **The health block is ONE row:** COMPASS | GYRO, columns `1fr max-content`, 8 px gap.
+- **TILT FIX moves to the IMU detail.** So do UPDATED (also on LAST UPDATED) and the four health values with their full reasons.
+- **The IMU detail:** a parked tap on the health row opens it, in the shared detail overlay (System §4.6.3). ` ›` is appended to the row's last value **only while parked**, when the tap works (the I9 rule).
+- **Each g cell has ONE sub-line:** the peak line when the value reads; the reason when it doesn't (the reason replaces the peak, and the peaks are always in the IMU detail).
+- **Every reason in the health row and the g cells is one line with an ellipsis**, and the full text is in the IMU detail (the System rule: the ellipsis is the visible sign, so this is no silent clip). This replaces §3's wrap-inside-the-column rule here, because a wrapped reason adds a line the budget doesn't have.
+- **Spacing:** `--motion-band-pad` 6 → **4 px**, `--motion-band-gap` 6 → **4 px**.
+- **Height budget (computed):**
+  - top band 8 + max(pitch 18 + 4 + 34 + 4 + 24 = 84, grade 18 + 4 + 58 = 80) = 92;
+  - gap 4 + rule 1;
+  - G band 8 + 18 + 4 + 34 + 4 + 24 = 92;
+  - gap 4;
+  - health 8 + 1 + 44 = 53;
+  - **total 246 of 254, 8 spare.**
+- **The margin is thin, so the gate is a measurement** (AC 15). **If it fails on the Pi,** the peak lines move into the IMU detail too. That changes the CIO's M-4 ("now + peak this drive" on the page), so it goes back to him first.
 
 ## 4. Behaviour
 - **Read RAW `states/imu`. Step at the IMU's 1 Hz publish rate**; no interpolation and no page-side smoothing (these are measurements). The old 3 s page smoothing (US-662) retired with the old g tile (Atlas B3). If g jitters in the car, the fix goes in the provider, never back into the page.
@@ -128,6 +165,9 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 12. Pitch that rounds to zero ⇒ `0.0°` + `level`, no sign.
 13. A GYRO cell never reads `plausible` unless `pitchDeg` is a published finite number (`gyro-unjudged`).
 14. Stale dims the top two bands only; the health block keeps full opacity.
+15. **Nothing needs a scroll (CIO 2026-10-27, §3a).** In a real browser (Chromium, 480 × 320 stage, shipped fonts), `#motion-card .card-body` has `scrollHeight <= clientHeight` on the live fixture with peaks, and on the all-not-read fixture with `not calibrated` + `calibration not published`. The bigDoD on-Pi screenshot shows COMPASS without scrolling.
+16. No UPDATED and no TILT FIX on the page. The health row is COMPASS | GYRO. The IMU detail opens on a parked tap only, and shows UPDATED, COMPASS, TILT FIX, GYRO and the peaks with full reasons.
+17. Every reason on the page is one line (`white-space: nowrap; text-overflow: ellipsis`); none wraps.
 
 ## 7. Fixtures
 As built in S105 (`tests/ui/fixtures/states/motion/`): `climb-accel` · `descent-brake` · `corner-left` · `corner-right` · `gyro-implausible` · `gyro-unjudged` · `compass-uncalibrated` · `compass-legacy-engine` · `health-trusted` · `no-stops-yet` · `stale-imu` · `history-empty-after-restart` · `peaks-null-after-drive-start`.
