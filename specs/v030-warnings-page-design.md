@@ -15,7 +15,7 @@
 
 | # | Decision | CIO choice |
 |---|---|---|
-| WN-1 | Sources | **Trouble codes · live engine protection · system issues · data-capture stall.** V0.30 builds CODE + ENGINE only; SYSTEM and DATA are declared `assessed:false` until their producers exist (Atlas 2026-10-14 §5; §4.1). |
+| WN-1 | Sources | **Trouble codes · live engine protection · system issues · data-capture stall.** V0.30 builds CODE + ENGINE + **SYSTEM** (**RULED 2026-10-27 (CIO): all System members → Alerts SYSTEM entries, ▲ = System `n ISSUES`, S119.**, §4.1). DATA stays declared `assessed:false` until its producer exists (Atlas 2026-10-14 §5). |
 | WN-2 | Icon | **4 states + count**: none / not checked / WATCH / STOP |
 | WN-3 | Full-screen takeover | ~~None (icon + page only)~~ **SUPERSEDED by R31 (CIO, asked directly 2026-10-13): an active red TAKES OVER the screen. Scope ruled 2026-10-14: LIVE COOLANT red only; RPM/battery red = WATCH; stored codes never** (§4.4). |
 | WN-4 | STOP signalling | **Takeover (§4.4) + pulsing red icon.** The one-time jump to Warnings is **dropped**: the takeover already owns the screen, so a jump underneath it does nothing. |
@@ -62,7 +62,7 @@ Entries ≥ 48 px tall, never `.tile` (the fact-ceiling test). **All entries ren
 |---|---|---|
 | **CODE** | stored/pending DTCs | Spool's table; **unknown ⇒ UNRATED, never a guessed tier** (US-754). Rated (Spool 2026-10-18, rows in US-754, S106): **P0400 WATCH** `EGR FLOW (P0400)` / `Drive gently. Get it diagnosed.` · **P0443 MINOR** `EVAP PURGE (P0443)` / `Emissions only. Safe to drive.` P1xxx titles follow the same `<NAME> (<code>)` form (Spool S2, 2026-10-19). **P0430 has NO row** (corrected 2026-10-18; my 10-13 "P0430 WATCH" is withdrawn): bank-2 codes (P0430, P0150–P0167, P0174/P0175) cannot set on this inline four. The only P0430 in `dtc_log` is drive 33, a cross-logged Ford Explorer. Such codes are wrong-vehicle data and render **UNRATED, never a tier**; the drive-33 rows must not appear on the page (provider VCs). **UNRATED sentence** (Spool 2026-10-19, provider-owned): `Severity unknown. Get it diagnosed.` (35 characters = 316.1 px at `--fs-meta`, inside the ~380 px sentence column, so Spool's fallback `Not rated. Get it diagnosed.` is not needed). UNRATED counts above MINOR for the clear gate. A new UNRATED code on the car is Spool's trigger to rate it; there is no speculative P0 table. |
 | **ENGINE** (live) | coolant, battery voltage, RPM over-rev, intake air in a band, **with the dwell rules** | **STOP: live coolant red only.** Battery red and RPM red = **WATCH** (§4.4a). Intake air never above WATCH. |
-| **SYSTEM** | **IN V0.30 (UIDEV-018, 2026-10-27; pending the CIO's scope call, see below).** The deferral's reason is gone: `system-status.verdict` exists on dev (US-877-c; `verdictMemberKeys`, carousel.js:787). One entry per System verdict member, title + sentence = the member's own `reason` (provider words, verbatim), `sources.system.assessed:true` once `system-status` has been read this boot. The CIO's sync message (System §4.3.1) is the reason it lands now. *(Was: ⏸ not in V0.30, no verdict yet.)* | WATCH |
+| **SYSTEM** | **RULED 2026-10-27 (CIO): all System members → Alerts SYSTEM entries, ▲ = System `n ISSUES`, S119.** The deferral's reason is gone: `system-status.verdict` exists on dev (US-877-c; `verdictMemberKeys`, carousel.js:787). One entry per System verdict member, title + sentence = the member's own `reason` (provider words, verbatim), `sources.system.assessed:true` once `system-status` has been read this boot. **Every** member is an entry (bt, adapter, capture, each `sensor`, wifi, pi, sync); none is filtered out, so the ▲ count and the System verdict's `n ISSUES` can never disagree. The CIO's sync message (System §4.3.1) is the reason it lands now. *(Was: ⏸ not in V0.30, no verdict yet.)* | WATCH |
 | **DATA** | ⏸ **not in V0.30.** The engine-running stall predicate (US-735) is banked (CIO R33), so a stall can't be told from engine-off; `sources.data.assessed:false`. When built: capture stalled while the engine runs, from `capture-health.feeds` | WATCH. Predicate ratified (Spool 2026-09-21): accel_z σ > 0.10 for **N = 7** consecutive 10 s buckets. |
 
 Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest first** (Atlas 06-19; Spool-confirmed). The **arbiter** orders; the page renders the order it is given.
@@ -89,7 +89,7 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 
 ### 4.3 Empty states
 **Print only what was assessed** (Atlas 2026-10-14 §5, the ARCH-062 rule applied to the whole page). Superseded: `Engine, system and data all clear.`, which claimed two sources V0.30 doesn't check.
-- **Checked, nothing found:** `NO WARNINGS` (26 px, 281.5 px), then `Codes read at h:mm. Engine checks clear.`. The engine clause appears only when `sources.engine.assessed`.
+- **Checked, nothing found:** `NO WARNINGS` (26 px, 281.5 px), then `Codes read at h:mm. Engine checks clear.`. The engine clause appears only when `sources.engine.assessed`. When `sources.system.assessed` (S119), a second line follows: `System checks clear.` (same face; the empty state has room for two lines).
 - **Not checked:** `? NOT CHECKED YET`, plus `Trouble codes haven't been read since key-on, so "nothing found" can't be claimed.`
 - **Checked, nothing found only**, one line per unassessed source, mono `--fs-meta`, `--text-secondary` (S108 shipped `tone:"secondary"`; Marcus/Iris S109 I1, 2026-10-22). The System line comes first:
   - `sources.system` `{assessed:false, reason:not_read}` ⇒ `System checks not read yet.` (S109 US-877-c: the System checks are built, but not read yet this boot.)
@@ -219,9 +219,7 @@ Stored and pending codes re-alert **once per key-on** and can be hidden. This is
 - **Units:** the provider passes the reading's own unit (`C`, `V`, `rpm`). The page converts through the S103 G1 helper by `unit` (coolant shows °F).
 - **Words:** every title and sentence is the provider's (Spool 2026-10-14 verbatim). The page composes none. Over-rev: **RULED (Atlas G3, 10-18):** `sentence` = `peak 7,150 rpm (sampled)` with `value` and `unit` null, so "(sampled)" can't be dropped (`value` always means CURRENT, and a drive peak isn't).
 - **Not in V0.30:** DATA entries (US-735 banked). No adapter stubs.
-- **SYSTEM entries (UIDEV-018).** ⚠️ **Scope call for the CIO:** the sync message (option A) is a SYSTEM entry, and the SYSTEM source is ONE rule: every System verdict member (BT down, adapter, capture, sensor, Wi-Fi read failed, Pi over limit, sync) becomes an entry and counts in ▲.
-  - **Recommended: all members.** One rule. And the ▲ then agrees with the System verdict's `n ISSUES`.
-  - **Alternative: `sync` only.** It breaks "print only what was assessed": the header would have to say that the other System checks aren't listed.
+- **SYSTEM entries:** **RULED 2026-10-27 (CIO): all System members → Alerts SYSTEM entries, ▲ = System `n ISSUES`, S119.** Every System verdict member (BT down, adapter, capture, sensor, Wi-Fi read failed, Pi over limit, sync) is an entry and counts in ▲.
 
 ## 6. Acceptance criteria (S108 build, predicates)
 From the S106 brief (2026-10-18), U1–U12 and the S108 review (2026-10-19); the S108 PRD carries them per story. Provider-side predicates (B1–B8, c1–c6, Atlas S108 G1/G2) are in the brief and the PRD under US-897-b/c.
@@ -277,7 +275,7 @@ The S108 build names (`tests/ui/fixtures/states/alerts/`, from the PRD); where t
 - **Retired 2026-10-18:** `mixed-four-sources`, `data-stall-n7` (no SYSTEM/DATA entries in V0.30), `stop-stored-code`.
 
 ## 8. Out of scope
-Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (no sensor) · audio alerts (US-538) · SYSTEM and DATA sources (§4.1) · "new ECU, learning" (no swap signal on this car, Spool 10-19).
+Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (no sensor) · audio alerts (US-538) · the DATA source (§4.1; SYSTEM is IN, ruled 2026-10-27) · "new ECU, learning" (no swap signal on this car, Spool 10-19).
 
 ## 9. Open items
 - ~~Atlas G3 / G4 / G6 / G7~~ **RULED 2026-10-18:** value null + `(sampled)` in the sentence; `takeover.directive`; KEEP the dashboard.css:185 mirror; MINOR-/UNRATED-only ⇒ `watch`.
