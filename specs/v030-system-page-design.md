@@ -306,6 +306,14 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 
 #### 4.6.2 Pi detail (S7)
 - **CPU temperature:** `cpuTempC` at its 0.1 °C as read, with `limit 80 °C` beside it.
+- **IMU chip temp (CIO 2026-10-27, UIDEV-020; name ruled by Atlas + Spool):** the ICM-20948 **die** temperature, `IMU chip temp  41.3 °C`, at the provider's published precision (rounding is the provider's, applied last).
+  - **No band and no colour:** `--text-primary`, no `limit` text beside it, and it never enters `pi.overLimit`. The missing limit is what tells it apart from the CPU line above it.
+  - `--` when `chipTempC` is null (`reasons.chipTempC: no_reading`), or `states/imu` has `available: false`, or its `ts` is stale under the existing `states/imu` staleness rule (Atlas US-888: one clock, no second staleness rule).
+  - **Banned words:** `cabin`, `interior`, `ambient`. It is the chip's own temperature, which runs above the air around it.
+  - **Only here.** Never on Driving, the main System page or LAST UPDATED.
+  - **Why here:** the main page is full (verdict 40 + 4 rows × 48 = 232 of 270; a fifth row ≥ `--row-min` gives 280, and the page would scroll). LAST UPDATED says *when* a device last reported, never a value, and is at 264 of 270.
+  - **Fit:** the Pi detail goes from 5 lines to 6 (6 × 44 = **264 of the 270 px** body, no scroll). Width: the label ≈ 172 px (Michroma `--fs-label`) + `41.3 °C` ≈ 84 px (mono), under 448.
+  - **Source (Atlas RULED 2026-10-27, US-888):** `states/imu.chipTempC`, a number in °C to 1 dp or null. It shares the `states/imu` `ts`, so there is no separate timestamp. It is **not** in `system-status.pi`: that block feeds `overLimit`, and this value has no limit. Its provider is its own S119 story, ahead of the page story. The page reads two state files here, which is routine.
 - **Throttling:** `throttled` now / since boot, in words + `throttledHex`.
 - **Disk:** `diskFreeBytes` in GiB, floored to 0.1, with `limit 20 GiB` (`diskThresholdBytes`).
 - **Uptime (I9):** `uptimeS` as a duration: under 60 s ⇒ `under 1 min`; under 1 h ⇒ `42 min`; under 1 day ⇒ `3 h 2 min`; then `2 days 3 h` (`1 day 3 h`). Null ⇒ `--`.
@@ -453,6 +461,7 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
 | Parked (every parked-only control) | `states/gear` `{available, gear, reason}`; parked = `"P"` or `"N"` and available, through the US-511 8 s / 3 s debounce (§4.7.2) | exists (US-687-a/b); **the debounce's input moves from `idle` to gear: US-511 reopened (b0)** | Ralph |
 | Power source | `system-status.power.source` (`external` \| `battery`) | exists (US-668) | — |
 | Pi health | `system-status.pi {cpuTempC, throttled, throttledHex, throttledSinceBoot, diskFreeBytes, diskThresholdBytes, diskVerdict, uptimeS, overLimit[], ts}` | **S109 US-877-a** | Atlas / Ralph |
+| IMU chip temp (§4.6.2) | `states/imu.chipTempC` (°C, 1 dp, or null; `reasons.chipTempC: no_reading`; freshness = the `states/imu` `ts`) | **RULED 2026-10-27 (Atlas US-888); S119 provider story, ahead of the page** | Atlas / Ralph |
 | Version | `.deploy-version` via the `#version-chip` reader | exists (Atlas P8) | — |
 | Settings | `/settings` overlay (`OVERRIDABLE_KEYS`), re-read on write | exists; **brightness key(s) new, US-878-c**; **`autoDim.luxMin` / `luxFull` join `OVERRIDABLE_KEYS`** with the cross-key rule `luxFull > luxMin` on effective values (POST 400) | Atlas |
 | Issue counting | the verdict | **provider-derived** (Atlas 08-20 rule) | Atlas |
@@ -529,6 +538,13 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
     The page computes no case: every member comes from `verdict.members`. Grep: no `syncStaleThresholdSeconds` or `120` in `carousel.js`.
 18. Each S1/S2/S3 member clears per its row (S1/S2 on `syncedThisBoot`; S3 on a fresh `lastOkTs`), proven in the provider's tests. The page needs no clear logic.
 19. **bigDoD, CIO:** at home after a normal drive, the ⇅ goes blue while syncing, then green. After a key-off with the server down, the next boot shows amber and the Warnings entry.
+20. **IMU chip temp (§4.6.2), render harness:**
+    - `imu-temp-ok` (41.3) ⇒ `IMU chip temp` + `41.3 °C` in `--text-primary`, no `limit`, no state class;
+    - `imu-temp-hot` (75.0, CPU fine) ⇒ still neutral, and no `pi` member;
+    - `imu-temp-null` (`chipTempC: null`, `reasons.chipTempC: no_reading`), `imu-unavailable` (`available: false`) and `imu-stale` (old `ts`) ⇒ `--`;
+    - the page reads `states/imu.chipTempC`, never `system-status.pi`.
+    - Grep: no `cabin`, `interior` or `ambient` in the page; no IMU temperature on Driving.
+    - **Fit, in a real browser:** the Pi detail body, all 6 lines, has `scrollHeight <= clientHeight`.
 
 ## 7. Fixtures (S10)
 Each is a `system-status` (+ `capture-health`, + `battery-health` where named) payload, regenerated from the real builders (Atlas L7), never hand-typed.
@@ -592,7 +608,8 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 ## 9. Open items
 - **Atlas:**
   - ~~the brightness override key(s) and the apply tags for brightness and auto-dim (US-878-c)~~ **RULED 2026-10-19 (S110 B4, B12):** `overrideLevel`; `applies on reload` / `applies at the next light reading` (§4.7);
-  - whether `restedHistory` is ever reader-facing (with Spool).
+  - whether `restedHistory` is ever reader-facing (with Spool);
+  - ~~the IMU chip temp field (UIDEV-020)~~ **RULED 2026-10-27 (US-888):** `states/imu.chipTempC`, 1 dp, the shared `ts`, `no_reading` (§4.6.2, §5).
 - **Build note (UIDEV-010):** shipped `healthValue` returns `—` for an unknown health. §4.4's rule is that `--` is the one no-data mark, so the UPS detail owes the swap when it is built.
 - **CIO:**
   - whether the effective `minLevel` floor is right, in the car.
