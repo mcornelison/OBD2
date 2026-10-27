@@ -43,6 +43,8 @@
 #               |              | asserts become "absent" asserts.
 # 2026-10-27    | Rex (US-917-a)| MOVED PIN: the two exact sync pins gain
 #               |              | inProgress; sync.inProgress follows the lock.
+# 2026-10-27    | Rex (US-917-b)| MOVED PIN: the two exact sync pins gain
+#               |              | priorCustody + syncedThisBoot; the relay tests.
 # ================================================================================
 ################################################################################
 
@@ -53,13 +55,18 @@ import os
 
 import pytest
 
+from pi.diagnostics import boot_progress
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
+from pi.power.power_watch.contract import OutcomeKind
+from pi.power.power_watch.sync_custody import CUSTODY_RECORD_FILENAME
 from pi.splash.system_status_emitter import (
     LINK_CONNECTING,
     LINK_DOWN,
     LINK_RETRYING,
     LINK_UP,
     OBD_LINKED,
+    PRIOR_CUSTODY_AWAY_KINDS,
+    PRIOR_CUSTODY_VERDICTS,
     RUN_MODE_LIVE,
     RUN_MODE_REPLAY,
     RUN_MODE_SIMULATE,
@@ -73,8 +80,9 @@ from pi.splash.system_status_emitter import (
     makeSystemStatusEmitter,
 )
 from pi.sync import push_lock
+from pi.sync.backlog import BACKLOG_DELIVERED, BACKLOG_OUTSTANDING, BACKLOG_UNKNOWN
 
-_NOW = "2026-06-30T19:42:00Z"
+_NOW ="2026-06-30T19:42:00Z"
 _SYNC_OK = "2026-06-30T19:40:00Z"  # 120s before _NOW
 
 
@@ -107,6 +115,9 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
             "rowsWaiting": None, "edrRowsWaiting": None, "notCounted": None,
             # MOVED PIN (US-917-a): inProgress is always a key (false unprobed).
             "inProgress": False,
+            # MOVED PIN (US-917-b): priorCustody (null = not read) and
+            # syncedThisBoot (false unread) are always keys.
+            "priorCustody": None, "syncedThisBoot": False,
         },
         # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
         # a real measurement, and a reason standing beside one would be a
@@ -1073,6 +1084,8 @@ def test_sync_backlogFields_areTransportedVerbatim_zeroIsNotNull():
         "notCounted": ["profiles", "vehicle_info"],
         # MOVED PIN (US-917-a): inProgress is always a key (false unprobed).
         "inProgress": False,
+        # MOVED PIN (US-917-b): always keys.
+        "priorCustody": None, "syncedThisBoot": False,
     }
 
 
@@ -1789,3 +1802,238 @@ def test_isPushLockHeld_neverBlocks_andLeavesTheHolderHoldingIt(tmp_path):
     # Free again: the probe on a free lock took and dropped it, leaving it free.
     assert push_lock.isPushLockHeld(lockPath) is False
     assert push_lock.isPushLockHeld(lockPath) is False
+
+
+# ---------------------------------------------------------------------------
+# US-917-b -- sync.priorCustody relays the last key-off's custody record
+# (powerwatch writes it; the emitter only reads it once, at start), and
+# sync.syncedThisBoot follows states/sync-activity's lastDeliveredTs.
+# ---------------------------------------------------------------------------
+
+_PRIOR_BOOT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_OLDER_BOOT_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+_THIS_BOOT_ID = "cccccccccccccccccccccccccccccccc"
+_CUSTODY_TS = "2026-10-26T22:10:00Z"
+_PRIOR_IDS_FILENAME = os.path.basename(boot_progress.DEFAULT_PRIOR_FILE_PATH)
+
+
+def _writeJson(path, payload) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def _keyOffRecords(
+    dataDir: str,
+    *,
+    outcomeBootId: str = _PRIOR_BOOT_ID,
+    kind: str = OutcomeKind.AT_HOME_SERVER_DOWN.value,
+    priorIds: list[str] | None = None,
+    priorWriter: str = _THIS_BOOT_ID,
+) -> None:
+    """Lay down what powerwatch and boot_progress.arm() leave in data/."""
+    _writeJson(os.path.join(dataDir, CUSTODY_RECORD_FILENAME), {
+        "schema": 2, "verdict": BACKLOG_OUTSTANDING, "outstandingRows": 240,
+        "countIsComplete": True, "perTable": {"realtime_data": 240},
+        "unreadableTables": [], "error": None, "edrOutstandingRows": None,
+        "ownDrainCloseExcluded": None, "ownTrajectoryExcluded": None,
+        "ts": _CUSTODY_TS,
+    })
+    _writeJson(os.path.join(dataDir, boot_progress.OUTCOME_RECORD_FILENAME), {
+        "schema": 1, "kind": kind, "detail": "", "task": "sync",
+        "ts": _CUSTODY_TS, "boot_id": outcomeBootId,
+    })
+    _writeJson(os.path.join(dataDir, _PRIOR_IDS_FILENAME), {
+        "schema": 1, "boot_id": priorWriter,
+        "prior_boot_ids": [_PRIOR_BOOT_ID] if priorIds is None else priorIds,
+        "written_at": "2026-10-27T07:00:00Z",
+    })
+
+
+def _custodyEmitter(tmp_path, dataDir: str, statesDir: str | None = None):
+    return makeSystemStatusEmitter(
+        statesDir or str(tmp_path / "states"), syncStaleThresholdS=60,
+        nowIsoFn=lambda: _NOW, syncLockPath=str(tmp_path / "run" / "sync.lock"),
+        dataDir=dataDir, bootIdFn=lambda: _THIS_BOOT_ID,
+    )
+
+
+def _sync(emit) -> dict:
+    payload = emit(syncLastOkTs=None, powerSource="external", driveState="idle", driveId=None)
+    assert payload is not None
+    return payload["sync"]
+
+
+def test_system_status_relays_prior_custody(tmp_path):
+    """Given the key-off at home with the server down left custody OUTSTANDING
+    240 (complete) and an outcome stamped by the prior boot,
+    When system-status is emitted, Then sync.priorCustody relays those values
+    with current true."""
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir)
+
+    sync = _sync(_custodyEmitter(tmp_path, dataDir))
+
+    assert sync["priorCustody"] == {
+        "verdict": BACKLOG_OUTSTANDING,
+        "outstandingRows": 240,
+        "countIsComplete": True,
+        "kind": "at_home_server_down",
+        "ts": _CUSTODY_TS,
+        "current": True,
+    }
+
+
+def test_priorCustody_outcomeFromAnOlderBoot_isCurrentFalse(tmp_path):
+    """A valid prior-id set with no match is positive proof of an OLDER record."""
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir, outcomeBootId=_OLDER_BOOT_ID)
+
+    assert _sync(_custodyEmitter(tmp_path, dataDir))["priorCustody"]["current"] is False
+
+
+@pytest.mark.parametrize("missing", [
+    CUSTODY_RECORD_FILENAME,
+    boot_progress.OUTCOME_RECORD_FILENAME,
+    _PRIOR_IDS_FILENAME,
+])
+def test_priorCustody_anyFileMissing_isNull(tmp_path, missing):
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir)
+    os.remove(os.path.join(dataDir, missing))
+
+    assert _sync(_custodyEmitter(tmp_path, dataDir))["priorCustody"] is None
+
+
+def test_priorCustody_noDataDirAtAll_isNull_andTheEmitStillWrites(tmp_path):
+    assert _sync(_custodyEmitter(tmp_path, str(tmp_path / "absent")))["priorCustody"] is None
+
+
+def test_priorCustody_noRecords_neverAsksForTheBootId(tmp_path):
+    """Off-Linux readBootId logs an ERROR; with nothing to match, do not ask."""
+    asked: list[bool] = []
+
+    def bootId() -> str:
+        asked.append(True)
+        return _THIS_BOOT_ID
+
+    makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=60,
+        dataDir=str(tmp_path / "absent"), bootIdFn=bootId,
+    )
+
+    assert asked == []
+
+
+@pytest.mark.parametrize("record", ["{torn", "[1, 2]"])
+def test_priorCustody_unreadableCustodyRecord_isNull(tmp_path, record):
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir)
+    with open(os.path.join(dataDir, CUSTODY_RECORD_FILENAME), "w", encoding="utf-8") as f:
+        f.write(record)
+
+    assert _sync(_custodyEmitter(tmp_path, dataDir))["priorCustody"] is None
+
+
+def test_priorCustody_priorIdsFileFromAnotherBoot_isNull_neverCurrentFalse(tmp_path):
+    """A stale prior-ids file (an older boot's, its next arm failed) proves nothing."""
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir, priorWriter=_OLDER_BOOT_ID)
+
+    assert _sync(_custodyEmitter(tmp_path, dataDir))["priorCustody"] is None
+
+
+def test_priorCustody_emptyPriorIdSet_isNull(tmp_path):
+    """First boot / trail lost: no set is no proof."""
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir, priorIds=[])
+
+    assert _sync(_custodyEmitter(tmp_path, dataDir))["priorCustody"] is None
+
+
+def test_priorCustody_isReadOnceAtEmitterStart(tmp_path):
+    """A relay of the boot-time record: a later file change does not move it."""
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir)
+    emit = _custodyEmitter(tmp_path, dataDir)
+    os.remove(os.path.join(dataDir, CUSTODY_RECORD_FILENAME))
+
+    assert _sync(emit)["priorCustody"]["outstandingRows"] == 240
+
+
+def test_priorCustody_malformedFields_landNull_notCoerced(tmp_path):
+    dataDir = str(tmp_path / "data")
+    _keyOffRecords(dataDir)
+    _writeJson(os.path.join(dataDir, CUSTODY_RECORD_FILENAME), {
+        "verdict": "MAYBE", "outstandingRows": -1, "countIsComplete": "yes", "ts": 5,
+    })
+
+    assert _sync(_custodyEmitter(tmp_path, dataDir))["priorCustody"] == {
+        "verdict": None, "outstandingRows": None, "countIsComplete": None,
+        "kind": "at_home_server_down", "ts": None, "current": True,
+    }
+
+
+def test_priorCustody_verdictVocabulary_isTheBacklogsOwn():
+    assert PRIOR_CUSTODY_VERDICTS == frozenset(
+        {BACKLOG_DELIVERED, BACKLOG_OUTSTANDING, BACKLOG_UNKNOWN}
+    )
+
+
+def test_priorCustody_awayKinds_areTheContractsOwn():
+    """Exposed for US-917-c; imported from contract.py, never copied."""
+    assert PRIOR_CUSTODY_AWAY_KINDS == frozenset(
+        {OutcomeKind.AWAY.value, OutcomeKind.SERVER_UNAVAILABLE.value}
+    )
+
+
+def test_priorCustody_andSyncedThisBoot_areAlwaysKeys_byDefault():
+    state = buildSystemStatusState(
+        syncLastOkTs=None, syncStale=False, powerSource="external",
+        driveState="idle", driveId=None, nowIso=_NOW,
+    )
+    assert state["sync"]["priorCustody"] is None
+    assert state["sync"]["syncedThisBoot"] is False
+
+
+def test_syncedThisBoot_falseUntilTheFirstDelivery_trueAfter_falseAfterAReboot(tmp_path):
+    """
+    Given: a fresh boot (empty tmpfs states/)
+    When:  a push holds the lock and delivers rows, then releases
+    Then:  syncedThisBoot is false before it, true after it -- and false again
+           on the next boot, whose tmpfs is fresh. No clock is compared.
+    """
+    lockPath = str(tmp_path / "run" / "sync.lock")
+    statesDir = str(tmp_path / "boot1" / "states")
+    dataDir = str(tmp_path / "data")
+    emit = _custodyEmitter(tmp_path, dataDir, statesDir)
+
+    before = _sync(emit)["syncedThisBoot"]
+    with push_lock.holdPushLock(
+        push_lock.INTERVAL_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+    ) as session:
+        duringFirst = _sync(emit)["syncedThisBoot"]
+        session.rowsDelivered = 12
+    after = _sync(emit)["syncedThisBoot"]
+    # A later push in flight: its acquire record carries no lastDeliveredTs,
+    # yet this boot HAS delivered -- the published fact must not flicker.
+    with push_lock.holdPushLock(
+        push_lock.INTERVAL_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+    ):
+        duringSecond = _sync(emit)["syncedThisBoot"]
+    rebooted = _custodyEmitter(tmp_path, dataDir, str(tmp_path / "boot2" / "states"))
+
+    assert (before, duringFirst, after, duringSecond) == (False, False, True, True)
+    assert _sync(rebooted)["syncedThisBoot"] is False
+
+
+def test_syncedThisBoot_aPushThatDeliveredNothing_staysFalse(tmp_path):
+    lockPath = str(tmp_path / "run" / "sync.lock")
+    statesDir = str(tmp_path / "states")
+    with push_lock.holdPushLock(
+        push_lock.INTERVAL_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+    ):
+        pass
+
+    assert _sync(_custodyEmitter(tmp_path, str(tmp_path / "data"), statesDir))[
+        "syncedThisBoot"] is False

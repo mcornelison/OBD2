@@ -768,6 +768,9 @@ def test_syncRowsAndPendingAreRetiredFromTheProducer():
         "lastOkTs", "stale", "rowsWaiting", "edrRowsWaiting", "notCounted",
         # MOVED PIN (US-917-a): the lock-backed sync.inProgress.
         "inProgress",
+        # MOVED PIN (US-917-b): the prior key-off's custody relay and whether
+        # this boot has delivered.
+        "priorCustody", "syncedThisBoot",
     }
     params = inspect.signature(buildSystemStatusState).parameters
     emitParams = inspect.signature(sse.makeSystemStatusEmitter(".", syncStaleThresholdS=1)).parameters

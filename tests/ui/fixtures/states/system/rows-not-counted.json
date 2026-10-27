@@ -78,7 +78,9 @@
           "startup_log",
           "vehicle_info"
         ],
-        "inProgress": false
+        "inProgress": false,
+        "priorCustody": null,
+        "syncedThisBoot": false
       },
       "power": {
         "source": "external",

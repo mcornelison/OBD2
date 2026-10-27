@@ -832,6 +832,8 @@ _TRIP_STATUS_KEYS = {
         "lastOkTs", "stale",
         "rowsWaiting", "edrRowsWaiting", "notCounted",
         "inProgress",
+        # MOVED PIN (US-917-b): always keys.
+        "priorCustody", "syncedThisBoot",
     },
     "power": {"source", "reasons"},
     "wifi": {"state", "ssid", "rssiDbm", "home", "ts"},

@@ -56,6 +56,9 @@
 #               |              | naming every faulted light/imu/ups feed.
 # 2026-10-27    | Rex (US-917-a)| the always-present sync.inProgress: a pusher
 #               |              | named in sync-activity AND the push lock held.
+# 2026-10-27    | Rex (US-917-b)| the always-present sync.priorCustody (the last
+#               |              | key-off's custody, read once at start) and
+#               |              | sync.syncedThisBoot (sync-activity delivered).
 # ================================================================================
 ################################################################################
 
@@ -63,10 +66,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
+
+# US-917-b: the prior-boot matching rule and the record names live with their
+# writers; the vocabularies are imported from their owners, never copied.
+from pi.diagnostics import boot_progress
+from pi.power.power_watch.contract import OutcomeKind
+from pi.power.power_watch.sync_custody import CUSTODY_RECORD_FILENAME
 
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
@@ -80,6 +90,7 @@ from pi.splash.source_availability import (
 
 # US-917-a: the push lock's own probe -- no second lock path literal here.
 from pi.sync import push_lock
+from pi.sync.backlog import BACKLOG_DELIVERED, BACKLOG_OUTSTANDING, BACKLOG_UNKNOWN
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +148,22 @@ PI_HEALTH_BLOCK_KEYS: tuple[str, ...] = (
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
+# US-917-b: sync.priorCustody -- the last key-off's custody, relayed. A verdict
+# outside the backlog's three is not relayed (null), never coerced.
+PRIOR_CUSTODY_VERDICTS: frozenset[str] = frozenset(
+    {BACKLOG_DELIVERED, BACKLOG_OUTSTANDING, BACKLOG_UNKNOWN}
+)
+# The away-skip kinds (the current AWAY and the pre-US-776-d SERVER_UNAVAILABLE
+# a record from an older build may still carry), for US-917-c.
+PRIOR_CUSTODY_AWAY_KINDS: frozenset[str] = frozenset(
+    {OutcomeKind.AWAY.value, OutcomeKind.SERVER_UNAVAILABLE.value}
+)
+PRIOR_CUSTODY_KEYS: tuple[str, ...] = (
+    "verdict", "outstandingRows", "countIsComplete", "kind", "ts", "current",
+)
+# Where powerwatch's records and boot_progress's trail live: one data/ dir.
+DEFAULT_DATA_DIR = os.path.dirname(boot_progress.DEFAULT_FILE_PATH)
+
 __all__ = [
     "LINK_CONNECTING",
     "LINK_DOWN",
@@ -148,6 +175,9 @@ __all__ = [
     "OBD_LINKED",
     "OBD_RECONNECTING",
     "PI_HEALTH_BLOCK_KEYS",
+    "PRIOR_CUSTODY_AWAY_KINDS",
+    "PRIOR_CUSTODY_KEYS",
+    "PRIOR_CUSTODY_VERDICTS",
     "RUN_MODE_LIVE",
     "RUN_MODE_REPLAY",
     "RUN_MODE_SIMULATE",
@@ -167,7 +197,79 @@ __all__ = [
     "unreadLinkLayer",
     "isSyncStaleWhileDriving",
     "makeSystemStatusEmitter",
+    "readPriorCustody",
 ]
+
+
+def _readJsonObject(path: str) -> dict | None:
+    """A JSON object from ``path``; None when missing, unreadable or not an object."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        logger.warning("prior custody: %s unreadable: %s", path, exc)
+        return None
+    if not isinstance(record, dict):
+        logger.warning("prior custody: %s is not a JSON object", path)
+        return None
+    return record
+
+
+def readPriorCustody(
+    dataDir: str, bootIdFn: Callable[[], str] = boot_progress.readBootId,
+) -> dict | None:
+    """Read the last key-off's sync custody for ``sync.priorCustody`` (US-917-b).
+
+    A RELAY: powerwatch writes both records at poweroff and stays their only
+    writer; this reads them. ``verdict`` / ``outstandingRows`` /
+    ``countIsComplete`` / ``ts`` come from the custody record, ``kind`` from
+    the outcome record, and ``current`` says whether the outcome record's
+    ``boot_id`` is the immediately prior boot's -- judged by
+    :func:`boot_progress.isPriorBootRecord` against the prior boot ids arm()
+    kept in ``boot_progress.prior.json`` (Atlas G3 ruling (a)). Never raises.
+
+    Positive proof only: ``current`` false asserts the records are an OLDER
+    boot's, so it needs a valid prior-id set with no match. Without that set
+    there is no proof either way and the block is null (the reader logs why).
+    A field whose value is not of its type lands null, never coerced.
+
+    Args:
+        dataDir: The data/ directory holding the records and the trail.
+        bootIdFn: This boot's id. Called only once both records are read:
+            off-Linux ``readBootId`` logs an ERROR, and a Pi with no key-off
+            on record has nothing to match.
+
+    Returns:
+        The block (keys :data:`PRIOR_CUSTODY_KEYS`), or None when either record
+        is missing or unreadable, or the prior boot ids are unknown.
+    """
+    custody = _readJsonObject(os.path.join(dataDir, CUSTODY_RECORD_FILENAME))
+    outcome = _readJsonObject(os.path.join(dataDir, boot_progress.OUTCOME_RECORD_FILENAME))
+    if custody is None or outcome is None:
+        return None
+    priorBootIds = boot_progress.readPriorBootIds(
+        bootIdFn(),
+        os.path.join(dataDir, os.path.basename(boot_progress.DEFAULT_PRIOR_FILE_PATH)),
+    )
+    if priorBootIds is None:
+        return None
+    verdict = custody.get("verdict")
+    rows = custody.get("outstandingRows")
+    complete = custody.get("countIsComplete")
+    ts = custody.get("ts")
+    kind = outcome.get("kind")
+    return {
+        "verdict": verdict if verdict in PRIOR_CUSTODY_VERDICTS else None,
+        "outstandingRows": (
+            rows if isinstance(rows, int) and not isinstance(rows, bool) and rows >= 0 else None
+        ),
+        "countIsComplete": complete if isinstance(complete, bool) else None,
+        "kind": kind if isinstance(kind, str) and kind.strip() else None,
+        "ts": ts if isinstance(ts, str) else None,
+        "current": boot_progress.isPriorBootRecord(outcome.get("boot_id"), priorBootIds),
+    }
 
 
 def deriveRunMode(*, replayActive: bool, simulate: bool) -> str:
@@ -720,6 +822,8 @@ def buildSystemStatusState(
     syncEdrRowsWaiting: int | None = None,
     syncNotCounted: list[str] | None = None,
     syncInProgress: bool = False,
+    syncPriorCustody: dict | None = None,
+    syncedThisBoot: bool = False,
     piHealth: dict | None = None,
     captureHealth: dict | None = None,
 ) -> dict:
@@ -806,6 +910,13 @@ def buildSystemStatusState(
             :func:`pi.sync.push_lock.isSyncInProgress` (a pusher named in
             states/sync-activity AND the push lock held). The emit probes it;
             False (not probed) when not supplied.
+        syncPriorCustody: US-917-b: the last key-off's custody block from
+            :func:`readPriorCustody`, or None (not read / no proof).
+            Transported verbatim.
+        syncedThisBoot: US-917-b: this boot has delivered rows --
+            states/sync-activity (tmpfs, fresh each boot) carried a non-null
+            ``lastDeliveredTs``. No clock is compared across a boot. False
+            when not supplied.
         piHealth: US-877-a: the ``pi`` block from
             ``pi.hardware.pi_health.PiHealthSampler.snapshot`` (values, their
             own ts, the limits and ``overLimit``). None -- unwired or not yet
@@ -852,6 +963,10 @@ def buildSystemStatusState(
             # US-917-a: always a key. Lock-backed, so a crashed pusher (its
             # record left naming it, its flock freed) reads false.
             "inProgress": bool(syncInProgress),
+            # US-917-b: always keys. priorCustody null = not read or no proof
+            # that the record is the prior boot's -- never a guessed current.
+            "priorCustody": syncPriorCustody,
+            "syncedThisBoot": bool(syncedThisBoot),
         },
         # US-668 (CIO 2026-09-02): the operator-declared `mode` (car/wall) is
         # GONE. It was a fact the operator typed in so the screen could show it
@@ -984,6 +1099,8 @@ def makeSystemStatusEmitter(
     syncStaleThresholdS: float,
     nowIsoFn: Callable[[], str] | None = None,
     syncLockPath: str = push_lock.DEFAULT_LOCK_PATH,
+    dataDir: str = DEFAULT_DATA_DIR,
+    bootIdFn: Callable[[], str] = boot_progress.readBootId,
 ) -> Callable[..., dict | None]:
     """Build the system-status emit callable owned by the orchestrator (A-3).
 
@@ -1000,6 +1117,10 @@ def makeSystemStatusEmitter(
         syncLockPath: US-917-a: the push lock probed for ``sync.inProgress``
             (default the one every pusher takes); sync-activity is read from
             ``statesDir``.
+        dataDir: US-917-b: the data/ dir holding powerwatch's records and the
+            boot_progress trail (default relative to the service's working
+            directory, as boot_progress's own default is).
+        bootIdFn: US-917-b: this boot's id, for the prior-ids file's stamp.
 
     Returns:
         The emit callable. It returns the payload it wrote, or None when the
@@ -1007,6 +1128,23 @@ def makeSystemStatusEmitter(
     """
     nowFn = nowIsoFn or (lambda: datetime.now(UTC).strftime(_ISO_FMT))
     target = os.path.join(statesDir, SYSTEM_STATUS_FILENAME)
+    # US-917-b: read ONCE, here -- a relay of what the last key-off left.
+    try:
+        priorCustody = readPriorCustody(dataDir, bootIdFn)
+    except Exception as exc:  # noqa: BLE001 -- a relay never blocks the emitter
+        logger.warning("prior custody not read: %s", exc)
+        priorCustody = None
+    # US-917-b: the acquire record of a later push carries no lastDeliveredTs,
+    # so once this process has seen a delivery it keeps saying so -- delivery
+    # this boot is a one-way fact. A restart re-reads the (still-this-boot) file.
+    deliveredSeen = False
+
+    def syncedThisBoot() -> bool:
+        nonlocal deliveredSeen
+        if not deliveredSeen:
+            activity = push_lock.readSyncActivity(statesDir) or {}
+            deliveredSeen = activity.get("lastDeliveredTs") is not None
+        return deliveredSeen
 
     def emit(
         *,
@@ -1074,6 +1212,8 @@ def makeSystemStatusEmitter(
                 syncEdrRowsWaiting=syncEdrRowsWaiting,
                 syncNotCounted=syncNotCounted,
                 syncInProgress=push_lock.isSyncInProgress(statesDir, syncLockPath),
+                syncPriorCustody=priorCustody,
+                syncedThisBoot=syncedThisBoot(),
                 piHealth=piHealth,
                 captureHealth=captureHealth,
             )

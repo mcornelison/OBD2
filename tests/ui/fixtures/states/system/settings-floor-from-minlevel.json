@@ -96,7 +96,9 @@
         "rowsWaiting": 0,
         "edrRowsWaiting": 0,
         "notCounted": [],
-        "inProgress": false
+        "inProgress": false,
+        "priorCustody": null,
+        "syncedThisBoot": false
       },
       "power": {
         "source": "external",
