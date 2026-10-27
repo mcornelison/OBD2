@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.15",
-  "theme": "V0.30 no-desktop kiosk and boot speed",
-  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 115 (#135): wayland default + no text consoles + getty@tty1 masked + blank cursor (US-652-a..e), EEPROM/config.txt boot-speed keys (US-926-a/b), Wi-Fi no-secrets stored-key retry (US-925-a/b), splash letterbox to the real viewport (US-869-h). EEPROM applies at the next reboot."
+  "version": "V0.30.16",
+  "theme": "V0.30 data providers and Wi-Fi recovery fix",
+  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 117 (#137): wifi-recover runs from /usr/local/lib/eclipse with Type=notify and a real start gate (US-925-c), gear hint on states/gear + Driving page (US-904-a/b), states/o2 + front verdict + O2 page (US-891-a/b/c), gain-label SSOT (US-906), NEXT STEP de-buttoned (US-758-a)."
 }
