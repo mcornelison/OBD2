@@ -79,7 +79,20 @@ The CIO had to scroll to reach COMPASS `calibrated` (relay, 2026-10-27: *"The wo
 - **UPDATED leaves this page.** It moves to System `LAST UPDATED` (System §4.6.3, the CIO's one-place ask). Staleness stays visible here through AC 14, unchanged: stale dims the top two bands only, and the health block keeps full opacity (§4.5). *(Correction, UIDEV-021, S119 review 2026-10-27: this line used to say "a stale card dims as a whole", which contradicted AC 14 and the shipped rule.)*
 - **The health block is ONE row:** COMPASS | GYRO, columns `1fr max-content`, 8 px gap.
 - **TILT FIX moves to the IMU detail.** So do UPDATED (also on LAST UPDATED) and the four health values with their full reasons.
-- **The IMU detail:** a parked tap on the health row opens it, in the shared detail host (System §4.6.3, the X-1 sibling). **Height (UIDEV-021, S119 review 2026-10-27):** UPDATED, COMPASS, TILT FIX, GYRO and the two peak lines = 6 × 44 = **264 of 270**. That holds only because **every line is one line**: `white-space: nowrap` + `text-overflow: ellipsis`. Modelled, ≤ 270. ` ›` is appended to the row's last value **only while parked**, when the tap works (the I9 rule).
+- **The IMU detail:** a parked tap on the health row opens it, in the shared detail host (System §4.6.3, the X-1 sibling). **Height (UIDEV-021, S119 review 2026-10-27):** UPDATED, COMPASS, TILT FIX, GYRO and the two peak lines = 6 × 44 = **264 of 270**, with **full reasons** (the detail exists to show them).
+  - **Row (UIDEV-022, corrects UIDEV-021's nowrap + ellipsis, which contradicted "full reasons"):**
+    - a grid of label column and value column, `min-height: var(--row-min)` (44);
+    - the label is Michroma `--fs-meta` at line-height 1.2 (18 px), letter-spacing 0.06em. The widest, `COMPASS`, is 7.592 em × 15 = 113.9 + 6.3 = 120.2 px, so the label column is 128 px including the 8 px gap, and the value column is 320 px of 448;
+    - the value is mono `--fs-label`, a 23.1 px line box (Liberation Mono on the Pi: 30 px line at 26 px, ratio 1.154);
+    - the reason sits inline after it, 6 px gap, mono `--fs-meta`, a 17.3 px line box.
+  - **A reason WRAPS inside the value column, up to 2 lines.** A value line plus one wrapped reason line is 23.1 + 17.3 = 40.4 ≤ 44, so a wrap never grows the row and the budget stays 264.
+  - **`-webkit-line-clamp: 2` + ellipsis is the only cut.** Only an unknown raw reason code of more than ~67 characters reaches it; the longest known text, `--` + `orientation unresolved`, is 229 of 320 px, one line.
+  - **Fit, computed on the named fixtures:**
+    - `gyro-unjudged`: GYRO `--` + `sensor not detected` 202 px;
+    - `compass-uncalibrated`: COMPASS `not calibrated` 169, TILT FIX `±0.45°` + `from 1 stop` 177;
+    - every row is 1 line, so 264.
+  - **Model:** each row = max(`--row-min`, value line + (reason lines − 1) × reason line), from the declared sizes and line-heights, reasons wrapped at 320 px (9.03 px per character), ≤ 270 on both fixtures and on a planted 3-line reason, which must clamp to 2. Negative control: `--row-min` 48 ⇒ 288 fails.
+  - ` ›` is appended to the row's last value **only while parked**, when the tap works (the I9 rule).
 - **Each g cell has ONE sub-line:** the peak line when the value reads; the reason when it doesn't (the reason replaces the peak, and the peaks are always in the IMU detail).
 - **Every reason in the health row and the g cells is one line with an ellipsis**, and the full text is in the IMU detail (the System rule: the ellipsis is the visible sign, so this is no silent clip). This replaces §3's wrap-inside-the-column rule here, because a wrapped reason adds a line the budget doesn't have.
 - **Spacing:** `--motion-band-pad` 6 → **4 px**, `--motion-band-gap` 6 → **4 px**.
