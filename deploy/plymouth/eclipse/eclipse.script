@@ -9,11 +9,18 @@
 # third of the glass. Scaling to the window's own size lets the panel show it
 # 1:1 at its designed geometry; aspect is NOT preserved (Atlas, 2026-10-24).
 # No resolution is named: a pinned 480x320 mode makes the scale a no-op.
+#
+# Boot only (US-885-d): Plymouth runs this same script at shutdown, reboot and
+# updates too, which flashed the WARNING after the shutdown splash at key-off.
+# Every other mode draws nothing and the screen stays black.
 
 Window.SetBackgroundTopColor(0, 0, 0);
 Window.SetBackgroundBottomColor(0, 0, 0);
 
-warning.image = Image("warning.png").Scale(Window.GetWidth(), Window.GetHeight());
-warning.sprite = Sprite(warning.image);
-warning.sprite.SetX(Window.GetX());
-warning.sprite.SetY(Window.GetY());
+if (Plymouth.GetMode() == "boot")
+{
+    warning.image = Image("warning.png").Scale(Window.GetWidth(), Window.GetHeight());
+    warning.sprite = Sprite(warning.image);
+    warning.sprite.SetX(Window.GetX());
+    warning.sprite.SetY(Window.GetY());
+}

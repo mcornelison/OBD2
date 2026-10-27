@@ -15,6 +15,8 @@
 # 2026-10-26    | Rex (US-891-a) | Initial -- O2 tracker, builder, seam and tick.
 # 2026-10-26    | Rex (US-891-b) | The front verdict: per-sample gate, the 60
 #                                minimum, Spool's distribution rule, reasons.
+# 2026-10-26    | Rex (US-891-d) | Pairing bounds, coolant bound and the
+#                                2026-10-27 idle replay (no flips while cold).
 # ================================================================================
 ################################################################################
 
@@ -504,14 +506,16 @@ def _cycles(
     startS: float = 0.0,
     statusLeadS: float = _STATUS_LEAD_S,
     coolantLeadS: float = _COOLANT_LEAD_S,
+    periodS: float = _PERIOD_S,
 ) -> float:
     """One poll cycle per volt: status, coolant, then the front O2 sample.
 
-    Returns the event time (s) of the last front sample.
+    A negative lead puts that gate read AFTER the sample. Returns the event
+    time (s) of the last front sample.
     """
     t = startS
     for i, v in enumerate(volts):
-        t = startS + i * _PERIOD_S
+        t = startS + i * periodS
         if status is not None:
             history.observe("FUEL_SYSTEM_STATUS", status, _at(t - statusLeadS))
         if coolantC is not None:
@@ -590,7 +594,9 @@ class TestTheDistributionRule:
         assert o2_state.STUCK_MIN_FRACTION == 0.90
         assert o2_state.VERDICT_MIN_GATED_SAMPLES == 60
         assert o2_state.GATE_COOLANT_MIN_C == 85.0
-        assert o2_state.GATE_PAIR_MAX_SEC == 1.1
+        assert o2_state.GATE_STATUS_PAIR_MAX_SEC == 3.0
+        assert o2_state.GATE_COOLANT_PAIR_MAX_SEC == 10.0
+        assert not hasattr(o2_state, "GATE_PAIR_MAX_SEC")
 
 
 class TestNotEnoughData:
@@ -651,32 +657,78 @@ class TestThePerSampleGate:
 
         assert _verdict(history, last)[0] == "switching"
 
-    def test_aStatusReading1point5sBeforeTheSample_isNotPaired(self) -> None:
+    # US-891-d: an 8 s cycle keeps the neighbouring cycles' status reads more
+    # than 3.0 s from every sample, so only the one under test can pair.
+    @pytest.mark.parametrize("statusLeadS", [2.5, -2.5, 3.0, -3.0])
+    def test_aStatusReadWithin3sEitherSide_isPaired(self, statusLeadS: float) -> None:
+        history = _history(windowSec=600)
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30, statusLeadS=statusLeadS, periodS=8.0)
+
+        assert _verdict(history, last + 3.0)[0] == "switching"
+
+    @pytest.mark.parametrize("statusLeadS", [3.5, -3.5])
+    def test_aStatusRead3point5sAway_isNotPaired(self, statusLeadS: float) -> None:
+        history = _history(windowSec=600)
+        last = _cycles(history, [0.1] * 35 + [0.8] * 35, statusLeadS=statusLeadS, periodS=8.0)
+
+        assert _verdict(history, last + 3.5)[0] not in ("switching", "unclear")
+
+    @pytest.mark.parametrize("coolantLeadS", [9.5, -9.5, 10.0])
+    def test_aCoolantReadWithin10sEitherSide_isPaired(self, coolantLeadS: float) -> None:
+        history = _history(windowSec=1600)
+        last = _cycles(
+            history, [0.1] * 30 + [0.8] * 30, coolantLeadS=coolantLeadS, periodS=25.0
+        )
+
+        assert _verdict(history, last + 10.0)[0] == "switching"
+
+    @pytest.mark.parametrize("coolantLeadS", [10.5, -10.5])
+    def test_aCoolantRead10point5sAway_isNotPaired(self, coolantLeadS: float) -> None:
+        history = _history(windowSec=1600)
+        last = _cycles(
+            history, [0.1] * 35 + [0.8] * 35, coolantLeadS=coolantLeadS, periodS=25.0
+        )
+
+        assert _verdict(history, last + 10.5)[0] not in ("switching", "unclear")
+
+    def test_spoolA_statusOneSlotAfter_previousStatus3point2sBefore_counts(self) -> None:
+        """Spool pin (a): O2 at t, status 2 at t+0.14, the previous status at
+        t-3.2, coolant 90 C at t+1.0 -> the sample COUNTS (the at-or-before
+        helper picked the previous cycle and missed)."""
         history = _history()
-        last = _cycles(history, [0.1] * 35 + [0.8] * 35, statusLeadS=1.5)
+        last = _cycles(
+            history,
+            [0.1] * 30 + [0.8] * 30,
+            statusLeadS=-0.14,
+            coolantLeadS=-1.0,
+            periodS=3.34,
+        )
 
-        assert _verdict(history, last)[0] == "not_enough_data"
+        assert _verdict(history, last + 1.0) == ("switching", None)
 
-    def test_aCoolantReading1point5sBeforeTheSample_isNotPaired(self) -> None:
+    def test_spoolB_theNearestCoolantDecides_notALaterWarmOne(self) -> None:
+        """Spool pin (b): O2 at t, coolant 80 C at t+1, coolant 86 C at t+50,
+        status 2 -> the sample does NOT count."""
         history = _history()
-        last = _cycles(history, [0.1] * 35 + [0.8] * 35, coolantLeadS=1.5)
+        last = _cycles(history, [0.1] * 30 + [0.8] * 30, coolantC=80.0, coolantLeadS=-1.0)
+        history.observe("COOLANT_TEMP", 86.0, _at(last + 50))
 
-        assert _verdict(history, last)[0] == "not_enough_data"
+        assert _verdict(history, last + 50)[0] not in ("switching", "unclear")
 
-    def test_aStatusReadingExactly1point1sBefore_isPaired(self) -> None:
-        history = _history()
-        last = _cycles(history, [0.1] * 30 + [0.8] * 30, statusLeadS=1.1)
+    def test_spoolC_aSampleOnTheWindowEdge_pairsWithCoolant9sBefore(self) -> None:
+        """Spool pin (c): the gate deques keep windowSec + 10 s, so the oldest
+        sample in the window still pairs with a coolant read 9 s before it."""
+        history = _history(windowSec=138.65)
+        history.observe("COOLANT_TEMP", 90.0, _at(0))
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(9 - _STATUS_LEAD_S))
+        history.observe("O2_B1S1", 0.8, _at(9))
+        # The next coolant read is 10.93 s after the edge sample: out of reach.
+        last = _cycles(history, [0.1] * 30 + [0.8] * 29, startS=20.0)
 
+        assert last == pytest.approx(147.6)
         assert _verdict(history, last)[0] == "switching"
 
-    def test_aStatusReadingAfterTheSample_isNotPaired(self) -> None:
-        """At or before: a gate read 0.1 s AFTER the sample does not gate it."""
-        history = _history()
-        last = _cycles(history, [0.1] * 35 + [0.8] * 35, statusLeadS=-0.1)
-
-        assert _verdict(history, last)[0] == "not_enough_data"
-
-    def test_theLatestGateAtOrBefore_decides_notAnEarlierGoodOne(self) -> None:
+    def test_theNearestStatus_decides_notAnEarlierGoodOne(self) -> None:
         """Status 2 at t-0.5 then status 1 at t-0.1: the sample is open loop."""
         history = _history()
         last = 0.0
@@ -762,13 +814,13 @@ class TestTheWithheldReason:
         assert _verdict(history, last + 4.8) == ("open_loop", "open_loop")
         assert _verdict(history, last + 4.92) == ("no_data", "no_data")
 
-    def test_status2_unpairedCoolant_isNotWarmingUp(self) -> None:
-        """A cold coolant 2 s from the latest status is another cycle's."""
+    def test_status2_coolant2sBeforeIt_isWarmingUp(self) -> None:
+        """US-891-d: the newest coolant within the bound decides, not the 1.1 s pairing."""
         history = _history()
         history.observe("COOLANT_TEMP", 60.0, _at(0))
         history.observe("FUEL_SYSTEM_STATUS", 2, _at(2))
 
-        assert _verdict(history, 2) == ("not_enough_data", "not_enough_data")
+        assert _verdict(history, 2) == ("warming_up", "warming_up")
 
     def test_status2_coolantJustAfterIt_isPaired(self) -> None:
         """Status and coolant of one cycle, coolant polled 0.1 s after status."""
@@ -785,6 +837,117 @@ class TestTheWithheldReason:
         history.observe("FUEL_SYSTEM_STATUS", 3, _at(last + 1))
 
         assert _verdict(history, last + 1)[0] == "switching"
+
+
+class TestTheWithheldReasonCoolantBound:
+    """US-891-d (Spool RULED 2026-10-27): the withheld reason reads the newest
+    coolant no older than min(staleSec, 10 s) at the emit; a pairing miss never
+    falls through to not_enough_data."""
+
+    def test_withheld_reason_survives_a_pairing_miss(self) -> None:
+        """Exit test: status 2, coolant 70 C read 1.5 s after it -> warming_up."""
+        history = _history()
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(0))
+        history.observe("COOLANT_TEMP", 70.0, _at(1.5))
+
+        assert _verdict(history, 1.5) == ("warming_up", "warming_up")
+
+    def test_status2_coolant84point9_1sAway_isWarmingUp(self) -> None:
+        history = _history()
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(0))
+        history.observe("COOLANT_TEMP", 84.9, _at(1.0))
+
+        assert _verdict(history, 1.0) == ("warming_up", "warming_up")
+
+    def test_status2_coolant85_1sAway_isTheClosedLoopVerdictPath(self) -> None:
+        """Spool pin (d): 85.0 C is warm (>= 85), so fewer than 60 gated samples
+        read not_enough_data, NOT warming_up."""
+        history = _history()
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(0))
+        history.observe("COOLANT_TEMP", 85.0, _at(1.0))
+
+        assert _verdict(history, 1.0) == ("not_enough_data", "not_enough_data")
+
+    def test_status2_newestCoolant11sOld_isNoData(self) -> None:
+        history = _history()
+        history.observe("COOLANT_TEMP", 70.0, _at(0))
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(11))
+
+        assert _verdict(history, 11) == ("no_data", "no_data")
+
+    def test_theBoundIsCappedAt10s_whenStaleSecIsLonger(self) -> None:
+        history = _history()
+        history.observe("COOLANT_TEMP", 70.0, _at(0))
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(9.5))
+
+        snapshot = history.snapshot()
+        at9point5 = o2_state.frontVerdict(snapshot, nowUtc=_at(9.5), staleSec=20.0)
+        at10point5 = o2_state.frontVerdict(snapshot, nowUtc=_at(10.5), staleSec=20.0)
+
+        assert (at9point5, at10point5) == ("warming_up", "no_data")
+
+    def test_theBoundIsStaleSec_whenStaleSecIsShorter(self) -> None:
+        history = _history()
+        history.observe("COOLANT_TEMP", 70.0, _at(0))
+        history.observe("FUEL_SYSTEM_STATUS", 2, _at(5.5))
+
+        assert _verdict(history, 5.5) == ("no_data", "no_data")
+
+    @pytest.mark.parametrize("status", [1, 5])
+    def test_aStaleCoolant_isNoData_neverOpenLoopNorNotEnoughData(self, status: int) -> None:
+        history = _history()
+        history.observe("COOLANT_TEMP", 90.0, _at(0))
+        history.observe("FUEL_SYSTEM_STATUS", status, _at(11))
+
+        assert _verdict(history, 11) == ("no_data", "no_data")
+
+
+# The 2026-10-27 idle replay (Atlas export, sha-pinned): 672 realtime_data rows,
+# coolant 44 -> 89 C, every status code 2. Under the 1.1 s pairing it flipped
+# warming_up <-> not_enough_data 16 times (o2watch.log, the oracle).
+_REPLAY_FIXTURE = os.path.join(
+    os.path.dirname(__file__), "fixtures", "o2-replay-idle-20261027.json"
+)
+_REPLAY_SHA256 = "287449b093d393a5adcc2be3e5cdb2a13c6e768b6f2eb19cbaa304cbb00e77da"
+
+
+class TestTheIdleReplay:
+    def test_theFixtureIsAtlasExport_byteForByte(self) -> None:
+        import hashlib
+
+        with open(_REPLAY_FIXTURE, "rb") as f:
+            assert hashlib.sha256(f.read()).hexdigest() == _REPLAY_SHA256
+
+    def test_everyReasonWhileCold_isWarmingUp_noFlips(self) -> None:
+        """After the first status read, EVERY reason emitted while the newest
+        coolant is < 85 C is warming_up (Spool: a bare '0 flips' would also
+        pass stuck at no_data). Each row is one emit at its own event time."""
+        with open(_REPLAY_FIXTURE, encoding="utf-8") as f:
+            fixture = json.load(f)
+        columns = fixture["columns"]
+        rows = sorted(fixture["rows"], key=lambda row: row[columns.index("id")])
+        pidAt, valueAt, tsAt = (
+            columns.index(name) for name in ("parameter_name", "value", "timestamp")
+        )
+        history = _history()
+        coolantC: float | None = None
+        statusSeen = False
+        coldReasons: list[str] = []
+        for row in rows:
+            pid = row[pidAt]
+            if pid not in ("COOLANT_TEMP", "FUEL_SYSTEM_STATUS", "O2_B1S1"):
+                continue
+            ts = datetime.fromisoformat(row[tsAt].replace("Z", "+00:00"))
+            history.observe(pid, row[valueAt], ts)
+            if pid == "COOLANT_TEMP":
+                coolantC = row[valueAt]
+            statusSeen = statusSeen or pid == "FUEL_SYSTEM_STATUS"
+            if statusSeen and coolantC is not None and coolantC < 85.0:
+                state = buildO2State(history.snapshot(), nowUtc=ts, staleSec=_STALE_S)
+                coldReasons.append(state["frontReason"])
+
+        assert len(coldReasons) > 500
+        assert set(coldReasons) == {"warming_up"}
 
 
 class TestTheVerdictThroughTheSeam:

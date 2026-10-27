@@ -22,6 +22,8 @@
 #                                with ModuleNotFoundError: No module named 'pi'.
 #                                (common.* stays src.common.* for exception
 #                                identity -- see the import note below.)
+# 2026-10-26    | Rex          | US-871-a: the push WAITS for the push lock and
+#                                prints `waiting for <pusher>`.
 # ================================================================================
 ################################################################################
 
@@ -111,6 +113,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 # the `pi.*` packages, the `common.*` packages have no unifying re-export.
 from pi.data import sync_log  # noqa: E402
 from pi.sync import PushResult, PushStatus, SyncClient  # noqa: E402
+from pi.sync.push_lock import SYNC_NOW_PUSHER  # noqa: E402
 from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
     loadEnvFile,
@@ -333,9 +336,19 @@ def _renderDryRunReport(syncClient: Any) -> str:
 # ==============================================================================
 
 
+def _printWaitingFor(holder: str) -> None:
+    """Tell the operator whose push this run is queued behind (US-871-a)."""
+    print(f"waiting for {holder}", flush=True)
+
+
 def _defaultSyncClientFactory(config: dict[str, Any]) -> SyncClient:
-    """Production factory -- constructs the real :class:`SyncClient`."""
-    return SyncClient(config)
+    """Production factory -- constructs the real :class:`SyncClient`.
+
+    US-871-a: the manual sync WAITS for the push lock and says whom for.
+    """
+    return SyncClient(
+        config, pusher=SYNC_NOW_PUSHER, lockWait=True, onLockWait=_printWaitingFor,
+    )
 
 
 def main(

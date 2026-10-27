@@ -48,6 +48,7 @@
 #                                and buildAlertsState(systemSource=) -- not_read
 #                                until a verdict was read; system ranks with engine.
 # 2026-10-24    | Rex (US-869-c) | SYSTEM_TITLES gains 'sensor': 'SENSOR FAULT'.
+# 2026-10-27    | Rex (US-917-c) | SYSTEM_TITLES gains 'sync': 'SYNC NOT COMPLETE'.
 # ================================================================================
 ################################################################################
 
@@ -217,6 +218,8 @@ SYSTEM_TITLES = {
     "sensor": "SENSOR FAULT",
     "wifi": "WIFI NOT READ",
     "pi": "PI OVER LIMIT",
+    # US-917-c (Iris 2026-10-27): <THING> <STATE>; true for S1, S2 and S3.
+    "sync": "SYNC NOT COMPLETE",
 }
 SYSTEM_REASON_NOT_READ = "not_read"
 DATA_REASON_NOT_BUILT = "not_built"

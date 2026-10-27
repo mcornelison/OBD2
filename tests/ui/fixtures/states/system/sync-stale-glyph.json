@@ -69,7 +69,10 @@
         "stale": true,
         "rowsWaiting": 6120,
         "edrRowsWaiting": 0,
-        "notCounted": []
+        "notCounted": [],
+        "inProgress": false,
+        "priorCustody": null,
+        "syncedThisBoot": false
       },
       "power": {
         "source": "external",

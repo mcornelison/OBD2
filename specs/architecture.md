@@ -594,8 +594,27 @@ allow-list), so a unit installed only under `--init` fails the suite.
 | `pi.bluetooth.macAddress` | — | MAC **or** literal device path |
 | `pi.bluetooth.rfcommDevice` | `0` | The `N` in `/dev/rfcommN` |
 | `pi.bluetooth.rfcommChannel` | `1` | SPP RFCOMM channel (OBDLink LX = 1) |
-| `pi.bluetooth.connectionTimeoutSeconds` | `30` | python-OBD command timeout |
+| `pi.bluetooth.connectionTimeoutSeconds` | `30` | Bound on python-OBD's auto-baud probe ONLY (see below); not a command timeout |
+| `pi.bluetooth.adapterBaudrate` | `38400` | Serial rate the real connect opens the adapter at; one of 9600/38400/115200/230400/500000 (US-817-a) |
 | `pi.bluetooth.retryDelays` | `[1,2,4,8,16]` | Backoff delays on connect retry |
+
+**Explicit baud + one-auto-attempt fallback (US-817-a).** In python-obd 0.7.3
+`OBD(timeout=)` is used ONLY by `auto_baudrate` (`elm327.py:307`), whose
+`read(1024)` always waits the full timeout -- so every connect that left
+`baudrate` unset paid ~30 s (Atlas MEASURED key-on ~56 s, n=5, 2026-10-26).
+`ObdConnection._createObdConnection` -- the one real `obdlib.OBD(...)` call --
+now passes `baudrate=pi.bluetooth.adapterBaudrate` (default 38400: Atlas MEASURED
+38400 on 96/96 connects since 2026-09-19), so the probe never runs and
+`connectionTimeoutSeconds` bounds nothing on a normal attempt. Fallback, never
+worse than before: an explicit attempt that raises, or whose `obd.status()` is
+not ELM-answered (ELM / OBD / Car Connected), makes the NEXT real attempt pass
+`baudrate=None` (the auto-probe, bounded by `connectionTimeoutSeconds`); the
+attempt after that auto one is explicit again. An ELM-answered-but-ECU-silent
+result (ignition off) keeps the next attempt explicit (Atlas G1). The state is
+one flag on the `ObdConnection` instance -- no sleep, no timer -- and the
+injected `obdFactory(serialPort, timeout)` test seam carries no baud.
+`validateObdConfig` rejects any other rate with a `ConfigValidationError` naming
+the key. The key `connectionTimeoutSeconds` keeps its name (rename out of scope).
 
 **Environment file (`/etc/default/obdlink`):**
 
@@ -1001,6 +1020,32 @@ promoted a parked Pi 1 s after start and nothing demoted it, so it pushed
 every 5 s for 15.8 h (~275k journal lines/day). A real drive's pushes carry
 `realtime_data`, so only a capture stall of about a minute demotes it. A failed
 push counts as empty, so a minute off WiFi also drops to the heartbeat.
+
+**One pusher at a time; the mark never rewinds (US-871-a, F-155).** MEASURED
+2026-10-12: four pushers (the interval tick, the drive-end flush, the
+powerwatch drain, `scripts/sync_now.py`) shared no lock and ~19 % of rows
+(2,000 of 10,620) reached the server twice. `src/pi/sync/push_lock.py` holds
+an `fcntl.flock` on `/run/eclipse-obd/sync.lock` (dir created in-process if
+absent); `SyncClient.pushAllDeltas()` and `SyncClient.forcePush()` hold it for
+the WHOLE call, so every caller inherits it. The kernel drops the flock when
+the holder dies, so a killed pusher never wedges the next one. Contention
+policy is the caller's (`SyncClient(..., pusher=, lockWait=)`, or per call on
+`pushAllDeltas`):
+
+| Pusher (`push_lock` name) | Policy when held |
+|---|---|
+| interval tick (`eclipse-obd-interval`), drive-end (`eclipse-obd-drive-end`) | **skip**: push nothing (not even the drive counter), log `sync skipped: held by <pusher>`; the next tick retries |
+| powerwatch drain (`powerwatch-drain`) | **wait** on the pipeline thread; the sequencer polls from another thread and can still power off at the floor (US-776-a) |
+| `scripts/sync_now.py` (`sync-now`) | **wait**, printing `waiting for <pusher>` |
+
+The holder writes `states/sync-activity` atomically: `{pusher, pid, startedTs,
+ts}` on acquire, `{pusher: null, lastDeliveredTs, ts}` on release.
+`lastDeliveredTs` is stamped only when the call delivered at least one data row
+(the forced drive-counter upsert does not count); otherwise it is carried over
+from the previous file this boot (`states/` is tmpfs), or null. US-917-a/b read
+it. **Never rewind:** `sync_log.updateHighWaterMark` writes `last_synced_id =
+MAX(existing, new)`, so a slow failed push that re-writes the `lastId` it read
+earlier cannot move the mark behind another pusher's advance.
 
 **Recovery playbook** — when the sync pipeline is observed stalled:
 
@@ -3186,7 +3231,7 @@ the splash** — it calls a generic callback and stays ignorant of the splash sc
 | Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash (the page loads with its stage hidden and paints nothing: US-870-a) |
 | Smoothing window failed (power returned mid-smoothing) | `cancelled` | ABORT splash (kill chromium, no fadeout) |
 | Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | PAINT on the first read (US-870-a) |
-| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | PAINT on the first read if not already; dies with the power |
+| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | PAINT on the first read if not already; plays its ending and POSTs done, which the normal path waits for (US-870-d, below; page half S119) |
 | Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit painted awaiting a poweroff that will not fire) |
 
 The VCELL-floor fast-path skips the pipeline, so it emits `powering_off` **without**
@@ -3200,6 +3245,38 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `tGraceTotalS`, `tRemainingS`, `reason`, `ts`, and since US-883-a `step`, below) is written atomically to
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
+
+**Poweroff waits for the page's 'splash done' (US-870-d, Sprint 118 / V0.30; CIO ruled
+2026-10-27).** Before this, `_powerOff` ran right after the window resolved, so with
+nothing to sync the poweroff overtook the page in its first turn. Now, on the normal
+path, the sequencer emits `powering_off` (the page's cue to start its ending, Atlas G2)
+and only then waits for `states/shutdown-splash-done` carrying **this boot's** id,
+before the pre-poweroff hooks and `systemctl poweroff`.
+
+- **Transport.** The page POSTs `/shutdown-splash-done` to eclipse-states-http with the
+  injected token and an empty body: the sixth token-gated write route, **403 and no
+  file** without a valid token. The server writes `{bootId, ts}` atomically; `bootId` is
+  read SERVER-SIDE from `/proc/sys/kernel/random/boot_id`, and any client-sent one is
+  ignored. An unreadable boot id is written as null, which never matches.
+- **The wait** (`ShutdownSequencer._awaitSplashDone`) is the `_pollPipeline` loop shape,
+  on `smoothingPollSec`. It ends on the FIRST of: the done record for this boot (one
+  already on disk at the cue -- left by an earlier, cancelled shutdown of the same boot
+  -- does not count); power restored (the window's cancel: `cancelled` emitted, the shed
+  restored, no drain close, no poweroff); `drainFloorDwellReads` successful reads at or
+  below the drain floor; the floor blind for `totalCapSec`; or a ceiling of
+  `totalCapSec` (45 s) **measured from the start of the wait**. It is an event wait
+  with the existing bound, not a new number and not a sleep budget. Each outcome is
+  logged: `splash done after X s`, `splash wait cap hit`, `... ended on the drain
+  floor`, `... VCELL floor blind`, `splash wait cancelled`.
+- **Skipped** (poweroff at once) when the drain ended on the drain floor
+  (`DRAIN_TERMINATION_DRAIN_FLOOR`), on the VCELL-floor fast path, when no
+  `phaseEmitFn` is wired (no page was ever told to end), when `splash-grace.service`
+  is not active (or the check fails), and -- by the existing cancel -- when power
+  returned during the window.
+- **Seams.** `splashActiveFn` and `splashDoneFn` are injected; their defaults live in
+  `power_watch/splash_done.py` (`splashGraceActive`, through `load_shed.systemctlRunner`,
+  and `makeSplashDoneReader`, which owns `SHUTDOWN_SPLASH_DONE_FILENAME` -- the route
+  imports it). They are kept out of `controller.py`, which names no splash unit.
 
 **The grace splash is NOT shed (US-796, Sprint 95; reverses US-796-a).**
 US-796-a (Sprint 90 / V0.29.59) put `splash-grace.path` and `splash-grace.service`
@@ -6802,9 +6879,13 @@ five withheld ones. `O2History` also keeps the window's `FUEL_SYSTEM_STATUS` and
 build.
 - **Per-sample gate (Atlas + Spool, 2026-10-26):** a front sample in the window counts
   only when its paired `FUEL_SYSTEM_STATUS` is `FUEL_SYSTEM_CLOSED_LOOP` and its paired
-  `COOLANT_TEMP` is >= 85 C. Paired = the latest reading with event ts AT OR BEFORE the
-  sample's and within 1.1 s of it (`GATE_PAIR_MAX_SEC`, same poll cycle, Spool S2
-  2026-10-26). 1.1 s < `pi.display.stale.obdLiveSec`, so a paired reading is never stale.
+  `COOLANT_TEMP` is >= 85 C. Paired (US-891-d, Spool RULED 2026-10-27, review FIX 1/2) =
+  the reading NEAREST the sample's event ts, before or after: status within 3.0 s
+  (`GATE_STATUS_PAIR_MAX_SEC`, Spool's measured p90 poll cycle), coolant within 10 s
+  (`GATE_COOLANT_PAIR_MAX_SEC`); otherwise the sample does not count. The runtime poll
+  order is not config.json's: Atlas MEASURED 2026-10-27 status 1 slot (~0.14 s) after
+  O2_B1S1 and coolant 7 slots (~1.0 s) after status, so the old 1.1 s at-or-before pairing
+  (`GATE_PAIR_MAX_SEC`, removed) missed. The gate deques keep `windowSec` + 10 s (FIX 3).
 - **Code 2 only (Spool S3 RULED 2026-10-26):** the constant is IMPORTED from
   `ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP`, never a second literal; `fuel_status`'s
   {2, 5} closed-loop set is a different rule. Status 5 samples do not count.
@@ -6814,10 +6895,13 @@ build.
   convention, never exercised on this car.
 - **Withheld reason** (fewer than 60), by the latest `FUEL_SYSTEM_STATUS` (Spool S1 + S3
   RULED 2026-10-26): absent, non-integral or older than `obdLiveSec` at the emit ->
-  `no_data`; 1/3/4 -> `open_loop`; 2 with the coolant of its cycle (within 1.1 s either
-  way) < 85 C -> `warming_up` (S1 MEASURED: closed loop below 85 C on 16 of 41 drives);
-  anything else, including 5, -> `not_enough_data`. A latest status of 5 never reads
-  `open_loop`.
+  `no_data`; no coolant read within min(`obdLiveSec`, 10 s) of the emit -> `no_data`
+  (US-891-d: never `not_enough_data`, never `open_loop`); 1/3/4 -> `open_loop`; 2 with
+  that newest coolant < 85 C -> `warming_up` (S1 MEASURED: closed loop below 85 C on 16
+  of 41 drives); anything else, including 5, -> `not_enough_data`. A latest status of 5
+  never reads `open_loop`. Pinned by a replay of the 2026-10-27 idle
+  (tests/pi/obdii/fixtures/o2-replay-idle-20261027.json): every reason while coolant
+  < 85 C is `warming_up` (16 flips to `not_enough_data` under the 1.1 s rule).
 
 #### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
 
@@ -6981,7 +7065,8 @@ legacy AlertManager owns that section (config.json).
   so a system entry never takes over, never pulses and is never in `codeAlert`; it counts
   toward the icon. Title from the arbiter's table (`SYSTEM_TITLES`): bt `BLUETOOTH NOT LINKED`,
   adapter `ADAPTER NOT ANSWERING`, capture `DATA FEED STALLED`, sensor `SENSOR FAULT`
-  (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`. `sentence` = the member's `reason` verbatim (the page composes nothing);
+  (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`, sync
+  `SYNC NOT COMPLETE` (US-917-c, Iris; one title for S1, S2 and S3). `sentence` = the member's `reason` verbatim (the page composes nothing);
   `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
   A key not in the table is skipped with one WARNING per key (A5).
 - **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
@@ -8660,7 +8745,8 @@ its own event-time ts:
 
 **`verdict` — every counted issue, named (US-877-b; Atlas Y-6, P4/P6/P7, E3).**
 Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
-`adapter`, `capture`, `sensor`, `wifi`, `pi` (`sensor` from US-869-c):
+`adapter`, `capture`, `sensor`, `wifi`, `pi`, `sync` (`sensor` from US-869-c,
+`sync` from US-917-c):
 
 ```json
 "verdict": {"issueCount": 1,
@@ -8672,6 +8758,11 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
   fixture generator calls it too). `buildSystemStatusState` calls it on the
   blocks it has just published (`link`, `source.wifi`, `pi`) plus its
   `captureHealth` parameter (builder, `emit()` and the orchestrator call).
+  US-917-c adds keyword inputs for the `sync` member: the published `sync`,
+  `wifi` and `priorShutdown` blocks, `nowIso`, `syncStaleThresholdS` (None: S3
+  not judged) and `localZone` (None: the host's local time, the clock the
+  kiosk page reads). `makeSystemStatusEmitter` passes its own
+  `syncStaleThresholdS`.
 - **Members, each from a provider field — never a page comparison.** A null /
   not-read value is never an issue.
   - `bt`: `link.bt` `down`; or `retrying` ONLY while `drive.state` is
@@ -8709,10 +8800,41 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
   - `wifi`: `source.wifi.reason == "read_failed"` only. `nmcli_absent`,
     `not_read` and a measured WiFi down never count — absence is not an issue.
   - `pi`: `pi.overLimit` non-empty (the provider's verdict, never re-compared).
+  - `sync` (US-917-c; spec v030-system-page-design §4.3.1, CIO 2026-10-27):
+    ONE member, the first case that holds, `{"key": "sync", "reason"}`:
+    - **S1** last key-off's sync didn't finish: `priorShutdown.verdict ==
+      "clean"` AND `sync.priorCustody.current` true AND its `verdict` is
+      `OUTSTANDING` or `UNKNOWN` (named; a null verdict never counts) AND its
+      `kind` not in `PRIOR_CUSTODY_AWAY_KINDS` (`away`, legacy
+      `server_unavailable`) → `Last sync didn't finish · <n> rows kept`, or
+      `… · row count unknown` when `countIsComplete` is not true or the count
+      is null.
+    - **S2** last stop cut off: `priorShutdown.verdict == "ungraceful"` AND
+      `sync.rowsWaiting` > 0 or null → `Last stop was cut off · sync result
+      unknown · <n> rows waiting` (`rows not read` when null). The custody
+      record is from an older shutdown and is NOT read. `no_record` or an
+      unread `priorShutdown` is neither S1 nor S2.
+    - S1 and S2 clear on `sync.syncedThisBoot`.
+    - **S3** not getting through at home: parked (`drive.state` not
+      `recording`, the source `isSyncStaleWhileDriving` reads) AND
+      `wifi.home` true AND `rowsWaiting` > 0 AND `lastOkTs` null or older than
+      `syncStaleThresholdS` (strictly) → `Not syncing at home · <n> rows
+      waiting · last sent <when>`, `<when>` by the DATA row's date rule in
+      local time: same day `9:14 PM`, the day before `yesterday`, older
+      `Oct 12`, null `never`. Clears on a fresh `lastOkTs`. An unparseable
+      stamp is not judged.
+    - `<n>` comma-grouped. Driving is never a case; `sync.stale` and
+      `isSyncStaleWhileDriving` are not inputs and are unchanged;
+      `edrRowsWaiting` never counts.
+    - **Config guard (Atlas G4):** `validateObdConfig` rejects an EFFECTIVE
+      `pi.dashboard.syncStaleThresholdSeconds` (else
+      `DEFAULT_SYNC_STALE_THRESHOLD_SECONDS`, 120) that is not greater than
+      the effective `pi.sync.intervalSeconds` (else the validator default,
+      60) with a `ConfigValidationError` naming both keys. At or below the
+      interval, S3 would flicker between two normal pushes.
   - **Not counted:** ECU silent (`connecting`), away from home, any null. No
-    `sync` member (877-b-1: no sourced threshold) and no UPS battery member
-    (P5: no grounded band) — both banked. A UPS **gauge** fault is the
-    `sensor` member's, not a UPS member (US-869-c).
+    UPS battery member (P5: no grounded band), banked. A UPS **gauge** fault is
+    the `sensor` member's, not a UPS member (US-869-c).
 - **`reason` is the finished sentence** (Iris 2026-10-19 words; the page
   composes nothing): bt retrying `Link dropped. Retrying.`; bt down `Not
   linked. Check the OBD dongle.`; adapter `Bluetooth up; adapter not

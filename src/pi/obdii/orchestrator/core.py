@@ -84,6 +84,9 @@
 # 2026-10-22    | Rex (US-923) | The fuel reset re-checks _fuelResetAllowed (the
 #               |              | published predicate) in place of "recording ->
 #               |              | driving"; a refusal returns its reason.
+# 2026-10-26    | Rex (US-871-a)| Interval + drive-end pushes never wait on the
+#               |              | push lock: held -> 'sync skipped: held by X',
+#               |              | nothing pushed, the next tick retries.
 # ================================================================================
 ################################################################################
 
@@ -112,6 +115,11 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
+
+# The src.* form on purpose: SyncClient raises src.pi.sync.push_lock's
+# PushLockHeld, and a pi.sync.push_lock import would be a different class
+# that the except below never matches.
+from src.pi.sync.push_lock import DRIVE_END_PUSHER, INTERVAL_PUSHER, PushLockHeld
 
 from ..database import ObdDatabase
 from .backup_coordinator import BackupCoordinatorMixin
@@ -1383,7 +1391,11 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             return False
 
         try:
-            results = list(self._syncClient.pushAllDeltas())
+            # US-871-a: never wait on another pusher from the runLoop -- a held
+            # lock skips this tick (the next one retries).
+            results = list(self._syncClient.pushAllDeltas(
+                pusher=INTERVAL_PUSHER, lockWait=False,
+            ))
             # US-413 (F-064): drive_counter is a single-row state mirror, not
             # a delta-by-PK table, so pushAllDeltas skips it.  Push it on every
             # regular sync tick so the server's last_drive_id tracks the Pi --
@@ -1394,6 +1406,10 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             # This runs only past the offline route gate above, so it adds no
             # doomed-retry cost when the Pi has no route (US-340 guard).
             results.append(self._syncClient.pushDriveCounter())
+        except PushLockHeld as held:
+            logger.info("sync skipped: held by %s", held.holder)
+            self._markSkippedSyncTick(controller)
+            return False
         except Exception as e:  # noqa: BLE001 -- sync must never crash runLoop
             logger.error("Interval sync push crashed: %s", e, exc_info=True)
             # Even on a transport hiccup the controller must learn the
@@ -1439,6 +1455,21 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._recordSyncOutcome(rowsPushed)
         return True
 
+    @staticmethod
+    def _markSkippedSyncTick(controller: Any) -> None:
+        """Advance the cadence after a tick skipped on a held push lock (US-871-a).
+
+        Like the crash path: the controller must learn the attempt happened, or
+        shouldSyncNow stays True and every runLoop pass re-probes and re-logs.
+        Nothing was pushed, so no sync outcome is recorded.
+        """
+        if controller is None:
+            return
+        try:
+            controller.markSynced(hadRows=False)
+        except Exception as ce:  # noqa: BLE001 -- defensive
+            logger.debug("controller.markSynced failed: %s", ce)
+
     def triggerDriveEndSync(self) -> bool:
         """Trigger a sync push on drive-end when configured (US-226).
 
@@ -1460,13 +1491,21 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._lastSyncAttemptTime = datetime.now()
         controller = self._syncCadenceController
         try:
-            results = list(self._syncClient.pushAllDeltas())
+            # US-871-a: a held lock skips this flush; the interval tick
+            # carries the rows once the holder releases.
+            results = list(self._syncClient.pushAllDeltas(
+                pusher=DRIVE_END_PUSHER, lockWait=False,
+            ))
             # US-413 (F-064): a drive just ended, so the drive_counter singleton
             # advanced at this drive's start.  Push it here too (pushAllDeltas
             # skips singletons) so the server's last_drive_id tracks the Pi with
             # minimal lag -- not only on the forcePush power-down flush.  Server
             # upsert is monotonic GREATEST(), so a repeat push never regresses.
             results.append(self._syncClient.pushDriveCounter())
+        except PushLockHeld as held:
+            logger.info("sync skipped: held by %s", held.holder)
+            self._markSkippedSyncTick(controller)
+            return False
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "Drive-end sync push crashed: %s", e, exc_info=True,

@@ -96,6 +96,13 @@
 # 2026-10-23    | Rex (US-883-b) | publishSync: the shutdown sync's progress rides
 #                              every phase write as `sync` (null until a drain
 #                              pass, cleared on cancel), through _emitPhase.
+# 2026-10-27    | Rex (US-870-d) | After the powering_off emit, poweroff waits for
+#                              the shutdown page's done record (this boot),
+#                              ending on power return (cancel), the drain floor,
+#                              the floor blind for totalCapSec, or totalCapSec
+#                              from the wait's start. Skipped on the floor
+#                              paths, with no phase emit, or the grace splash
+#                              inactive. Both reads are injected (splash_done.py).
 # ================================================================================
 ################################################################################
 #
@@ -128,6 +135,7 @@ from src.pi.power.power_watch.ceremony import (
     ceremonySteps,
 )
 from src.pi.power.power_watch.pld_witness import recordTransitionWitnessed
+from src.pi.power.power_watch.splash_done import makeSplashDoneReader, splashGraceActive
 from src.pi.power.types import (
     DRAIN_TERMINATION_DRAIN_FLOOR,
     DRAIN_TERMINATION_POWER_RESTORED,
@@ -163,6 +171,14 @@ PHASE_POWERING_OFF = "powering_off"
 
 # v1 treats all shutdown reasons identically; the splash never branches on it.
 DEFAULT_SHUTDOWN_REASON = "ignition_off"
+
+# US-870-d: how the splash-done wait ended (each one logged where it is returned).
+_SPLASH_WAIT_SKIPPED = "skipped"
+_SPLASH_WAIT_DONE = "done"
+_SPLASH_WAIT_CEILING = "ceiling"
+_SPLASH_WAIT_FLOOR = "floor"
+_SPLASH_WAIT_FLOOR_BLIND = "floor_blind"
+_SPLASH_WAIT_CANCELLED = "cancelled"
 
 
 def _defaultNowIso() -> str:
@@ -265,6 +281,8 @@ class ShutdownSequencer:
         drainSampleFn: Callable[..., None] | None = None,
         drainFloorDwellReads: int = 1,
         holdDueFn: Callable[[], bool] | None = None,
+        splashActiveFn: Callable[[], bool] | None = None,
+        splashDoneFn: Callable[[], str | None] | None = None,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -352,6 +370,15 @@ class ShutdownSequencer:
             smoothing confirms a normal path: True puts the monthly hold in the
             ceremony plan (``of`` 6, not 5). Guarded: a raise reads False.
             ``None`` plans no hold. Only the published step uses it.
+        splashActiveFn: US-870-d -- zero-arg "is the grace splash playing?",
+            read once when the splash-done wait would start. False (or a
+            raise) skips the wait. ``None``: the real unit check
+            (``splash_done.splashGraceActive``).
+        splashDoneFn: US-870-d -- zero-arg reader of the shutdown page's done
+            record for THIS boot: its ``ts``, or None. ``None``: the real
+            states/ reader (``splash_done.makeSplashDoneReader()``). Neither is
+            consulted unless ``phaseEmitFn`` is wired -- with no phase emit no
+            page is ever told to end.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
@@ -386,6 +413,10 @@ class ShutdownSequencer:
         self._lastPhase: str | None = None
         # US-883-b: the shutdown sync's progress, published with every phase write.
         self._sync: dict | None = None
+        # US-870-d: the splash-done wait's two reads. The real reader is built
+        # at the first wait, so a sequencer that never waits never resolves it.
+        self._splashActiveFn = splashActiveFn if splashActiveFn is not None else splashGraceActive
+        self._splashDoneFn = splashDoneFn
 
     def _smoothedPowerLost(self) -> bool:
         """Return True only if ``isOnBattery()`` stays True continuously for
@@ -565,6 +596,13 @@ class ShutdownSequencer:
             # gap 1: of = entered + remaining). The new `of` is published with the
             # next step entered, so one step never shows two different totals.
             self._ceremony.reroute(ceremonySteps(fastPath=True, holdDue=False))
+        elif self._awaitSplashDone(floorReadable=floorReadable) == _SPLASH_WAIT_CANCELLED:
+            # US-870-d: power came back while the page played its ending. Same
+            # abort as the window's: the splash is told, the shed is undone, and
+            # neither the drain close nor the poweroff runs.
+            self._emitPhase(PHASE_CANCELLED)
+            self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
+            return
         self._runPrePowerOff()
         self._enterStep(STEP_POWEROFF)
         self._powerOff()
@@ -643,6 +681,106 @@ class ShutdownSequencer:
                 return _DrainEnd(reason=DRAIN_TERMINATION_VCELL_UNREADABLE, pollRead=True)
             self._recordDrainSample(v)
         return _DrainEnd()
+
+    # ----- US-870-d splash-done wait (the page's ending, before poweroff) -----
+
+    def _awaitSplashDone(self, *, floorReadable: bool) -> str:
+        """Wait for the shutdown page's done record, after ``powering_off``.
+
+        Skipped (returns ``_SPLASH_WAIT_SKIPPED`` at once) when no phase emit
+        is wired or the grace splash is not active. Otherwise polls on
+        ``smoothingPollSec`` -- the ``_pollPipeline`` shape -- and returns on
+        the first of:
+
+        * a done record for this boot that was not already there at the cue
+          (one left by an earlier, cancelled shutdown of this boot never
+          answers this one);
+        * ``isOnBattery()`` False -- power returned, the caller cancels;
+        * ``drainFloorDwellReads`` consecutive successful reads <= the drain floor;
+        * the floor blind for ``totalCapSec``;
+        * ``totalCapSec`` since the wait began -- the ceiling. The same bound
+          as the drain's blind floor, not a new number; a dead kiosk costs at
+          most this.
+
+        Args:
+            floorReadable: False to leave the floor unread (bootGrace).
+
+        Returns:
+            One ``_SPLASH_WAIT_*`` outcome.
+        """
+        if self._phaseEmitFn is None or not self._splashGraceActive():
+            return _SPLASH_WAIT_SKIPPED
+        startMono = self._monotonic()
+        floorSeenMono = startMono
+        belowCount = 0
+        already = self._readSplashDone()
+        while True:
+            self._sleep(self._smoothingPollSec)
+            now = self._monotonic()
+            waited = now - startMono
+            if not self._isOnBattery():
+                logger.info(
+                    "shutdown-sequencer: splash wait cancelled after %.1f s -- power returned",
+                    waited,
+                )
+                return _SPLASH_WAIT_CANCELLED
+            record = self._readSplashDone()
+            if record is not None and record != already:
+                logger.warning("shutdown-sequencer: splash done after %.1f s", waited)
+                return _SPLASH_WAIT_DONE
+            if floorReadable:
+                try:
+                    v = self._vcell()
+                except Exception as exc:  # noqa: BLE001 -- a failed read is blind, not low
+                    logger.warning(
+                        "shutdown-sequencer: VCELL read failed during splash wait (%s)", exc,
+                    )
+                else:
+                    floorSeenMono = now
+                    belowCount = belowCount + 1 if v <= self._drainFloor else 0
+                    if belowCount >= self._drainFloorDwellReads:
+                        logger.warning(
+                            "shutdown-sequencer: splash wait ended on the drain floor "
+                            "after %.1f s (VCELL %.3f <= %.3f) -- poweroff now",
+                            waited,
+                            v,
+                            self._drainFloor,
+                        )
+                        return _SPLASH_WAIT_FLOOR
+            if waited >= self._totalCapSec:
+                logger.warning(
+                    "shutdown-sequencer: splash wait cap hit (%.0f s) -- no done "
+                    "record, poweroff now",
+                    self._totalCapSec,
+                )
+                return _SPLASH_WAIT_CEILING
+            if now - floorSeenMono >= self._totalCapSec:
+                logger.warning(
+                    "shutdown-sequencer: splash wait ended, VCELL floor blind for "
+                    "%.0f s -- poweroff now",
+                    now - floorSeenMono,
+                )
+                return _SPLASH_WAIT_FLOOR_BLIND
+
+    def _splashGraceActive(self) -> bool:
+        """The injected (or real) grace-splash check; a raise reads inactive."""
+        try:
+            return bool(self._splashActiveFn())
+        except Exception as exc:  # noqa: BLE001 -- never wait on an unknown splash
+            logger.warning(
+                "shutdown-sequencer: splash check failed (%s) -- no splash wait", exc,
+            )
+            return False
+
+    def _readSplashDone(self) -> str | None:
+        """The injected (or real) done-record read; a raise reads not-done."""
+        if self._splashDoneFn is None:
+            self._splashDoneFn = makeSplashDoneReader()
+        try:
+            return self._splashDoneFn()
+        except Exception as exc:  # noqa: BLE001 -- unreadable is not done
+            logger.warning("shutdown-sequencer: splash done read failed (%s)", exc)
+            return None
 
     # ----- US-790 drain VCELL series -------------------------------------------
 

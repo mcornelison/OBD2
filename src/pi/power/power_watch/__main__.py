@@ -213,6 +213,8 @@
 #                           snapshots at the sync run's start (keyOffSnapshotFn) and
 #                           publishes after each drain pass (_buildRunSync passDoneFn)
 #                           through ShutdownSequencer.publishSync.
+# 2026-10-26    | Rex (US-871-a) | The drain's SyncClient names itself powerwatch-drain
+#                           and WAITS for the push lock.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -320,6 +322,7 @@ from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
 )
 from src.pi.sync.backlog import SyncBacklog, countOutstandingRows  # noqa: E402
 from src.pi.sync.client import SyncClient  # noqa: E402
+from src.pi.sync.push_lock import DRAIN_PUSHER  # noqa: E402
 from src.pi.sync.shutdown_progress import ShutdownSyncProgress  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -1713,7 +1716,10 @@ def main(argv: list[str] | None = None) -> int:
     # provider stays policy-free).
     provider = PowerSourceProvider(pld=pld)
     detector = HomeNetworkDetector(config, apiKey=apiKey)
-    syncClient = SyncClient(config)
+    # US-871-a: the drain WAITS for the push lock -- on the pipeline thread,
+    # which the sequencer polls from another thread, so it can still power off
+    # at the floor while blocked (US-776-a).
+    syncClient = SyncClient(config, pusher=DRAIN_PUSHER, lockWait=True)
 
     # US-621: ONE backlog reader, shared by the drain (to decide whether
     # another pass is worth making) and by the custody record (to state what

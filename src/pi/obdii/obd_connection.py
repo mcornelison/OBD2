@@ -133,6 +133,11 @@
 #                |              | interval.  ConnectionStatus.adapterAnswered /
 #                |              | adapterChangedAtUtc / adapterLastOkAtUtc, kept
 #                |              | out of toDict().  Connect behaviour unchanged.
+# 2026-10-26    | Rex (US-817-a)| The real obd.OBD() call passes baudrate=
+#                |              | pi.bluetooth.adapterBaudrate (skips python-obd's
+#                |              | ~30 s auto-baud probe); one baudrate=None attempt
+#                |              | follows an explicit attempt the ELM did not
+#                |              | answer.  _obdFactory seam unchanged.
 # ================================================================================
 ################################################################################
 
@@ -171,6 +176,7 @@ from enum import Enum
 from typing import Any
 
 from . import bluetooth_helper, bond_self_heal, decoders
+from .config.loader import DEFAULT_ADAPTER_BAUDRATE
 
 logger = logging.getLogger(__name__)
 
@@ -665,6 +671,12 @@ class ObdConnection:
             'retryCeilingSeconds', DEFAULT_RETRY_CEILING_SECONDS
         )
         self.connectionTimeout = btConfig.get('connectionTimeoutSeconds', DEFAULT_CONNECTION_TIMEOUT)
+        # US-817-a: the serial rate the real connect path opens the adapter at,
+        # skipping python-obd's auto-baud probe.  _autoBaudNext is the one-
+        # attempt fallback: set after an explicit-baud attempt the ELM did not
+        # answer, cleared by the auto attempt it buys (whatever its result).
+        self.adapterBaudrate = btConfig.get('adapterBaudrate', DEFAULT_ADAPTER_BAUDRATE)
+        self._autoBaudNext = False
         self.rfcommDevice = btConfig.get('rfcommDevice', DEFAULT_RFCOMM_DEVICE)
         self.rfcommChannel = btConfig.get('rfcommChannel', DEFAULT_RFCOMM_CHANNEL)
         # US-907: a deploy diagnostic (absent = off; validator default false).
@@ -1850,6 +1862,15 @@ class ObdConnection:
         """
         Create the underlying OBD connection.
 
+        US-817-a: passes ``baudrate=self.adapterBaudrate`` so python-obd skips
+        its auto-baud probe.  If that explicit attempt raises, or its
+        ``status()`` is not an ELM-answered status, the NEXT call passes
+        ``baudrate=None`` (python-obd's auto-probe, the pre-US-817-a cost);
+        the call after that auto attempt is explicit again.  An ELM that
+        answered with the ECU silent (ignition off) keeps the next explicit.
+        Only this real path carries a baud; the injected ``_obdFactory`` seam
+        does not.
+
         Args:
             serialPort: Pre-resolved serial device path (e.g. /dev/rfcomm0).
                         Caller is expected to have run :meth:`_resolvePort`.
@@ -1866,22 +1887,38 @@ class ObdConnection:
 
         portName = serialPort if serialPort is not None else (self.macAddress or None)
 
+        autoBaud = self._autoBaudNext
+        baudrate = None if autoBaud else self.adapterBaudrate
+        if autoBaud:
+            logger.info(
+                "OBD connect: auto-baud attempt after an explicit-baud ELM failure "
+                "| configured baudrate=%s (US-817-a)",
+                self.adapterBaudrate,
+            )
+
         try:
-            # fast=False allows for more compatible but slower connection
-            # timeout controls command timeout
+            # fast=False allows for more compatible but slower connection.
+            # In python-obd 0.7.3 `timeout` bounds ONLY the auto-baud probe
+            # (elm327.py:307), which runs only when baudrate is None -- it is
+            # not a command timeout.
             connection = obdlib.OBD(
                 portstr=portName,
                 fast=False,
-                timeout=self.connectionTimeout
+                timeout=self.connectionTimeout,
+                baudrate=baudrate,
             )
 
-            return connection
-
         except Exception as e:
+            self._autoBaudNext = not autoBaud
             raise ObdConnectionError(
                 f"Failed to create OBD connection: {e}",
                 details={'macAddress': self.macAddress, 'portstr': portName, 'error': str(e)}
             ) from e
+
+        # Atlas G1: only an ELM that did not answer the explicit baud buys the
+        # auto attempt; ELM/OBD Connected with a silent ECU keeps it explicit.
+        self._autoBaudNext = (not autoBaud) and not _elmAnswered(connection)
+        return connection
 
     def disconnect(self) -> None:
         """

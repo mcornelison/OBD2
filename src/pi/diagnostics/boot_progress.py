@@ -42,6 +42,9 @@
 #                          state to the finaliser (floor-ended at home -> replace).
 # 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: _asIso parses with CANONICAL_ISO_FORMAT
 #                          (one owner of the format) instead of a literal.
+# 2026-10-27    | Rex (US-917-b) | Atlas G3 (a): arm keeps the prior trail's boot ids in
+#                          boot_progress.prior.json before the truncate; isPriorBootRecord
+#                          is the one matching rule; readPriorBootIds reads the file.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -74,8 +77,11 @@ __all__ = [
     "finalize",
     "readBootId",
     "readPriorShutdownRecord",
+    "isPriorBootRecord",
+    "readPriorBootIds",
     "main",
     "DEFAULT_FILE_PATH",
+    "DEFAULT_PRIOR_FILE_PATH",
     "DEFAULT_MAX_TRAIL_BYTES",
     "OUTCOME_RECORD_FILENAME",
 ]
@@ -118,6 +124,16 @@ CLEAN_COMPLETE_RUNG: Stage = Stage.CLEAN_COMPLETE
 #: module usable standalone.
 DEFAULT_FILE_PATH = "data/boot_progress"
 DEFAULT_MAX_TRAIL_BYTES = 65536
+
+#: US-917-b (Atlas G3 ruling (a)): arm() keeps the prior trail's boot ids here,
+#: beside the trail, before it truncates the trail. arm() derives the path from
+#: its own ``filePath`` the same way, so an absolute --file carries over.
+PRIOR_FILE_SUFFIX = ".prior.json"
+DEFAULT_PRIOR_FILE_PATH = DEFAULT_FILE_PATH + PRIOR_FILE_SUFFIX
+PRIOR_FILE_SCHEMA_VERSION = 1
+
+#: readBootId()'s failure value. A boot id that is not known proves nothing.
+UNKNOWN_BOOT_ID = "unknown"
 
 #: powerwatch's durable shutdown record, written beside the DB
 #: (power_watch/__main__.py derives the same path from its dbPath).
@@ -383,6 +399,90 @@ _PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...]
 )
 
 
+def isPriorBootRecord(recordBootId: object, priorBootIds: set[str]) -> bool:
+    """THE one rule for "was this record written by the prior boot?".
+
+    US-917-b (Atlas G3 ruling (a)): extracted from :func:`readPriorShutdownRecord`
+    so the system-status emitter asks the same question the same way. A record
+    is the prior boot's when its ``boot_id`` is one of the boot ids in the prior
+    boot's breadcrumb trail; :data:`UNKNOWN_BOOT_ID` never matches, and neither
+    does a missing or blank id.
+
+    Args:
+        recordBootId: The record's ``boot_id`` value, as read (any type).
+        priorBootIds: Boot ids found in the prior boot's breadcrumb trail.
+
+    Returns:
+        True only on a positive match.
+    """
+    label = _asLabel(recordBootId)
+    return label is not None and label in priorBootIds - {UNKNOWN_BOOT_ID}
+
+
+def _writePriorBootIds(priorFilePath: str, bootId: str, priorBootIds: set[str]) -> None:
+    """Write boot_progress.prior.json atomically (tmp + fdatasync + replace).
+
+    Same write pattern as the truncate in :func:`arm`. Deliberately NOT
+    ``outcome.writeAtomicJson``: outcome.py imports this module (a cycle).
+    Raises on failure; :func:`arm` owns the best-effort policy.
+    """
+    payload = {
+        "schema": PRIOR_FILE_SCHEMA_VERSION,
+        "boot_id": bootId,
+        "prior_boot_ids": sorted(priorBootIds),
+        "written_at": utcIsoNow(),
+    }
+    tmp = priorFilePath + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, separators=(",", ":")))
+        fh.flush()
+        _fdatasyncBestEffort(fh.fileno())
+    os.replace(tmp, priorFilePath)
+
+
+def readPriorBootIds(
+    currentBootId: str, path: str = DEFAULT_PRIOR_FILE_PATH,
+) -> set[str] | None:
+    """Read the prior boot-id set arm() kept for THIS boot. Never raises.
+
+    US-917-b (Atlas G3 ruling (a)). None means "no proof": the file is missing
+    or unreadable, is not a JSON object, was written by another boot (its
+    ``boot_id`` is not ``currentBootId`` -- an older boot's file left behind
+    when that boot's arm failed), or its ``prior_boot_ids`` is empty or not a
+    list. Each None logs a WARNING naming the reason. A caller must read None
+    as UNKNOWN, never as "no match".
+
+    Args:
+        currentBootId: This boot's id (:func:`readBootId`).
+        path: The prior-ids file. Defaults to :data:`DEFAULT_PRIOR_FILE_PATH`.
+
+    Returns:
+        The non-empty set of prior boot ids, or None.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except FileNotFoundError:
+        logger.warning("boot_progress: prior boot ids file missing (%s)", path)
+        return None
+    except (OSError, ValueError) as exc:
+        logger.warning("boot_progress: prior boot ids file unreadable (%s): %s", path, exc)
+        return None
+    if not isinstance(record, dict):
+        logger.warning("boot_progress: prior boot ids file is not an object (%s)", path)
+        return None
+    writer = _asLabel(record.get("boot_id"))
+    if writer is None or writer == UNKNOWN_BOOT_ID or writer != currentBootId:
+        logger.warning("boot_progress: prior boot ids file was written by boot %s, "
+                       "not this boot %s (%s)", writer, currentBootId, path)
+        return None
+    ids = record.get("prior_boot_ids")
+    if not isinstance(ids, list) or not ids:
+        logger.warning("boot_progress: prior boot ids file holds no prior ids (%s)", path)
+        return None
+    return {str(i) for i in ids}
+
+
 def readPriorShutdownRecord(
     recordPath: str, priorBootIds: set[str],
 ) -> dict[str, object]:
@@ -414,8 +514,7 @@ def readPriorShutdownRecord(
     if not isinstance(record, dict):
         return landed
     recordBootId = _asLabel(record.get("boot_id"))
-    owners = priorBootIds - {"unknown"}
-    if recordBootId is None or recordBootId not in owners:
+    if not isPriorBootRecord(recordBootId, priorBootIds):
         logger.info("boot_progress: shutdown record boot_id %s is not the prior "
                     "boot's -- prior-boot sync fields land NULL", recordBootId)
         return landed
@@ -578,6 +677,12 @@ def arm(
     if outcomeRecordPath is None:
         outcomeRecordPath = os.path.join(os.path.dirname(dbPath), OUTCOME_RECORD_FILENAME)
     priorBootIds = {str(rec["boot_id"]) for rec in trail if rec.get("boot_id")}
+    # US-917-b: the truncate below is the last moment the prior ids exist; keep
+    # them for later readers. Best-effort -- the re-arm happens regardless.
+    try:
+        _writePriorBootIds(filePath + PRIOR_FILE_SUFFIX, bootId, priorBootIds)
+    except Exception as exc:  # noqa: BLE001 -- never block the re-arm
+        logger.error("boot_progress: prior boot ids write failed: %s", exc)
     priorBootSync = readPriorShutdownRecord(outcomeRecordPath, priorBootIds)
 
     try:

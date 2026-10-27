@@ -18,6 +18,10 @@
 # 2026-10-26    | Rex (US-891-b) | frontVerdict/frontReason by Spool's
 #                                distribution rule over per-sample-gated
 #                                front samples (status 2, coolant >= 85 C).
+# 2026-10-26    | Rex (US-891-d) | Pairing bounds (Spool 2026-10-27): nearest
+#                                status within 3.0 s, nearest coolant within
+#                                10 s; withheld reason reads the newest coolant
+#                                within min(staleSec, 10 s), else no_data.
 # ================================================================================
 ################################################################################
 
@@ -35,9 +39,10 @@ Three facts are load-bearing:
 * **samplePeriodSec is measured, never configured**: the median of consecutive
   front-sample deltas inside the window, so one dropped poll does not move it.
 * **The front verdict is the provider's** (US-891-b, spec s4.2): a front sample
-  counts only when the FUEL_SYSTEM_STATUS and COOLANT_TEMP readings of its own
-  poll cycle say code 2 and >= 85 C; with too few such samples the page gets
-  the reason instead (``open_loop``, ``warming_up``, ...), never a guess.
+  counts only when the FUEL_SYSTEM_STATUS and COOLANT_TEMP readings nearest it
+  (within 3.0 s and 10 s, US-891-d) say code 2 and >= 85 C; with too few such
+  samples the page gets the reason instead (``open_loop``, ``warming_up``,
+  ...), never a guess.
 
 The writer runs on EVERY card tick, never only on change, so ``stale`` flips
 while the feed is quiet.
@@ -104,10 +109,17 @@ PID_COOLANT_TEMP = "COOLANT_TEMP"
 # A sample counts only with coolant at or above this, degrees C (spec s4.2).
 GATE_COOLANT_MIN_C = 85.0
 
-# A gate reading pairs with a sample (or with the other gate reading) only from
-# the same poll cycle: within half a ~2.2 s cycle (Spool 2026-10-26, S117 S2).
-# Under pi.display.stale.obdLiveSec (5 s), so a paired reading is never stale.
-GATE_PAIR_MAX_SEC = 1.1
+# US-891-d pairing bounds (Spool RULED 2026-10-27, review FIX 1/2; Atlas MEASURED
+# the car's poll offsets: status is 1 slot ~0.14 s after O2_B1S1, coolant 7
+# slots ~1.0 s after status, so a 1.1 s same-cycle pairing missed). A front
+# sample pairs with the status read NEAREST its time, before or after, within
+# the measured p90 poll cycle; and with the NEAREST coolant read within 10 s.
+GATE_STATUS_PAIR_MAX_SEC = 3.0
+GATE_COOLANT_PAIR_MAX_SEC = 10.0
+
+# The gate deques keep the window plus the largest pairing bound, so a sample on
+# the window's oldest edge still finds its pair (Spool review FIX 3).
+_GATE_RETAIN_EXTRA_SEC = max(GATE_STATUS_PAIR_MAX_SEC, GATE_COOLANT_PAIR_MAX_SEC)
 
 # Fewer gated front samples in the window than this: not_enough_data (spec s4.2,
 # ~2.2 min of closed loop at the measured ~2.2 s period).
@@ -268,9 +280,9 @@ class O2History:
         gate = self._gates.get(pid)
         if gate is not None:
             gate.append(GateReading(number, ts))
-            # A sample on the window edge pairs with a gate read up to one
-            # pairing span before it.
-            _bounded(gate, ts, self._windowSec + GATE_PAIR_MAX_SEC)
+            # A sample on the window edge pairs with a gate read up to the
+            # largest pairing bound before it.
+            _bounded(gate, ts, self._windowSec + _GATE_RETAIN_EXTRA_SEC)
 
     def snapshot(self) -> O2Snapshot:
         """An immutable copy of both sensors' samples and the gate readings."""
@@ -340,15 +352,23 @@ def _samplePeriodSec(front: list[O2Sample]) -> float | None:
     return round(statistics.median(deltas), _SAMPLE_PERIOD_DECIMALS)
 
 
-def _pairedAtOrBefore(
-    readings: Sequence[GateReading], times: Sequence[datetime], atUtc: datetime
+def _pairedNearest(
+    readings: Sequence[GateReading],
+    times: Sequence[datetime],
+    atUtc: datetime,
+    maxSec: float,
 ) -> GateReading | None:
-    """The latest reading at or before ``atUtc``, if it is from the same poll cycle."""
+    """The reading nearest ``atUtc``, before or after, if within ``maxSec`` of it.
+
+    On an exact tie the earlier reading wins, so the result never depends on
+    which side a later poll lands.
+    """
     index = bisect.bisect_right(times, atUtc)
-    if index == 0:
+    candidates = [readings[i] for i in (index - 1, index) if 0 <= i < len(readings)]
+    if not candidates:
         return None
-    reading = readings[index - 1]
-    return reading if (atUtc - reading.atUtc).total_seconds() <= GATE_PAIR_MAX_SEC else None
+    reading = min(candidates, key=lambda r: abs((r.atUtc - atUtc).total_seconds()))
+    return reading if abs((reading.atUtc - atUtc).total_seconds()) <= maxSec else None
 
 
 def _statusCode(value: float) -> int | None:
@@ -359,13 +379,13 @@ def _statusCode(value: float) -> int | None:
 def _gatedVolts(
     front: list[O2Sample], fuelStatus: Sequence[GateReading], coolant: Sequence[GateReading]
 ) -> list[float]:
-    """The front volts whose paired status is closed loop and paired coolant warm."""
+    """The front volts whose nearest status is closed loop and nearest coolant warm."""
     statusTimes = [r.atUtc for r in fuelStatus]
     coolantTimes = [r.atUtc for r in coolant]
     gated: list[float] = []
     for sample in front:
-        status = _pairedAtOrBefore(fuelStatus, statusTimes, sample.atUtc)
-        temp = _pairedAtOrBefore(coolant, coolantTimes, sample.atUtc)
+        status = _pairedNearest(fuelStatus, statusTimes, sample.atUtc, GATE_STATUS_PAIR_MAX_SEC)
+        temp = _pairedNearest(coolant, coolantTimes, sample.atUtc, GATE_COOLANT_PAIR_MAX_SEC)
         if (
             status is not None
             and temp is not None
@@ -382,10 +402,13 @@ def _withheldReason(
     nowUtc: datetime,
     staleSec: float,
 ) -> str:
-    """Why there is no verdict, by the latest status and the coolant of its cycle.
+    """Why there is no verdict, by the latest status and the newest coolant.
 
     A status older than ``staleSec`` at this emit is absent, as obd-live
-    publishes it (value always means CURRENT).
+    publishes it (value always means CURRENT). The coolant is the newest read
+    no older than min(``staleSec``, :data:`GATE_COOLANT_PAIR_MAX_SEC`) at this
+    emit (US-891-d, Spool RULED 2026-10-27); without one the reason is
+    ``no_data``, never ``not_enough_data`` and never ``open_loop``.
     """
     if not fuelStatus:
         return VERDICT_NO_DATA
@@ -395,15 +418,13 @@ def _withheldReason(
     code = _statusCode(status.value)
     if code is None:
         return VERDICT_NO_DATA
+    coolantBoundSec = min(staleSec, GATE_COOLANT_PAIR_MAX_SEC)
+    if not coolant or (nowUtc - coolant[-1].atUtc).total_seconds() > coolantBoundSec:
+        return VERDICT_NO_DATA
     if code in OPEN_LOOP_STATUS_CODES:
         return VERDICT_OPEN_LOOP
-    if code == FUEL_SYSTEM_CLOSED_LOOP:
-        # Status and coolant are polled back to back: pair them either way round.
-        for temp in reversed(coolant):
-            if abs((temp.atUtc - status.atUtc).total_seconds()) <= GATE_PAIR_MAX_SEC:
-                if temp.value < GATE_COOLANT_MIN_C:
-                    return VERDICT_WARMING_UP
-                break
+    if code == FUEL_SYSTEM_CLOSED_LOOP and coolant[-1].value < GATE_COOLANT_MIN_C:
+        return VERDICT_WARMING_UP
     # Code 5 (closed loop, sensor fault), 0 (unknown) or warm closed loop.
     return VERDICT_NOT_ENOUGH_DATA
 
@@ -422,7 +443,8 @@ def frontVerdict(snapshot: O2Snapshot, *, nowUtc: datetime, staleSec: float) -> 
         gated front samples in the window when there are at least
         :data:`VERDICT_MIN_GATED_SAMPLES`; otherwise the withheld reason:
         ``no_data`` (no current status), ``open_loop`` (status 1/3/4),
-        ``warming_up`` (status 2 with coolant of its cycle under 85 C) or
+        ``warming_up`` (status 2 with the newest coolant under 85 C;
+        ``no_data`` when that coolant is older than min(staleSec, 10 s)) or
         ``not_enough_data``.
     """
     oldest = nowUtc - timedelta(seconds=snapshot.windowSec)

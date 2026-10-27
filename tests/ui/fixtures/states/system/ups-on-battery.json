@@ -85,7 +85,10 @@
         "stale": false,
         "rowsWaiting": 0,
         "edrRowsWaiting": 0,
-        "notCounted": []
+        "notCounted": [],
+        "inProgress": false,
+        "priorCustody": null,
+        "syncedThisBoot": false
       },
       "power": {
         "source": "battery",

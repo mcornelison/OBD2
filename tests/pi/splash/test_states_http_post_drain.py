@@ -14,6 +14,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-22    | Atlas (ARCH) | Initial (alerts-ack drain chore, rulings B1-B4).
+# 2026-10-27    | Rex (US-870-d) | A5: POST /shutdown-splash-done -- 403 and no
+#               |              | file without a valid token; with one, an atomic
+#               |              | {bootId, ts}, bootId stamped server-side.
 # ================================================================================
 ################################################################################
 
@@ -35,6 +38,10 @@ from typing import Any
 import pytest
 
 from common.config.validator import DEFAULTS
+from pi.power.power_watch.splash_done import (
+    SHUTDOWN_SPLASH_DONE_FILENAME,
+    makeSplashDoneReader,
+)
 from pi.splash import states_http_server as shs
 from pi.splash.states_http_server import StatesHttpServer
 
@@ -240,3 +247,90 @@ def test_socketTimeout_isOnTheHandler_andUnderTheStaleThreshold(server):
     handler = server._httpd.RequestHandlerClass
     assert handler.timeout == shs._SOCKET_TIMEOUT_SEC
     assert 0 < shs._SOCKET_TIMEOUT_SEC < DEFAULTS["pi.display.stale.obdLiveSec"]
+
+
+# ------------------------------------------- US-870-d /shutdown-splash-done
+
+_BOOT = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.fixture
+def doneServer(tmp_path, monkeypatch) -> Iterator[tuple[StatesHttpServer, Any]]:
+    statesDir = tmp_path / "states"
+    statesDir.mkdir()
+    # The server reads the kernel's boot id per request; this desk has none.
+    monkeypatch.setattr(shs, "readCurrentBootId", lambda: _BOOT)
+    srv = StatesHttpServer(
+        statesDir=str(statesDir), token=_TOKEN, host="127.0.0.1", port=0,
+    )
+    thread = threading.Thread(target=srv.serveForever, daemon=True)
+    thread.start()
+    try:
+        yield srv, statesDir / SHUTDOWN_SPLASH_DONE_FILENAME
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("token", [None, "wrong-token"])
+def test_splashDone_withoutAValidToken_403_noFile(doneServer, token):
+    server, doneFile = doneServer
+
+    status, _ = _post(server, "/shutdown-splash-done", b"", token=token)
+
+    assert status == 403
+    assert not doneFile.exists()
+
+
+def test_splashDone_withToken_writesThisBootsRecord(doneServer):
+    server, doneFile = doneServer
+
+    status, body = _post(server, "/shutdown-splash-done", b"")
+
+    assert status == 200
+    assert json.loads(body) == {"ok": True}
+    record = json.loads(doneFile.read_text(encoding="utf-8"))
+    assert record["bootId"] == _BOOT
+    assert isinstance(record["ts"], str) and record["ts"].endswith("Z")
+
+
+def test_splashDone_aClientSentBootId_isIgnored(doneServer):
+    server, doneFile = doneServer
+
+    status, _ = _post(
+        server, "/shutdown-splash-done", json.dumps({"bootId": "f" * 32}).encode()
+    )
+
+    assert status == 200
+    assert json.loads(doneFile.read_text(encoding="utf-8"))["bootId"] == _BOOT
+
+
+def test_splashDone_isWhatTheSequencersReaderAccepts(doneServer):
+    server, doneFile = doneServer
+    read = makeSplashDoneReader(str(doneFile.parent), currentBootIdFn=lambda: _BOOT)
+    assert read() is None
+
+    _post(server, "/shutdown-splash-done", b"")
+
+    assert read() == json.loads(doneFile.read_text(encoding="utf-8"))["ts"]
+
+
+def test_splashDone_isAtomic_noTempFileLeft(doneServer):
+    server, doneFile = doneServer
+
+    _post(server, "/shutdown-splash-done", b"")
+
+    assert sorted(p.name for p in doneFile.parent.iterdir()) == [doneFile.name]
+
+
+def test_splashDone_getIsNotAWrite(doneServer):
+    server, doneFile = doneServer
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{server.actualPort}/shutdown-splash-done"
+    )
+    req.add_header("X-Splash-Token", _TOKEN)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=10)
+
+    assert exc.value.code == 404
+    assert not doneFile.exists()
