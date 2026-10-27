@@ -1021,6 +1021,32 @@ every 5 s for 15.8 h (~275k journal lines/day). A real drive's pushes carry
 `realtime_data`, so only a capture stall of about a minute demotes it. A failed
 push counts as empty, so a minute off WiFi also drops to the heartbeat.
 
+**One pusher at a time; the mark never rewinds (US-871-a, F-155).** MEASURED
+2026-10-12: four pushers (the interval tick, the drive-end flush, the
+powerwatch drain, `scripts/sync_now.py`) shared no lock and ~19 % of rows
+(2,000 of 10,620) reached the server twice. `src/pi/sync/push_lock.py` holds
+an `fcntl.flock` on `/run/eclipse-obd/sync.lock` (dir created in-process if
+absent); `SyncClient.pushAllDeltas()` and `SyncClient.forcePush()` hold it for
+the WHOLE call, so every caller inherits it. The kernel drops the flock when
+the holder dies, so a killed pusher never wedges the next one. Contention
+policy is the caller's (`SyncClient(..., pusher=, lockWait=)`, or per call on
+`pushAllDeltas`):
+
+| Pusher (`push_lock` name) | Policy when held |
+|---|---|
+| interval tick (`eclipse-obd-interval`), drive-end (`eclipse-obd-drive-end`) | **skip**: push nothing (not even the drive counter), log `sync skipped: held by <pusher>`; the next tick retries |
+| powerwatch drain (`powerwatch-drain`) | **wait** on the pipeline thread; the sequencer polls from another thread and can still power off at the floor (US-776-a) |
+| `scripts/sync_now.py` (`sync-now`) | **wait**, printing `waiting for <pusher>` |
+
+The holder writes `states/sync-activity` atomically: `{pusher, pid, startedTs,
+ts}` on acquire, `{pusher: null, lastDeliveredTs, ts}` on release.
+`lastDeliveredTs` is stamped only when the call delivered at least one data row
+(the forced drive-counter upsert does not count); otherwise it is carried over
+from the previous file this boot (`states/` is tmpfs), or null. US-917-a/b read
+it. **Never rewind:** `sync_log.updateHighWaterMark` writes `last_synced_id =
+MAX(existing, new)`, so a slow failed push that re-writes the `lastId` it read
+earlier cannot move the mark behind another pusher's advance.
+
 **Recovery playbook** — when the sync pipeline is observed stalled:
 
 1. Confirm last-sync state (Pi side):

@@ -104,6 +104,8 @@
 #                               shutdown sync's key-off snapshot set, counted
 #                               through _deltaPredicate (no second definition
 #                               of outstanding).
+# 2026-10-26    | Rex (US-871-a) | updateHighWaterMark never rewinds:
+#                               last_synced_id = MAX(existing, new).
 # ================================================================================
 ################################################################################
 
@@ -836,6 +838,9 @@ def updateHighWaterMark(
     use a distinct write path -- never pass the delta-max id with
     ``status='failed'`` expecting the id to be held back.
 
+    US-871-a: ``last_synced_id`` is written as ``MAX(existing, lastId)`` -- it
+    never moves backwards, whatever ``lastId`` a slow or failed pusher passes.
+
     US-916: ``status='ok'`` also stamps ``last_ok_at`` (running
     :func:`ensureLastOkSchema` first); any other status leaves it untouched.
 
@@ -874,7 +879,15 @@ def updateHighWaterMark(
         columns.append(LAST_OK_AT_COLUMN)
         values.append(now)
     placeholders = ', '.join('?' for _ in range(len(columns) + 1))
-    updates = ', '.join(f"{col} = excluded.{col}" for col in columns)
+    # US-871-a: the mark never rewinds -- a slow pusher that read an older
+    # mark (or a failed push re-writing the id it started from) keeps the
+    # higher value another pusher already advanced to.
+    updates = ', '.join(
+        f"{col} = MAX(sync_log.{col}, excluded.{col})"
+        if col == 'last_synced_id'
+        else f"{col} = excluded.{col}"
+        for col in columns
+    )
     conn.execute(
         f"INSERT INTO sync_log (table_name, {', '.join(columns)}) "  # noqa: S608 -- const identifiers
         f"VALUES ({placeholders}) "

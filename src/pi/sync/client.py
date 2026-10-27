@@ -85,6 +85,10 @@
 #                               refuses every push at the two POST sites
 #                               (PushStatus.REFUSED); no request, nothing
 #                               written to sync_log.
+# 2026-10-26    | Rex (US-871-a)| One pusher at a time: pushAllDeltas and
+#                               forcePush hold push_lock for the whole call;
+#                               the caller picks wait/skip (lockWait) and names
+#                               itself (pusher).
 # ================================================================================
 ################################################################################
 
@@ -148,8 +152,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Collection
-from contextlib import closing
+from collections.abc import Callable, Collection, Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -161,11 +165,16 @@ from src.common.errors.handler import ConfigurationError
 from src.common.sync.snapshot_registry import getSnapshotSpec, snapshotSyncTables
 from src.pi.data import sync_log
 from src.pi.obdii.drive_id import DRIVE_COUNTER_TABLE
+from src.pi.sync import push_lock
 from src.pi.sync.backlog import countOutstandingRows, residualAfterBatch
+from src.pi.sync.push_lock import PushLockHeld, PushLockSession
 
-__all__ = ["PushResult", "PushStatus", "PushSummary", "SyncClient"]
+__all__ = ["PushLockHeld", "PushResult", "PushStatus", "PushSummary", "SyncClient"]
 
 logger = logging.getLogger(__name__)
+
+#: Push-lock name of a SyncClient whose caller did not name itself (US-871-a).
+DEFAULT_PUSHER = "sync-client"
 
 
 # ================================================================================
@@ -273,6 +282,11 @@ class PushResult:
 def _utcIsoTimestamp() -> str:
     """Return an ISO-8601 UTC timestamp with a trailing ``Z``."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rowsDelivered(results: list[PushResult]) -> int:
+    """Rows the server acknowledged across ``results`` (OK results only)."""
+    return sum(r.rowsPushed for r in results if r.status == PushStatus.OK)
 
 
 def _makeBatchId(deviceId: str) -> str:
@@ -416,6 +430,10 @@ class SyncClient:
         sleep: Any | None = None,
         clock: Any | None = None,
         simulate: bool = False,
+        pusher: str = DEFAULT_PUSHER,
+        lockWait: bool = True,
+        onLockWait: Callable[[str], None] | None = None,
+        pushLockPath: str = push_lock.DEFAULT_LOCK_PATH,
     ) -> None:
         """Construct a SyncClient from a validated Pi config dict.
 
@@ -438,6 +456,18 @@ class SyncClient:
                 (US-901-a, CIO R37).  Like ``pi.replay.active``, it makes
                 every push REFUSED at the POST sites.  The run's own flag,
                 handed in by the orchestrator that holds it -- not a global.
+            pusher: This caller's name in the push lock (US-871-a): published
+                in states/sync-activity and in another pusher's
+                ``held by`` / ``waiting for`` line.
+            lockWait: The caller's contention policy.  True blocks until the
+                push lock is free (powerwatch drain, sync_now); False makes a
+                held lock raise :class:`PushLockHeld` (eclipse-obd ticks).
+                :meth:`pushAllDeltas` can override it per call.
+            onLockWait: Called with the holder's name before a waiting push
+                blocks (sync_now prints ``waiting for <pusher>``).
+            pushLockPath: The lock file; defaults to
+                :data:`push_lock.DEFAULT_LOCK_PATH`.  The sync-activity
+                record goes to ``pi.splash.statesDir``.
 
         Raises:
             ConfigurationError: If ``companionService.enabled`` is True but
@@ -465,6 +495,14 @@ class SyncClient:
         replayConfig: dict[str, Any] = piConfig.get("replay", {}) or {}
         self._replayActive: bool = bool(replayConfig.get("active", False))
         self._simulate: bool = bool(simulate)
+        self._pusher: str = pusher
+        self._lockWait: bool = lockWait
+        self._onLockWait = onLockWait
+        self._pushLockPath: str = pushLockPath
+        self._statesDir: str = str(
+            (piConfig.get("splash", {}) or {}).get("statesDir")
+            or push_lock.DEFAULT_STATES_DIR
+        )
 
         self._apiKey: str | None = None
         if self.isEnabled:
@@ -1074,8 +1112,13 @@ class SyncClient:
         *,
         bypassQuarantine: bool = False,
         excludeTables: Collection[str] = (),
+        pusher: str | None = None,
+        lockWait: bool | None = None,
     ) -> list[PushResult]:
-        """Push every in-scope table in deterministic order.
+        """Push every in-scope table in deterministic order, holding the push lock.
+
+        US-871-a: the whole sweep runs under :func:`push_lock.holdPushLock`, so
+        no two pushers (in any process) send the same rows.
 
         Snapshot/upsert reject-list tables (``profiles`` / ``vehicle_info``)
         return :data:`PushStatus.SKIPPED` -- they are still in the result set so
@@ -1096,12 +1139,47 @@ class SyncClient:
                 An excluded table yields NO PushResult at all -- it was never
                 attempted, and reporting it as SKIPPED would put it in the
                 operator's table list as though it had been considered.
+            pusher: This call's push-lock name; defaults to the constructor's.
+            lockWait: This call's contention policy; defaults to the
+                constructor's.  False makes a held lock raise.
 
         Returns:
             One :class:`PushResult` per non-excluded delta table in
             :data:`sync_log.IN_SCOPE_TABLES` (sorted), then one per registered
             snapshot-sync table (sorted), so operator-facing output is stable.
+
+        Raises:
+            PushLockHeld: The lock is held by another pusher and this call does
+                not wait.  Nothing was pushed.
         """
+        with self._heldPushLock(pusher, lockWait) as session:
+            results = self._pushAllDeltasLocked(
+                bypassQuarantine=bypassQuarantine, excludeTables=excludeTables,
+            )
+            session.rowsDelivered = _rowsDelivered(results)
+        return results
+
+    @contextmanager
+    def _heldPushLock(
+        self, pusher: str | None, lockWait: bool | None,
+    ) -> Iterator[PushLockSession]:
+        with push_lock.holdPushLock(
+            pusher if pusher is not None else self._pusher,
+            wait=self._lockWait if lockWait is None else lockWait,
+            lockPath=self._pushLockPath,
+            statesDir=self._statesDir,
+            onWait=self._onLockWait,
+        ) as session:
+            yield session
+
+    def _pushAllDeltasLocked(
+        self,
+        *,
+        bypassQuarantine: bool,
+        excludeTables: Collection[str],
+    ) -> list[PushResult]:
+        # The sweep itself; callers hold the push lock (a second flock from
+        # this process on a new descriptor would wait on itself).
         skip = set(excludeTables)
         results: list[PushResult] = []
         for tableName in sorted(sync_log.IN_SCOPE_TABLES):
@@ -1148,17 +1226,24 @@ class SyncClient:
         logger.info(
             "forcePush: flushing pending deltas (explicit manual trigger)"
         )
-        # US-391: forcePush is the explicit re-drain -- bypass the quarantine
-        # throttle so a deploy-time / pre-poweroff flush re-attempts any
-        # quarantined table (e.g. after US-367 lands the ECU lineage spine).
-        results = self.pushAllDeltas(
-            bypassQuarantine=True, excludeTables=excludeTables,
-        )
-        # US-418: forcePush is the explicit power-down flush -- bypass the
-        # unchanged-value idle gate so the server singleton is guaranteed
-        # current before poweroff, even if an interval tick already delivered
-        # the same value.
-        results.append(self.pushDriveCounter(force=True))
+        # US-871-a: the whole flush holds the push lock, under the
+        # constructor's contention policy (the powerwatch drain waits).
+        with self._heldPushLock(None, None) as session:
+            # US-391: forcePush is the explicit re-drain -- bypass the
+            # quarantine throttle so a deploy-time / pre-poweroff flush
+            # re-attempts any quarantined table (e.g. after US-367 lands the
+            # ECU lineage spine).
+            results = self._pushAllDeltasLocked(
+                bypassQuarantine=True, excludeTables=excludeTables,
+            )
+            # Counted before the drive counter: its forced singleton upsert
+            # is not a delivered data row.
+            session.rowsDelivered = _rowsDelivered(results)
+            # US-418: forcePush is the explicit power-down flush -- bypass the
+            # unchanged-value idle gate so the server singleton is guaranteed
+            # current before poweroff, even if an interval tick already
+            # delivered the same value.
+            results.append(self.pushDriveCounter(force=True))
 
         rowsPushed = 0
         tablesOk = 0
