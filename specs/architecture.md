@@ -6821,9 +6821,13 @@ five withheld ones. `O2History` also keeps the window's `FUEL_SYSTEM_STATUS` and
 build.
 - **Per-sample gate (Atlas + Spool, 2026-10-26):** a front sample in the window counts
   only when its paired `FUEL_SYSTEM_STATUS` is `FUEL_SYSTEM_CLOSED_LOOP` and its paired
-  `COOLANT_TEMP` is >= 85 C. Paired = the latest reading with event ts AT OR BEFORE the
-  sample's and within 1.1 s of it (`GATE_PAIR_MAX_SEC`, same poll cycle, Spool S2
-  2026-10-26). 1.1 s < `pi.display.stale.obdLiveSec`, so a paired reading is never stale.
+  `COOLANT_TEMP` is >= 85 C. Paired (US-891-d, Spool RULED 2026-10-27, review FIX 1/2) =
+  the reading NEAREST the sample's event ts, before or after: status within 3.0 s
+  (`GATE_STATUS_PAIR_MAX_SEC`, Spool's measured p90 poll cycle), coolant within 10 s
+  (`GATE_COOLANT_PAIR_MAX_SEC`); otherwise the sample does not count. The runtime poll
+  order is not config.json's: Atlas MEASURED 2026-10-27 status 1 slot (~0.14 s) after
+  O2_B1S1 and coolant 7 slots (~1.0 s) after status, so the old 1.1 s at-or-before pairing
+  (`GATE_PAIR_MAX_SEC`, removed) missed. The gate deques keep `windowSec` + 10 s (FIX 3).
 - **Code 2 only (Spool S3 RULED 2026-10-26):** the constant is IMPORTED from
   `ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP`, never a second literal; `fuel_status`'s
   {2, 5} closed-loop set is a different rule. Status 5 samples do not count.
@@ -6833,10 +6837,13 @@ build.
   convention, never exercised on this car.
 - **Withheld reason** (fewer than 60), by the latest `FUEL_SYSTEM_STATUS` (Spool S1 + S3
   RULED 2026-10-26): absent, non-integral or older than `obdLiveSec` at the emit ->
-  `no_data`; 1/3/4 -> `open_loop`; 2 with the coolant of its cycle (within 1.1 s either
-  way) < 85 C -> `warming_up` (S1 MEASURED: closed loop below 85 C on 16 of 41 drives);
-  anything else, including 5, -> `not_enough_data`. A latest status of 5 never reads
-  `open_loop`.
+  `no_data`; no coolant read within min(`obdLiveSec`, 10 s) of the emit -> `no_data`
+  (US-891-d: never `not_enough_data`, never `open_loop`); 1/3/4 -> `open_loop`; 2 with
+  that newest coolant < 85 C -> `warming_up` (S1 MEASURED: closed loop below 85 C on 16
+  of 41 drives); anything else, including 5, -> `not_enough_data`. A latest status of 5
+  never reads `open_loop`. Pinned by a replay of the 2026-10-27 idle
+  (tests/pi/obdii/fixtures/o2-replay-idle-20261027.json): every reason while coolant
+  < 85 C is `warming_up` (16 flips to `not_enough_data` under the 1.1 s rule).
 
 #### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
 
