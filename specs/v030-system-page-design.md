@@ -200,7 +200,7 @@ relay(CIO, confirmed 2026-10-27, via Marcus): *"keep them. but green = last sync
 | # | Case | Present while | Member `reason` (provider-written) |
 |---|---|---|---|
 | S1 | **Last key-off sync didn't finish.** `priorShutdown` clean, and `sync.priorCustody.verdict` not `DELIVERED` and not an away skip | until `sync.syncedThisBoot` | `Last sync didn't finish · <n> rows kept`. `countIsComplete` false ⇒ `Last sync didn't finish · row count unknown` |
-| S2 | **Last stop was cut off.** `priorShutdown` not clean, and `rowsWaiting` > 0 or null. The custody record is then from an OLDER shutdown, so its verdict is NOT used (Atlas) | until `sync.syncedThisBoot` | `Last stop was cut off · sync result unknown · <n> rows waiting` (`rows not read` when null) |
+| S2 | **Last stop was cut off.** the `priorShutdown` verdict is `ungraceful` (Atlas, positive proof: `no_record` and `unread` are neither S1 nor S2), and `rowsWaiting` > 0 or null. The custody record is then from an OLDER shutdown, so its verdict is NOT used (Atlas) | until `sync.syncedThisBoot` | `Last stop was cut off · sync result unknown · <n> rows waiting` (`rows not read` when null) |
 | S3 | **Not getting through at home.** Parked, at home (`wifi.home` true), `rowsWaiting` > 0, `lastOkTs` older than `pi.dashboard.syncStaleThresholdSeconds` (120 s, Spool S-3) | until `lastOkTs` is newer than the threshold | `Not syncing at home · <n> rows waiting · last sent <h:mm AM/PM>` (`never` when null) |
 
 - `<n>` is comma-grouped (`1,240`) by the provider. No promise words (no "will retry").
@@ -312,7 +312,8 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
   - **Banned words:** `cabin`, `interior`, `ambient`. It is the chip's own temperature, which runs above the air around it.
   - **Only here.** Never on Driving, the main System page or LAST UPDATED.
   - **Why here:** the main page is full (verdict 40 + 4 rows × 48 = 232 of 270; a fifth row ≥ `--row-min` gives 280, and the page would scroll). LAST UPDATED says *when* a device last reported, never a value, and is at 264 of 270.
-  - **Fit:** the Pi detail goes from 5 lines to 6 (6 × 44 = **264 of the 270 px** body, no scroll). Width: the label ≈ 172 px (Michroma `--fs-label`) + `41.3 °C` ≈ 84 px (mono), under 448.
+  - **Label, exactly `IMU CHIP TEMP`:** the ruled words, upper-cased like `CPU`, `THROTTLING`, `DISK` and `UPTIME` (`piDetailView`).
+  - **Fit: the Pi detail MAY SCROLL (CIO RULED 2026-10-27).** It is parked-only diagnostics, so it is exempt from the no-scroll rule, with a **visible scrollbar** (no silent clip). *Correction (UIDEV-021, S119 review 2026-10-27):* the earlier `6 × 44 = 264 of 270` was wrong. Each Pi row is a `.detail-card` (label + value line, limit line, read line), about 105 px, so the four shipped rows already overflow on dev.
   - **Source (Atlas RULED 2026-10-27, US-888):** `states/imu.chipTempC`, a number in °C to 1 dp or null. It shares the `states/imu` `ts`, so there is no separate timestamp. It is **not** in `system-status.pi`: that block feeds `overLimit`, and this value has no limit. Its provider is its own S119 story, ahead of the page story. The page reads two state files here, which is routine.
 - **Throttling:** `throttled` now / since boot, in words + `throttledHex`.
 - **Disk:** `diskFreeBytes` in GiB, floored to 0.1, with `limit 20 GiB` (`diskThresholdBytes`).
@@ -327,7 +328,7 @@ relay(CIO, in car 2026-10-27): *"have the bottom navigation called last updated 
 
 **Entry: `UPDATED ›` on the verdict line, left of `SETTINGS ›`.**
 - Same style as `.sys-settings`: neutral link, `--fs-meta`, letter-spacing 0.06em.
-- **Fit:** the widest verdict is `8 ISSUES`. The most members possible are bt, adapter, capture, 3 × sensor, wifi and pi, so the count is one digit: 8 × 22.5 = 180 px.
+- **Fit:** the widest verdict is `9 ISSUES`. The most members possible are bt, adapter, capture, 3 × sensor, wifi, pi and sync, so the count is still one digit: 8 × 22.5 = 180 px.
   - Add `UPDATED ›` (9 × 9.93 = 89.4) and `SETTINGS ›` (99.3), plus 2 × 13 gaps: **395 of 448**.
   - `LAST UPDATED ›` would leave 4 px, so the link says `UPDATED` and the detail's title says `LAST UPDATED`.
 - The ` ›` and the tap follow the I9 / §4.7.2 parked rule, like every detail.
@@ -339,7 +340,7 @@ relay(CIO, in car 2026-10-27): *"have the bottom navigation called last updated 
 - **Sources: one reader each, and no new field.**
   - OBD, IMU, LIGHT, UPS: `capture-health.feeds.<feed>` last-row time. This is the same field the DATA detail's last-row age reads, so it isn't read twice: the DATA detail and this one share it.
   - SYNC: `sync.lastOkTs` (last data stored).
-  - WIFI: the WiFi read's `ts`. ASK(Atlas): name the field.
+  - WIFI: `system-status.wifi.ts`, **only when `source.wifi.available === true`**; otherwise `--`. That `ts` is stamped on failed reads too, and a failed read is not a report.
 - **Undated** ⇒ `--` (the DATA detail's undated rule). **Never coloured:** an age has no band. A faulted feed's reason stays on the DATA detail; this page only says *when*.
 - **Per-page UPDATED items go:** Motion's UPDATED cell is the only one (`dashboard.html`, `motion-updated`; Motion §3a).
   - A value's own age (`2 s old` on O2, the UPS row's `12 s ago`, …) **stays**. That says how fresh the number beside it is (honest instrument), not when a device last spoke.
@@ -347,7 +348,9 @@ relay(CIO, in car 2026-10-27): *"have the bottom navigation called last updated 
 **The shared page-detail pattern** (Engine HISTORY, Fuel FUEL TRIM, Motion IMU, and this one):
 - **Where it renders:** the one detail overlay (§4.6 I8 `#sys-detail`, or a sibling with the same rules; the element is Ralph's call). It is solid (the P-4 rule: a navigational overlay is a destination).
 - **Header:** `‹ BACK` top left; the title in Michroma.
-- **Body:** 320 − 34 − 2 × 8 = **270 px**. **No detail scrolls** (the CIO's no-scroll rule, applied here too); each detail's spec carries its height budget.
+- **Host (X-1, Atlas S119 gate, UIDEV-021, S119 review 2026-10-27):** a sibling of `#sys-detail` whose chrome gives 270 px: a **34 px header** (= `--bar-h`), body padding 8 px top and bottom, no extra gap. `#sys-detail`'s own chrome (4/10 padding, 44 + 1 header, 8 px body top and row gap) leaves only 253 px, so these details do NOT render there. `‹ BACK` paints inside the 34 px header and keeps a **≥ `--tap-min` hit box** through a transparent `::after` (the US-556 kebab rule: the visual box is not the hit box).
+- **Body:** 320 − 34 − 2 × 8 = **270 px**. **No detail scrolls** (the CIO's no-scroll rule, applied here too); each detail's spec carries its height budget. **Exception: the Pi detail (§4.6.2, CIO 2026-10-27).** Each budget is proven by a modelled height test from the declared CSS and tokens, with a planted-overflow negative control. Atlas's headless check on the Pi at deploy is the authority.
+- **Leaving parked closes it (R1, UIDEV-021, S119 review 2026-10-27):** when `currentParked()` goes false, an open page detail closes and its page shows. A destination screen must not hold the glass while the car moves.
 - **Opens only while parked.** The opener is either a `›` link (System) or the **detail button**.
 - **The detail button:**
   - Michroma `--fs-label` label, ` ›` in mono, `--text-primary` text;
@@ -544,7 +547,8 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
     - `imu-temp-null` (`chipTempC: null`, `reasons.chipTempC: no_reading`), `imu-unavailable` (`available: false`) and `imu-stale` (old `ts`) ⇒ `--`;
     - the page reads `states/imu.chipTempC`, never `system-status.pi`.
     - Grep: no `cabin`, `interior` or `ambient` in the page; no IMU temperature on Driving.
-    - **Fit, in a real browser:** the Pi detail body, all 6 lines, has `scrollHeight <= clientHeight`.
+    - The label is exactly `IMU CHIP TEMP`. With CPU over its limit and the chip temp high, the chip row stays neutral and the `pi` member is unchanged.
+    - No fit check: the Pi detail may scroll (CIO 2026-10-27), with a visible scrollbar.
 
 ## 7. Fixtures (S10)
 Each is a `system-status` (+ `capture-health`, + `battery-health` where named) payload, regenerated from the real builders (Atlas L7), never hand-typed.

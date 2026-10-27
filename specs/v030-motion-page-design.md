@@ -76,10 +76,10 @@ The CIO had to scroll to reach COMPASS `calibrated` (relay, 2026-10-27: *"The wo
 └──────────────────────────────────────────────┘
 ```
 
-- **UPDATED leaves this page.** It moves to System `LAST UPDATED` (System §4.6.3, the CIO's one-place ask). Staleness stays visible here through the shared rule: a stale card dims as a whole.
+- **UPDATED leaves this page.** It moves to System `LAST UPDATED` (System §4.6.3, the CIO's one-place ask). Staleness stays visible here through AC 14, unchanged: stale dims the top two bands only, and the health block keeps full opacity (§4.5). *(Correction, UIDEV-021, S119 review 2026-10-27: this line used to say "a stale card dims as a whole", which contradicted AC 14 and the shipped rule.)*
 - **The health block is ONE row:** COMPASS | GYRO, columns `1fr max-content`, 8 px gap.
 - **TILT FIX moves to the IMU detail.** So do UPDATED (also on LAST UPDATED) and the four health values with their full reasons.
-- **The IMU detail:** a parked tap on the health row opens it, in the shared detail overlay (System §4.6.3). ` ›` is appended to the row's last value **only while parked**, when the tap works (the I9 rule).
+- **The IMU detail:** a parked tap on the health row opens it, in the shared detail host (System §4.6.3, the X-1 sibling). **Height (UIDEV-021, S119 review 2026-10-27):** UPDATED, COMPASS, TILT FIX, GYRO and the two peak lines = 6 × 44 = **264 of 270**. That holds only because **every line is one line**: `white-space: nowrap` + `text-overflow: ellipsis`. Modelled, ≤ 270. ` ›` is appended to the row's last value **only while parked**, when the tap works (the I9 rule).
 - **Each g cell has ONE sub-line:** the peak line when the value reads; the reason when it doesn't (the reason replaces the peak, and the peaks are always in the IMU detail).
 - **Every reason in the health row and the g cells is one line with an ellipsis**, and the full text is in the IMU detail (the System rule: the ellipsis is the visible sign, so this is no silent clip). This replaces §3's wrap-inside-the-column rule here, because a wrapped reason adds a line the budget doesn't have.
 - **Spacing:** `--motion-band-pad` 6 → **4 px**, `--motion-band-gap` 6 → **4 px**.
