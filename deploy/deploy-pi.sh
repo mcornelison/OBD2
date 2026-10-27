@@ -1020,12 +1020,28 @@ step_install_wifi_recover_unit() {
     # READ-ONLY check reads psk-flags of every Wi-Fi profile with `nmcli -g`
     # (never the psk field, never a modify) and prints ONE WARNING line per
     # profile whose psk-flags != 0. No nmcli -> one WARN; the deploy continues.
+    #
+    # US-925-c (Atlas RULED): the unit runs a ROOT-OWNED COPY of the script.
+    # Root with an empty capability set cannot enter the home of the deploy user
+    # (Errno 13, a crash loop the old 'enabled + active' echo never saw), so
+    # src/pi/network/wifi_recover.py is copied to /usr/local/lib/eclipse/ the
+    # way the unit file is synced: cmp -s guard, `sudo install` (root:root),
+    # then cmp-verified. Both sources are checked BEFORE anything is installed.
+    # Then the GATE: the unit is Type=notify and the script sends READY=1 only
+    # once subscribed, so the step FAILS unless `systemctl restart` exits 0
+    # (it waits for READY, bounded by the systemd start timeout), NRestarts is 0,
+    # and the journal of this invocation has the 'watching wlan0' line. Each failure
+    # names its check.
+    local scriptDir="/usr/local/lib/eclipse"
     echo "--- Step: Installing eclipse-wifi-recover systemd unit (US-925-a, sync-if-changed) ---"
     if $DRY_RUN; then
         echo "DRY-RUN would: dpkg -s python3-dbus python3-gi (FAIL the deploy, naming the package, if either is missing)"
         echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-wifi-recover.service /etc/systemd/system/eclipse-wifi-recover.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo install -d -m 0755 ${scriptDir} (root-owned, only if absent)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/src/pi/network/wifi_recover.py ${scriptDir}/wifi_recover.py || (sudo install -m 0644, root:root, cmp-verified)"
         echo "DRY-RUN would: sudo systemctl enable eclipse-wifi-recover.service"
-        echo "DRY-RUN would: sudo systemctl restart eclipse-wifi-recover.service (start; replaces a running copy)"
+        echo "DRY-RUN would: sudo systemctl restart eclipse-wifi-recover.service (start; replaces a running copy; Type=notify waits for READY)"
+        echo "DRY-RUN would: gate -- restart exit 0, systemctl show -p NRestarts --value = 0, journal of this invocation has 'watching wlan0' (else FAIL the deploy naming the check)"
         echo "DRY-RUN note: NetworkManager is NOT restarted and brcmfmac is NOT reloaded"
         echo "DRY-RUN would: psk-flags check -- nmcli -g 802-11-wireless-security.psk-flags connection show uuid <each Wi-Fi profile> (read-only, never the psk); ONE WARNING per profile with psk-flags != 0, else 'all Wi-Fi secrets system-owned (psk-flags=0)'; nmcli unavailable -> one WARN, the deploy continues"
         return 0
@@ -1041,8 +1057,15 @@ step_install_wifi_recover_unit() {
 
         SRC='${PI_PATH}/deploy/eclipse-wifi-recover.service'
         DST='/etc/systemd/system/eclipse-wifi-recover.service'
+        PY_SRC='${PI_PATH}/src/pi/network/wifi_recover.py'
+        PY_DIR='${scriptDir}'
+        PY_DST=\"\$PY_DIR/wifi_recover.py\"
         if [ ! -f \"\$SRC\" ]; then
             echo 'ERROR: eclipse-wifi-recover.service not present in deploy/ on the Pi (sync_tree whitelist?).' >&2
+            exit 1
+        fi
+        if [ ! -f \"\$PY_SRC\" ]; then
+            echo \"ERROR: \$PY_SRC not present on the Pi (sync_tree?) -- eclipse-wifi-recover not restarted.\" >&2
             exit 1
         fi
 
@@ -1054,9 +1077,37 @@ step_install_wifi_recover_unit() {
             echo 'eclipse-wifi-recover.service installed + daemon-reload complete.'
         fi
 
+        if ! sudo test -d \"\$PY_DIR\"; then
+            sudo install -d -m 0755 \"\$PY_DIR\"
+            echo \"created \$PY_DIR (root:root 0755)\"
+        fi
+        if sudo test -f \"\$PY_DST\" && sudo cmp -s \"\$PY_SRC\" \"\$PY_DST\"; then
+            echo \"\$PY_DST already up-to-date.\"
+        else
+            sudo install -m 0644 \"\$PY_SRC\" \"\$PY_DST\"
+            if ! sudo cmp -s \"\$PY_SRC\" \"\$PY_DST\"; then
+                echo \"ERROR: \$PY_DST does not match \$PY_SRC after install -- eclipse-wifi-recover not restarted.\" >&2
+                exit 1
+            fi
+            echo \"copied \$PY_SRC -> \$PY_DST (root:root 0644, cmp-verified)\"
+        fi
+
         sudo systemctl enable eclipse-wifi-recover.service
-        sudo systemctl restart eclipse-wifi-recover.service
-        echo 'eclipse-wifi-recover.service enabled + active.'
+        if ! sudo systemctl restart eclipse-wifi-recover.service; then
+            echo 'ERROR: wifi-recover gate: systemctl restart eclipse-wifi-recover.service failed (no READY=1 before the start timeout?) -- see journalctl -u eclipse-wifi-recover -b' >&2
+            exit 1
+        fi
+        N_RESTARTS=\$(sudo systemctl show -p NRestarts --value eclipse-wifi-recover.service) || N_RESTARTS=unreadable
+        if [ \"\$N_RESTARTS\" != 0 ]; then
+            echo \"ERROR: wifi-recover gate: NRestarts=\$N_RESTARTS (expected 0) -- the service crash-looped; see journalctl -u eclipse-wifi-recover -b\" >&2
+            exit 1
+        fi
+        INVOCATION=\$(sudo systemctl show -p InvocationID --value eclipse-wifi-recover.service) || INVOCATION=
+        if [ -z \"\$INVOCATION\" ] || ! sudo journalctl _SYSTEMD_INVOCATION_ID=\"\$INVOCATION\" --output cat --no-pager | grep -qF 'watching wlan0'; then
+            echo \"ERROR: wifi-recover gate: no 'watching wlan0' line in the journal of invocation \${INVOCATION:-<none>}\" >&2
+            exit 1
+        fi
+        echo 'eclipse-wifi-recover.service gate passed: restart READY, NRestarts=0, watching wlan0.'
 
         if ! command -v nmcli >/dev/null 2>&1 || ! WIFI_ROWS=\$(nmcli -g UUID,TYPE connection show 2>/dev/null); then
             echo 'WARN: nmcli unavailable -- the Wi-Fi psk-flags check could not run; the deploy continues.' >&2

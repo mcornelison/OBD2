@@ -137,7 +137,9 @@
       "available": true,
       "gear": 3,
       "reason": "engaged",
-      "ts": "2026-10-22T23:10:00Z"
+      "ts": "2026-10-22T23:10:00Z",
+      "hintGear": null,
+      "hintDirection": null
     },
     "settings": {
       "pi.display.carousel.autoRotateS": {

@@ -1,0 +1,76 @@
+{
+  "description": "Gear null, reason settling, provider hint 3 up: hollow '3' with an SVG up-triangle; the page draws the provider's hint and computes nothing.",
+  "now": "2026-10-13T12:30:10Z",
+  "obd-live": {
+    "params": {
+      "RPM": {
+        "value": 2450,
+        "unit": "rpm",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-13T12:30:08Z",
+          "reason": "rpm below 5500"
+        },
+        "last": null,
+        "scale": {
+          "amberFrom": 5500,
+          "redFrom": 7000
+        }
+      },
+      "SPEED": {
+        "value": 64,
+        "unit": "km/h",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "COOLANT_TEMP": {
+        "value": 88,
+        "unit": "C",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-13T12:30:08Z",
+          "reason": "coolant has not held >= 104 C for 30 s"
+        },
+        "last": null
+      },
+      "INTAKE_TEMP": {
+        "value": 31,
+        "unit": "C",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "BATTERY_V": {
+        "value": 14.1,
+        "unit": "V",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-13T12:30:08Z",
+          "reason": "battery in its green range with the engine running"
+        },
+        "last": null
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:30:10Z"
+  },
+  "gear": {
+    "available": false,
+    "gear": null,
+    "reason": "settling",
+    "hintGear": 3,
+    "hintDirection": "up",
+    "ts": "2026-10-13T12:30:10Z"
+  }
+}

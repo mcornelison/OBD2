@@ -1,0 +1,30 @@
+{
+  "description": "neither sensor ever read, gate inputs live",
+  "now": "2026-10-26T15:04:59.000Z",
+  "o2": {
+    "front": {
+      "value": null,
+      "ts": null,
+      "stale": false,
+      "reason": "not_read",
+      "last": null,
+      "samples": []
+    },
+    "rear": {
+      "value": null,
+      "ts": null,
+      "stale": false,
+      "reason": "not_read",
+      "last": null,
+      "samples": []
+    },
+    "samplePeriodSec": null,
+    "windowSec": 300.0,
+    "midlineV": 0.45,
+    "frontVerdict": "not_enough_data",
+    "frontReason": "not_enough_data",
+    "rearVerdict": "not_rated",
+    "catalystVerdict": "not_rated",
+    "ts": "2026-10-26T15:04:59Z"
+  }
+}

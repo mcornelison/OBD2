@@ -14,6 +14,7 @@
 # ================================================================================
 # 2026-10-25    | Rex (US-925-a) | Initial
 # 2026-10-26    | Rex (US-925-b) | psk-flags != 0 -> one WARNING per Wi-Fi profile
+# 2026-10-26    | Rex (US-925-c) | READY=1 only after the subscription; bus_name pinned
 # ================================================================================
 ################################################################################
 
@@ -27,12 +28,15 @@ import logging
 import re
 import sys
 import tokenize
+import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from src.pi.network import wifi_recover
 from src.pi.network.wifi_recover import (
+    NM_BUS_NAME,
     NM_DEVICE_STATE_ACTIVATED,
     NM_DEVICE_STATE_FAILED,
     NM_DEVICE_STATE_REASON_NO_SECRETS,
@@ -750,3 +754,208 @@ def test_neverModifiesAProfile_neverReadsOrPrintsAPsk():
     assert "psk" not in strings
     assert not re.search(r"802-11-wireless-security\.psk\b(?!-)", source)
     assert not re.search(r"\[[\"']psk[\"']\]", source)
+
+
+# ================================================================================
+# US-925-c: READY=1 only after the subscription, and the sender is pinned
+# ================================================================================
+
+NOTIFY_PATH = "/run/systemd/notify"
+
+
+class _FakeSocket:
+    """A datagram socket that records into the shared event log."""
+
+    def __init__(self, events: list[tuple[str, Any]], family: str, kind: str) -> None:
+        self._events = events
+        self._events.append(("socket", (family, kind)))
+
+    def __enter__(self) -> _FakeSocket:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._events.append(("close", None))
+
+    def connect(self, address: str) -> None:
+        self._events.append(("connect", address))
+
+    def sendall(self, data: bytes) -> None:
+        self._events.append(("send", data))
+
+
+def _fakeSocketModule(events: list[tuple[str, Any]]) -> types.SimpleNamespace:
+    # The bench's Windows CPython has no socket.AF_UNIX, so the module is faked whole.
+    return types.SimpleNamespace(
+        AF_UNIX="AF_UNIX",
+        SOCK_DGRAM="SOCK_DGRAM",
+        socket=lambda family, kind: _FakeSocket(events, family, kind),
+    )
+
+
+class _FakeEmptySettings:
+    def ListConnections(self, dbus_interface: str) -> list[str]:  # noqa: N802 -- D-Bus name
+        return []
+
+
+class _FakeSystemBus:
+    def __init__(self, events: list[tuple[str, Any]]) -> None:
+        self._events = events
+        self.receivers: list[dict[str, Any]] = []
+
+    def get_object(self, busName: str, path: str, introspect: bool = True) -> Any:
+        return _FakeEmptySettings()
+
+    def add_signal_receiver(self, handler: Any, **kwargs: Any) -> None:
+        self.receivers.append(kwargs)
+        self._events.append(("subscribed", kwargs.get("bus_name")))
+
+
+class _EventHandler(logging.Handler):
+    def __init__(self, events: list[tuple[str, Any]]) -> None:
+        super().__init__()
+        self._events = events
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._events.append(("log", record.getMessage()))
+
+
+def _runMain(
+    monkeypatch: pytest.MonkeyPatch, notifySocket: str | None
+) -> tuple[list[tuple[str, Any]], _FakeSystemBus]:
+    """Run the real main() on a fake dbus/gi and a fake socket module."""
+    events: list[tuple[str, Any]] = []
+    bus = _FakeSystemBus(events)
+
+    dbusModule = types.ModuleType("dbus")
+    dbusModule.SystemBus = lambda: bus  # type: ignore[attr-defined]
+    dbusModule.exceptions = types.SimpleNamespace(  # type: ignore[attr-defined]
+        DBusException=type("DBusException", (Exception,), {})
+    )
+    glibLoopModule = types.ModuleType("dbus.mainloop.glib")
+    glibLoopModule.DBusGMainLoop = lambda set_as_default: None  # type: ignore[attr-defined]
+    repositoryModule = types.ModuleType("gi.repository")
+    repositoryModule.GLib = types.SimpleNamespace(  # type: ignore[attr-defined]
+        MainLoop=lambda: types.SimpleNamespace(run=lambda: events.append(("loop", None))),
+        PRIORITY_DEFAULT=0,
+        child_watch_add=lambda *args: None,
+    )
+    for name, module in (
+        ("dbus", dbusModule),
+        ("dbus.mainloop", types.ModuleType("dbus.mainloop")),
+        ("dbus.mainloop.glib", glibLoopModule),
+        ("gi", types.ModuleType("gi")),
+        ("gi.repository", repositoryModule),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(wifi_recover, "socket", _fakeSocketModule(events))
+    if notifySocket is None:
+        monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    else:
+        monkeypatch.setenv("NOTIFY_SOCKET", notifySocket)
+
+    handler = _EventHandler(events)
+    level = wifi_recover.logger.level
+    wifi_recover.logger.addHandler(handler)
+    wifi_recover.logger.setLevel(logging.INFO)
+    try:
+        assert wifi_recover.main() == 0
+    finally:
+        wifi_recover.logger.removeHandler(handler)
+        wifi_recover.logger.setLevel(level)
+    return events, bus
+
+
+def _kinds(events: list[tuple[str, Any]]) -> list[str]:
+    return [kind for kind, _ in events]
+
+
+def test_main_sendsReadyOnlyAfterTheSubscription(monkeypatch: pytest.MonkeyPatch):
+    """
+    Given: systemd set NOTIFY_SOCKET (Type=notify)
+    When: main() starts
+    Then: READY=1 goes out once, after add_signal_receiver returned, before the loop runs
+    """
+    events, _ = _runMain(monkeypatch, NOTIFY_PATH)
+
+    kinds = _kinds(events)
+    assert kinds.count("send") == 1
+    assert ("send", b"READY=1") in events
+    assert ("connect", NOTIFY_PATH) in events
+    assert ("socket", ("AF_UNIX", "SOCK_DGRAM")) in events
+    assert kinds.index("subscribed") < kinds.index("socket") < kinds.index("send")
+    assert kinds.index("send") < kinds.index("loop")
+
+
+def test_main_watchingLineIsWrittenBeforeReady(monkeypatch: pytest.MonkeyPatch):
+    """The deploy gate reads 'watching wlan0' as soon as the restart returns on READY."""
+    events, _ = _runMain(monkeypatch, NOTIFY_PATH)
+
+    kinds = _kinds(events)
+    watching = [i for i, (k, v) in enumerate(events) if k == "log" and "watching wlan0" in v]
+    assert len(watching) == 1
+    assert kinds.index("subscribed") < watching[0] < kinds.index("send")
+
+
+def test_main_noNotifySocket_sendsNothing_andStillRuns(monkeypatch: pytest.MonkeyPatch):
+    """Desk / tests: NOTIFY_SOCKET unset -> no socket at all, no failure."""
+    events, _ = _runMain(monkeypatch, None)
+
+    kinds = _kinds(events)
+    assert "socket" not in kinds and "send" not in kinds
+    assert kinds[-1] == "loop"
+
+
+def test_main_abstractNotifySocket_atBecomesNul(monkeypatch: pytest.MonkeyPatch):
+    events, _ = _runMain(monkeypatch, "@/org/freedesktop/systemd1/notify/42")
+
+    assert ("connect", "\0/org/freedesktop/systemd1/notify/42") in events
+
+
+def test_main_subscribesOnlyToNetworkManagersSignals(monkeypatch: pytest.MonkeyPatch):
+    """Sender match (Atlas RULED): only NetworkManager's StateChanged reaches the handler."""
+    _, bus = _runMain(monkeypatch, None)
+
+    assert len(bus.receivers) == 1
+    assert bus.receivers[0]["bus_name"] == "org.freedesktop.NetworkManager"
+    assert NM_BUS_NAME == "org.freedesktop.NetworkManager"
+
+
+def test_subscription_passesBusName_static():
+    calls = [
+        n
+        for n in ast.walk(_tree())
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "add_signal_receiver"
+    ]
+    (call,) = calls
+    busName = [k.value for k in call.keywords if k.arg == "bus_name"]
+    assert len(busName) == 1
+    assert isinstance(busName[0], ast.Name) and busName[0].id == "NM_BUS_NAME"
+
+
+def test_notifyReady_sendFails_logsOneErrorAndReturnsFalse(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    class _Refused(_FakeSocket):
+        def connect(self, address: str) -> None:
+            raise ConnectionRefusedError("refused")
+
+    events: list[tuple[str, Any]] = []
+    fake = _fakeSocketModule(events)
+    fake.socket = lambda family, kind: _Refused(events, family, kind)
+    monkeypatch.setattr(wifi_recover, "socket", fake)
+    caplog.set_level(logging.INFO, logger=wifi_recover.LOGGER_NAME)
+
+    assert wifi_recover.notifyReady({"NOTIFY_SOCKET": NOTIFY_PATH}) is False
+    assert len(_errorLines(caplog)) == 1
+    assert "send" not in _kinds(events)
+
+
+def test_notifyReady_unsetOrEmpty_returnsFalseAndOpensNothing(monkeypatch: pytest.MonkeyPatch):
+    events: list[tuple[str, Any]] = []
+    monkeypatch.setattr(wifi_recover, "socket", _fakeSocketModule(events))
+
+    assert wifi_recover.notifyReady({}) is False
+    assert wifi_recover.notifyReady({"NOTIFY_SOCKET": ""}) is False
+    assert events == []

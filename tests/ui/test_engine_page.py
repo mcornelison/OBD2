@@ -35,6 +35,7 @@
 #                               card at index 4.
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
 #               |              | (9 -> 8).
+# 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
 # ================================================================================
 ################################################################################
 
@@ -86,8 +87,9 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
 # MOVED PIN (US-894-e): the Battery card is retired (9 -> 8); its cell is
 # the System page's UPS row.
+# MOVED PIN (US-891-c): the O2 card joins between Fuel and Motion (8 -> 9).
 CARD_ORDER = [
-    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Light", "Alerts",
     "System Status",
 ]
 

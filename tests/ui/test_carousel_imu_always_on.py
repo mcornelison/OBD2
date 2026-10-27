@@ -32,6 +32,7 @@
 #                               homeFace / liveCardView / renderHome cases of (1)
 #                               go with them; the order pin reads Motion, and the
 #                               stripper's negative control reads motionView.
+# 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
 # ================================================================================
 ################################################################################
 
@@ -140,8 +141,9 @@ def test_html_alertsIsTheSecondCard():
     # MOVED PIN (US-896-a): the NAV card sits between Driving and Engine (E-2).
     # MOVED PIN (US-892-b): the Motion card replaces the Home card in its slot.
     # MOVED PIN (US-893-b): the Light card sits between Motion and Alerts (E-2).
-    assert cards[:8] == [
-        "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    # MOVED PIN (US-891-c): the O2 card sits between Fuel and Motion (O-1).
+    assert cards[:9] == [
+        "Driving", "Navigation", "Engine", "Fuel", "O2", "Motion", "Light", "Alerts",
         "System Status",
     ]
 

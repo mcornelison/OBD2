@@ -35,6 +35,8 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: re-pointed from the Home GEAR tile
 #                               DOM at gearView (Atlas B1/B2); the vanish pair
 #                               reads the Driving glyph.
+# 2026-10-26    | Rex (US-904-a) | MOVED PIN: the exact states/gear payload gains
+#               |              | hintGear/hintDirection (null for a solid gear).
 # ================================================================================
 ################################################################################
 
@@ -250,6 +252,9 @@ class TestTheDerivedGearReachesThePanel:
             "gear": 3,
             "reason": gd.REASON_ENGAGED,
             "ts": _emitCruise(tmp_path, 3)["ts"],
+            # US-904-a MOVED PIN: every write carries the hint, null when none.
+            "hintGear": None,
+            "hintDirection": None,
         }
 
 

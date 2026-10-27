@@ -43,6 +43,7 @@
 #                                alertsAckNoticeSec 3 + finite > 0.
 # 2026-10-22    | Rex (US-923)   | pi.fuel.resetMaxSpeedKph default 8 + positivity;
 #                                config.json carries it.
+# 2026-10-26    | Rex (US-891-a) | pi.display.o2.windowSec default 300 + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1573,6 +1574,27 @@ def test_validate_engineHistory_nonPositiveOrNonFinite_rejected(key, bad):
     cfg["pi"] = {"display": {"engineHistory": {key: bad}}}
     with pytest.raises(ConfigValidationError, match=f"pi.display.engineHistory.{key}"):
         ConfigValidator().validate(cfg)
+
+
+def test_validate_o2WindowSec_defaultsTo300():
+    """US-891-a: states/o2 keeps the last 5 minutes of O2 samples by default
+    (spec v030-o2-page-design s4.2, Spool 2026-10-13)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["o2"]["windowSec"] == 300
+
+
+@pytest.mark.parametrize("bad", [0, -300, float("inf"), float("nan"), "300", True])
+def test_validate_o2WindowSec_nonPositiveOrNonFinite_rejected(bad):
+    """US-891-a: the O2 window must be a finite number > 0; the error names the key."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"o2": {"windowSec": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.o2.windowSec"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_o2WindowSec_absentUnderCustomDefaults_isSkipped():
+    result = ConfigValidator(defaults={"logging.level": "INFO"}).validate(_baseCfg())
+    assert "o2" not in result.get("pi", {}).get("display", {})
 
 
 def test_validate_mafMaxGs_defaultsTo160():

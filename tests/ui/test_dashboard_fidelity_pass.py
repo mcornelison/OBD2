@@ -48,6 +48,8 @@
 #                               (NO WARNINGS / NOT CHECKED YET) join it.
 # 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the deleted takeover floods'
 #                               deep-edge token pins retired.
+# 2026-10-26    | Ralph (Rex)  | US-891-c -- MOVED PIN: the O2 labels and live chip
+#                               join the font-display set (O2 spec s3).
 # ================================================================================
 ################################################################################
 
@@ -443,7 +445,13 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     MOVED PIN (US-894-b): the System page's row LABELS (OBD, then DATA / WIFI /
     UPS as their rows land) are Michroma (system spec s3: "row label --fs-label
     --font-display"); the values and sentences stay --font-mono, pinned in
-    tests/ui/test_system_page_obd_row.py."""
+    tests/ui/test_system_page_obd_row.py.
+
+    MOVED PIN (US-891-c): the O2 page's section LABELS (FRONT  BEFORE CAT /
+    REAR  AFTER CAT / CATALYST) and its LIVE verdict chip (SWITCHING / STUCK
+    LEAN / STUCK RICH) are Michroma (O2 spec s3). The withheld chip is lower
+    case, so --font-mono; the volts and the meta line stay --font-mono, pinned
+    in tests/ui/test_o2_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -458,6 +466,8 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#fuel-card .fuel-mpg .fuel-label",
         "#nav-card .nav-label",
         "#motion-card .motion-label",
+        "#o2-card .o2-label",
+        '#o2-card .o2-chip[data-live="true"]',
         "#light-card .light-word",
         "#light-card .light-label",
         "#light-card .light-status-label",

@@ -4,6 +4,7 @@
 #          it with NO_SECRETS (US-925-a / F-155)
 # Author:  Rex (Ralph Agent)
 # Created: 2026-10-25 -- US-925-a (Atlas design; Atlas RULED Q-925-1)
+# Changed: 2026-10-26 -- US-925-c: root-owned script path, Type=notify
 #
 # Why
 # ---
@@ -23,8 +24,24 @@
 # polkit grant to mcornelison would also reach Chromium, which runs as that
 # user. Precedent: eclipse-rfkill-unblock.service. No polkit rule is added.
 # The sandbox below is what keeps root small: no new privileges, an EMPTY
-# capability bounding set, a read-only OS and /home (the code lives under
-# /home), a private /tmp, and AF_UNIX only (the system bus and the journal).
+# capability bounding set, a read-only OS, NO home directories at all, a
+# private /tmp, and AF_UNIX only (the system bus, the journal and the notify
+# socket).
+#
+# The root-owned copy (US-925-c, Atlas RULED)
+# -------------------------------------------
+# Root with an empty capability set has no CAP_DAC_OVERRIDE, so it cannot
+# enter the deploy user's 0700 home: run from the repo checkout, this unit
+# crash-looped with Errno 13 while the deploy reported it active (V0.30.15).
+# The deploy step copies src/pi/network/wifi_recover.py to
+# /usr/local/lib/eclipse/wifi_recover.py (root:root 0644, cmp-verified), so the
+# unit needs no path in a home directory and ProtectHome=yes hides them all.
+# No CAP_DAC_* is added: the fix is the path, not a wider capability set.
+#
+# Type=notify: wifi_recover.main sends READY=1 on $NOTIFY_SOCKET only after
+# its StateChanged subscription is in place, so `systemctl restart` returns
+# only once the service is really listening (or fails at the start timeout).
+# NotifyAccess=main: the nmcli children it launches cannot speak for it.
 #
 # The SYSTEM python, not obd2-venv
 # --------------------------------
@@ -38,12 +55,15 @@
 # (device paths change when NM restarts).
 #
 # Installation: deploy/deploy-pi.sh step_install_wifi_recover_unit (sync-if-
-# changed + daemon-reload-on-change + enable + restart, every deploy). It never
-# restarts NetworkManager and never reloads brcmfmac, so SSH survives a deploy.
+# changed unit + script copy, daemon-reload-on-change, enable + restart, every
+# deploy). The step FAILS unless the restart exits 0, NRestarts is 0 and this
+# invocation's journal has the "watching wlan0" line. It never restarts
+# NetworkManager and never reloads brcmfmac, so SSH survives a deploy.
 #
 # Verify:
-#   systemctl is-active eclipse-wifi-recover      # -> active
-#   journalctl -u eclipse-wifi-recover -b         # -> "watching wlan0 ..."
+#   systemctl is-active eclipse-wifi-recover              # -> active
+#   systemctl show -p NRestarts --value eclipse-wifi-recover  # -> 0
+#   journalctl -u eclipse-wifi-recover -b                 # -> "watching wlan0 ..."
 # ==============================================================================
 
 [Unit]
@@ -52,12 +72,13 @@ After=NetworkManager.service
 PartOf=NetworkManager.service
 
 [Service]
-WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
-ExecStart=/usr/bin/python3 /home/mcornelison/Projects/Eclipse-01/src/pi/network/wifi_recover.py
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/bin/python3 /usr/local/lib/eclipse/wifi_recover.py
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_UNIX
 CapabilityBoundingSet=

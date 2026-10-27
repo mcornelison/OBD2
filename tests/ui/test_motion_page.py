@@ -30,6 +30,7 @@
 # ================================================================================
 # 2026-10-19    | Rex (US-892-b) | Initial -- Motion pitch, grade graph, g + peaks.
 # 2026-10-19    | Rex (US-892-c) | The IMU health block + 5 fixtures.
+# 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
 # ================================================================================
 ################################################################################
 
@@ -429,12 +430,14 @@ def _motionMarkup() -> str:
 def test_slot_motionIsIndexFour_afterNavEngineFuel():
     """Card order (E-2): Driving, NAV, Engine, Fuel, Motion, Light, Alerts, ...
 
-    MOVED PIN (US-893-b): the Light card follows Motion (Iris Q6)."""
+    MOVED PIN (US-893-b): the Light card follows Motion (Iris Q6).
+    MOVED PIN (US-891-c): the O2 card sits between Fuel and Motion, so Motion
+    is index 5."""
     tags = _sectionTags(_read(_HTML))
     labels = [re.search(r'aria-label="([^"]+)"', t).group(1) for t in tags]
-    assert labels[:7] == ["Driving", "Navigation", "Engine", "Fuel", "Motion", "Light",
-                          "Alerts"]
-    tag = tags[4]
+    assert labels[:8] == ["Driving", "Navigation", "Engine", "Fuel", "O2", "Motion",
+                          "Light", "Alerts"]
+    tag = tags[5]
     assert 'id="motion-card"' in tag and 'data-page-name="MOTION"' in tag
     for attr in ("data-state", "data-idle-home", "data-face"):
         assert attr not in tag, attr

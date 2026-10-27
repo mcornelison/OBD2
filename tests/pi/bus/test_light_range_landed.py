@@ -14,6 +14,8 @@
 # 2026-08-29    | Atlas   | ARCH-009: land the reading's range context
 # 2026-10-06    | Atlas   | US-731: the fake exposes raw_luminosity (lux is
 #               |         | computed from counts); range assertions unchanged.
+# 2026-10-26    | Rex     | US-906: map cases use sensor_reader.tslGainLabel;
+#               |         | a sentinel proves the one table decides the row.
 # ================================================================================
 ################################################################################
 
@@ -46,7 +48,8 @@ import threading
 
 import pytest
 
-from src.pi.bus.edr_persistence_subscriber import _gainLabel
+from pi.sensors import sensor_reader
+from pi.sensors.sensor_reader import tslGainLabel
 
 
 class TestGainLabelMapping:
@@ -56,16 +59,71 @@ class TestGainLabelMapping:
         (0x00, "low"), (0x10, "med"), (0x20, "high"), (0x30, "max"),
     ])
     def test_knownGainCodesMapToTheSchemaLabels(self, code, label):
-        assert _gainLabel(code) == label
+        assert tslGainLabel(code) == label
 
     def test_anUnknownCodeIsNullNotAGuess(self):
         """A code we do not recognise is not evidence of a gain setting.
         Inventing 'low' for it would be a fabricated context -- the exact
         defect class this story exists to close."""
-        assert _gainLabel(0x99) is None
+        assert tslGainLabel(0x99) is None
 
     def test_aMissingCodeIsNull(self):
-        assert _gainLabel(None) is None
+        assert tslGainLabel(None) is None
+
+
+def _captureLightRow(fields):
+    """Write one light row through a fake connection; return its params."""
+    from src.pi.bus.edr_persistence_subscriber import EdrPersistenceSubscriber
+    rows = []
+
+    class _Conn:
+        def execute(self, sql, params): rows.append((sql, params))
+        def commit(self): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class _Db:
+        def connect(self): return _Conn()
+
+    sub = EdrPersistenceSubscriber.__new__(EdrPersistenceSubscriber)
+    sub._database = _Db()
+    sub._tls = threading.local()  # ARCH-030: __new__ skips __init__
+    buf = {
+        "seq": 9, "tsUtc": "2026-10-26T15:00:00Z", "tsCapture": 3.0,
+        "dataSource": "real", "fields": fields,
+    }
+    sub._writeLightRow(buf, driveId=None)
+    sql, params = rows[0]
+    columns = sql[sql.index("(") + 1:sql.index(")")].replace(" ", "").split(",")
+    return dict(zip(columns, params, strict=True))
+
+
+class TestTheOneGainTableDecides:
+    """US-906: edr_light_sample.gain comes from sensor_reader's one map."""
+
+    def test_theRowGainIsWhateverSensorReaderSays(self, monkeypatch):
+        """Replace sensor_reader.tslGainLabel with a sentinel: if the stored
+        label is the sentinel, no private copy of the table can disagree."""
+        seen = []
+
+        def _sentinel(code):
+            seen.append(code)
+            return "SENTINEL-906"
+
+        monkeypatch.setattr(sensor_reader, "tslGainLabel", _sentinel)
+        row = _captureLightRow({"lux": 1.0, "raw": (1, 2, 3), "range": (0x20, 100)})
+        assert row["gain"] == "SENTINEL-906"
+        assert seen == [0x20]
+
+    def test_aKnownCodeStillLandsItsLabel(self):
+        row = _captureLightRow({"lux": 1.0, "raw": (1, 2, 3), "range": (0x20, 100)})
+        assert row["gain"] == "high"
+
+    @pytest.mark.parametrize("code", [0x99, "0x20", 32.0, True, None])
+    def test_anUnrecognisedOrNonIntCodeLandsNull(self, code):
+        """Never a guessed label: an unknown or non-int code is NULL."""
+        row = _captureLightRow({"lux": 1.0, "raw": (1, 2, 3), "range": (code, 100)})
+        assert row["gain"] is None
 
 
 class TestTheRowCarriesTheContext:

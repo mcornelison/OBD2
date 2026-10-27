@@ -81,7 +81,7 @@ The reason line under `--` is **dropped on this page** (glance view); detail kee
 - **Fit (computed):** the widest digit is 0.951 em × 120 px = 114 px. Centred in the 208 px centre column (448 body − 2 × 120), its right edge is at x 161 and the arrow runs 167–197: inside 208, with 11 px spare.
 - carousel.js and dashboard.html contain no `↑`/`↓` character. The only new px are `--drv-hint-stroke` and `--drv-hint-arrow`, in the `#driving-card` custom-property block.
 
-**Hint rule (Spool 2026-10-13; computed by `gear_state_emitter`, published as `hintGear` + `hintDirection` on `states/gear`, names approved by Atlas G-2).** A hint exists only when **all** hold:
+**Hint rule (Spool 2026-10-13; computed by `gearHint` in `gear_derivation.py`, published by `gear_state_emitter` as `hintGear` + `hintDirection` on `states/gear`, names approved by Atlas G-2).** A hint exists only when **all** hold:
 - the gear reason is in {`no_band_match`, `ambiguous`, `settling`};
 - the last **solid** gear G was ≤ 5 s ago;
 - speed > 15 km/h.

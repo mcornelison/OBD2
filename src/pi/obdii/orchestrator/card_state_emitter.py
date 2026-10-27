@@ -138,6 +138,11 @@
 #               |              | presenceFault + _upsFault from the UPS read.
 # 2026-10-24    | Rex (US-869-c)| _upsFault: sensor_absent (no monitor) or
 #               |              | read_failed (read raised), Atlas C-Atlas-1.
+# 2026-10-26    | Rex (US-904-a)| _emitGearState attaches gearHint's
+#               |              | (hintGear, hintDirection); observeGearInput
+#               |              | keeps the previous SPEED reading too.
+# 2026-10-26    | Rex (US-891-a)| states/o2 written beside obd-live on EVERY
+#               |              | tick (not on change), so `stale` can flip.
 # ================================================================================
 ################################################################################
 
@@ -356,6 +361,16 @@ class CardStateEmitterMixin:
     # advance the debounce. The time lets the gate age a stale P out.
     _lastGearReading: Any = None
     _lastGearAtS: float | None = None
+    # US-904-a: the hint rule's inputs that no field above holds. The SPEED
+    # reading just before _lastSpeedReading (Atlas REFUTED #2: only the latest
+    # was kept), and the last SOLID gear G as (gear, arrivalS, rpmAtG). G is
+    # taken from the reading cached in _lastGearReading at the emit it was
+    # solid on, but kept past the next emit: _lastGearReading is overwritten
+    # by the very `settling` the hint is for. Its time is the ARRIVAL time of
+    # the readings it was derived from, not _lastGearAtS's clock read, so the
+    # hint's 5 s compares reading to reading (Atlas A2, 2026-10-26).
+    _prevSpeedReading: Any = None
+    _lastSolidGear: tuple[int, float, float | None] | None = None
     # US-661: the `ltft-trend` producer. CLASS defaults for the same reason as
     # the gear pair above. Its own cadence -- the trend is a MULTI-DRIVE signal
     # that cannot change more than once per drive, and recomputing it on the 2 s
@@ -407,6 +422,8 @@ class CardStateEmitterMixin:
     # US-889-a: the states/engine-history writer; the history itself lives in
     # the obd-live tracker. CLASS default for the same reason as above.
     _engineHistoryEmitter: Any = None
+    # US-891-a: the states/o2 writer; the samples live in the obd-live tracker.
+    _o2Emitter: Any = None
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -847,6 +864,13 @@ class CardStateEmitterMixin:
         except Exception as e:  # noqa: BLE001 -- must not fail boot
             logger.warning("engine-history emitter init skipped: %s", e)
             self._engineHistoryEmitter = None
+        try:
+            from pi.obdii.o2_state import makeO2Emitter
+
+            self._o2Emitter = makeO2Emitter(statesDir)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("o2 emitter init skipped: %s", e)
+            self._o2Emitter = None
 
     def observeObdLiveReading(self, reading: Any) -> None:
         """Record one realtime reading for states/obd-live (the reading seam)."""
@@ -924,6 +948,11 @@ class CardStateEmitterMixin:
             history = tracker.engineHistoryIfChanged()
             if history is not None:
                 historyEmitter(history, nowUtc=nowUtc)
+        # US-891-a (Atlas A1): states/o2 is written on EVERY tick, never only on
+        # change -- its per-sensor `stale` must flip while the feed is quiet.
+        o2Emitter = self._o2Emitter
+        if o2Emitter is not None:
+            o2Emitter(tracker.o2Snapshot(), nowUtc=nowUtc, staleSec=self._obdLiveStaleSec)
         return payload
 
     # --------------------------------------------------------- states/alerts
@@ -1247,6 +1276,7 @@ class CardStateEmitterMixin:
         reading = Reading(value=None if value is None else float(value),
                           tsS=self._gearNowS())
         if paramName == "SPEED":
+            self._prevSpeedReading = self._lastSpeedReading
             self._lastSpeedReading = reading
         else:
             self._lastRpmReading = reading
@@ -1295,9 +1325,50 @@ class CardStateEmitterMixin:
             nowS=nowS,
             linkHealthy=linkHealthy,
         )
+        reading = self._withGearHint(reading)
         # US-923: the MPG reset gate reads THIS reading, never a second update.
         self._lastGearReading, self._lastGearAtS = reading, nowS
         emitter(reading)
+
+    def _withGearHint(self, reading: Any) -> Any:
+        """Attach gearHint's (hintGear, hintDirection) to ``reading`` (US-904-a).
+
+        'now' is the arrival time of the newest SPEED/RPM reading -- the one
+        that triggered this emit, or on a card tick the last one that arrived
+        -- NEVER the clock (Atlas A2): the hint is a pure function of the
+        reading sequence. The hint never changes ``gear`` or ``reason``.
+
+        Args:
+            reading: The GearReading the deriver just produced.
+
+        Returns:
+            The same reading with ``hintGear`` / ``hintDirection`` set (None
+            when there is no hint).
+        """
+        import dataclasses
+
+        from pi.obdii.gear_derivation import gearHint, isSolidGear
+
+        rpm, speed = self._lastRpmReading, self._lastSpeedReading
+        arrivals = [r.tsS for r in (rpm, speed) if r is not None]
+        arrivalS = max(arrivals) if arrivals else None
+        if reading.available and isSolidGear(reading.gear) and arrivalS is not None:
+            rpmAtG = None if rpm is None else rpm.value
+            self._lastSolidGear = (reading.gear, arrivalS, rpmAtG)
+        solid = self._lastSolidGear
+        hintGear, hintDirection = gearHint(
+            reason=reading.reason,
+            solidGear=None if solid is None else solid[0],
+            solidAtS=None if solid is None else solid[1],
+            rpmAtSolid=None if solid is None else solid[2],
+            rpm=rpm,
+            speed=speed,
+            prevSpeed=self._prevSpeedReading,
+            nowS=arrivalS,
+        )
+        return dataclasses.replace(
+            reading, hintGear=hintGear, hintDirection=hintDirection
+        )
 
     def _fuelResetAllowed(self) -> dict[str, Any]:
         """The ONE MPG-reset predicate over the deriver's own readings (US-923).

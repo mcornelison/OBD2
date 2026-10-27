@@ -19,6 +19,9 @@
 # 2026-10-25    | Rex (US-925-a) | MOVED PIN (US-925-a): inventory 23 -> 24 (+
 #               |                | eclipse-wifi-recover.service, pi-literal via
 #               |                | step_install_wifi_recover_unit).
+# 2026-10-26    | Rex (US-925-c) | MOVED PIN (US-925-c): the wifi-recover installer is
+#               |                | still its own step, which now also installs the
+#               |                | root-owned script copy and gates the restart.
 # ================================================================================
 ################################################################################
 
@@ -260,6 +263,16 @@ def test_eclipseObd_isFoundOnlyThroughServiceName(piText: str) -> None:
     """The SERVICE_NAME expansion is load-bearing: without it eclipse-obd has no installer."""
     assert columnZeroAssignments(piText)["SERVICE_NAME"] == "eclipse-obd"
     assert piInstallers(piText)["eclipse-obd.service"].startswith("expanded:")
+
+
+def test_wifiRecover_isInstalledByItsGatedStep(piText: str) -> None:
+    """MOVED PIN (US-925-c): one step installs the unit AND its root-owned script
+    (/usr/local/lib/eclipse), then gates the restart on NRestarts + the journal."""
+    step = "step_install_wifi_recover_unit"
+    assert piInstallers(piText)["eclipse-wifi-recover.service"] == f"literal:{step}"
+    body = functionBodies(piText)[step]
+    assert "/usr/local/lib/eclipse" in body
+    assert "NRestarts" in body and "watching wlan0" in body
 
 
 def test_kioskStartTrigger_isInstalledByTheKioskStep(piText: str) -> None:

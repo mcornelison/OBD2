@@ -2055,13 +2055,13 @@ starts it happens below the supplicant, and `band=bg`, `freq_list` and
 `roamoff=1` are already set (MEASURED), so nothing above the driver can stop
 the failure — only answer it.
 
-- **Service.** `deploy/eclipse-wifi-recover.service` runs
-  `src/pi/network/wifi_recover.py` on the SYSTEM python (`/usr/bin/python3`;
+- **Service.** `deploy/eclipse-wifi-recover.service` runs a root-owned copy of
+  `src/pi/network/wifi_recover.py` (US-925-c, below) on the SYSTEM python (`/usr/bin/python3`;
   dbus + `gi.repository.GLib` from Debian `python3-dbus` / `python3-gi`, which
   `obd2-venv` cannot import). Root with no `User=` (NM's network-control polkit
   is `auth_admin` for a session-less caller, and a grant to the kiosk user
   would reach Chromium too), sandboxed: `NoNewPrivileges`, empty
-  `CapabilityBoundingSet=`, `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `CapabilityBoundingSet=`, `ProtectSystem=strict`, `ProtectHome=yes`,
   `PrivateTmp`, `AF_UNIX` only; `PartOf=NetworkManager.service`. No polkit
   rule. `deploy-pi.sh step_install_wifi_recover_unit` installs it every
   deploy (cmp-guarded; fails loud when either Debian package is missing; never
@@ -2093,6 +2093,28 @@ the failure — only answer it.
 - **Why not a dispatcher script.** NetworkManager-dispatcher(8) has no event
   for a failed activation and carries no state reason, so it cannot see this
   failure at all.
+
+**Root-owned path, readiness and the deploy gate (US-925-c, Sprint 117; Atlas
+RULED).** As shipped in V0.30.15 the unit crash-looped with `Errno 13`: root
+with an empty capability set has no `CAP_DAC_*`, so it cannot enter the deploy
+user's home, where the script lived. The deploy printed "enabled + active"
+anyway. The fix is the path, not a wider capability set.
+`step_install_wifi_recover_unit` copies the script to
+**`/usr/local/lib/eclipse/wifi_recover.py`** (root:root 0644, sync-if-changed,
+cmp-verified; the directory is created root-owned 0755 if absent). The unit's
+`ExecStart` points there, it has no `WorkingDirectory`, and `ProtectHome=yes`
+hides every home directory. The unit is **`Type=notify`** with
+`NotifyAccess=main`. `wifi_recover.main` subscribes with
+`bus_name=org.freedesktop.NetworkManager`, so only NM's signals reach the
+handler (there is no live State/StateReason re-read; it would race
+FAILED→DISCONNECTED). Then it logs "watching wlan0 …" and only after that sends
+`READY=1` on `$NOTIFY_SOCKET`, using the stdlib socket module (nothing is sent
+when it is unset). **The deploy gate** replaces the old echo: the step fails,
+naming the check, unless `systemctl restart` exits 0 (it waits for READY,
+bounded by systemd's default start timeout), `systemctl show -p NRestarts
+--value` is 0, and the journal of this invocation (`_SYSTEMD_INVOCATION_ID`)
+has the "watching wlan0" line. A missing source script or a copy that fails
+cmp fails the step with an ERROR before the restart.
 
 #### `pi.companionService` — Pi → server reach (US-151)
 
@@ -6733,6 +6755,70 @@ US-890-b, below).
   (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
   produce, not a copy of the target vocabulary (US-888-b).
 
+#### `states/o2` -- front/rear O2 samples, staleness and the verdict (US-891-a/b)
+
+**Producer (US-891-a, Atlas A1 RULED 2026-10-26):** `src/pi/obdii/o2_state.py`. The
+`O2History` is owned and fed inside `ObdLiveTracker.observeReading`, exactly as
+`EngineHistory` is, so it sees every O2_B1S1 (front) and O2_B1S2 (rear) reading at the
+obd-live seam with the reading's event time as aware UTC (`ObdLiveTracker._eventUtc`).
+`_emitObdLiveState` then writes `states/o2` through `makeO2Emitter` on EVERY card tick,
+right after obd-live, even when no O2 reading arrived, so `stale` can flip. It does not
+copy engine-history's write-only-on-change. The write is atomic (`writeStateAtomic`) and
+best-effort: a failure logs and never raises. No SQLite, schema, sync or poll-list change.
+
+**Shape:** `{front: {value, ts, stale, reason, last, samples: [{v, ts}]}, rear: {...},
+samplePeriodSec, windowSec, midlineV, rearVerdict: 'not_rated', catalystVerdict:
+'not_rated', ts}`.
+
+- **Timestamps.** Each sample `ts` and each sensor `ts` is the reading's own event time
+  (`LoggedReading.timestamp`), in the obd-live format. The top-level `ts` is the write
+  time, as in engine-history.
+- **Stale follows obd-live exactly** ("value always means CURRENT"). At each emit a
+  sensor is stale when its latest reading is older than `pi.display.stale.obdLiveSec`
+  (no O2 stale key). Fresh: `{value, ts, stale: false, reason: null, last: null}`.
+  Stale: `{value: null, ts (of the last reading), stale: true, reason: 'stale', last:
+  {value}}`, so the page can dim the last value with its age. Never read: `{value: null,
+  ts: null, stale: false, reason: 'not_read', last: null, samples: []}`. The samples are
+  history and stay in the list while stale.
+- **Window.** `pi.display.o2.windowSec` (validator DEFAULTS only, 300 s: spec
+  v030-o2-page-design s4.2, Spool 2026-10-13; not in config.json). The samples are those
+  with event ts at or after `write time - windowSec`; older ones are gone on the next
+  build. Published as `windowSec`, so the page never hard-codes 5 minutes.
+- **samplePeriodSec is MEASURED, never configured**: the median of consecutive deltas of
+  the front samples' full-precision event times inside the window, rounded to 0.1 s;
+  null with fewer than 2 samples. The median means one dropped poll does not move it
+  (~2.2 s on this car, Spool).
+- **`midlineV` = 0.45 V** has one home, `MIDLINE_V` in `o2_state.py` (spec s4.2). The
+  page draws its dashed mid-line from it.
+- A non-numeric value (string, bool, NaN, infinity) is dropped, never stored as 0.
+- Rear and catalyst verdicts are held (CIO 2026-10-13, spec s4.3): always `not_rated`.
+
+**Front verdict (US-891-b, spec v030-o2-page-design s4.2, Spool 2026-10-13):**
+`frontVerdict` is one of `switching`, `stuck_lean`, `stuck_rich`, `unclear`,
+`not_enough_data`, `open_loop`, `warming_up`, `no_data` (snake_case; the page maps token
+-> words). `frontReason` is null for the three rating verdicts and the same token for the
+five withheld ones. `O2History` also keeps the window's `FUEL_SYSTEM_STATUS` and
+`COOLANT_TEMP` readings, fed at the same seam; the pure `frontVerdict` decides at each
+build.
+- **Per-sample gate (Atlas + Spool, 2026-10-26):** a front sample in the window counts
+  only when its paired `FUEL_SYSTEM_STATUS` is `FUEL_SYSTEM_CLOSED_LOOP` and its paired
+  `COOLANT_TEMP` is >= 85 C. Paired = the latest reading with event ts AT OR BEFORE the
+  sample's and within 1.1 s of it (`GATE_PAIR_MAX_SEC`, same poll cycle, Spool S2
+  2026-10-26). 1.1 s < `pi.display.stale.obdLiveSec`, so a paired reading is never stale.
+- **Code 2 only (Spool S3 RULED 2026-10-26):** the constant is IMPORTED from
+  `ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP`, never a second literal; `fuel_status`'s
+  {2, 5} closed-loop set is a different rule. Status 5 samples do not count.
+- **Rule:** with >= 60 gated samples (`VERDICT_MIN_GATED_SAMPLES`): frac(< 0.30 V) >= 0.20
+  and frac(> 0.60 V) >= 0.20 -> `switching`; frac(< `midlineV`) >= 0.90 -> `stuck_lean`;
+  frac(> `midlineV`) >= 0.90 -> `stuck_rich`; else `unclear`. The STUCK thresholds are
+  convention, never exercised on this car.
+- **Withheld reason** (fewer than 60), by the latest `FUEL_SYSTEM_STATUS` (Spool S1 + S3
+  RULED 2026-10-26): absent, non-integral or older than `obdLiveSec` at the emit ->
+  `no_data`; 1/3/4 -> `open_loop`; 2 with the coolant of its cycle (within 1.1 s either
+  way) < 85 C -> `warming_up` (S1 MEASURED: closed loop below 85 C on 16 of 41 drives);
+  anything else, including 5, -> `not_enough_data`. A latest status of 5 never reads
+  `open_loop`.
+
 #### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
 
 **Producer:** `src/pi/obdii/alerts_arbiter.py`, run inside the eclipse-obd process (Atlas
@@ -9629,6 +9715,28 @@ Driving spec §3-§5 (`specs/v030-driving-page-design.md`), Iris Q1 (card slot):
   `tests/ui/test_driving_page.py` allows literal px only in that block and no
   literal colour in any Driving rule. Fixtures:
   `tests/ui/fixtures/states/driving/*.json` (Iris's list; no hint or takeover).
+
+**states/gear hintGear / hintDirection (US-904-a, Sprint 117).** `states/gear`
+now carries `hintGear` (1..5 or null) and `hintDirection` (`up` / `down` or
+null) on EVERY write, explicit null when there is no hint, beside the unchanged
+`available`, `gear`, `reason`, `ts`; the hint never changes `gear` or `reason`,
+and `GearReading.toStateDict` stays `{available, gear, reason}`. Computed ONCE by
+the pure `gearHint` in `src/pi/obdii/gear_derivation.py`, attached by
+`CardStateEmitterMixin._emitGearState` and published by `gear_state_emitter`
+`buildGearState`; the page (US-904-b) only renders it. Rule: driving spec §4.2,
+Spool 2026-10-13 -- reason in {`no_band_match`, `ambiguous`, `settling`}, the last
+solid gear G (1..5; N/P are not solid) at most 5 s old, speed > 15 km/h; RPM below
+the RPM at G with speed >= previous − 2 km/h -> G+1 up, RPM above it with speed
+falling -> G−1 down; outside 1..5 is no hint (Spool 2026-10-26, no clamp). Pairing
+guard (Spool S2 2026-10-26): the latest RPM and SPEED must arrive within 1.1 s of
+each other. **Atlas A2 (2026-10-26):** the 5 s is an AGE between readings, not a
+timer -- "now" is the arrival time (`Reading.tsS`) of the newest SPEED/RPM reading,
+G's time is the arrival time of the readings it was solid on, and the card tick
+re-emits the same hint for the same readings; no clock read enters the rule. The
+mixin keeps the previous SPEED reading (`_prevSpeedReading`) and the last solid
+gear (`_lastSolidGear`), because `_lastGearReading` is overwritten by the very
+`settling` the hint is for. Gear stays display-only (no schema, sync or poll
+change; `tests/lint/test_gear_is_display_only.py`).
 
 #### V0.30 Driving RPM bar contract (US-888-b, Sprint 103 / V0.30.1)
 
