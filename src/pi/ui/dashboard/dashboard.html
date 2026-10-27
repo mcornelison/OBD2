@@ -581,6 +581,20 @@
     <span id="version-chip">__DEPLOY_VERSION__</span>
   </div>
 
+  <!-- US-894-g shared page-detail host (spec s4.6.3; Iris X-1 = (a), Atlas
+       re-gate 2026-10-27): a SIBLING of #sys-detail, not a reuse of it. Its
+       chrome (34 px head, 8 px body padding top and bottom) leaves a 270 px
+       body; #sys-detail's leaves 253. System's LAST UPDATED renders here, and
+       Engine HISTORY, Fuel FUEL TRIM and Motion IMU next. Opens only while
+       parked, and closes the tick the car leaves parked (R1). -->
+  <div id="page-detail" hidden role="dialog" aria-label="Page detail">
+    <header class="page-detail-head">
+      <button id="page-detail-back" aria-label="Back to the page">‹ BACK</button>
+      <span id="page-detail-title" class="page-detail-title"></span>
+    </header>
+    <div id="page-detail-body" class="page-detail-body"><!-- JS fills the detail --></div>
+  </div>
+
   <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases
        the freeze-frame, and resets emissions readiness. Cancel is the easy
        default; Clear all is the deliberate action. Kept separate from the US-403

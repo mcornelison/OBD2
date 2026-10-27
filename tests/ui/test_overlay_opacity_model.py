@@ -26,6 +26,7 @@
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-558 destination-vs-modal opacity.
 # 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): the watch/minor/unknown
 #               |              | takeover floods are deleted; STOP is the one field.
+# 2026-10-27    | Ralph (Rex)  | MOVED PIN (US-894-g): #page-detail, a DESTINATION.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +65,14 @@ OVERLAY_ROLES = {
     "#dtc-detail": (
         DESTINATION,
         "US-406 per-code detail -- tapped through from the Alerts list",
+    ),
+    # MOVED PIN (US-894-g): the shared page-detail host, a sibling of
+    # #sys-detail (System spec s4.6.3: "It is solid (the P-4 rule: a
+    # navigational overlay is a destination)").
+    "#page-detail": (
+        DESTINATION,
+        "US-894-g page detail -- tapped through from a page (LAST UPDATED, next "
+        "HISTORY / FUEL TRIM / IMU)",
     ),
     "#confirm-modal": (
         MODAL,

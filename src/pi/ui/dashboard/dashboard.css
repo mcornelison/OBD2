@@ -671,6 +671,14 @@ html, body {
   min-height: var(--tap-min);
   font-size: var(--fs-meta); letter-spacing: 0.06em; color: var(--text-secondary);
 }
+/* US-894-g (s4.6.3): UPDATED, LEFT of SETTINGS ›, in the .sys-settings type
+   WITHOUT its margin-left:auto: two auto margins on one line would split the
+   free space between them (Iris S119 review), so exactly one link carries it. */
+.sys-updated {
+  display: inline-flex; align-items: center;
+  min-height: var(--tap-min);
+  font-size: var(--fs-meta); letter-spacing: 0.06em; color: var(--text-secondary);
+}
 .sys-row {
   display: flex; align-items: center; gap: 0.5em;
   min-height: var(--row-min); box-sizing: border-box;
@@ -1357,6 +1365,7 @@ html, body {
 .sys-diag-text {
   margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
 }
+
 /* US-894-d WIFI detail: the reason is amber only as the `wifi` member's. */
 .wifi-reason[data-level="amber"] .sys-diag-text { color: var(--amber-warn); }
 /* US-894-e (s4.6.1): the UPS detail. Every line is neutral (no UPS member);
@@ -1371,6 +1380,102 @@ html, body {
    neutral. */
 .pi-value { margin-left: auto; font-size: var(--fs-label); color: var(--text-primary); }
 .pi-row[data-level="amber"] .pi-value { color: var(--amber-warn); }
+
+/* --- US-894-g shared page-detail host (spec s4.6.3) ---------------------------
+   Iris X-1 = (a), Atlas re-gate 2026-10-27: the parked-only page details (System
+   LAST UPDATED; Engine HISTORY, Fuel FUEL TRIM, Motion IMU next) render in this
+   SIBLING of #sys-detail, whose chrome (4/10 padding, a 44 + 1 head, 8 px body
+   top) leaves only 253 px. This host has a 270 px BODY BUDGET to defend:
+   320 - 34 (head) - 8 - 8 (body padding) = 270, with no host padding and no
+   gap, and every consumer declares NO geometry of its own.
+
+   So its head follows the KEBAB precedent (#menu-btn::after): the head is
+   --bar-h tall with its 1 px rule INSIDE (border-box), and ‹ BACK paints in
+   that band while a transparent ::after grows its hit box to --tap-min -- 6 px
+   below the head, inside the body's 8 px padding-top, so it never covers a
+   body line. That INVERTS the US-556 `.menu-head` rule, where an overlay head
+   grows to the control because it has "no stage budget": this one has 270.
+   The geometry lives here as scoped properties, and
+   tests/ui/test_system_last_updated.py reads their declared sum (Q1). */
+#page-detail {
+  --pd-head-h: var(--bar-h);  /* the head band, its rule inside */
+  --pd-rule: 1px;             /* the head's bottom rule */
+  --pd-pad-y: 8px;            /* body padding, top and bottom */
+  --pd-pad-x: 12px;           /* head + body padding, each side */
+  --pd-line: 1.2;             /* every line box */
+  position: fixed; inset: 0; z-index: 45;
+  /* US-558: a DESTINATION, so a solid field (the P-4 rule). */
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  padding: 0; box-sizing: border-box; overflow: hidden;
+}
+#page-detail[hidden] { display: none; }
+.page-detail-head {
+  flex: 0 0 auto;
+  display: flex; align-items: stretch;
+  height: var(--pd-head-h); box-sizing: border-box;
+  padding: 0 var(--pd-pad-x);
+  border-bottom: var(--pd-rule) solid var(--surface);
+}
+/* `position: relative` anchors the ::after to the button, not to the host. */
+#page-detail-back {
+  position: relative;
+  min-width: var(--tap-min); min-height: 0;
+  padding: 0; background: transparent; border: 0; color: var(--accent);
+  font-size: var(--fs-label); line-height: var(--pd-line); text-align: left;
+}
+#page-detail-back::after {
+  content: ""; position: absolute;
+  left: 0; right: 0; top: 0; height: var(--tap-min);
+}
+.page-detail-title {
+  margin-left: auto; align-self: center;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); line-height: var(--pd-line);
+  white-space: nowrap; color: var(--text-primary);
+}
+/* No detail scrolls (the CIO's no-scroll rule): each detail's budget is
+   modelled. Should one ever overflow, the bar shows -- never a silent clip. */
+.page-detail-body {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 0;
+  padding: var(--pd-pad-y) var(--pd-pad-x);
+  overflow-y: auto; touch-action: pan-y;
+}
+/* One line per fact, >= --row-min: a Michroma label in the 4.5em row column
+   (the System row's), a mono value. Neutral: a detail line has no band. */
+.page-detail-row {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 0.5em;
+  min-height: var(--row-min);
+  font-size: var(--fs-label); line-height: var(--pd-line);
+}
+.page-detail-label {
+  flex: 0 0 4.5em;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); white-space: nowrap; color: var(--text-secondary);
+}
+.page-detail-value {
+  min-width: 0;
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+/* The detail BUTTON (s4.6.3): a real control in the button grammar, with no
+   state colour. Not parked, it keeps its space and paints nothing. */
+.page-detail-btn {
+  display: inline-flex; align-items: center;
+  height: var(--tap-min); box-sizing: border-box;
+  padding: 0 12px;
+  background: transparent; color: var(--text-primary);
+  border: 1px solid var(--text-secondary); border-radius: var(--radius);
+}
+.page-detail-btn[data-parked="false"] { visibility: hidden; }
+.page-detail-btn-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label);
+}
+.page-detail-btn-chevron { font-family: var(--font-mono); font-size: var(--fs-label); }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)

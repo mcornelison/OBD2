@@ -6127,6 +6127,52 @@
     );
   }
 
+  // -------------------------------------------------------------------------
+  // US-894-g (spec s4.6.3, CIO in car 2026-10-27) -- LAST UPDATED: WHEN each
+  // device last reported, never a value. One reader each and no new field:
+  // a feed's moment is the capture-health file's ts minus that feed's
+  // lastSampleSecondsAgo (the DATA detail's field); SYNC is sync.lastOkTs;
+  // WIFI is wifi.ts ONLY while source.wifi.available is true (Atlas RULED: a
+  // failed read stamps ts too, and a failed read is not a report). The age is
+  // the M7 rule against the tick's clock, so it grows while the file sits
+  // unchanged; the time is local, with seconds and no date. Undated -> `--`.
+  // A line carries no level and no member: an age has no band.
+  // -------------------------------------------------------------------------
+  var LAST_UPDATED_HEAD = "LAST UPDATED";
+  var LAST_UPDATED_FEEDS = [["obd", "OBD"], ["imu", "IMU"], ["light", "LIGHT"], ["ups", "UPS"]];
+
+  function lastUpdatedLine(key, label, ageSec, nowMs) {
+    var age = typeof nowMs === "number" && isFinite(nowMs) ? freshAgeText(ageSec) : null;
+    return {
+      key: key,
+      label: label,
+      value: age === null ? SYS_NO_DATA
+        : age + " · " + fmtTimeOfDay(new Date(nowMs - ageSec * 1000), true),
+    };
+  }
+
+  function lastUpdatedView(data, captureData, nowMs) {
+    var feeds = isObj(captureData) && isObj(captureData.feeds) ? captureData.feeds : {};
+    var fileAge = readAgeSec(captureData, nowMs);
+    var rows = [];
+    for (var i = 0; i < LAST_UPDATED_FEEDS.length; i++) {
+      var feed = isObj(feeds[LAST_UPDATED_FEEDS[i][0]]) ? feeds[LAST_UPDATED_FEEDS[i][0]] : {};
+      var ago = feed.lastSampleSecondsAgo;
+      var dated = fileAge !== null && typeof ago === "number" && isFinite(ago);
+      rows.push(lastUpdatedLine(
+        LAST_UPDATED_FEEDS[i][0], LAST_UPDATED_FEEDS[i][1], dated ? fileAge + ago : null, nowMs
+      ));
+    }
+    var source = isObj(data) && isObj(data.source) && isObj(data.source.wifi) ? data.source.wifi : {};
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : null;
+    rows.push(lastUpdatedLine(
+      "wifi", "WIFI", source.available === true ? readAgeSec(wifi, nowMs) : null, nowMs
+    ));
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    rows.push(lastUpdatedLine("sync", "SYNC", readAgeSec({ ts: sync.lastOkTs }, nowMs), nowMs));
+    return { head: LAST_UPDATED_HEAD, rows: rows };
+  }
+
   var api = {
     makeResilientLoop: makeResilientLoop,
     reportFetchAbort: reportFetchAbort,
@@ -6210,6 +6256,7 @@
     publishParked: publishParked,
     piLineView: piLineView,
     piDetailView: piDetailView,
+    lastUpdatedView: lastUpdatedView,
     uptimeText: uptimeText,
     systemStatusView: systemStatusView,
     dataRowView: dataRowView,
@@ -6445,8 +6492,32 @@
         line.appendChild(chevron);
         line.onclick = function () { openSysDetail("pi"); };
       }
+      appendSysUpdated(line);
       appendSysSettings(line);
       body.appendChild(line);
+    }
+
+    // US-894-g (spec s4.6.3): UPDATED on the verdict line, LEFT of SETTINGS ›,
+    // in every state. It says UPDATED (LAST UPDATED › would leave 4 px); the
+    // detail's title says LAST UPDATED. The ` ›` only while parked (I9) and
+    // the open gated again at tap time by the shared helper, so a link painted
+    // parked opens nothing once the car moves. Its tap stops at the link: the
+    // verdict line under it opens the Pi detail. It reads the parked fact
+    // itself: the unavailable verdict offers no Pi tap, yet LAST UPDATED does.
+    function appendSysUpdated(line) {
+      var parked = currentParked().parked === true;
+      var link = document.createElement("span");
+      link.className = "sys-updated";
+      link.textContent = parked ? "UPDATED ›" : "UPDATED";
+      if (parked) {
+        link.setAttribute("role", "button");
+        link.setAttribute("tabindex", "0");
+      }
+      link.addEventListener("click", function (e) {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        openPageDetail(LAST_UPDATED_DETAIL);
+      });
+      line.appendChild(link);
     }
 
     // US-895-a (spec s3, s4.7.2): SETTINGS › on the verdict line, in EVERY
@@ -6628,6 +6699,8 @@
     // and its chevron appear (or go) on the edge, not a tick later.
     function repaintSystemOnParkedEdge() {
       if (lastSysCard && lastSysView) renderSystemBody(lastSysCard, lastSysView);
+      // US-894-g: the unavailable verdict carries UPDATED too.
+      else if (lastSysCard) renderSystemUnavailable(lastSysCard);
     }
 
     // --- US-509 System-Status detail overlay (browser only) -----------------
@@ -6897,6 +6970,128 @@
       var el = document.getElementById("sys-detail");
       if (el) el.hidden = true;
     }
+
+    // --- US-894-g shared page-detail kit (spec s4.6.3) ---------------------
+    // The parked-only destination behind System's UPDATED ›, and next behind
+    // Engine HISTORY, Fuel FUEL TRIM and Motion IMU. It renders in
+    // #page-detail, a SIBLING of #sys-detail whose chrome leaves a 270 px body
+    // (Iris X-1 = (a), Atlas re-gate 2026-10-27); #sys-detail's own chrome
+    // leaves 253. An entry is { title, paint(bodyEl), refresh(read, nowMs) }:
+    // paint draws from what the entry holds; refresh (optional, async) re-reads
+    // through the tick's cached reader so an open detail follows the poll.
+    var pageDetailEntry = null;
+
+    function pageDetailOpen() {
+      var el = document.getElementById("page-detail");
+      return !!el && el.hidden === false;
+    }
+
+    function paintPageDetail() {
+      var bodyEl = document.getElementById("page-detail-body");
+      if (!bodyEl || !pageDetailEntry) return;
+      var title = document.getElementById("page-detail-title");
+      if (title) title.textContent = pageDetailEntry.title;
+      bodyEl.textContent = "";
+      pageDetailEntry.paint(bodyEl);
+    }
+
+    // The ONLY gate is the parked fact read at tap time (Iris S119 review):
+    // openSysDetail's lastSysView guard would silently refuse a page detail
+    // before system-status has loaded, so it is deliberately not inherited.
+    function openPageDetail(entry) {
+      var el = document.getElementById("page-detail");
+      if (!el || !entry || currentParked().parked !== true) return;
+      pageDetailEntry = entry;
+      paintPageDetail();
+      el.hidden = false;
+    }
+
+    function closePageDetail() {
+      var el = document.getElementById("page-detail");
+      if (el) el.hidden = true;
+      pageDetailEntry = null;
+    }
+
+    // R1 (UIDEV-021): run on EVERY render tick, on the predicate the open uses,
+    // so `unknown` closes too. A destination screen must not hold the glass
+    // while the car moves; closing it shows the page it was opened from.
+    function closePageDetailUnlessParked() {
+      if (pageDetailOpen() && currentParked().parked !== true) closePageDetail();
+    }
+
+    async function refreshPageDetail(read, nowMs) {
+      if (!pageDetailOpen() || !pageDetailEntry) return;
+      var entry = pageDetailEntry;
+      if (typeof entry.refresh === "function") await entry.refresh(read, nowMs);
+      // The await can span a close (or another open): repaint only the same one.
+      if (pageDetailEntry === entry && pageDetailOpen()) paintPageDetail();
+    }
+
+    // The detail button (s4.6.3): a real control in the button grammar, with
+    // no state colour. While not parked it is `visibility: hidden` with its
+    // space kept (data-parked, repainted on the parked fact's edge), and its
+    // tap opens only through openPageDetail's tap-time gate.
+    function appendPageDetailButton(parent, label, entry) {
+      var btn = document.createElement("button");
+      btn.className = "page-detail-btn";
+      btn.setAttribute("data-parked", currentParked().parked === true ? "true" : "false");
+      var text = document.createElement("span");
+      text.className = "page-detail-btn-label";
+      text.textContent = label;
+      var chevron = document.createElement("span");
+      chevron.className = "page-detail-btn-chevron";
+      chevron.textContent = " ›";
+      btn.appendChild(text);
+      btn.appendChild(chevron);
+      btn.addEventListener("click", function (e) {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        openPageDetail(entry);
+      });
+      parent.appendChild(btn);
+      return btn;
+    }
+
+    function paintPageDetailButtons(fact) {
+      var parked = isObj(fact) && fact.parked === true ? "true" : "false";
+      var btns = document.querySelectorAll(".page-detail-btn");
+      for (var i = 0; i < btns.length; i++) btns[i].setAttribute("data-parked", parked);
+    }
+
+    // LAST UPDATED's inputs: the System poll's own reads (the same cached
+    // system-status and capture-health) on that tick's clock. Dropped with the
+    // view when system-status goes unreadable; an open detail re-reads them.
+    var lastUpdatedInputs = null;
+
+    function renderLastUpdated(bodyEl) {
+      var inputs = lastUpdatedInputs || {};
+      var view = lastUpdatedView(inputs.data, inputs.captureData, inputs.nowMs);
+      for (var i = 0; i < view.rows.length; i++) {
+        var row = document.createElement("div");
+        row.className = "page-detail-row";
+        row.setAttribute("data-row", view.rows[i].key);
+        var label = document.createElement("span");
+        label.className = "page-detail-label";
+        label.textContent = view.rows[i].label;
+        var value = document.createElement("span");
+        value.className = "page-detail-value";
+        value.textContent = view.rows[i].value;
+        row.appendChild(label);
+        row.appendChild(value);
+        bodyEl.appendChild(row);
+      }
+    }
+
+    var LAST_UPDATED_DETAIL = {
+      title: LAST_UPDATED_HEAD,
+      paint: renderLastUpdated,
+      refresh: async function (read, nowMs) {
+        lastUpdatedInputs = {
+          data: await read("system-status"),
+          captureData: await read("capture-health"),
+          nowMs: nowMs,
+        };
+      },
+    };
 
     // US-894-a: each `.chain-dot` in #glyph-bt carries its own data-state, keyed
     // by its data-layer. A dot the view has no look for falls to hollow rather
@@ -9541,6 +9736,11 @@
       if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
       // US-894-b: the System page's taps follow the parked fact's edges.
       onParkedChange(repaintSystemOnParkedEdge);
+      // US-894-g: the shared page-detail host's ‹ BACK, and every detail
+      // button's visibility on the same edges.
+      var pageDetailBack = document.getElementById("page-detail-back");
+      if (pageDetailBack) pageDetailBack.addEventListener("click", closePageDetail);
+      onParkedChange(paintPageDetailButtons);
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -9669,7 +9869,11 @@
             } else if (body && nd) renderNaBody(body, nd.label, nd.reason);
             // US-894-b (s4.1): the System page's unavailable path is the
             // verdict `--`, never ALL OK.
-            else if (body && name === "system-status") renderSystemUnavailable(card);
+            else if (body && name === "system-status") {
+              renderSystemUnavailable(card);
+              // US-894-g: LAST UPDATED's inputs go with the view.
+              lastUpdatedInputs = null;
+            }
             else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
@@ -9691,6 +9895,8 @@
             renderSystemStatusCard(
               card, systemStatusView(data, captureData, batteryData, nowMs), glyphEls
             );
+            // US-894-g: LAST UPDATED opens on this poll's reads and clock.
+            lastUpdatedInputs = { data: data, captureData: captureData, nowMs: nowMs };
           }
           // US-508: the standalone Motion branch is GONE with the card it
           // served -- the live instrument is now a FACE of the home slot,
@@ -9761,6 +9967,10 @@
         // US-894-b: the ONE write of the module's parked fact -- the debounced
         // value just advanced, and the RAW gear-known fact (Atlas B9 + A1).
         publishParked(engineParked.parked, isObj(lastGear) && lastGear.available === true);
+        // US-894-g (R1): an open page detail closes the tick the parked fact
+        // goes false; one still open re-reads and repaints on THIS tick's clock.
+        closePageDetailUnlessParked();
+        await refreshPageDetail(stateOnce, nowMs);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
         // moves the dismiss on first (a codeAlert-null re-read settles it).

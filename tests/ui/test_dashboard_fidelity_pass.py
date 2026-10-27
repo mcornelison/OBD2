@@ -50,6 +50,8 @@
 #                               deep-edge token pins retired.
 # 2026-10-26    | Ralph (Rex)  | US-891-c -- MOVED PIN: the O2 labels and live chip
 #                               join the font-display set (O2 spec s3).
+# 2026-10-27    | Ralph (Rex)  | US-894-g -- MOVED PIN: the page-detail title,
+#                               line labels and detail-button label join it.
 # ================================================================================
 ################################################################################
 
@@ -451,7 +453,13 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     REAR  AFTER CAT / CATALYST) and its LIVE verdict chip (SWITCHING / STUCK
     LEAN / STUCK RICH) are Michroma (O2 spec s3). The withheld chip is lower
     case, so --font-mono; the volts and the meta line stay --font-mono, pinned
-    in tests/ui/test_o2_page.py."""
+    in tests/ui/test_o2_page.py.
+
+    MOVED PIN (US-894-g): the shared page-detail host's TITLE and its line
+    LABELS, and the detail button's LABEL, are Michroma (System spec s4.6.3:
+    "the title in Michroma", "the label is Michroma --fs-label", the button's
+    "Michroma --fs-label label"). The values and the button's ' ›' stay
+    --font-mono, pinned in tests/ui/test_system_last_updated.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -478,6 +486,9 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#code-alert .code-alert-chip",
         "#code-alert-dismiss",
         ".sys-row-label",
+        ".page-detail-title",
+        ".page-detail-label",
+        ".page-detail-btn-label",
     }, bound
 
 
