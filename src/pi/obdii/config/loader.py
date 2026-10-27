@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation (US-003)
 # 2026-04-14    | Ralph Agent  | Sweep 2b — delete legacy _validateAlertThresholds and injection dict
+# 2026-10-26    | Rex (US-817-a) | pi.bluetooth.adapterBaudrate (default 38400), ELM327 rates only
 # ================================================================================
 ################################################################################
 
@@ -66,6 +67,16 @@ OBD_REQUIRED_FIELDS: list[str] = [
 # Valid display modes
 VALID_DISPLAY_MODES = ['headless', 'minimal', 'developer']
 
+# US-817-a: the serial rate the OBD adapter is opened at.  Passing it to
+# obd.OBD(baudrate=) skips python-obd 0.7.3's auto_baudrate probe, whose
+# read(1024) always waits the full `timeout` (~30 s of every connect).
+# Source: Atlas MEASURED 38400 on 96/96 connects since 2026-09-19
+# (pm/inbox/2026-10-27-from-atlas-DESIGN-S118-producers-and-data.md).
+ADAPTER_BAUDRATE_KEY = 'pi.bluetooth.adapterBaudrate'
+DEFAULT_ADAPTER_BAUDRATE = 38400
+# The ELM327 serial rates; any other value is a configuration error.
+VALID_ADAPTER_BAUDRATES: frozenset[int] = frozenset({9600, 38400, 115200, 230400, 500000})
+
 # Default values for optional OBD-II settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4.
 OBD_DEFAULTS: dict[str, Any] = {
@@ -92,6 +103,7 @@ OBD_DEFAULTS: dict[str, Any] = {
     'pi.bluetooth.retryCeilingSeconds': 320.0,
     'pi.bluetooth.maxRetries': 5,
     'pi.bluetooth.connectionTimeoutSeconds': 30,
+    ADAPTER_BAUDRATE_KEY: DEFAULT_ADAPTER_BAUDRATE,
     # rfcomm resolution (US-193 / TD-023). macAddress may be a MAC or a
     # literal /dev/rfcommN path; when it's a MAC, bluetooth_helper binds it
     # using these defaults.
@@ -266,6 +278,7 @@ def validateObdConfig(config: dict[str, Any]) -> dict[str, Any]:
     _validateProfilesConfig(config)
     _validateRealtimeParameters(config)
     _validateSimulatorConfig(config)
+    _validateAdapterBaudrate(config)
 
     return config
 
@@ -330,6 +343,26 @@ def _validateDisplayMode(config: dict[str, Any]) -> None:
             f"Invalid display mode: '{displayMode}'. "
             f"Must be one of: {', '.join(VALID_DISPLAY_MODES)}",
             invalidFields=['display.mode']
+        )
+
+
+def _validateAdapterBaudrate(config: dict[str, Any]) -> None:
+    """
+    Validate pi.bluetooth.adapterBaudrate is one of the ELM327 rates (US-817-a).
+
+    Args:
+        config: Configuration dictionary (defaults already applied)
+
+    Raises:
+        ConfigValidationError: If the value is not an int in
+            VALID_ADAPTER_BAUDRATES; the message names the key
+    """
+    baud = config.get('pi', {}).get('bluetooth', {}).get('adapterBaudrate')
+    # bool is an int subclass and 38400.0 == 38400; neither is a baud setting.
+    if type(baud) is not int or baud not in VALID_ADAPTER_BAUDRATES:
+        raise ConfigValidationError(
+            f"Invalid {ADAPTER_BAUDRATE_KEY}: {baud!r}. Must be one of the ELM327 "
+            f"rates: {', '.join(str(b) for b in sorted(VALID_ADAPTER_BAUDRATES))}"
         )
 
 

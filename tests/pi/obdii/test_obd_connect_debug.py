@@ -12,6 +12,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Rex (US-907) | Initial
+# 2026-10-26    | Rex (US-817-a) | Moved pin: obd.OBD kwargs gain baudrate
 # ================================================================================
 ################################################################################
 
@@ -35,6 +36,7 @@ from typing import Any
 import pytest
 
 import src.pi.obdii.obd_connection as connModule
+from src.pi.obdii.config.loader import DEFAULT_ADAPTER_BAUDRATE
 from src.pi.obdii.obd_connection import ObdConnection
 
 ELM_RECORD = "write: ATZ"
@@ -273,8 +275,10 @@ class TestObdCallUnchanged:
 
         _connection(connectDebug=connectDebug).connect()
 
+        # MOVED PIN (US-817-a): the real call now also carries the adapter baud.
         assert fake.calls == [
-            ((), {"portstr": PORT, "fast": False, "timeout": CONNECTION_TIMEOUT})
+            ((), {"portstr": PORT, "fast": False, "timeout": CONNECTION_TIMEOUT,
+                  "baudrate": DEFAULT_ADAPTER_BAUDRATE})
         ]
 
 

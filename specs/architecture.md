@@ -594,8 +594,27 @@ allow-list), so a unit installed only under `--init` fails the suite.
 | `pi.bluetooth.macAddress` | — | MAC **or** literal device path |
 | `pi.bluetooth.rfcommDevice` | `0` | The `N` in `/dev/rfcommN` |
 | `pi.bluetooth.rfcommChannel` | `1` | SPP RFCOMM channel (OBDLink LX = 1) |
-| `pi.bluetooth.connectionTimeoutSeconds` | `30` | python-OBD command timeout |
+| `pi.bluetooth.connectionTimeoutSeconds` | `30` | Bound on python-OBD's auto-baud probe ONLY (see below); not a command timeout |
+| `pi.bluetooth.adapterBaudrate` | `38400` | Serial rate the real connect opens the adapter at; one of 9600/38400/115200/230400/500000 (US-817-a) |
 | `pi.bluetooth.retryDelays` | `[1,2,4,8,16]` | Backoff delays on connect retry |
+
+**Explicit baud + one-auto-attempt fallback (US-817-a).** In python-obd 0.7.3
+`OBD(timeout=)` is used ONLY by `auto_baudrate` (`elm327.py:307`), whose
+`read(1024)` always waits the full timeout -- so every connect that left
+`baudrate` unset paid ~30 s (Atlas MEASURED key-on ~56 s, n=5, 2026-10-26).
+`ObdConnection._createObdConnection` -- the one real `obdlib.OBD(...)` call --
+now passes `baudrate=pi.bluetooth.adapterBaudrate` (default 38400: Atlas MEASURED
+38400 on 96/96 connects since 2026-09-19), so the probe never runs and
+`connectionTimeoutSeconds` bounds nothing on a normal attempt. Fallback, never
+worse than before: an explicit attempt that raises, or whose `obd.status()` is
+not ELM-answered (ELM / OBD / Car Connected), makes the NEXT real attempt pass
+`baudrate=None` (the auto-probe, bounded by `connectionTimeoutSeconds`); the
+attempt after that auto one is explicit again. An ELM-answered-but-ECU-silent
+result (ignition off) keeps the next attempt explicit (Atlas G1). The state is
+one flag on the `ObdConnection` instance -- no sleep, no timer -- and the
+injected `obdFactory(serialPort, timeout)` test seam carries no baud.
+`validateObdConfig` rejects any other rate with a `ConfigValidationError` naming
+the key. The key `connectionTimeoutSeconds` keeps its name (rename out of scope).
 
 **Environment file (`/etc/default/obdlink`):**
 
