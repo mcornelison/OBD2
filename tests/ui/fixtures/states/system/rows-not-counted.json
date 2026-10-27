@@ -77,7 +77,8 @@
           "profiles",
           "startup_log",
           "vehicle_info"
-        ]
+        ],
+        "inProgress": false
       },
       "power": {
         "source": "external",

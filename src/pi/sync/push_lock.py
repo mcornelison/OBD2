@@ -13,6 +13,8 @@
 # ================================================================================
 # 2026-10-26    | Rex (US-871-a)| Initial: fcntl.flock on
 #                               /run/eclipse-obd/sync.lock + states/sync-activity.
+# 2026-10-27    | Rex (US-917-a)| isPushLockHeld (non-blocking probe) and
+#                               isSyncInProgress for system-status.
 # ================================================================================
 ################################################################################
 
@@ -41,6 +43,10 @@ The holder publishes ``states/sync-activity`` atomically:
 * on release ``{pusher: null, lastDeliveredTs, ts}`` -- ``lastDeliveredTs`` is
   stamped only when the call delivered at least one row, otherwise carried
   over from the previous file (``states/`` is tmpfs, so "this boot"), or null.
+
+Readers (system-status, US-917-a) ask :func:`isSyncInProgress`: a pusher named
+in states/sync-activity AND :func:`isPushLockHeld` -- a non-blocking probe of
+the same lock -- so a crashed holder (lock freed, record stale) reads false.
 
 Off-Linux (the Windows dev desk has no ``fcntl``) the same contract runs on a
 ``msvcrt`` byte-range lock, which the OS also drops when the holder dies.
@@ -78,6 +84,8 @@ __all__ = [
     "PushLockHeld",
     "PushLockSession",
     "holdPushLock",
+    "isPushLockHeld",
+    "isSyncInProgress",
     "readSyncActivity",
 ]
 
@@ -200,6 +208,60 @@ def _unlock(fd: int) -> None:
         return
     os.lseek(fd, 0, os.SEEK_SET)
     msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
+def isPushLockHeld(lockPath: str = DEFAULT_LOCK_PATH) -> bool:
+    """Return whether another pusher holds the push lock right now.
+
+    A non-blocking probe: it tries the lock without waiting and, when it gets
+    it, lets go at once.  The lock file (and its directory) is never created
+    -- an absent file is a free lock.  An unreadable lock reads as not held:
+    the probe never claims a sync it cannot see.
+
+    Args:
+        lockPath: The lock file every pusher takes.
+
+    Returns:
+        True when the lock is held by an open descriptor other than the probe's.
+    """
+    try:
+        fd = os.open(lockPath, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        if not _tryLock(fd):
+            return True
+        _unlock(fd)
+        return False
+    except OSError as exc:
+        logger.debug("push-lock probe failed (%s): %s", lockPath, exc)
+        return False
+    finally:
+        os.close(fd)
+
+
+def isSyncInProgress(
+    statesDir: str = DEFAULT_STATES_DIR,
+    lockPath: str = DEFAULT_LOCK_PATH,
+) -> bool:
+    """Return whether a push is actually running (US-917-a ``sync.inProgress``).
+
+    True only when states/sync-activity names a pusher AND the lock is held.
+    The record alone is not enough: a holder killed mid-push leaves it naming
+    the pusher, but the kernel has freed its lock.  With no pusher named the
+    lock is not probed at all, so an idle Pi never touches it.
+
+    Args:
+        statesDir: tmpfs states directory holding sync-activity.
+        lockPath: The lock file every pusher takes.
+
+    Returns:
+        True while a named pusher holds the lock, else False.
+    """
+    record = readSyncActivity(statesDir) or {}
+    if not record.get("pusher"):
+        return False
+    return isPushLockHeld(lockPath)
 
 
 @contextmanager

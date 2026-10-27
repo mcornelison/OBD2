@@ -766,6 +766,8 @@ def test_syncRowsAndPendingAreRetiredFromTheProducer():
     )
     assert set(status["sync"]) == {
         "lastOkTs", "stale", "rowsWaiting", "edrRowsWaiting", "notCounted",
+        # MOVED PIN (US-917-a): the lock-backed sync.inProgress.
+        "inProgress",
     }
     params = inspect.signature(buildSystemStatusState).parameters
     emitParams = inspect.signature(sse.makeSystemStatusEmitter(".", syncStaleThresholdS=1)).parameters

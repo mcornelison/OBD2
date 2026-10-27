@@ -23,7 +23,8 @@
       "stale": false,
       "rowsWaiting": null,
       "edrRowsWaiting": null,
-      "notCounted": null
+      "notCounted": null,
+      "inProgress": false
     },
     "power": {
       "source": "external",

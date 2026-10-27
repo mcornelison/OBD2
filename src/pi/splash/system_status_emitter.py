@@ -54,6 +54,8 @@
 #               |              | P7): the syncRows / syncPending inputs go too.
 # 2026-10-24    | Rex (US-869-c)| the ungated `sensor` verdict member: ONE member
 #               |              | naming every faulted light/imu/ups feed.
+# 2026-10-27    | Rex (US-917-a)| the always-present sync.inProgress: a pusher
+#               |              | named in sync-activity AND the push lock held.
 # ================================================================================
 ################################################################################
 
@@ -75,6 +77,9 @@ from pi.splash.source_availability import (
     SOURCE_WIFI,
     buildSourceState,
 )
+
+# US-917-a: the push lock's own probe -- no second lock path literal here.
+from pi.sync import push_lock
 
 logger = logging.getLogger(__name__)
 
@@ -714,6 +719,7 @@ def buildSystemStatusState(
     syncRowsWaiting: int | None = None,
     syncEdrRowsWaiting: int | None = None,
     syncNotCounted: list[str] | None = None,
+    syncInProgress: bool = False,
     piHealth: dict | None = None,
     captureHealth: dict | None = None,
 ) -> dict:
@@ -796,6 +802,10 @@ def buildSystemStatusState(
             field as the drain reports it; None when not read.
         syncNotCounted: US-916: the snapshot tables, sorted -- named, never
             folded into a count; None when not read.
+        syncInProgress: US-917-a: a push is running right now --
+            :func:`pi.sync.push_lock.isSyncInProgress` (a pusher named in
+            states/sync-activity AND the push lock held). The emit probes it;
+            False (not probed) when not supplied.
         piHealth: US-877-a: the ``pi`` block from
             ``pi.hardware.pi_health.PiHealthSampler.snapshot`` (values, their
             own ts, the limits and ``overLimit``). None -- unwired or not yet
@@ -839,6 +849,9 @@ def buildSystemStatusState(
             "rowsWaiting": syncRowsWaiting,
             "edrRowsWaiting": syncEdrRowsWaiting,
             "notCounted": syncNotCounted,
+            # US-917-a: always a key. Lock-backed, so a crashed pusher (its
+            # record left naming it, its flock freed) reads false.
+            "inProgress": bool(syncInProgress),
         },
         # US-668 (CIO 2026-09-02): the operator-declared `mode` (car/wall) is
         # GONE. It was a fact the operator typed in so the screen could show it
@@ -970,6 +983,7 @@ def makeSystemStatusEmitter(
     *,
     syncStaleThresholdS: float,
     nowIsoFn: Callable[[], str] | None = None,
+    syncLockPath: str = push_lock.DEFAULT_LOCK_PATH,
 ) -> Callable[..., dict | None]:
     """Build the system-status emit callable owned by the orchestrator (A-3).
 
@@ -983,6 +997,9 @@ def makeSystemStatusEmitter(
         syncStaleThresholdS: Stale-while-driving threshold in seconds (Spool S-3;
             config-supplied -- no fabricated default).
         nowIsoFn: Injected clock for ``ts`` (default UTC now, second resolution).
+        syncLockPath: US-917-a: the push lock probed for ``sync.inProgress``
+            (default the one every pusher takes); sync-activity is read from
+            ``statesDir``.
 
     Returns:
         The emit callable. It returns the payload it wrote, or None when the
@@ -1056,6 +1073,7 @@ def makeSystemStatusEmitter(
                 syncRowsWaiting=syncRowsWaiting,
                 syncEdrRowsWaiting=syncEdrRowsWaiting,
                 syncNotCounted=syncNotCounted,
+                syncInProgress=push_lock.isSyncInProgress(statesDir, syncLockPath),
                 piHealth=piHealth,
                 captureHealth=captureHealth,
             )

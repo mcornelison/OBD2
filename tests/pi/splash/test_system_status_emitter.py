@@ -41,6 +41,8 @@
 #               |              | emit parameters are retired (Atlas A2/P6); the
 #               |              | exact pin loses the block and the obdLink
 #               |              | asserts become "absent" asserts.
+# 2026-10-27    | Rex (US-917-a)| MOVED PIN: the two exact sync pins gain
+#               |              | inProgress; sync.inProgress follows the lock.
 # ================================================================================
 ################################################################################
 
@@ -70,6 +72,7 @@ from pi.splash.system_status_emitter import (
     isSyncStaleWhileDriving,
     makeSystemStatusEmitter,
 )
+from pi.sync import push_lock
 
 _NOW = "2026-06-30T19:42:00Z"
 _SYNC_OK = "2026-06-30T19:40:00Z"  # 120s before _NOW
@@ -102,6 +105,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
             # MOVED PIN (US-894-c): no `rows` / `pending` (Atlas P7).
             "lastOkTs": _SYNC_OK, "stale": False,
             "rowsWaiting": None, "edrRowsWaiting": None, "notCounted": None,
+            # MOVED PIN (US-917-a): inProgress is always a key (false unprobed).
+            "inProgress": False,
         },
         # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
         # a real measurement, and a reason standing beside one would be a
@@ -1066,6 +1071,8 @@ def test_sync_backlogFields_areTransportedVerbatim_zeroIsNotNull():
         "lastOkTs": _SYNC_OK, "stale": False,
         "rowsWaiting": 0, "edrRowsWaiting": 1771,
         "notCounted": ["profiles", "vehicle_info"],
+        # MOVED PIN (US-917-a): inProgress is always a key (false unprobed).
+        "inProgress": False,
     }
 
 
@@ -1678,3 +1685,107 @@ def test_emitter_returnsNone_whenTheWriteFailed(tmp_path):
     )
 
     assert returned is None
+
+
+# ---------------------------------------------------------------------------
+# US-917-a -- sync.inProgress: a pusher named in sync-activity AND the push
+# lock (US-871-a) actually held. A crashed holder frees the lock, so it can
+# never leave the glyph blue.
+# ---------------------------------------------------------------------------
+
+
+def _lockPaths(tmp_path):
+    return str(tmp_path / "run" / "sync.lock"), str(tmp_path / "states")
+
+
+def _emitInProgress(statesDir: str, lockPath: str) -> bool:
+    emit = makeSystemStatusEmitter(
+        statesDir, syncStaleThresholdS=60, nowIsoFn=lambda: _NOW, syncLockPath=lockPath
+    )
+    payload = emit(syncLastOkTs=None, powerSource="external", driveState="idle", driveId=None)
+    assert payload is not None
+    return payload["sync"]["inProgress"]
+
+
+def test_system_status_sync_in_progress_follows_the_lock(tmp_path):
+    """Given a live holder (sync-activity names it, the flock is held),
+    When system-status is emitted, Then sync.inProgress is true -- and false
+    again once the holder releases."""
+    lockPath, statesDir = _lockPaths(tmp_path)
+
+    with push_lock.holdPushLock(
+        push_lock.DRAIN_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+    ):
+        held = _emitInProgress(statesDir, lockPath)
+    released = _emitInProgress(statesDir, lockPath)
+
+    assert held is True
+    assert released is False
+
+
+def test_syncInProgress_isFalse_whenActivityNamesAPusherButTheLockIsFree(tmp_path):
+    """A crashed holder: sync-activity still names it, the kernel freed the lock."""
+    lockPath, statesDir = _lockPaths(tmp_path)
+    os.makedirs(statesDir)
+    with open(os.path.join(statesDir, push_lock.SYNC_ACTIVITY_FILENAME), "w", encoding="utf-8") as f:
+        json.dump({"pusher": push_lock.DRAIN_PUSHER, "pid": 99999,
+                   "startedTs": _NOW, "ts": _NOW}, f)
+    os.makedirs(os.path.dirname(lockPath))
+    open(lockPath, "w").close()
+
+    assert _emitInProgress(statesDir, lockPath) is False
+
+
+def test_syncInProgress_isFalse_withNoActivityFile_evenWithTheLockHeld(tmp_path):
+    lockPath, statesDir = _lockPaths(tmp_path)
+    os.makedirs(os.path.dirname(lockPath))
+    fd = os.open(lockPath, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        assert push_lock._tryLock(fd)
+        assert _emitInProgress(statesDir, lockPath) is False
+    finally:
+        push_lock._unlock(fd)
+        os.close(fd)
+
+
+def test_syncInProgress_isFalse_withNoLockFile(tmp_path):
+    """An absent lock file is free; the probe never creates it (or its dir)."""
+    lockPath, statesDir = _lockPaths(tmp_path)
+
+    assert push_lock.isPushLockHeld(lockPath) is False
+    assert not os.path.exists(os.path.dirname(lockPath))
+    assert _emitInProgress(statesDir, lockPath) is False
+
+
+def test_syncInProgress_isPublishedFalse_byDefault():
+    """Always a key: a caller that probed nothing publishes false, never absent."""
+    state = buildSystemStatusState(
+        syncLastOkTs=None, syncStale=False, powerSource="external",
+        driveState="idle", driveId=None, nowIso=_NOW,
+    )
+    assert state["sync"]["inProgress"] is False
+
+
+def test_isPushLockHeld_neverBlocks_andLeavesTheHolderHoldingIt(tmp_path):
+    """Given a held lock, the probe answers at once and does not take it over."""
+    import time
+
+    lockPath, statesDir = _lockPaths(tmp_path)
+    with push_lock.holdPushLock(
+        push_lock.INTERVAL_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+    ):
+        started = time.monotonic()
+        held = push_lock.isPushLockHeld(lockPath)
+        elapsed = time.monotonic() - started
+        # Still held after the probe: a non-waiting pusher is still refused.
+        with pytest.raises(push_lock.PushLockHeld):
+            with push_lock.holdPushLock(
+                push_lock.DRIVE_END_PUSHER, wait=False, lockPath=lockPath, statesDir=statesDir
+            ):
+                pass
+
+    assert held is True
+    assert elapsed < 1.0
+    # Free again: the probe on a free lock took and dropped it, leaving it free.
+    assert push_lock.isPushLockHeld(lockPath) is False
+    assert push_lock.isPushLockHeld(lockPath) is False

@@ -823,10 +823,15 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 #           (Atlas P7); the inputs drop their two builder parameters, syncRows
 #           and syncPending. Nothing else moved (checked at regeneration: each
 #           new block == the old one minus the two sync keys).
+# US-917-a: MOVED PIN (US-917-a) -- `sync` gains `inProgress` (false in every
+#           trip fixture: no push lock in a trip scene). No input key added or
+#           removed: the builder's syncInProgress defaults to false. Nothing
+#           else moved (checked at regeneration: one added key per fixture).
 _TRIP_STATUS_KEYS = {
     "sync": {
         "lastOkTs", "stale",
         "rowsWaiting", "edrRowsWaiting", "notCounted",
+        "inProgress",
     },
     "power": {"source", "reasons"},
     "wifi": {"state", "ssid", "rssiDbm", "home", "ts"},
