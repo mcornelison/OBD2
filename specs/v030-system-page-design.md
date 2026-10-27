@@ -278,6 +278,39 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 - **Where the details render (I8):** every detail screen renders in the one `#sys-detail` overlay. The `#version-chip` pinned inside it is shown **only in the Pi detail**.
 - **Version (S7, confirmed):** the same string as the top-bar `#version-chip`, from `.deploy-version` through its ONE existing reader (Atlas P8). It's **not** in the `pi` block, and the page never reads it a second way.
 
+#### 4.6.3 LAST UPDATED + the shared page-detail pattern (CIO 2026-10-27, UIDEV-017)
+relay(CIO, in car 2026-10-27): *"have the bottom navigation called last updated systems and have a separate page for all the devices and when they were last updated versus having them each on their own screen."* **CIO ruled it IN V0.30** (via Marcus, 2026-10-27).
+
+**Entry: `UPDATED ›` on the verdict line, left of `SETTINGS ›`.**
+- Same style as `.sys-settings`: neutral link, `--fs-meta`, letter-spacing 0.06em.
+- **Fit:** the widest verdict is `8 ISSUES`. The most members possible are bt, adapter, capture, 3 × sensor, wifi and pi, so the count is one digit: 8 × 22.5 = 180 px.
+  - Add `UPDATED ›` (9 × 9.93 = 89.4) and `SETTINGS ›` (99.3), plus 2 × 13 gaps: **395 of 448**.
+  - `LAST UPDATED ›` would leave 4 px, so the link says `UPDATED` and the detail's title says `LAST UPDATED`.
+- The ` ›` and the tap follow the I9 / §4.7.2 parked rule, like every detail.
+
+**The LAST UPDATED detail:** one line per device, in this fixed order: OBD, IMU, LIGHT, UPS, WIFI, SYNC.
+- Each line is ≥ `--row-min`. The label is Michroma `--fs-label` in the 4.5em row column.
+- The value is `--font-mono` `--fs-label`: `<age> · <time>`, e.g. `2 s ago · 9:20:14 PM`. The age follows the M7 rule; the time is local 12-hour, through `fmtStamp`.
+- 6 × 44 = 264 of the 270 px detail body.
+- **Sources: one reader each, and no new field.**
+  - OBD, IMU, LIGHT, UPS: `capture-health.feeds.<feed>` last-row time. This is the same field the DATA detail's last-row age reads, so it isn't read twice: the DATA detail and this one share it.
+  - SYNC: `sync.lastOkTs` (last data stored).
+  - WIFI: the WiFi read's `ts`. ASK(Atlas): name the field.
+- **Undated** ⇒ `--` (the DATA detail's undated rule). **Never coloured:** an age has no band. A faulted feed's reason stays on the DATA detail; this page only says *when*.
+- **Per-page UPDATED items go:** Motion's UPDATED cell is the only one (`dashboard.html`, `motion-updated`; Motion §3a).
+  - A value's own age (`2 s old` on O2, the UPS row's `12 s ago`, …) **stays**. That says how fresh the number beside it is (honest instrument), not when a device last spoke.
+
+**The shared page-detail pattern** (Engine HISTORY, Fuel FUEL TRIM, Motion IMU, and this one):
+- **Where it renders:** the one detail overlay (§4.6 I8 `#sys-detail`, or a sibling with the same rules; the element is Ralph's call). It is solid (the P-4 rule: a navigational overlay is a destination).
+- **Header:** `‹ BACK` top left; the title in Michroma.
+- **Body:** 320 − 34 − 2 × 8 = **270 px**. **No detail scrolls** (the CIO's no-scroll rule, applied here too); each detail's spec carries its height budget.
+- **Opens only while parked.** The opener is either a `›` link (System) or the **detail button**.
+- **The detail button:**
+  - Michroma `--fs-label` label, ` ›` in mono, `--text-primary` text;
+  - 1px `--text-secondary` border, radius `--radius`, padding 12 px each side, height `--tap-min`;
+  - **no state colour.** It is a real control and looks like one, which is the button grammar used correctly (US-758 was a non-control that wore it);
+  - while not parked: `visibility: hidden`, space kept.
+
 ### 4.7 Settings (F-126, now in V0.30; S9)
 Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **parked or not** (§4.7.2). The ⋮ is never hidden (S-13). That replaces the 2026-10-15 note "⋮ is hidden while moving".
 
@@ -440,6 +473,11 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
    - UPS SOC `0xFFFF` ⇒ no member;
    - the feed recovers ⇒ the member clears and the sentence returns to `all 4 feeds writing`.
 14. **Top bar:** the left cluster with the chain fits its 168.6 px side track, by `test_topbar_three_column_grid`'s measured model.
+15. **LAST UPDATED (§4.6.3).**
+    - Render harness: `UPDATED ›` sits left of `SETTINGS ›` on the verdict line in every state; ` ›` and the tap work only while parked.
+    - The detail lists OBD, IMU, LIGHT, UPS, WIFI and SYNC in that order, each `<age> · <time>` or `--` when undated, with no state colour.
+    - Grep: no `motion-updated` in the dashboard.
+16. **Fit, in a real browser** (480 × 320 stage, shipped fonts): the verdict line doesn't wrap with `8 ISSUES`, and the LAST UPDATED detail body has `scrollHeight <= clientHeight`.
 
 ## 7. Fixtures (S10)
 Each is a `system-status` (+ `capture-health`, + `battery-health` where named) payload, regenerated from the real builders (Atlas L7), never hand-typed.

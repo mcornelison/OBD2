@@ -25,6 +25,8 @@
 
 ## 3. Layout (480 × 320; body 258 visible; content scrolls)
 
+> ⚠️ **Superseded by §3a (CIO ruled 2026-10-27, option B).** The page no longer scrolls. The history and status below the fold move to the ENGINE HISTORY detail, reached by a `HISTORY ›` button. The chart, status-row and word rules below still hold inside the detail.
+
 ```
 ┌──────────────────────────────────────────────┐
 │ ┃█┃   ┃ ┃    LOAD                             │  above the fold
@@ -52,6 +54,39 @@
   - `OFF` when the lamp is off; no count line. Lamp on with count 0 (a pending code): `ON` / `0 codes ›`, which is true and still links to Warnings.
   - **Count 1 reads `1 code ›`** (singular). It is the most common real MIL case, so it is the one most often on the glass. As built (US-889-c) it reads `1 codes ›`: a later Engine touch fixes it, not a turnover blocker.
   - As built and accepted (US-889-c, 2026-10-15): `DTC_COUNT` not read while ON ⇒ `-- codes ›`, tap kept (Warnings reads the codes itself); `MIL_ON` not 0/1 ⇒ `--` + `not read`; lamp ON is **neutral** (severity is the Warnings page's, the page picks no band).
+
+## 3a. Re-lay: HISTORY button + full-width glance (CIO ruled 2026-10-27, UIDEV-017)
+
+relay(CIO, confirmed 2026-10-27, via Marcus): option B. *"a button that would take me to the history and status screen in full detail. That way we can maximize the real estate of the current screen and the history data."* The ↓ cue was too small to notice, and the readings sat jammed to the left. **The card body is 254 px** = 320 − 34 (`--bar-h`) − 16 (`--dots-h`) − 2 × 8 (`--card-pad-y`); the title row is retired (US-887-c). Earlier sizes in this spec used 258.
+
+```
+┌──────────────────────────────────────────────┐
+│ ┃ ┃  ┃ ┃    LOAD                              │
+│ ┃█┃  ┃ ┃    71 %                (--fs-hero)   │
+│ ┃█┃  ┃█┃    THROTTLE         TIMING           │
+│ ┃█┃  ┃█┃    48 %             22° BTDC         │
+│ ┃█┃  ┃█┃                     base timing · not knock
+│ LOAD THR                     ┌────────────┐   │
+│                              │ HISTORY  › │   │ parked only
+│                              └────────────┘   │
+└──────────────────────────────────────────────┘
+```
+
+- **Bars** `--eng-bar-h` 120 → **168 px** (26 px wide, unchanged). The bar column is 168 + 4 + 18 label = 190 px.
+- **Readings, right of the bars** (448 − 64 bars − 16 gap = 368 px):
+  - LOAD on its own row (label 18 + `--fs-hero` 44);
+  - then THROTTLE | TIMING side by side, 2 × 1fr, each label 18 + `--fs-primary` 34. The widest is TIMING `22° BTDC`: 3 mono characters at 34 px = 61 px + ` BTDC` at 20 px = 60 px, so 121 px in a 176 px column;
+  - `base timing · not knock` under TIMING (`--fs-meta`).
+- **`HISTORY ›` button**, bottom right of the readings:
+  - `HISTORY` Michroma `--fs-label` (129.2 px) + ` ›` mono, padding 12 px each side, 1px `--text-secondary` border, radius `--radius`, height `--tap-min` (40), so 179 px wide;
+  - **neutral**: it navigates, it judges nothing, so it takes no state colour (the shared detail button, System §4.6.3).
+- **Height:** readings 66 + 6 + 56 + 4 + 18 + 12 + 40 button = **202 of 254**; bars 190. **No scroll, no cue**: the `.eng-cue` element and its ↓ are deleted.
+- **The button shows only while parked** (§4.7.2 of System, the one parked rule). While not parked it is `visibility: hidden`: its space is kept, so nothing moves when the car stops.
+
+### 3b. The ENGINE HISTORY detail
+- Opens in the shared detail overlay (System §4.6.3): solid, `‹ BACK` top left, title `ENGINE HISTORY` (Michroma, 181.5 px at 15 px). The body is 320 − 34 header − 2 × 8 = **270 px**.
+- **Contents:** the three history charts (COOLANT, INTAKE AIR, BATTERY, every §4 history rule unchanged), then the status row (RUN TIME, CHECK ENGINE, §3 status-row fit unchanged; the `n codes ›` tap still goes to Warnings).
+- `--eng-graph-h` 46 → **40 px**. Each chart = head 18 + 40 + 8 gap = 66, so three are 198; then rule 1 + 8 + the status row 60 (label 18 + `ON` 24 + `n codes ›` 18). **Total 267 of 270.** The detail does not scroll either; the margin is thin, so AC 15 measures it.
 
 ## 4. Behaviour
 - **Each value steps at its own polling cadence** (load, timing every cycle; throttle ~every 3rd; IAT, run time ~every 10th). No interpolation.
@@ -98,6 +133,13 @@
 12. New CSS tokens-only; geometry as scoped custom properties on `#engine-card` (S103 G-4 rule).
 13. **DoD (R15): CIO judgement in the car.**
 14. Timing: a negative-advance fixture renders `|n|° ATDC`, never `−n° BTDC`.
+15. **No scroll on the page or in the detail (CIO 2026-10-27, §3a/§3b).** In a real browser (Chromium, 480 × 320 stage, shipped fonts):
+    - `#engine-card .card-body` has `scrollHeight <= clientHeight` on `wot-pull-load-100`, `timing-negative` and `not-read-with-reason`;
+    - the ENGINE HISTORY detail body passes the same check on `mil-on-twelve-codes` + `fan-cycle-history` and on `history-empty-after-restart`.
+    AC 10's scroll-cue clause is retired. No `.eng-cue` and no `↓` remain in the Engine markup (grep).
+16. Render harness: the `HISTORY ›` button is `visibility: hidden` when not parked and visible when parked; while not parked a tap opens nothing. Parked, a tap opens the detail with title `ENGINE HISTORY`, and `‹ BACK` returns to the Engine page.
+17. The button's winning `color` and `border-color` are `--text-primary` / `--text-secondary`: no state colour (it's navigation, not a verdict).
+18. bigDoD, CIO in the car: the Engine page reads without scrolling, and the HISTORY button is obvious.
 
 ## 7. Fixtures
 `idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale` · `history-restarted-mid-drive` (`partial` true) · `timing-negative` (−4 ⇒ `4° ATDC`).

@@ -25,7 +25,7 @@ The **default page** (R5): readable at a glance while driving with **no touch**.
 | D-7 | Stale OBD value | **Dim + age after 5 s** |
 | D-8 | Between gears | **Hollow hint of the likely next gear + arrow**, solid when the measured gear confirms; **glide** on change. Hint rule: Spool 2026-10-13 (§4.2) |
 | D-9 | Layout | **B · Side columns** |
-| D-10 | Gear size | **120 px** (new tier `--fs-giant`) |
+| D-10 | Gear size | **100 px** (`--fs-giant`; was 120, CIO 2026-10-27 in car: *"slightly smaller … to increase the size of the number mph value"*) |
 | D-11 | RPM number placement | **Right column**. R9 ("RPM + gear central") is met by the **central RPM bar** |
 | D-12 | Column assignment | **Left: coolant + intake air · Right: RPM + battery** |
 | D-13 | Distance/speed unit | **mph** (CIO: miles on every V0.30 page) |
@@ -47,9 +47,11 @@ The **default page** (R5): readable at a glance while driving with **no touch**.
    120 px            centre              120 px
 ```
 
-- Every value `--fs-primary` (34 px); labels `--fs-meta`; units `--fs-label`.
-- **Gear `--fs-giant` = 120 px**, a NEW top tier above `--fs-hero`. Token addition ⇒ **Atlas Rule-10 gate**. The type scale must stay descending (pinned by `tests/ui/test_dashboard_type_scale.py`).
-- Total ≈ 248 / 258 px.
+- Every value `--fs-primary` (34 px), **except speed: `--fs-hero` (44 px)** (CIO 2026-10-27). Labels `--fs-meta`; units `--fs-label`.
+- **Gear `--fs-giant` = 100 px** (was 120; CIO 2026-10-27, relay: *"the gear to be slightly smaller … and align top with the words coolant and RPM … to increase the size of the number mph value"*). It is still the top tier above `--fs-hero`, so the scale stays descending (`tests/ui/test_dashboard_type_scale.py`). **MOVED PIN:** `tests/ui/test_dashboard_type_scale_values.py:48` `"fs-giant": 120` → `100`.
+- **Top-aligned:** the gear glyph's cap top lines up with the cap tops of the `COOLANT` and `RPM` labels, within 2 px on a screenshot. The centre column aligns to the start. Any offset is ONE token, `--drv-gear-top`, derived from Michroma's cap height (OS/2 `sCapHeight`, measured from the font file, not guessed) and declared in the `#driving-card` block.
+- **Speed fit:** the widest is `120 mph`: 3 mono digits at 44 px = 79.5 px + ` mph` at 20 px = 48 px, + 2 × 8 box padding + 2 border = **146 px of 208**.
+- **Height:** the gear's 20 px pays for the speed's +10. Total ≤ 248 of the real 254 px body (320 − 34 − 16 − 2 × 8; this spec's 258 predates the corrected budget).
 
 ## 4. Behaviour
 
@@ -78,7 +80,7 @@ The reason line under `--` is **dropped on this page** (glance view); detail kee
 **How the hint is drawn (S117 review, 2026-10-26).** The gear face is Michroma, and its 38-glyph subset has no arrow characters, so the arrow is a **shape**, never text:
 - **Hollow digit:** `.drv-gear-hint { color: transparent; -webkit-text-stroke: var(--drv-hint-stroke) var(--text-secondary); }`, with `--drv-hint-stroke: 3px` declared on `#driving-card`. Same face, size and position as the solid gear, so a hint and a measured gear differ only in fill. They are never identical.
 - **Arrow:** an inline SVG triangle, `<svg class="drv-hint-arrow" viewBox="0 0 10 10">`, path `M5 0 L10 10 L0 10 Z` for up and the same path flipped for down, `fill: currentColor` in `--text-secondary`, in a `var(--drv-hint-arrow)` = 30px square box. It is absolutely positioned at `left: calc(100% + var(--drv-gap))`, centred vertically on the digit, so the digit sits exactly where a solid gear draws and nothing moves when the hint turns solid.
-- **Fit (computed):** the widest digit is 0.951 em × 120 px = 114 px. Centred in the 208 px centre column (448 body − 2 × 120), its right edge is at x 161 and the arrow runs 167–197: inside 208, with 11 px spare.
+- **Fit (computed, at 100 px, 2026-10-27):** the widest digit is 0.951 em × 100 px = 95 px. Centred in the 208 px centre column (448 body − 2 × 120), its right edge is at x 151.5, and the 30 px arrow runs 157.5–187.5: inside 208, with 20.5 px spare. *(At 120 px it was 114 px wide with 11 px spare.)*
 - carousel.js and dashboard.html contain no `↑`/`↓` character. The only new px are `--drv-hint-stroke` and `--drv-hint-arrow`, in the `#driving-card` custom-property block.
 
 **Hint rule (Spool 2026-10-13; computed by `gearHint` in `gear_derivation.py`, published by `gear_state_emitter` as `hintGear` + `hintDirection` on `states/gear`, names approved by Atlas G-2).** A hint exists only when **all** hold:
@@ -128,7 +130,7 @@ The reason line under `--` is **dropped on this page** (glance view); detail kee
 
 1. Given each fixture in §7, the page at 480×320 shows the gear / RPM / speed / band colours in §4, verified by screenshot.
 2. No element clips (DOM `scrollHeight <= clientHeight`, all fixtures).
-3. Computed font-size: gear = `--fs-giant`; RPM, speed, coolant, intake air, battery ≥ 34 px.
+3. Computed font-size: gear = `--fs-giant` (100 px); speed = `--fs-hero` (44 px); RPM, coolant, intake air, battery ≥ 34 px. The gear's cap top is within 2 px of the COOLANT/RPM label cap tops (on-Pi screenshot, bigDoD).
 4. RPM never renders a value absent from the state (no interpolation): with a state change from 2,000 to 4,000, no intermediate value is ever painted.
 5. The gear glide fires only when the gear changes (two readings with the same gear ⇒ no animation).
 6. A hinted gear renders hollow, with arrow; a measured gear renders solid. They are never visually identical.

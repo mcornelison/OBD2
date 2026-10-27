@@ -27,6 +27,8 @@
 
 ## 3. Layout (480 × 320; body 258)
 
+> ⚠️ **Superseded by §3a (CIO in car, 2026-10-27).** The sketch and the sizes below overflowed the glass. Build from §3a; the type, font and word rules below still hold unless §3a changes them.
+
 ```
 ┌──────────────────────────────────────────────┐
 │ FRONT  BEFORE CAT                 [SWITCHING] │
@@ -47,6 +49,38 @@
 - **Live verdict** chip: `--fs-label` `--font-display`, **no state colour** (the verdict is a description, not a severity; STUCK is not a STOP).
 - **Withheld verdict** chip: lower case, `--font-mono` `--fs-label` (the Michroma subset has no a–z), dashed outline, `--text-tertiary`. **The word is the provider's reason code with `_` → space:** `open_loop` → `open loop`, `not_enough_data` → `not enough data`, `unclear`, `not_rated` → `not rated`. Each is a different reason, and the chip says which. A new reason code renders readably with no page change.
 - **No promise words** (CIO 2026-10-26: `yet` dropped): the chip says why there is no verdict, never that one is coming.
+
+## 3a. Layout, re-laid (CIO in car 2026-10-27, UIDEV-017)
+
+**The CIO's rule for this page: nothing needs a scroll.** The §3 layout needed one: CATALYST was below the fold and the meta line printed twice (photos `pm/evidence/2026-10-27-cio-car-photos/``o2-top-2120.jpg`, `o2-scrolled-bottom-2120.jpg`). Both are my errors:
+- §3 budgeted a 258 px body. **The card body is 254 px** = 320 − 34 (`--bar-h`) − 16 (`--dots-h`) − 2 × 8 (`--card-pad-y`); the title row is retired (US-887-c). Earlier sizes in this spec used 258.
+- With `· last 5 min` (S117) the meta line is ~361 px. It no longer fits beside the 106 px voltage, so it wrapped under each sensor and repeated the same words.
+
+```
+┌──────────────────────────────────────────────┐
+│ FRONT  BEFORE CAT                 [SWITCHING] │ head 28
+│ 0.78 V   •  • •   •  • •  •• •  • •   •  •   │ one row 52: value column + trace
+│ 2 s old  - - - - - - - - - - - - - - - - - - │
+├──────────────────────────────────────────────┤
+│ REAR  AFTER CAT                   [not rated] │
+│ 0.18 V   • • •  • • • •  • • • • • •  • •    │
+│ 1 s old  - - - - - - - - - - - - - - - - - - │
+│ 1 sample / ~2.2 s · last 5 min                │ shared meta 18
+├──────────────────────────────────────────────┤
+│ CATALYST                          [not rated] │ 28
+└──────────────────────────────────────────────┘
+```
+
+- **Each sensor = its head (label + chip), then ONE row:** a value column (voltage `--fs-primary`; under it `<n> s old`, `--font-mono` `--fs-meta`), and the trace filling the rest of the row.
+- **Value column** `--o2-val-w: 112px`. The widest content is `0.00 V` (4 mono characters at 34 px = 82 px, plus ` V` at 20 px = 24 px, so 106 px). `999+ s old` is 10 × 9.03 = 90 px.
+- **Trace** `--o2-trace-h: 52px` (the column's 34 + 18). Its width is the rest of the row: 448 − 112 − 12 (`--o2-col-gap: 12px`) = **324 px**. Both traces have the same width and x scale, so they still share one time axis (O-5). At today's rate the ~136 dots are 2.4 px apart, so they stay separable. The mid-line and dot rules are unchanged.
+- **The meta is printed ONCE** (CIO, 2026-10-27). It goes under the rear trace, above CATALYST: `1 sample / ~<N> s · last 5 min`, `--font-mono` `--fs-meta` `--text-secondary`, 30 characters = 271 px. Both sensors come from one provider on one poll cycle, so one line is true for both. **void-if** the provider ever publishes a separate `samplePeriodSec` per sensor: then the period goes back beside each sensor's age, and the column is re-measured.
+- **Head fit:** `FRONT  BEFORE CAT` is 218.5 px (Michroma 15 px, advances JSON). The widest chip is `not enough data`: 15 × 12.04 = 181 px + 2 × 8 padding + 2 border = 199 px. 218.5 + 13 gap + 199 = **430.5 of 448**.
+- **Section padding `0.1em`** (was 0.2em).
+- **Height budget** (computed at the body's 26 px em):
+  - each sensor = 5.2 padding + 28 head + 3.9 gap + 52 row = 89.1, so two are 178.2;
+  - plus 2 rules, the shared meta 18, and CATALYST 5.2 + 28 = 33.2;
+  - **total 231.4 of 254, 22.6 spare.** No state changes a height: `--` voltage, `no source`, `999+ s old` and the widest chip all fit their slots.
 
 ## 4. Behaviour
 
@@ -97,7 +131,12 @@
 4. Under 60 gated samples: front chip `not enough data`.
 5. Rear and catalyst chips read `not rated` in every fixture.
 6. No AFR value or label anywhere on the page.
-7. No clipping, **proven by rule** (the render harness resolves the cascade, not layout; precedent `test_engine_history_render.py`): no O2 box has a fixed height except the trace (`--o2-trace-h`), and no O2 rule sets `overflow: hidden`. On the glass: an on-Pi screenshot of the `switching` fixture shows both rows and both traces whole (bigDoD). Voltages ≥ 34 px. Live verdict chips carry no state colour.
+7. **Nothing needs a scroll (CIO 2026-10-27; §3a).**
+   - (a) In a real browser (Chromium at the 480 × 320 stage, shipped fonts), `#o2-card .card-body` has `scrollHeight <= clientHeight` on `switching`, `open-loop-koeo` (front 0.04 V / rear 0.00 V, the photographed state), `no-source`, `stale-999` and `not-enough-data`. The render harness can't see layout, so this runs in a browser or on the Pi.
+   - (b) Rule: no O2 rule sets `overflow: hidden`; the only fixed sizes are the §3a tokens.
+   - (c) bigDoD: an on-Pi screenshot of the KOEO state shows CATALYST without scrolling.
+   - Voltages ≥ 34 px. Live verdict chips carry no state colour.
+7a. The text `1 sample /` appears exactly once in the O2 card's rendered text (render harness).
 8. No literal colour in this page's CSS; px only inside `#o2-card` custom properties.
 8a. `states/o2` missing ⇒ `--` + `no source`, never `0.00 V`.
 9. **DoD (R15): CIO judgement in the car.**

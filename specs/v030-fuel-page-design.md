@@ -27,6 +27,8 @@
 
 ## 3. Layout (480 × 320; body 258 px; ≈ 238 used)
 
+> ⚠️ **Superseded by §3a (CIO ruled 2026-10-27).** TOTAL TRIM and the fuel-trim trend move off the glance into the FUEL TRIM detail. The type, unit and word rules below still hold.
+
 ```
 ┌──────────────────────────────────────────────┐
 │ AIRFLOW                         [CLOSED LOOP] │
@@ -51,6 +53,37 @@
 | THIS DRIVE / SINCE RESET | `--fs-secondary` (26) | parked-read, allowed under the F-127 tier rule |
 | MPG unit | `--fs-label` (20), mono, `--text-secondary` | `MPG` after every MPG figure, the airflow `g/s` pattern (`.fuel-unit`, 4 px gap, same baseline). US-922, §4.3 |
 | Trend headline | `--fs-secondary` | latest 5-drive median |
+
+## 3a. Re-lay: the glance cut + the FUEL TRIM detail (CIO ruled 2026-10-27, UIDEV-017)
+
+relay(CIO, in car 2026-10-27): *"there seems to be a lot of information on this page"*. On the trend: *"it's not obvious what I would use this for while I was driving … it may warrant its own sub screen"*. **CIO ruled 2026-10-27 (via Marcus):** the cut as proposed, with TOTAL TRIM behind a detail button; **the trend goes to a sub-screen on the Pi, not to the server.** **The card body is 254 px** = 320 − 34 (`--bar-h`) − 16 (`--dots-h`) − 2 × 8 (`--card-pad-y`); the title row is retired (US-887-c). Earlier sizes in this spec used 258.
+
+```
+┌──────────────────────────────────────────────┐
+│ AIRFLOW                         [CLOSED LOOP] │
+│ 16.2 g/s                       (--fs-hero)    │ ~92
+│ ▬▬▬▬▬▬▬░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    │
+├──────────────────────────────────────────────┤
+│ LAST 30 S      THIS DRIVE      SINCE RESET   │ ~70
+│ 24 MPG         ≈26.3 MPG       ≈24.6 MPG     │
+├──────────────────────────────────────────────┤
+│                              ┌─────────────┐ │
+│                              │ FUEL TRIM › │ │ 40, parked only
+│                              └─────────────┘ │
+└──────────────────────────────────────────────┘
+```
+
+- **The glance keeps 5 facts in 2 bands:** AIRFLOW (hero + bar) with the LOOP chip, then the three MPG figures. The MPG band, the reset gesture and every §4.3 rule are unchanged.
+- **TOTAL TRIM and the trend leave the glance.**
+- **`FUEL TRIM ›` button**, bottom right:
+  - `FUEL TRIM` Michroma `--fs-label` (149.2 px) + ` ›` mono, the shared detail button (System §4.6.3), so 199 px wide, 40 tall;
+  - neutral, and visible only while parked (`visibility: hidden` otherwise, so its space is kept).
+- **Height:** ~92 + 9 + ~70 + 9 + 40 = **~220 of 254**.
+
+### 3b. The FUEL TRIM detail (sub-screen)
+- Opens in the shared detail overlay: title `FUEL TRIM`, `‹ BACK` back to Fuel. The body is 270 px.
+- **TOTAL TRIM**, then the **fuel-trim trend** at full width, each with its §4.2 / §4.4 rules unchanged. The LOOP chip repeats beside TOTAL TRIM, because trim is read against the loop state.
+- **No new data and no new verdict:** it is the same two elements, moved. A reading here still steps at its own sample.
 
 ## 4. Behaviour
 
@@ -160,6 +193,8 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 10. LAST 30 S and total trim ≥ 34 px; THIS DRIVE / SINCE RESET `--fs-secondary` (parked-read). No reason text wider than its MPG column (§4.6 fit rule).
 11. Tokens-only CSS; geometry as scoped custom properties on the card (S103 G-4 rule).
 12. **DoD (R15): CIO judgement in the car.**
+13. **Nothing needs a scroll (CIO 2026-10-27, §3a):** in a real browser (Chromium, 480 × 320 stage, shipped fonts), `#fuel-card .card-body` and the FUEL TRIM detail body each have `scrollHeight <= clientHeight` on the reset-in-progress fixture and the widest-reason fixtures.
+14. No TOTAL TRIM and no trend on the glance (render harness). The FUEL TRIM detail shows both, under the unchanged §4.2/§4.4 rules, on a parked tap only. The `FUEL TRIM ›` button is `visibility: hidden` when not parked and takes no state colour.
 
 ## 7. Fixtures
 `idle-closed` · `cruise-closed` · `wot-open-above-scale-max` · `stopped` · `last30-null-crawl` · `last30-99-plus` · `last30-not-published` · `trend-healthy` · `trend-amber` · `ltft-relearning-after-reset` (built by `buildLtftTrendState`, replaces the hand-set `ltft-reset-zero-flat`) · `maf-null` · `mpg-null-reasons` (one per §4.6 code) · `sinceReset-never` · `parked-reset-available` · `reset-allowed-true` (hint shown) · `reset-allowed-driving` (no hint) · `reset-allowed-speed-unknown` (no hint) · `reset-allowed-missing` (no hint) · `reset-refused-driving` (`slow to reset`) · `reset-write-fails` · `stale`.
