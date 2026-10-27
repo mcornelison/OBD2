@@ -3231,7 +3231,7 @@ the splash** — it calls a generic callback and stays ignorant of the splash sc
 | Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash (the page loads with its stage hidden and paints nothing: US-870-a) |
 | Smoothing window failed (power returned mid-smoothing) | `cancelled` | ABORT splash (kill chromium, no fadeout) |
 | Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | PAINT on the first read (US-870-a) |
-| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | PAINT on the first read if not already; dies with the power |
+| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | PAINT on the first read if not already; plays its ending and POSTs done, which the normal path waits for (US-870-d, below; page half S119) |
 | Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit painted awaiting a poweroff that will not fire) |
 
 The VCELL-floor fast-path skips the pipeline, so it emits `powering_off` **without**
@@ -3245,6 +3245,38 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `tGraceTotalS`, `tRemainingS`, `reason`, `ts`, and since US-883-a `step`, below) is written atomically to
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
+
+**Poweroff waits for the page's 'splash done' (US-870-d, Sprint 118 / V0.30; CIO ruled
+2026-10-27).** Before this, `_powerOff` ran right after the window resolved, so with
+nothing to sync the poweroff overtook the page in its first turn. Now, on the normal
+path, the sequencer emits `powering_off` (the page's cue to start its ending, Atlas G2)
+and only then waits for `states/shutdown-splash-done` carrying **this boot's** id,
+before the pre-poweroff hooks and `systemctl poweroff`.
+
+- **Transport.** The page POSTs `/shutdown-splash-done` to eclipse-states-http with the
+  injected token and an empty body: the sixth token-gated write route, **403 and no
+  file** without a valid token. The server writes `{bootId, ts}` atomically; `bootId` is
+  read SERVER-SIDE from `/proc/sys/kernel/random/boot_id`, and any client-sent one is
+  ignored. An unreadable boot id is written as null, which never matches.
+- **The wait** (`ShutdownSequencer._awaitSplashDone`) is the `_pollPipeline` loop shape,
+  on `smoothingPollSec`. It ends on the FIRST of: the done record for this boot (one
+  already on disk at the cue -- left by an earlier, cancelled shutdown of the same boot
+  -- does not count); power restored (the window's cancel: `cancelled` emitted, the shed
+  restored, no drain close, no poweroff); `drainFloorDwellReads` successful reads at or
+  below the drain floor; the floor blind for `totalCapSec`; or a ceiling of
+  `totalCapSec` (45 s) **measured from the start of the wait**. It is an event wait
+  with the existing bound, not a new number and not a sleep budget. Each outcome is
+  logged: `splash done after X s`, `splash wait cap hit`, `... ended on the drain
+  floor`, `... VCELL floor blind`, `splash wait cancelled`.
+- **Skipped** (poweroff at once) when the drain ended on the drain floor
+  (`DRAIN_TERMINATION_DRAIN_FLOOR`), on the VCELL-floor fast path, when no
+  `phaseEmitFn` is wired (no page was ever told to end), when `splash-grace.service`
+  is not active (or the check fails), and -- by the existing cancel -- when power
+  returned during the window.
+- **Seams.** `splashActiveFn` and `splashDoneFn` are injected; their defaults live in
+  `power_watch/splash_done.py` (`splashGraceActive`, through `load_shed.systemctlRunner`,
+  and `makeSplashDoneReader`, which owns `SHUTDOWN_SPLASH_DONE_FILENAME` -- the route
+  imports it). They are kept out of `controller.py`, which names no splash unit.
 
 **The grace splash is NOT shed (US-796, Sprint 95; reverses US-796-a).**
 US-796-a (Sprint 90 / V0.29.59) put `splash-grace.path` and `splash-grace.service`

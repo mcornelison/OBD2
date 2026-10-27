@@ -53,14 +53,19 @@
 #               |              | DISPLAY_SETTINGS entries are {found, value}.
 # 2026-10-23    | Rex (US-895-b)| DISPLAY_AUTODIM resolved PER REQUEST through
 #               |              | the overlay seam (construction cache retired).
+# 2026-10-27    | Rex (US-870-d)| SIXTH token-gated POST route
+#               |              | /shutdown-splash-done: 403 without a token;
+#               |              | else states/shutdown-splash-done {bootId, ts},
+#               |              | atomic, bootId stamped server-side.
 # ================================================================================
 ################################################################################
 
-"""Localhost-only, token-gated state server (read-only GET + five write routes).
+"""Localhost-only, token-gated state server (read-only GET + six write routes).
 
 GET is read-only (states + same-origin assets). Writes are an explicit, closed
 set of POST routes -- US-403 ``/service-control``, US-407 ``/dtc-clear``,
-US-531 ``/settings``, US-881-d ``/fuel-reset`` and US-897-c ``/alerts-ack`` --
+US-531 ``/settings``, US-881-d ``/fuel-reset``, US-897-c ``/alerts-ack`` and
+US-870-d ``/shutdown-splash-done`` --
 each token-gated by the same ``_tokenOk``, each a thin
 transport that delegates its gate to a SSOT module rather than carrying its own
 copy of an allow-list. For ``/service-control`` that SSOT is ``service_control``
@@ -83,6 +88,9 @@ from urllib.parse import unquote, urlsplit
 
 from common.config import overlay
 from common.config.validator import DEFAULTS
+from common.time.helper import utcIsoNow
+from pi.diagnostics.boot_reason import readCurrentBootId
+from pi.power.power_watch.splash_done import SHUTDOWN_SPLASH_DONE_FILENAME
 from pi.splash import (
     alerts_ack_channel,
     dtc_clear,
@@ -90,6 +98,7 @@ from pi.splash import (
     fuel_reset_channel,
     service_control,
 )
+from pi.splash.boot_state_emitter import writeStateAtomic
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
@@ -205,6 +214,12 @@ _ALERTS_ACK_PATH = "/alerts-ack"
 # Its outcome wait budget (validator default 5; short, the server is
 # single-threaded and the wait blocks every GET -- Atlas Q22).
 _ALERTS_ACK_TIMEOUT_KEY = "pi.warnings.ackTimeoutSec"
+
+# US-870-d [F-103]: the shutdown page has played its ending (3 turns, the
+# vanish). This process writes states/shutdown-splash-done {bootId, ts}; the
+# shutdown sequencer waits for it before poweroff. The body is ignored: bootId
+# is stamped HERE from the kernel, so a page cannot answer for another boot.
+_SPLASH_DONE_PATH = "/shutdown-splash-done"
 
 # /alerts-ack refusals answered 409 (nothing written); any other failure is 503.
 _ALERTS_ACK_REFUSALS = frozenset({"unknown_id", "not_ackable"})
@@ -347,6 +362,10 @@ def makeStatesHandler(
     ``alertsAckRunner`` (US-897-c) is the ``alerts_ack_channel`` bridge runner,
     called with the request's ids, that asks eclipse-obd to acknowledge them.
     ``None`` -> POST /alerts-ack returns an honest 503.
+
+    POST /shutdown-splash-done (US-870-d) takes no parameter: its bootId is the
+    kernel's, read per request through ``readCurrentBootId``. An unreadable id
+    is written as null, which no reader ever matches.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Nothing display-side is cached here any more. US-895-b (Atlas B15) retired
@@ -447,10 +466,11 @@ def makeStatesHandler(
                 )
                 return
 
-            # Exactly five write routes (US-403 service-control, US-407
+            # Exactly six write routes (US-403 service-control, US-407
             # dtc-clear, US-531 settings, US-881-d fuel-reset, US-897-c
-            # alerts-ack). Everything else is 404 -- the server is otherwise
-            # read-only and must not grow a catch-all writer.
+            # alerts-ack, US-870-d shutdown-splash-done). Everything else is
+            # 404 -- the server is otherwise read-only and must not grow a
+            # catch-all writer.
             rawPath = unquote(urlsplit(self.path).path)
             if rawPath == _ACTION_PATH:
                 self._handleServiceControl(rawBody)
@@ -467,7 +487,26 @@ def makeStatesHandler(
             if rawPath == _ALERTS_ACK_PATH:
                 self._handleAlertsAck(rawBody)
                 return
+            if rawPath == _SPLASH_DONE_PATH:
+                self._handleSplashDone()
+                return
             self._send(404, b'{"error":"not found"}', "application/json")
+
+        def _handleSplashDone(self) -> None:
+            # US-870-d: 403 (not the other routes' 401) and no file without a
+            # valid token, as the story's acceptance specifies. The body was
+            # drained and is ignored; bootId and ts are this server's own.
+            if not self._tokenOk():
+                self._send(403, b'{"ok":false,"error":"forbidden"}', "application/json")
+                return
+            record = {"bootId": readCurrentBootId(), "ts": utcIsoNow()}
+            try:
+                writeStateAtomic(str(Path(statesDir) / SHUTDOWN_SPLASH_DONE_FILENAME), record)
+            except OSError as exc:
+                body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
+                self._send(500, body, "application/json")
+                return
+            self._send(200, b'{"ok":true}', "application/json")
 
         def _handleServiceControl(self, rawBody: bytes) -> None:
             # Token-gated -- same gate as the state reads.
