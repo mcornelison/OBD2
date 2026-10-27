@@ -93,9 +93,10 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
 | `sensor` *(S113, US-869-c; Atlas may rename the key)* | `capture-health.feeds.<imu\|light\|ups>.state` = `faulted` (Atlas B2): **one member per faulted feed**, in `FEED_NAMES` order, each carrying **`feed`** (`imu` / `light` / `ups`). Clears when the feed recovers | DATA row: sentence, **one span per member**; the feed's line in the DATA detail. Each amber element carries `data-member="sensor"` **and** `data-feed`, so A5's one-element-to-one-member check holds with two `sensor` members |
 | `wifi` | the WiFi read **failed** (`reason: read_failed`) | WIFI row: `? not read` |
 | `pi` | `pi.overLimit` non-empty | the Pi line under the verdict |
+| `sync` *(US-917, IN V0.30, CIO 2026-10-27)* | §4.3.1 cases S1–S3 | DATA row: the sentence's sync part; the top-bar ⇅ (§4.3.1); a Warnings SYSTEM entry |
 
 - **Not members (S109):**
-  - **`sync`:** banked as US-917, with my sync words in its goal. Until it lands, a sync failing at home is **shown, never counted**. The DATA sentence says it, neutral.
+  - ~~**`sync`:** banked as US-917~~ **UNBANKED 2026-10-27 (CIO): `sync` IS a member, §4.3.1.**
   - **UPS:** no grounded band (Spool + Atlas P5).
   - ECU silent (S-10), away from home, WiFi down, WiFi weak, WiFi not read for want of a tool (`nmcli_absent`), and any null.
 - **The Pi line** shows only when `pi` is a member. It's one mono `--fs-meta` line in amber under the verdict, carrying the member's `reason` verbatim, e.g. `CPU 80.2 °C, limit 80 °C.`. Tap it (parked) ⇒ **Pi health** detail.
@@ -186,9 +187,44 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
      - **`rowsWaiting` null ⇒ `rows not read`**, never `0 rows waiting`. The same rule applies to a null `edrRowsWaiting`: nothing prints.
      - `notCounted` is a **list of table names** (US-916: the snapshot tables, named, never folded into `rowsWaiting`). Non-empty ⇒ the count reads `12,345+ rows waiting`: the `+` sits on the number itself, so an ellipsis can never cut it off and leave a total that looks complete. The names are in the DATA detail (`not counted: <table>, <table>`). An empty list prints no `+`.
      - **Never fold them in and never imply zero:** `rowsWaiting` counts only the counted tables, so the words always say some tables weren't counted.
-- **Sync failing at home** (no member until US-917): the sentence shows the provider's state, neutral, never amber. With no member, amber would break §4.0.
-- **Top-bar sync glyph (I4):** shipped `syncGlyphState` paints `sync.stale` amber with no member behind it. US-894 makes it **neutral** (`--text-secondary`). When US-917 lands a `sync` member, the glyph goes amber exactly while that member is present.
+- **Sync member (§4.3.1):** while a `sync` member is present, its `reason` is printed first in the sentence's sync part, in amber, in its own span with `data-member="sync"`. The neutral rows/away words follow it.
+- **Top-bar sync glyph:** §4.3.1. *(Superseded: I4's "neutral until US-917".)*
 - **Old fields retired:** `rows` / `pending` no longer exist.
+
+#### 4.3.1 The `sync` member and the top-bar sync glyph (US-917, CIO 2026-10-27, UIDEV-018)
+
+relay(CIO, confirmed 2026-10-27, via Marcus): *"keep them. but green = last sync is good. amber = error with sync and error message like option A. and blue = \"sync in progress\""*. **US-917 is back IN V0.30.** The ⇅ was grey forever, because its only input (this member) did not exist: an inert indicator. Options page: https://claude.ai/artifact/2e526Sq1jnzvK6RVK7HEQM (option A + E).
+
+**The `sync` member.** It counts in the verdict (§4.1) and goes amber on the DATA sentence (§4.0). The provider writes the member's `reason`; the page prints it byte for byte. It is present when ANY of these holds:
+
+| # | Case | Present while | Member `reason` (provider-written) |
+|---|---|---|---|
+| S1 | **Last key-off sync didn't finish.** `priorShutdown` clean, and `sync.priorCustody.verdict` not `DELIVERED` and not an away skip | until `sync.syncedThisBoot` | `Last sync didn't finish · <n> rows kept`. `countIsComplete` false ⇒ `Last sync didn't finish · row count unknown` |
+| S2 | **Last stop was cut off.** `priorShutdown` not clean, and `rowsWaiting` > 0 or null. The custody record is then from an OLDER shutdown, so its verdict is NOT used (Atlas) | until `sync.syncedThisBoot` | `Last stop was cut off · sync result unknown · <n> rows waiting` (`rows not read` when null) |
+| S3 | **Not getting through at home.** Parked, at home (`wifi.home` true), `rowsWaiting` > 0, `lastOkTs` older than `pi.dashboard.syncStaleThresholdSeconds` (120 s, Spool S-3) | until `lastOkTs` is newer than the threshold | `Not syncing at home · <n> rows waiting · last sent <h:mm AM/PM>` (`never` when null) |
+
+- `<n>` is comma-grouped (`1,240`) by the provider. No promise words (no "will retry").
+- **Driving is NEVER a case.** On the road there is no home Wi-Fi, so "not synced for 120 s" is normal, not an error. The `stale` flag's driving clause (`isSyncStale`, `recording AND lastOkTs old`) is NOT a member input; it would turn the ⇅ amber on every drive. Away from home is never a case either.
+- **EDR never counts** (`edrRowsWaiting` is archival, expected to wait).
+- Only S3's at-home clause is shared with Atlas's `isSyncStale` (ruled 2026-10-27). The member is the one fact: the glyph, the verdict count, the DATA sentence and the Warnings SYSTEM entry (Warnings §4.1) all read it.
+- ASK(Atlas): confirm the custody `verdict` names for a deliberate away skip, so S1 can exclude them by name, never by "anything but DELIVERED".
+
+**The glyph (`#glyph-sync`, the ⇅ character; its `data-state` takes `ok` / `busy` / `error` / `unknown`, replacing today's `neutral` / `amber`).** Four states, decided top-down. The first match wins:
+
+| Order | State | When | Colour |
+|---|---|---|---|
+| 1 | `error` | a `sync` member is present | `--amber-warn` |
+| 2 | `busy` | `sync.inProgress` true (**NEW**, Atlas: true from a sync attempt's start to its end, any trigger) | `--blue-busy` (**NEW**, frame-and-style §4.2) |
+| 3 | `ok` | `sync.lastOkTs` is non-null: a sync has delivered, on record | `--green-ok` |
+| 4 | `unknown` | none of the above (never synced on record, or `system-status` unread) | `--text-tertiary` |
+
+- **Amber over blue:** a stuck sync retries on every interval, and blue would hide the error for half of every minute. It goes from amber straight to green on the delivery that clears the member.
+- **Blue over green:** the CIO's "sync in progress".
+- **Before the first sync of a boot**, the glyph shows what's on record: S1/S2 ⇒ amber; otherwise a delivered sync on record ⇒ green; nothing on record ⇒ the `unknown` grey. A missing or unreadable `priorCustody` is not an error (an absence is not a measurement), so it falls through to the `lastOkTs` rule.
+- **Away from home:** the colour of the last result. Usually green after a good sync, never amber for being away, and blue if a sync does run. The DATA sentence still says `away from home`.
+- **Green is the same green as the BT chain dots and the Wi-Fi arcs:** state OK, identical on every page (frame-and-style §4.4 rule 1). No clash: the shape differs and the meaning is the same.
+- **Width unchanged:** one ⇅ glyph, 16.69 px in the §4.2.1 cluster budget.
+- `title` per state (hover text, for the bench): `sync OK` / `syncing` / `sync error` / `sync not read`.
 
 ### 4.4 WIFI (carries US-732 + US-742; S3)
 The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}` + `source.wifi {available, reason: nmcli_absent|read_failed|not_read}` (`wifi_reader` :180-193 + the emitter's `REASON_WIFI_UNKNOWN`; there is no `not_associated`, Atlas A6). The shipped weak band is kept (Atlas 732-4). **The emitter derives `state`; the page applies no RSSI threshold.**
@@ -478,6 +514,21 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
     - The detail lists OBD, IMU, LIGHT, UPS, WIFI and SYNC in that order, each `<age> · <time>` or `--` when undated, with no state colour.
     - Grep: no `motion-updated` in the dashboard.
 16. **Fit, in a real browser** (480 × 320 stage, shipped fonts): the verdict line doesn't wrap with `8 ISSUES`, and the LAST UPDATED detail body has `scrollHeight <= clientHeight`.
+17. **Sync member + glyph (§4.3.1), render harness, one fixture per row:**
+    - `sync-ok` ⇒ ⇅ `--green-ok`, no member;
+    - `sync-busy` ⇒ `--blue-busy`;
+    - `sync-prior-unfinished` (S1) ⇒ amber + the DATA sentence's member span + verdict count +1;
+    - `sync-prior-unfinished-count-unknown` ⇒ `row count unknown`;
+    - `sync-cut-off` (S2) ⇒ amber, the cut words, and NOT the old custody verdict;
+    - `sync-home-stuck` (S3) ⇒ amber;
+    - `sync-busy-during-error` ⇒ amber (amber over blue);
+    - `sync-driving-old` (recording, lastOkTs 30 min old, away) ⇒ green, **no member**;
+    - `sync-away-backlog` (parked away, 900 rows) ⇒ green, no member;
+    - `sync-never` (lastOkTs null) ⇒ `--text-tertiary`;
+    - `sync-custody-missing` ⇒ no member from S1, and the glyph follows `lastOkTs`.
+    The page computes no case: every member comes from `verdict.members`. Grep: no `syncStaleThresholdSeconds` or `120` in `carousel.js`.
+18. Each S1/S2/S3 member clears per its row (S1/S2 on `syncedThisBoot`; S3 on a fresh `lastOkTs`), proven in the provider's tests. The page needs no clear logic.
+19. **bigDoD, CIO:** at home after a normal drive, the ⇅ goes blue while syncing, then green. After a key-off with the server down, the next boot shows amber and the Warnings entry.
 
 ## 7. Fixtures (S10)
 Each is a `system-status` (+ `capture-health`, + `battery-health` where named) payload, regenerated from the real builders (Atlas L7), never hand-typed.
