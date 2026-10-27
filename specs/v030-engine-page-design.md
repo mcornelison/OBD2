@@ -80,11 +80,11 @@ relay(CIO, confirmed 2026-10-27, via Marcus): option B. *"a button that would ta
 - **`HISTORY ›` button**, bottom right of the readings:
   - `HISTORY` Michroma `--fs-label` (129.2 px) + ` ›` mono, padding 12 px each side, 1px `--text-secondary` border, radius `--radius`, height `--tap-min` (40), so 179 px wide;
   - **neutral**: it navigates, it judges nothing, so it takes no state colour (the shared detail button, System §4.6.3).
-- **Height:** readings 66 + 6 + 56 + 4 + 18 + 12 + 40 button = **202 of 254**; bars 190. **No scroll, no cue**: the `.eng-cue` element and its ↓ are deleted.
+- **Height:** about **202 of 254**; bars 190. *(Correction, UIDEV-021, S119 review 2026-10-27: the old `readings 66` didn't add up from its parts, 18 + 44 = 62 at line-height 1. The pass number is a modelled budget from the declared tokens and line-heights, ≤ 254, never this estimate.)* **No scroll, no cue**: the `.eng-cue` element and its ↓ are deleted.
 - **The button shows only while parked** (§4.7.2 of System, the one parked rule). While not parked it is `visibility: hidden`: its space is kept, so nothing moves when the car stops.
 
 ### 3b. The ENGINE HISTORY detail
-- Opens in the shared detail overlay (System §4.6.3): solid, `‹ BACK` top left, title `ENGINE HISTORY` (Michroma, 181.5 px at 15 px). The body is 320 − 34 header − 2 × 8 = **270 px**.
+- Opens in the shared detail host (System §4.6.3, the X-1 sibling with the 34 px header): solid, `‹ BACK` top left, title `ENGINE HISTORY` (Michroma, 181.5 px at 15 px). The body is 320 − 34 header − 2 × 8 = **270 px**.
 - **Contents:** the three history charts (COOLANT, INTAKE AIR, BATTERY, every §4 history rule unchanged), then the status row (RUN TIME, CHECK ENGINE, §3 status-row fit unchanged; the `n codes ›` tap still goes to Warnings).
 - `--eng-graph-h` 46 → **40 px**. Each chart = head 18 + 40 + 8 gap = 66, so three are 198; then rule 1 + 8 + the status row 60 (label 18 + `ON` 24 + `n codes ›` 18). **Total 267 of 270.** The detail does not scroll either; the margin is thin, so AC 15 measures it.
 

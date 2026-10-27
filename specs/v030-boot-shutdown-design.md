@@ -162,11 +162,11 @@ The checklist sits under the logo: four rows in `capture-health.FEED_NAMES` orde
   - **Counted from events, not a clock.** The page counts the reverse spin's `animationiteration` events. The dim spin starts on the first iteration boundary where both hold: **≥ 2 completed reverse turns**, and **the fill's `transitionend` at 100 % has fired** (the bar is seen full).
   - So the shortest close-out is 2 reverse turns + 1 dim turn = 3 × `--t-spin` + dim-down `--t-fade` + stage fade `--t-fade` = **10.0 s** at today's tokens (3.0 s, 0.5 s). The no-timer rule holds: no wait is placed on a clock.
   - Reduced motion is unchanged: no spins, and the dim-down + fade run on the 100 % read.
-  - **The poweroff must wait for the page** (Atlas's design, S118). Without the wait the power still cuts mid-turn, and the page minimum changes nothing. The page's side of the contract: it signals done **exactly once**, on the stage fade's `transitionend`.
+  - **The poweroff must wait for the page** (Atlas's design, S118). Without the wait the power still cuts mid-turn, and the page minimum changes nothing. The page's side of the contract: it signals done **exactly once, on reaching black, by any path** (`enterBlack()`, with a once-guard; never after `aborted` or `cancelled`). On the live path that is after the stage fade's `transitionend`. **Reduced motion, missing styles and a missing stage reach black with no `transitionend`, and they signal done too** (Q3, ruled S119): otherwise the 45 s ceiling would end the shutdown, a timer the CIO's no-timer rule forbids.
   - relay(CIO, ruled 2026-10-27, via Marcus): poweroff waits on that event, bounded by `totalCap`, and never on the VCELL-floor path.
 - **The fill moves smoothly (CIO 2026-10-27).**
   - relay(CIO, key-off #2): *"I did see the progress bar go from 25, then 75 and then it went off. It never actually made it to 100 … I would like to see the status bar be smooth not jumpy"*.
-  - **Rule:** `#bar-fill { transition: width var(--t-bar) ease-out; }`, with **`--t-bar: 0.6s`** declared once in `styles.css` beside `--t-spin` / `--t-fade`. The amber stretch uses the same transition.
+  - **Rule:** `#bar-fill { transition: width var(--t-bar) ease-out; }`, with **`--t-bar: 0.6s`** declared in `tokens.css` **and its `styles.css` mirror** beside `--t-spin` / `--t-fade`, the pair `test_splash_token_ssot.py` pins (corrected, UIDEV-021, S119 review 2026-10-27). The amber stretch uses the same transition.
   - **This is not a timer.** Nothing waits on it except through its own `transitionend` event, the same as `--t-fade`.
   - **It never runs ahead of the truth:** it glides to the value just read, never past it, and rests there until the next read. The never-draws-less rule holds.
   - **The glide is not an invented measurement.** The bar shows steps done, not a sensor. So the O2 / Engine rule against interpolation (which protects measurements) doesn't apply. Every value the glide *ends* on is real.
@@ -290,8 +290,8 @@ The boot and shutdown screens are Chromium pages over the states server, so the 
 ### 5a. Acceptance additions (US-870 reopen, CIO 2026-10-27)
 - **Three turns.** On fixture `nothing-to-sync` (`step` reads `index == of` on the first poll), the event log shows 2 reverse `animationiteration` events, then the dim spin, then `dim-down`, then the stage fade. Run in the render harness with synthetic animation events, as US-870-c's tests do.
 - **Seen full.** The dim spin never starts before the fill's `transitionend` at 100 %.
-- **Smooth.** `#bar-fill` declares `transition` on `width` naming `var(--t-bar)`; `--t-bar` is declared once in `styles.css`; the page script holds no duration literal. A 25 → 75 read writes the width once (75 %), with no JS steps in between.
-- **Done once.** The page signals done exactly once, after the stage fade's `transitionend`, and never on `cancelled`.
+- **Smooth.** `#bar-fill` declares `transition` on `width` naming `var(--t-bar)`; `--t-bar` is declared in `tokens.css` and its `styles.css` mirror; the page script holds no duration literal. A 25 → 75 read writes the width once (75 %), with no JS steps in between.
+- **Done once.** The page signals done exactly once, on reaching black by any path (`enterBlack()`), and never on `cancelled`. Exit tests: nothing-to-sync live ⇒ 1 POST after the fade; nothing-to-sync with reduced motion ⇒ 1 POST; `cancelled` ⇒ 0.
 - **bigDoD, CIO at key-off with nothing to sync:** three turns and the vanish are seen, and the bar is seen at 100 % before the dim spin.
 
 ## 6. US-551 and US-760

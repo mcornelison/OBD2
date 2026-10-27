@@ -78,10 +78,12 @@ relay(CIO, in car 2026-10-27): *"there seems to be a lot of information on this 
 - **`FUEL TRIM ›` button**, bottom right:
   - `FUEL TRIM` Michroma `--fs-label` (149.2 px) + ` ›` mono, the shared detail button (System §4.6.3), so 199 px wide, 40 tall;
   - neutral, and visible only while parked (`visibility: hidden` otherwise, so its space is kept).
-- **Height:** ~92 + 9 + ~70 + 9 + 40 = **~220 of 254**.
+- **Height:** about **220 of 254** (~92 + 9 + ~70 + 9 + 40). The pass number is a modelled budget from the declared tokens, ≤ 254, never this estimate (UIDEV-021, S119 review 2026-10-27).
 
 ### 3b. The FUEL TRIM detail (sub-screen)
-- Opens in the shared detail overlay: title `FUEL TRIM`, `‹ BACK` back to Fuel. The body is 270 px.
+- Opens in the shared detail host (System §4.6.3, the X-1 sibling): title `FUEL TRIM`, `‹ BACK` back to Fuel. The body is 270 px.
+- **Height (UIDEV-021, S119 review 2026-10-27):** TOTAL TRIM + LOOP row ~62, rule 9, trend label 18 + trend ~44 = **~133 of 270**; modelled, ≤ 270.
+- **The vehicle gate still reaches the trend:** with `source.obd.available` false, the detail's trend shows the gate text (`no engine data`), the same as it did on the glance. The gate's slot lookup must resolve the detail's trend element, not only one inside `#fuel-card`.
 - **TOTAL TRIM**, then the **fuel-trim trend** at full width, each with its §4.2 / §4.4 rules unchanged. The LOOP chip repeats beside TOTAL TRIM, because trim is read against the loop state.
 - **No new data and no new verdict:** it is the same two elements, moved. A reading here still steps at its own sample.
 
@@ -185,7 +187,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 3. Loop chip outlined, no state colour. Open loop: total trim `--` dimmed + `not applied in open loop`.
 4. Total trim is the live LTFT + STFT sum, unbanded and neutral. It is never read from `ltft-trend.totalTrim`.
 5. THIS DRIVE and SINCE RESET carry `≈`; LAST 30 S does not (Spool 2026-10-14 §2). The `approximate` flag shows `open loop` (`--amber-warn`, `--fs-meta`) on its own line under the THIS DRIVE figure. The text `rich, overstated` appears nowhere.
-5a. **MPG unit (US-922):** every MPG figure, `99+` included, is followed by `MPG` in `.fuel-unit` (mono, `--fs-label`, `--text-secondary`); a `--` never is. Screenshot `≈100.0 MPG` in THIS DRIVE at 480×320 with the body scrollbar showing: one line, nothing clipped.
+5a. **MPG unit (US-922):** every MPG figure, `99+` included, is followed by `MPG` in `.fuel-unit` (mono, `--fs-label`, `--text-secondary`); a `--` never is. Screenshot `≈100.0 MPG` in THIS DRIVE at 480×320: one line, nothing clipped. *(The glance no longer scrolls, §3a; the old "body scrollbar showing" condition is retired.)*
 6. LAST 30 S: label `LAST 30 S`, never `instant`; integer; `99+` at ≥ 99; `--` + reason for every null. While the provider field is absent: `--` + `not published`. Grep gate: `carousel.js` never divides by a MAF value.
 7. THIS DRIVE / SINCE RESET: every null shows `--` + the §4.6 text for the provider's code. An unknown code shows the raw code. Nothing is ever blank.
 8. Reset: hint + long-press follow `resetAllowed.value === true` only, and nothing else: present at `{true}`; absent at `{false, driving}`, `{false, speed_unknown}`, `null` and a missing block. Grep gate: the Fuel reset code in `carousel.js` reads no SPEED, gear or parked state. A refusal shows `slow to reset` / `speed unknown`; `park to reset` appears nowhere. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. `resetting…` from `Yes`. On `driving` / `unavailable` / failure / 504 / confirm timeout: the LATEST provider value + the §4.6 text, never a page-cached value. VC: a 504, then a read with `sinceReset.resetAtTs` = T and `mpg` null ⇒ `--` + `too short yet`, not the pre-reset MPG.
@@ -193,7 +195,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 10. LAST 30 S and total trim ≥ 34 px; THIS DRIVE / SINCE RESET `--fs-secondary` (parked-read). No reason text wider than its MPG column (§4.6 fit rule).
 11. Tokens-only CSS; geometry as scoped custom properties on the card (S103 G-4 rule).
 12. **DoD (R15): CIO judgement in the car.**
-13. **Nothing needs a scroll (CIO 2026-10-27, §3a):** in a real browser (Chromium, 480 × 320 stage, shipped fonts), `#fuel-card .card-body` and the FUEL TRIM detail body each have `scrollHeight <= clientHeight` on the reset-in-progress fixture and the widest-reason fixtures.
+13. **Nothing needs a scroll (CIO 2026-10-27, §3a):** in a real browser (Chromium, 480 × 320 stage, shipped fonts), `#fuel-card .card-body` and the FUEL TRIM detail body each have `scrollHeight <= clientHeight` on the widest-reason fixtures and on the two states that add the reset outcome line: `fuel/reset-allowed-true.json` + long-press + `Yes` with the POST held pending (`resetting…`), and `fuel/reset-confirm-timeout.json` (`couldn't confirm`).
 14. No TOTAL TRIM and no trend on the glance (render harness). The FUEL TRIM detail shows both, under the unchanged §4.2/§4.4 rules, on a parked tap only. The `FUEL TRIM ›` button is `visibility: hidden` when not parked and takes no state colour.
 
 ## 7. Fixtures
