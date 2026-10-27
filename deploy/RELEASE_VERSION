@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.16",
-  "theme": "V0.30 data providers and Wi-Fi recovery fix",
-  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 117 (#137): wifi-recover runs from /usr/local/lib/eclipse with Type=notify and a real start gate (US-925-c), gear hint on states/gear + Driving page (US-904-a/b), states/o2 + front verdict + O2 page (US-891-a/b/c), gain-label SSOT (US-906), NEXT STEP de-buttoned (US-758-a)."
+  "version": "V0.30.17",
+  "theme": "V0.30 producers and data",
+  "description": "Both tiers (server code unchanged since V0.30.6, neutral redeploy). Sprint 118 (#142): explicit adapter baud, no 30 s probe (US-817-a); Plymouth WARNING boot-only (US-885-d); O2 warming_up holds (US-891-d); one sync pusher (US-871-a); sync member + custody relay (US-917-a/b/c); poweroff waits for the shutdown page (US-870-d). Iris UIDEV-020 spec (#141)."
 }
