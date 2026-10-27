@@ -92,6 +92,7 @@ Period-correct for a 1998 Eclipse GST cluster: **matte black, warm-white wide-se
 | `--accent` *(new)* | `#FF6A2B` | **pointers + accents only** (§4.4) |
 | `--radius` *(new)* | `10px` | panel corners (bezel feel) |
 | `--green-ok` / `--amber-warn` / `--critical-red` | **unchanged** | **state only, fixed across styles** |
+| `--blue-busy` *(new, UIDEV-018)* | `#4FA8FF` | **activity only:** "in progress". Today its ONE user is the top-bar sync glyph's `busy` state (System §4.3.1, CIO 2026-10-27). Never a severity, never data. Contrast on `--surface` #141414 ≈ 7.4 : 1 |
 
 `--neutral-chip-bg`, `--destructive*`, and the brand reds `--red*` are unchanged (brand reds stay **brand-mark only**).
 
@@ -106,6 +107,7 @@ Period-correct for a 1998 Eclipse GST cluster: **matte black, warm-white wide-se
 
 ### 4.4 Colour rules
 1. **State colours mean state, only.** Green OK · amber WATCH · red STOP, identical on every page and in every style.
+   - **`--blue-busy` means activity, only** (UIDEV-018): something is happening right now. It is not a fourth state tier and is never ranked against them. A new user of blue needs its own spec line.
 2. **Green → yellow → red appears ONLY on scales with real bands** from Spool's spec (CIO: "more colour for the graphed data"):
    - RPM bar: green → **yellow from 5,500** (the CIO's display cue, not a shift light; R35) → red from 7,000.
    - History lines (coolant, battery…): coloured **only along the stretches where the provider's band fired** (dwell rules included).
