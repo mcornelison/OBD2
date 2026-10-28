@@ -256,41 +256,47 @@
            US-889-d (spec s3a, CIO option B): the page no longer scrolls. LOAD
            sits alone at --fs-hero, THROTTLE | TIMING share a 2 x 1fr row, and
            the history + status moved to the ENGINE HISTORY detail behind the
-           HISTORY › button carousel.js appends to .eng-actions (parked only). -->
+           HISTORY › button carousel.js appends to .eng-actions (parked only).
+           US-889-e (CIO ruling 2026-10-27): LOAD and THROTTLE are full-width
+           horizontal bars, a header line above each (label left, age/reason
+           right) and the value INSIDE the bar, drawn twice: .eng-on-track over
+           the empty track, .eng-on-fill over the fill (clipped to its width by
+           carousel.js). The footer stacks TIMING / value / caption on the left
+           with HISTORY › bottom right. -->
       <section class="card" id="engine-card" aria-label="Engine" data-page-name="ENGINE">
         <div class="card-body">
-          <div class="eng-main">
-            <div class="eng-bars" aria-hidden="true">
-              <div class="eng-bar-col" data-pid="ENGINE_LOAD" data-stale="false">
-                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
+          <div class="eng-gauges">
+            <div class="eng-bar-col eng-load" data-pid="ENGINE_LOAD" data-stale="false" data-note="none" data-null="true">
+              <div class="eng-bar-head">
                 <span class="eng-label">LOAD</span>
-              </div>
-              <div class="eng-bar-col" data-pid="THROTTLE_POS" data-stale="false">
-                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
-                <span class="eng-label">THR</span>
-              </div>
-            </div>
-            <div class="eng-readings">
-              <div class="eng-reading eng-load" data-pid="ENGINE_LOAD" data-stale="false" data-note="none">
-                <span class="eng-label">LOAD</span>
-                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
                 <span class="eng-note" hidden></span>
               </div>
-              <div class="eng-pair">
-                <div class="eng-reading" data-pid="THROTTLE_POS" data-stale="false" data-note="none">
-                  <span class="eng-label">THROTTLE</span>
-                  <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-                  <span class="eng-note" hidden></span>
-                </div>
-                <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
-                  <span class="eng-label">TIMING</span>
-                  <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-                  <span class="eng-note" hidden></span>
-                </div>
-                <span class="eng-basis">base timing · not knock</span>
+              <div class="eng-bar">
+                <span class="eng-bar-text eng-on-track"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <div class="eng-bar-fill" hidden></div>
+                <span class="eng-bar-text eng-on-fill" aria-hidden="true" hidden><span class="eng-value">--</span><span class="eng-unit"></span></span>
               </div>
-              <div class="eng-actions"><!-- JS appends HISTORY › --></div>
             </div>
+            <div class="eng-bar-col" data-pid="THROTTLE_POS" data-stale="false" data-note="none" data-null="true">
+              <div class="eng-bar-head">
+                <span class="eng-label">THROTTLE</span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <div class="eng-bar">
+                <span class="eng-bar-text eng-on-track"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <div class="eng-bar-fill" hidden></div>
+                <span class="eng-bar-text eng-on-fill" aria-hidden="true" hidden><span class="eng-value">--</span><span class="eng-unit"></span></span>
+              </div>
+            </div>
+          </div>
+          <div class="eng-foot">
+            <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
+              <span class="eng-label">TIMING</span>
+              <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+              <span class="eng-note" hidden></span>
+              <span class="eng-basis">base timing · not knock</span>
+            </div>
+            <div class="eng-actions"><!-- JS appends HISTORY › --></div>
           </div>
         </div>
       </section>

@@ -5195,8 +5195,8 @@
   // no value here carries a band (load at 100 % is expected on this turbo
   // engine and stays neutral -- a compound danger belongs to a provider).
   var ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"];
-  // The two vertical bars and their scale: 0-100 % of the bar's height. A
-  // geometry bound, not a threshold -- it paints no colour.
+  // The two bars and their scale: 0-100 % of the bar's width (horizontal since
+  // US-889-e). A geometry bound, not a threshold -- it paints no colour.
   var ENGINE_BAR_PIDS = ["ENGINE_LOAD", "THROTTLE_POS"];
   var ENGINE_BAR_MAX_PCT = 100;
 
@@ -5235,7 +5235,7 @@
     };
   }
 
-  // A bar's fill in % of its height, or null (nothing lit). Only a '%' reading
+  // A bar's fill in % of its width, or null (nothing lit). Only a '%' reading
   // can fill a 0-100 % bar; clamped so a value past the scale pins the bar
   // rather than overflowing the card.
   function engineBar(reading, unit) {
@@ -7267,35 +7267,63 @@
     }
 
     // US-889-b: paint `engineView` into the Engine card's FIXED skeleton
-    // (dashboard.html). Text, state attributes and the bars' fill height only:
-    // the stylesheet maps data-stale / data-note to tokens. The fill is a plain
-    // height with no transition, so a bar steps from one sample to the next.
+    // (dashboard.html). Text, state attributes and the bars' fill only: the
+    // stylesheet maps data-stale / data-note / data-null to tokens.
+    // US-889-e: each bar is a full-width horizontal gauge whose value sits
+    // INSIDE it, drawn twice -- .eng-on-track over the empty track and
+    // .eng-on-fill over the fill, clipped to the fill's width -- so it reads on
+    // both. The fill is a plain width with no transition, so a bar steps from
+    // one sample to the next. A null fill hides the fill and its copy: a value
+    // that was never read is an empty track with one '--', never a 0 % bar.
+    function paintEngineText(slot, reading) {
+      var valueEl = slot.querySelector(".eng-value");
+      if (valueEl) valueEl.textContent = reading.text;
+      var unitEl = slot.querySelector(".eng-unit");
+      if (unitEl) unitEl.textContent = reading.unit;
+    }
+
+    function paintEngineNote(slot, reading) {
+      slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+      slot.setAttribute("data-note", reading.noteKind || "none");
+      var noteEl = slot.querySelector(".eng-note");
+      if (noteEl) {
+        noteEl.textContent = reading.note;
+        noteEl.hidden = !reading.note;
+      }
+    }
+
     function renderEngineCard(card, view) {
       if (!card || !view) return;
       var slots = card.querySelectorAll(".eng-reading");
       for (var s = 0; s < slots.length; s++) {
-        var slot = slots[s];
-        var reading = view.readings[slot.getAttribute("data-pid")];
+        var reading = view.readings[slots[s].getAttribute("data-pid")];
         if (!reading) continue;
-        slot.setAttribute("data-stale", reading.stale ? "true" : "false");
-        slot.setAttribute("data-note", reading.noteKind || "none");
-        var valueEl = slot.querySelector(".eng-value");
-        if (valueEl) valueEl.textContent = reading.text;
-        var unitEl = slot.querySelector(".eng-unit");
-        if (unitEl) unitEl.textContent = reading.unit;
-        var noteEl = slot.querySelector(".eng-note");
-        if (noteEl) {
-          noteEl.textContent = reading.note;
-          noteEl.hidden = !reading.note;
-        }
+        paintEngineNote(slots[s], reading);
+        paintEngineText(slots[s], reading);
       }
       var cols = card.querySelectorAll(".eng-bar-col");
       for (var c = 0; c < cols.length; c++) {
-        var bar = view.bars[cols[c].getAttribute("data-pid")];
-        if (!bar) continue;
-        cols[c].setAttribute("data-stale", bar.stale ? "true" : "false");
+        var pid = cols[c].getAttribute("data-pid");
+        var barReading = view.readings[pid];
+        var bar = view.bars[pid];
+        if (!barReading || !bar) continue;
+        paintEngineNote(cols[c], barReading);
+        cols[c].setAttribute("data-null", barReading.value === null ? "true" : "false");
+        var copies = cols[c].querySelectorAll(".eng-bar-text");
+        for (var k = 0; k < copies.length; k++) paintEngineText(copies[k], barReading);
+        var lit = bar.fill !== null;
         var fill = cols[c].querySelector(".eng-bar-fill");
-        if (fill) fill.style.setProperty("height", (bar.fill === null ? 0 : bar.fill) + "%");
+        if (fill) {
+          fill.hidden = !lit;
+          if (lit) fill.style.setProperty("width", bar.fill + "%");
+        }
+        var onFill = cols[c].querySelector(".eng-on-fill");
+        if (onFill) {
+          onFill.hidden = !lit;
+          if (lit) {
+            onFill.style.setProperty("clip-path", "inset(0 calc(100% - " + bar.fill + "%) 0 0)");
+          }
+        }
       }
     }
 

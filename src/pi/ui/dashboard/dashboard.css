@@ -1777,7 +1777,7 @@ html, body {
 
 /* --- US-889-b Engine card, layout B above the fold (F-127) ------------------ */
 /* specs/v030-engine-page-design.md s3/s4. Tokens only; the layout's geometry
-   (26 x 168 px bars, the gaps) has no token, so -- as on #driving-card (S103
+   (the bars, the gaps) has no token, so -- as on #driving-card (S103
    G-4) -- it is declared ONCE here as properties scoped to the card and every
    rule below consumes them. This block is the only place in the Engine rules
    that may hold a literal px (tests/ui/test_engine_page.py, the CSS gate).
@@ -1795,11 +1795,15 @@ html, body {
   --eng-inline-gap: 8px;      /* label -> value -> note on one row */
 }
 #engine-card {
-  --eng-bar-w: 26px;          /* vertical bar width (spec s3) */
-  --eng-bar-h: 168px;         /* vertical bar height, 0-100 % (spec s3a: was 120) */
-  --eng-col-gap: 16px;        /* bars -> readings; THROTTLE -> TIMING */
-  --eng-bars-gap: 12px;       /* between the two bars */
-  --eng-gap: 6px;             /* between stacked rows */
+  /* US-889-e (CIO ruling 2026-10-27): two full-width horizontal bars. Body
+     254: header 18 + 2 + bar 48 = 68; + 8 + 68 = 144; + 14 -> footer 158-254. */
+  --eng-bar-h: 48px;          /* one horizontal bar's height (also each value's line box) */
+  --eng-head-gap: 2px;        /* header line -> its bar */
+  --eng-gauge-gap: 8px;       /* LOAD bar -> THROTTLE header */
+  --eng-foot-gap: 14px;       /* THROTTLE bar -> footer */
+  --eng-foot-h: 96px;         /* the footer box (TIMING stack + HISTORY ›) */
+  --eng-col-gap: 16px;        /* TIMING stack -> HISTORY › */
+  --eng-gap: 6px;             /* between stacked rows in the TIMING stack */
   --eng-unit-gap: 4px;        /* number -> unit */
 }
 #engine-detail {
@@ -1813,60 +1817,88 @@ html, body {
   --eng-stat-gap: 8px;        /* status grid gap (spec s3: 104.0 + 160.0 + 8) */
 }
 /* The body keeps the shared .card-body guard (overflow-y auto), but nothing
-   lives below the fold any more (spec s3a: no scroll, no cue). */
+   lives below the fold (spec s3a: no scroll, no cue). */
 #engine-card .card-body {
-  display: flex; flex-direction: column; gap: var(--eng-gap);
+  display: flex; flex-direction: column; gap: var(--eng-foot-gap);
 }
-#engine-card .eng-main {
+#engine-card .eng-gauges {
   flex: none;
-  display: flex; align-items: flex-start; gap: var(--eng-col-gap);
+  display: flex; flex-direction: column; gap: var(--eng-gauge-gap);
 }
-#engine-card .eng-bars {
-  flex: none;
-  display: flex; gap: var(--eng-bars-gap);
-}
+/* One gauge: its header line (label left, age / reason right) over its bar.
+   data-stale dims the bar and its value, never the header's amber age. */
 #engine-card .eng-bar-col {
-  display: flex; flex-direction: column; align-items: center; gap: var(--eng-gap);
+  display: flex; flex-direction: column; gap: var(--eng-head-gap);
 }
-#engine-card .eng-bar-col[data-stale="true"] {
+#engine-card .eng-bar-col[data-stale="true"] .eng-bar {
   opacity: var(--eng-stale-opacity);
 }
+#engine-card .eng-bar-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--eng-inline-gap); min-width: 0;
+}
+#engine-card .eng-bar-head .eng-note {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 #engine-card .eng-bar {
-  position: relative;
-  width: var(--eng-bar-w); height: var(--eng-bar-h);
+  position: relative; flex: none;
+  width: 100%; height: var(--eng-bar-h);
   background-color: var(--line); border-radius: var(--radius);
   overflow: hidden;
 }
-/* carousel.js sets the fill's height (0-100 %) from the latest sample. */
+/* carousel.js sets the fill's width (0-100 %) from the latest sample; a null
+   reading hides it (never a 0 % fill). */
 #engine-card .eng-bar-fill {
-  position: absolute; left: 0; right: 0; bottom: 0;
+  position: absolute; left: 0; top: 0; bottom: 0;
   background-color: var(--accent);
 }
-#engine-card .eng-readings {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column; gap: var(--eng-gap);
+/* The value, twice, over the whole bar and centred in it: .eng-on-track under
+   the fill in warm white, .eng-on-fill above it in --bg, clipped by carousel.js
+   to the fill's width. The line box IS the bar's height, so neither copy can
+   push the bar past 48 px (Atlas gate 2026-10-27). */
+#engine-card .eng-bar-text {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  text-align: center; white-space: nowrap;
+  line-height: var(--eng-bar-h);
 }
-/* One reading: label, value + unit, note -- on a shared baseline. Every label
-   wraps onto its own line above its number (spec s3a); a note that does not
-   fit beside the number wraps below it, never off the column. */
+#engine-card .eng-on-track {
+  color: var(--text-primary);
+}
+#engine-card .eng-on-fill {
+  color: var(--bg);
+}
+#engine-card .eng-bar-text .eng-value,
+#engine-card .eng-bar-text .eng-unit {
+  color: inherit;
+}
+#engine-card .eng-bar-text .eng-unit {
+  line-height: var(--eng-line);
+}
+/* Not read: '--' in the tertiary ink, one copy, no fill. */
+#engine-card .eng-bar-col[data-null="true"] .eng-on-track .eng-value {
+  color: var(--text-tertiary);
+}
+/* TIMING / value / caption stacked on the left, HISTORY › bottom right. */
+#engine-card .eng-foot {
+  flex: none; height: var(--eng-foot-h);
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--eng-col-gap);
+}
+/* TIMING: label, value + unit, note -- on a shared baseline. The label and
+   the caption take their own lines; a note that does not fit beside the
+   number wraps below it, never off the column. */
 #engine-card .eng-reading {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--eng-inline-gap);
-  min-width: 0;
+  align-self: flex-start; flex: 1; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  column-gap: var(--eng-inline-gap); row-gap: var(--eng-gap);
 }
-#engine-card .eng-reading .eng-label {
+#engine-card .eng-reading .eng-label,
+#engine-card .eng-reading .eng-basis {
   flex-basis: 100%;
 }
-/* THROTTLE | TIMING side by side, 2 x 1fr, with the timing caption under
-   TIMING (spec s3a). */
-#engine-card .eng-pair {
-  display: grid; grid-template-columns: 1fr 1fr;
-  column-gap: var(--eng-col-gap); row-gap: var(--eng-gap);
-}
-#engine-card .eng-pair .eng-basis {
-  grid-column: 2;
-}
-/* HISTORY ›, bottom right of the readings (the shared detail button). */
+/* HISTORY ›, bottom right of the footer (the shared detail button). */
 #engine-card .eng-actions {
+  flex: none;
   display: flex; justify-content: flex-end;
 }
 /* Labels: Michroma (frame spec s4.3), letter-spacing 0. */
@@ -1906,7 +1938,8 @@ html, body {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary);
 }
-#engine-card .eng-reading[data-note="age"] .eng-note {
+#engine-card .eng-reading[data-note="age"] .eng-note,
+#engine-card .eng-bar-col[data-note="age"] .eng-note {
   color: var(--amber-warn);
 }
 #engine-card .eng-basis {
