@@ -383,10 +383,11 @@
           </div>
         </div>
       </section>
-      <!-- US-891-c (F-127; specs/v030-o2-page-design.md s3, layout A, stacked):
+      <!-- US-891-c (F-127; specs/v030-o2-page-design.md s3a, re-laid US-891-e):
            the O2 page, between Fuel and Motion (O-1). carousel.js
-           (`renderO2Card`) paints every value from states/o2 ALONE: the
-           volts row, the meta line, the dot trace and the chips. No
+           (`renderO2Card`) paints every value from states/o2 ALONE: each
+           sensor's value column (volts over age) beside its dot trace, the
+           ONE shared meta line under the rear, and the chips. No
            `data-state`: each value carries its own '--' + reason, and the
            skeleton ships the no-source faces. Labels are Michroma, double
            spaced (the subset has no middle dot). -->
@@ -398,10 +399,12 @@
               <span class="o2-chip" data-live="false">no source</span>
             </div>
             <div class="o2-row" data-none="true" data-stale="false">
-              <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
-              <span class="o2-meta">no source</span>
+              <div class="o2-valcol">
+                <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
+                <span class="o2-age">no source</span>
+              </div>
+              <svg class="o2-trace" viewBox="0 0 324 52" aria-hidden="true"></svg>
             </div>
-            <svg class="o2-trace" viewBox="0 0 456 44" aria-hidden="true"></svg>
           </div>
           <div class="o2-sensor o2-rear">
             <div class="o2-head">
@@ -409,11 +412,14 @@
               <span class="o2-chip" data-live="false">no source</span>
             </div>
             <div class="o2-row" data-none="true" data-stale="false">
-              <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
-              <span class="o2-meta">no source</span>
+              <div class="o2-valcol">
+                <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
+                <span class="o2-age">no source</span>
+              </div>
+              <svg class="o2-trace" viewBox="0 0 324 52" aria-hidden="true"></svg>
             </div>
-            <svg class="o2-trace" viewBox="0 0 456 44" aria-hidden="true"></svg>
           </div>
+          <div class="o2-meta">1 sample / ~-- s · last -- min</div>
           <div class="o2-cat">
             <div class="o2-head">
               <span class="o2-label">CATALYST</span>

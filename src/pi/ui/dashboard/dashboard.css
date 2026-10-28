@@ -2363,17 +2363,21 @@ html, body {
   color: var(--text-secondary); white-space: nowrap;
 }
 
-/* US-891-c (F-127; specs/v030-o2-page-design.md s3, layout A): the O2 page --
-   FRONT and REAR stacked, each a head (label + chip), the volts row and the
-   dot trace, then the CATALYST head. Tokens only: no literal colour, and the
-   one px is the trace height (spec s3); every other length is em or a token.
-   No box has a fixed height except the trace and nothing hides overflow, so
-   a long line wraps rather than clips. Labels and the live chip are Michroma;
+/* US-891-c (F-127; specs/v030-o2-page-design.md s3a, re-laid by US-891-e):
+   the O2 page -- FRONT and REAR stacked, each a head (label + chip), then ONE
+   row: the value column (volts over age) and the dot trace; then the ONE
+   shared meta line and the CATALYST head. Nothing needs a scroll: 231.4 of
+   the 254 px body (spec s3a). Tokens only: no literal colour, and the only px
+   are the three s3a sizes; every other length is em or a token. No box has a
+   fixed height except the trace and nothing hides overflow, so a long line
+   wraps rather than clips. Labels and the live chip are Michroma;
    the withheld chip is lower case, so --font-mono (the subset has no a-z).
    The live chip carries no state colour: a verdict is a description, not a
    severity. Stale dims the last value (shared rule). */
 #o2-card {
-  --o2-trace-h: 44px;           /* the trace (spec s3: 456 x 44) */
+  --o2-trace-h: 52px;           /* the trace (spec s3a: 324 x 52) */
+  --o2-val-w: 112px;            /* the value column: '0.00 V' is 106 px */
+  --o2-col-gap: 12px;           /* value column | trace */
   --o2-stale-opacity: 0.4;      /* stale = dimmed (shared rule) */
   --o2-line: 1;                 /* value + chip line boxes */
   --o2-note-line: 1.2;          /* label / meta line boxes */
@@ -2381,7 +2385,7 @@ html, body {
 #o2-card .card-body { display: flex; flex-direction: column; }
 #o2-card .o2-sensor,
 #o2-card .o2-cat {
-  flex: none; display: flex; flex-direction: column; gap: 0.15em; padding-block: 0.2em;
+  flex: none; display: flex; flex-direction: column; gap: 0.15em; padding-block: 0.1em;
   min-width: 0;
 }
 #o2-card .o2-sensor + .o2-sensor,
@@ -2408,7 +2412,10 @@ html, body {
   border: thin dashed var(--text-tertiary);
 }
 #o2-card .o2-row {
-  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.5em; min-width: 0;
+  display: flex; align-items: flex-start; column-gap: var(--o2-col-gap); min-width: 0;
+}
+#o2-card .o2-valcol {
+  flex: none; width: var(--o2-val-w); display: flex; flex-direction: column;
 }
 #o2-card .o2-line { white-space: nowrap; line-height: var(--o2-line); }
 #o2-card .o2-value {
@@ -2420,12 +2427,14 @@ html, body {
 }
 #o2-card .o2-row[data-none="true"] .o2-value { color: var(--text-tertiary); }
 #o2-card .o2-row[data-stale="true"] .o2-line { opacity: var(--o2-stale-opacity); }
+#o2-card .o2-age,
 #o2-card .o2-meta {
   font-family: var(--font-mono); font-size: var(--fs-meta); line-height: var(--o2-note-line);
   font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 0;
 }
+#o2-card .o2-meta { flex: none; }
 #o2-card .o2-trace {
-  display: block; width: 100%; height: var(--o2-trace-h); overflow: visible;
+  display: block; flex: 1 1 0; min-width: 0; height: var(--o2-trace-h); overflow: visible;
 }
 #o2-card .o2-trace-mid {
   stroke: var(--text-tertiary); stroke-width: 1; stroke-dasharray: 4 4; fill: none;

@@ -14,8 +14,13 @@
 #     4. the grep gates on the O2 code (no threshold, no AFR, no joining line,
 #        no promise word) and the stylesheet rules (tokens only, one px, no
 #        fixed height but the trace, no hidden overflow).
+#   US-891-e (spec s3a, re-laid): one row per sensor (value column + trace),
+#   the meta printed ONCE, and the fit MODELLED from the declared rules (Q1):
+#     5. the height budget <= the 254 px body, with a planted negative control,
+#        and each fit fixture's widest slot texts against their columns.
 #   NOT GUARDED: layout on the glass (render_harness resolves the cascade, not
-#   boxes): both rows and traces whole is the bigDefinitionOfDone screenshot.
+#   boxes): the browser scrollHeight check and the KOEO / no-source / 999+ s
+#   states are the bigDefinitionOfDone.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-10-26
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -25,6 +30,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-26    | Rex (US-891-c) | Initial -- the O2 page.
+# 2026-10-27    | Rex (US-891-e) | s3a re-lay: one meta line, 324 x 52 traces,
+#                                  the modelled height + width fit.
 # ================================================================================
 ################################################################################
 
@@ -48,6 +55,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_harness as rh  # noqa: E402
 
 from pi.obdii.o2_state import O2History, O2Settings, buildO2State  # noqa: E402
+from tests.ui.test_engine_page import _bodyHeightPx, _bodyWidthPx  # noqa: E402
+from tests.ui.test_topbar_three_column_grid import (  # noqa: E402
+    PI_MONO_ADVANCE_EM,
+    michromaWidthPx,
+)
 
 _JS = os.path.join(rh.DASHBOARD_DIR, "carousel.js")
 _HTML = os.path.join(rh.DASHBOARD_DIR, "dashboard.html")
@@ -227,20 +239,23 @@ def test_view_withheldWords_areTheTokenWithUnderscoresAsSpaces():
 
 @_NODE_ONLY
 def test_view_switching_theFullMetaLine():
-    """The story's example: 0.78 V, 2 s old, ~2.2 s, last 5 min."""
-    front = _view("switching")["front"]["reading"]
+    """The story's example: 0.78 V over 2 s old; the rate and window once."""
+    view = _view("switching")
+    front = view["front"]["reading"]
     assert (front["text"], front["unit"]) == ("0.78", " V")
-    assert front["meta"] == "2 s old · 1 sample / ~2.2 s · last 5 min"
+    # MOVED PIN (US-891-e): the age stays per sensor, the rest is shared.
+    assert front["meta"] == "2 s old"
+    assert view["meta"] == "1 sample / ~2.2 s · last 5 min"
     assert front["stale"] is False and front["none"] is False
 
 
 @_NODE_ONLY
 def test_view_rateAndWindow_comeFromTheProvider_neverALiteral():
     payload = dict(_fixture("switching")["o2"], samplePeriodSec=3.4, windowSec=600)
-    meta = _view("switching", payload)["front"]["reading"]["meta"]
-    assert meta == "2 s old · 1 sample / ~3.4 s · last 10 min"
+    # MOVED PIN (US-891-e): the shared line, not the per-sensor one.
+    assert _view("switching", payload)["meta"] == "1 sample / ~3.4 s · last 10 min"
     payload = dict(payload, samplePeriodSec=None)
-    assert "~-- s" in _view("switching", payload)["front"]["reading"]["meta"]
+    assert "~-- s" in _view("switching", payload)["meta"]
 
 
 @_NODE_ONLY
@@ -251,7 +266,7 @@ def test_view_stale_rendersTheLastValueDimmedWithItsAge():
     assert front["text"] == f"{_fixture('stale')['o2']['front']['last']['value']:.2f}"
     age = round((_now("stale") - _ms(_fixture("stale")["o2"]["front"]["ts"])) / 1000)
     assert age > STALE_SEC
-    assert front["meta"].startswith(f"{age} s old · ")
+    assert front["meta"] == f"{age} s old"  # MOVED PIN (US-891-e): the age alone
 
 
 @_NODE_ONLY
@@ -282,9 +297,10 @@ def test_view_trace_oneDotPerSample_atItsOwnTs_acrossTheWindow():
     assert len(trace["dots"]) == len(data["front"]["samples"])
     xs = [d["x"] for d in trace["dots"]]
     assert xs == sorted(xs)
-    assert 0 <= xs[0] and xs[-1] <= 456
-    # The newest sample is ~2 s (whole-second ts) before the write: ~2/300 of 456 in.
-    assert xs[-1] == pytest.approx(456 * (1 - 2 / 300), abs=3.1)
+    # MOVED PIN (US-891-e): the trace is 324 wide (spec s3a), was 456.
+    assert 0 <= xs[0] and xs[-1] <= 324
+    # The newest sample is ~2 s (whole-second ts) before the write: ~2/300 of 324 in.
+    assert xs[-1] == pytest.approx(324 * (1 - 2 / 300), abs=2.2)
     # 0 V at the bottom, 1 V at the top, inside the 3-unit pad.
     lowest = min(range(len(xs)), key=lambda i: data["front"]["samples"][i]["v"])
     assert trace["dots"][lowest]["y"] > trace["midY"]
@@ -294,9 +310,10 @@ def test_view_trace_oneDotPerSample_atItsOwnTs_acrossTheWindow():
 def test_view_midline_isDrawnFromMidlineV():
     payload = _fixture("switching")["o2"]
     base = _view("switching")["front"]["trace"]["midY"]
-    assert base == pytest.approx(3 + 38 * (1 - payload["midlineV"]), abs=0.05)
+    # MOVED PIN (US-891-e): the plot height is 52 - 2 x 3 = 46 (was 44 - 6 = 38).
+    assert base == pytest.approx(3 + 46 * (1 - payload["midlineV"]), abs=0.05)
     moved = _view("switching", dict(payload, midlineV=0.2))["front"]["trace"]["midY"]
-    assert moved == pytest.approx(3 + 38 * 0.8, abs=0.05)
+    assert moved == pytest.approx(3 + 46 * 0.8, abs=0.05)
     assert _view("switching", dict(payload, midlineV=None))["front"]["trace"]["midY"] is None
 
 
@@ -340,8 +357,9 @@ def _boot(name: str, routes: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def _row(section: dict[str, Any]) -> tuple[str, str]:
+    """(volts, age): the sensor's value column (US-891-e: the age alone)."""
     line = _one(section, "o2-line")
-    return _rawText(line), _rawText(_one(section, "o2-meta")).strip()
+    return _rawText(line), _rawText(_one(section, "o2-age")).strip()
 
 
 @_NODE_ONLY
@@ -355,6 +373,7 @@ def test_dom_everyFixture_paintsTheProvidersFields(name):
         assert _rawText(chip) == view[side]["chip"]["text"]
         assert chip["attrs"]["data-live"] == ("true" if view[side]["chip"]["live"] else "false")
         reading = view[side]["reading"]
+        # MOVED PIN (US-891-e): the row's second slot is the age, not the meta.
         assert _row(section) == (reading["text"] + reading["unit"], reading["meta"])
         row = _one(section, "o2-row")
         assert row["attrs"]["data-stale"] == ("true" if reading["stale"] else "false")
@@ -363,6 +382,7 @@ def test_dom_everyFixture_paintsTheProvidersFields(name):
         assert len(dots) == len(view[side]["trace"]["dots"])
         assert all(_classes(d) == ["o2-trace-dot"] for d in dots)
     assert _rawText(_one(_one(card, "o2-cat"), "o2-chip")) == "not rated"
+    assert _rawText(_one(card, "o2-meta")) == view["meta"]
     assert "0.00 V" not in _rawText(card)
 
 
@@ -372,7 +392,9 @@ def test_dom_switching_theStoryExample():
     front = _one(card, "o2-front")
     assert _rawText(_one(front, "o2-label")) == "FRONT  BEFORE CAT"
     assert _rawText(_one(_one(card, "o2-rear"), "o2-label")) == "REAR  AFTER CAT"
-    assert _row(front) == ("0.78 V", "2 s old · 1 sample / ~2.2 s · last 5 min")
+    # MOVED PIN (US-891-e): volts over age; the meta prints once, below.
+    assert _row(front) == ("0.78 V", "2 s old")
+    assert _rawText(_one(card, "o2-meta")) == "1 sample / ~2.2 s · last 5 min"
     assert _rawText(_one(front, "o2-chip")) == "SWITCHING"
     assert _rawText(_one(_one(card, "o2-rear"), "o2-chip")) == "not rated"
 
@@ -396,6 +418,8 @@ def test_dom_statesO2Absent_isDashAndNoSource_neverZero():
         section = _one(card, cls)
         assert _row(section) == ("--", "no source")
         assert not _find(section, lambda n: n.get("tag") in ("circle", "line"))
+    # The shared line keeps its slot: an unread field is '--', never a guess.
+    assert _rawText(_one(card, "o2-meta")) == "1 sample / ~-- s · last -- min"
     assert "0.00" not in _rawText(card)
 
 
@@ -438,13 +462,21 @@ def _o2Rules() -> list[rh.Rule]:
     return rules
 
 
-def test_css_o2Rules_tokensOnly_theOnePxIsTheTraceHeight():
+# MOVED PIN (US-891-e): the one px (the trace height, 44) becomes exactly the
+# three spec s3a sizes.
+O2_PX = {"--o2-trace-h: 52px", "--o2-val-w: 112px", "--o2-col-gap: 12px"}
+
+
+def test_css_o2Rules_tokensOnly_thePxAreTheThreeS3aSizes():
+    seen = set()
     for rule in _o2Rules():
         body = rule.declarations
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", body), rule.selector
         for decl in filter(None, (d.strip() for d in body.split(";"))):
             if "px" in decl:
-                assert decl == "--o2-trace-h: 44px", (rule.selector, decl)
+                assert decl in O2_PX, (rule.selector, decl)
+                seen.add(decl)
+    assert seen == O2_PX
 
 
 def test_css_noClipping_byRule():
@@ -461,7 +493,7 @@ def test_css_noClipping_byRule():
 
 def _decl(selector: str, prop: str) -> str | None:
     for rule in _o2Rules():
-        if rule.selector == selector:
+        if selector in [s.strip() for s in rule.selector.split(",")]:
             found = rh.declarationOf(rule.declarations, prop)
             if found is not None:
                 return found[0]
@@ -478,13 +510,219 @@ def test_css_faces_andSizes():
     assert _decl('#o2-card .o2-chip[data-live="false"]', "color") == "var(--text-tertiary)"
     assert _decl("#o2-card .o2-chip", "font-size") == "var(--fs-label)"
     assert _decl("#o2-card .o2-value", "font-size") == "var(--fs-primary)"
-    assert _decl("#o2-card .o2-meta", "font-family") == "var(--font-mono)"
-    assert _decl("#o2-card .o2-meta", "font-size") == "var(--fs-meta)"
+    for cls in (".o2-meta", ".o2-age"):
+        assert _decl(f"#o2-card {cls}", "font-family") == "var(--font-mono)"
+        assert _decl(f"#o2-card {cls}", "font-size") == "var(--fs-meta)"
+        assert _decl(f"#o2-card {cls}", "color") == "var(--text-secondary)"
     # The live verdict is a description, not a severity: no state colour.
     live = _decl('#o2-card .o2-chip[data-live="true"]', "color")
     assert live == "var(--text-primary)"
     assert "dasharray" in "".join(r.declarations for r in _o2Rules()
                                   if r.selector == "#o2-card .o2-trace-mid")
+
+
+# --- 5. US-891-e: spec s3a -- the meta once, and the modelled fit (Q1) -----------
+
+
+def _elements(node: dict[str, Any]) -> list[dict[str, Any]]:
+    return [c for c in node.get("children", []) if "tag" in c]
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", FIXTURE_NAMES)
+def test_o2_meta_line_printed_once(name):
+    """
+    Given: the shipped card painted from each fixture
+    When: its text is read
+    Then: '1 sample /' appears exactly once (spec AC 7a), both traces are
+          324 x 52, and the meta is the last child before CATALYST
+    """
+    card = _boot(name)
+    assert _rawText(card).count("1 sample /") == 1
+    for cls in ("o2-front", "o2-rear"):
+        # The harness tree lower-cases attribute names.
+        assert _one(_one(card, cls), "o2-trace")["attrs"]["viewbox"] == "0 0 324 52"
+    (body,) = [c for c in _elements(card) if "card-body" in _classes(c)]
+    kids = [_classes(c) for c in _elements(body)]
+    cat = next(i for i, k in enumerate(kids) if "o2-cat" in k)
+    assert "o2-meta" in kids[cat - 1]
+    assert sum("o2-meta" in k for k in kids) == 1
+
+
+def test_o2_traceViewBox_isTheRowLeftBesideTheValueColumn():
+    """448 - --o2-val-w - --o2-col-gap = 324, the viewBox width (s3a)."""
+    width = _bodyWidthPx()
+    trace = width - _o2Len(_o2Decl(".o2-valcol", "width"), 0) - _o2Len(
+        _o2Decl(".o2-row", "column-gap"), 0)
+    assert trace == 324
+    assert _o2Len("var(--o2-trace-h)", 0) == 52
+    html = open(_HTML, encoding="utf-8").read()
+    card = html[html.index('id="o2-card"'):html.index("</section>", html.index('id="o2-card"'))]
+    assert re.findall(r'class="o2-trace" viewBox="([^"]+)"', card) == ["0 0 324 52"] * 2
+
+
+# The model reads the DECLARED rules at test time (Q1 condition 1). `thin`
+# is 1 px in Chromium: the spec's '2 rules' and the chip border.
+THIN_PX = 1.0
+_O2 = "#o2-card"
+_TOKENS = os.path.join(rh.DASHBOARD_DIR, "..", "tokens.css")
+
+
+def _o2Decl(cls: str, prop: str, css: str | None = None) -> str:
+    """`prop` of the O2 rule naming `#o2-card <cls>` (grouped or alone)."""
+    selector = f"{_O2} {cls}" if cls else _O2
+    for rule in rh.parseCss(css or open(_CSS, encoding="utf-8").read()):
+        if selector in [s.strip() for s in rule.selector.split(",")]:
+            found = rh.declarationOf(rule.declarations, prop)
+            if found is not None:
+                return found[0]
+    raise AssertionError(f"{selector} declares no {prop}")
+
+
+def _o2Var(value: str, css: str | None = None) -> str:
+    """A var() chased through #o2-card's own properties, then the sheets."""
+    value = value.strip()
+    var = re.fullmatch(r"var\((--[\w-]+)\)", value)
+    if not var:
+        return value
+    name = var.group(1)
+    sheet = css or open(_CSS, encoding="utf-8").read()
+    try:
+        return _o2Var(_o2Decl("", name, css), css)
+    except AssertionError:
+        pass
+    for source in (sheet, open(_TOKENS, encoding="utf-8").read()):
+        found = re.search(rf"^\s*{re.escape(name)}:\s*([^;]+);", source, re.M)
+        if found:
+            return _o2Var(found.group(1), css)
+    raise AssertionError(f"{name} does not resolve")
+
+
+def _o2Len(value: str, emPx: float, css: str | None = None) -> float:
+    """A length in px: px, em (at `emPx`) or `thin`."""
+    resolved = _o2Var(value, css)
+    if resolved == "thin":
+        return THIN_PX
+    m = re.fullmatch(r"([0-9.]+)(px|em)", resolved)
+    assert m is not None, f"{value!r} -> {resolved!r} is not a length"
+    return float(m.group(1)) * (emPx if m.group(2) == "em" else 1.0)
+
+
+def _o2Line(cls: str, css: str | None = None) -> float:
+    """One line box: the declared font-size x its unitless line-height."""
+    lh = _o2Decl(cls, "line-height", css)
+    assert lh != "normal", cls
+    return _o2Len(_o2Decl(cls, "font-size", css), 0, css) * float(_o2Var(lh, css))
+
+
+def _bodyEm() -> float:
+    """The card body's font-size: the em the sections and heads inherit."""
+    for rule in rh.parseCss(open(_CSS, encoding="utf-8").read()):
+        if rule.selector.strip() == ".card-body":
+            return _o2Len(rh.declarationOf(rule.declarations, "font-size")[0], 0)
+    raise AssertionError(".card-body declares no font-size")
+
+
+def _chipHeight(css: str | None = None) -> float:
+    chipEm = _o2Len(_o2Decl(".o2-chip", "font-size", css), 0, css)
+    border = max(_o2Len(_o2Decl(f'.o2-chip[data-live="{live}"]', "border", css).split()[0],
+                        chipEm, css) for live in ("true", "false"))
+    return (chipEm * float(_o2Var(_o2Decl(".o2-chip", "line-height", css), css))
+            + 2 * _o2Len(_o2Decl(".o2-chip", "padding-block", css), chipEm, css) + 2 * border)
+
+
+def _o2Height(css: str | None = None) -> float:
+    """Every term the card body spends (spec s3a, at the body's em): two
+    sensors (padding + head + gap + the row), two rules, the shared meta and
+    CATALYST (padding + head). No state changes a height: every slot is one
+    line (the width test proves it) and the trace's height is fixed."""
+    em = _bodyEm()
+    pad = _o2Len(_o2Decl(".o2-sensor", "padding-block", css), em, css)
+    gap = _o2Len(_o2Decl(".o2-sensor", "gap", css), em, css)
+    head = max(_o2Line(".o2-label", css), _chipHeight(css))
+    column = _o2Len(_o2Decl(".o2-value", "font-size", css), 0, css) * float(
+        _o2Var(_o2Decl(".o2-value", "line-height", css), css)) + _o2Line(".o2-age", css)
+    row = max(column, _o2Len(_o2Decl(".o2-trace", "height", css), 0, css))
+    rule = _o2Len(_o2Decl(".o2-sensor + .o2-sensor", "border-top", css).split()[0], em, css)
+    catRule = _o2Len(_o2Decl(".o2-cat", "border-top", css).split()[0], em, css)
+    sensor = 2 * pad + head + gap + row
+    return 2 * sensor + rule + catRule + _o2Line(".o2-meta", css) + 2 * pad + head
+
+
+def test_o2_heightBudget_fitsTheBody():
+    """2 x (5.2 + 28 + 3.9 + 52) + 2 rules + meta 18 + CATALYST 33.2 = 231.4
+    of the 254 px body (spec s3a; Iris S119 review recomputed it)."""
+    body = _bodyHeightPx()
+    assert body == 254
+    assert _o2Height() == pytest.approx(231.4)
+    assert _o2Height() <= body
+
+
+def test_o2_heightBudget_aPlantedOverflow_fails():
+    """The negative control: a 120 px trace cannot fit, and the model says so."""
+    css = open(_CSS, encoding="utf-8").read()
+    planted = css.replace("--o2-trace-h: 52px;", "--o2-trace-h: 120px;")
+    assert planted != css
+    assert _o2Height(planted) > _bodyHeightPx()
+
+
+def _mono(text: str, sizePx: float) -> float:
+    return len(text) * sizePx * PI_MONO_ADVANCE_EM
+
+
+def _headWidth(section: dict[str, Any]) -> float:
+    """Label (Michroma) + the head gap + the chip (its face, padding, border)."""
+    em = _bodyEm()
+    meta = _o2Len("var(--fs-meta)", 0)
+    chipEm = _o2Len(_o2Decl(".o2-chip", "font-size"), 0)
+    chip = _one(section, "o2-chip")
+    text = _rawText(chip)
+    face = (michromaWidthPx(text, chipEm) if chip["attrs"]["data-live"] == "true"
+            else _mono(text, chipEm))
+    return (michromaWidthPx(_rawText(_one(section, "o2-label")), meta)
+            + _o2Len(_o2Decl(".o2-head", "gap"), em) + face
+            + 2 * _o2Len(_o2Decl(".o2-chip", "padding-inline"), chipEm) + 2 * THIN_PX)
+
+
+FIT_CASES = ["switching", "open-loop", "o2-null", "stale", "not-enough-data"]
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", FIT_CASES + ["statesO2-absent"])
+def test_o2_widths_eachSlotsWidestTextFitsItsColumn(name):
+    """Q1 condition 2: mono at the Pi's advance, Michroma from
+    michroma-advances.json; every painted slot text inside its column, so
+    nothing wraps and the height model holds for this state."""
+    card = _boot("switching", routes={}) if name == "statesO2-absent" else _boot(name)
+    width = _bodyWidthPx()
+    valW = _o2Len("var(--o2-val-w)", 0)
+    primary = _o2Len(_o2Decl(".o2-value", "font-size"), 0)
+    unit = _o2Len(_o2Decl(".o2-unit", "font-size"), 0)
+    meta = _o2Len(_o2Decl(".o2-age", "font-size"), 0)
+    for cls in ("o2-front", "o2-rear"):
+        section = _one(card, cls)
+        assert _headWidth(section) <= width, (name, cls)
+        volts = _rawText(_one(section, "o2-value"))
+        assert _mono(volts, primary) + _mono(_rawText(_one(section, "o2-unit")), unit) <= valW
+        assert _mono(_rawText(_one(section, "o2-age")), meta) <= valW, (name, cls)
+    assert _headWidth(_one(card, "o2-cat")) <= width
+    assert _mono(_rawText(_one(card, "o2-meta")), _o2Len(_o2Decl(".o2-meta", "font-size"), 0)) \
+        <= width
+
+
+def test_o2_widths_theSpecsWidestCasesFit():
+    """Spec s3a's own widest texts: '0.00 V' (106) and '999+ s old' (90) in
+    the 112 px column, 'FRONT  BEFORE CAT' + 'not enough data' (430.5 of 448)."""
+    valW = _o2Len("var(--o2-val-w)", 0)
+    assert _mono("0.00", _o2Len("var(--fs-primary)", 0)) + _mono(
+        " V", _o2Len("var(--fs-label)", 0)) <= valW
+    assert _mono("999+ s old", _o2Len("var(--fs-meta)", 0)) <= valW
+    chipEm = _o2Len("var(--fs-label)", 0)
+    head = (michromaWidthPx("FRONT  BEFORE CAT", _o2Len("var(--fs-meta)", 0))
+            + _o2Len(_o2Decl(".o2-head", "gap"), _bodyEm()) + _mono("not enough data", chipEm)
+            + 2 * _o2Len(_o2Decl(".o2-chip", "padding-inline"), chipEm) + 2 * THIN_PX)
+    assert head == pytest.approx(430.5, abs=1.0)
+    assert head <= _bodyWidthPx()
 
 
 if __name__ == "__main__":

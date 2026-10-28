@@ -5637,20 +5637,22 @@
 
   // --- US-891-c O2 page (F-127) ------------------------------------------------
   //
-  // specs/v030-o2-page-design.md s3-s4 (layout A, stacked): per sensor the
-  // volts, their age and the provider's sample rate, a dot trace of the
-  // provider's window, and the verdict chips. A PURE CONSUMER of states/o2
+  // specs/v030-o2-page-design.md s3a-s4 (re-laid, US-891-e): per sensor the
+  // volts and their age beside a dot trace of the provider's window, and the
+  // verdict chips; the provider's sample rate and window print ONCE for both
+  // (one provider, one poll cycle). A PURE CONSUMER of states/o2
   // (src/pi/obdii/o2_state.py): the provider owns staleness, the window, the
   // mid-line volts and every verdict, and this page holds no threshold. A stale
   // sensor renders `last.value` dimmed with its age (drivingReading's rule), a
   // null one '--' + the provider's reason, and no states/o2 at all '--' +
   // 'no source' (the Driving page's word), never a zero.
   var O2_NO_SOURCE = "no source";
-  // The trace frame (spec s3: 456 x 44, 0-1 V) and the OEM mockup's edge pad
-  // and dot radius (proposals/2026-10-15-v030-o2-page-oem.html), in viewBox
-  // units. A volt outside 0-1 sits on the edge it passed.
-  var O2_TRACE_W = 456;
-  var O2_TRACE_H = 44;
+  // The trace frame (spec s3a: 324 x 52, 0-1 V -- the row beside the 112 px
+  // value column) and the OEM mockup's edge pad and dot radius
+  // (proposals/2026-10-15-v030-o2-page-oem.html), in viewBox units. A volt
+  // outside 0-1 sits on the edge it passed.
+  var O2_TRACE_W = 324;
+  var O2_TRACE_H = 52;
   var O2_TRACE_PAD = 3;
   var O2_TRACE_V_MIN = 0;
   var O2_TRACE_V_MAX = 1;
@@ -5685,22 +5687,23 @@
     return Math.max(0, Math.round((nowMs - t) / O2_MS_PER_SEC)) + " s";
   }
 
-  // The meta line's full form (Iris, PR #136): age, the provider's measured
-  // sample period and the provider's window in minutes.
-  function o2MetaText(ageText, data) {
-    var period = isNum(data.samplePeriodSec)
+  // The shared meta line (spec s3a, printed once): the provider's measured
+  // sample period and its window in minutes. Always a full line -- an unread
+  // field is '--' -- so no state changes the card's height.
+  function o2MetaText(data) {
+    var period = isObj(data) && isNum(data.samplePeriodSec)
       ? data.samplePeriodSec.toFixed(O2_PERIOD_DECIMALS) : "--";
-    var mins = isNum(data.windowSec)
+    var mins = isObj(data) && isNum(data.windowSec)
       ? String(Number((data.windowSec / O2_SEC_PER_MIN).toFixed(1))) : "--";
-    return ageText + " old · 1 sample / ~" + period + " s · last " + mins + " min";
+    return "1 sample / ~" + period + " s · last " + mins + " min";
   }
 
   function o2NotRead(reason) {
     return { text: "--", unit: "", stale: false, none: true, meta: reason };
   }
 
-  // One sensor's value row. `data` is the whole payload (rate and window).
-  function o2Reading(sensor, data, nowMs) {
+  // One sensor's value column: the volts and, under them, their age.
+  function o2Reading(sensor, nowMs) {
     if (!isObj(sensor)) return o2NotRead(drivingReasonText(null));
     var volts = sensor.value;
     if (sensor.stale === true) {
@@ -5711,7 +5714,7 @@
     }
     return {
       text: volts.toFixed(O2_VOLTS_DECIMALS), unit: " V", stale: sensor.stale === true,
-      none: false, meta: o2MetaText(o2AgeText(sensor.ts, nowMs), data),
+      none: false, meta: o2AgeText(sensor.ts, nowMs) + " old",
     };
   }
 
@@ -5745,16 +5748,18 @@
     if (!isObj(data)) {
       var none = { reading: o2NotRead(O2_NO_SOURCE), trace: { midY: null, dots: [] },
         chip: o2Chip(null, null) };
-      return { front: none, rear: none, catalyst: { chip: o2Chip(null, null) } };
+      return { front: none, rear: none, catalyst: { chip: o2Chip(null, null) },
+        meta: o2MetaText(null) };
     }
     return {
+      meta: o2MetaText(data),
       front: {
-        reading: o2Reading(data.front, data, nowMs),
+        reading: o2Reading(data.front, nowMs),
         trace: o2Trace(data.front, data),
         chip: o2Chip(data.frontVerdict, data.frontReason),
       },
       rear: {
-        reading: o2Reading(data.rear, data, nowMs),
+        reading: o2Reading(data.rear, nowMs),
         trace: o2Trace(data.rear, data),
         chip: o2Chip(null, data.rearVerdict),
       },
@@ -7669,8 +7674,8 @@
         if (value) value.textContent = s.reading.text;
         var unit = row.querySelector(".o2-unit");
         if (unit) unit.textContent = s.reading.unit;
-        var meta = row.querySelector(".o2-meta");
-        if (meta) meta.textContent = s.reading.meta;
+        var age = row.querySelector(".o2-age");
+        if (age) age.textContent = s.reading.meta;
       }
       var svg = section.querySelector(".o2-trace");
       if (!svg) return;
@@ -7687,11 +7692,14 @@
       }
     }
 
-    // US-891-c: paint the O2 card from `o2View`.
+    // US-891-c: paint the O2 card from `o2View`. US-891-e: the one shared
+    // meta line sits under the rear sensor, above CATALYST.
     function renderO2Card(card, view) {
       if (!card || !view) return;
       paintO2Sensor(card.querySelector(".o2-front"), view.front);
       paintO2Sensor(card.querySelector(".o2-rear"), view.rear);
+      var meta = card.querySelector(".o2-meta");
+      if (meta) meta.textContent = view.meta;
       var cat = card.querySelector(".o2-cat");
       if (cat) paintO2Chip(cat.querySelector(".o2-chip"), view.catalyst.chip);
     }
