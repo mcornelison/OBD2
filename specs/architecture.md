@@ -613,8 +613,18 @@ attempt after that auto one is explicit again. An ELM-answered-but-ECU-silent
 result (ignition off) keeps the next attempt explicit (Atlas G1). The state is
 one flag on the `ObdConnection` instance -- no sleep, no timer -- and the
 injected `obdFactory(serialPort, timeout)` test seam carries no baud.
-`validateObdConfig` rejects any other rate with a `ConfigValidationError` naming
-the key. The key `connectionTimeoutSeconds` keeps its name (rename out of scope).
+`ConfigValidator.validate` (src/common/config/validator.py) rejects any other
+rate, when the key is present, with a `ConfigValidationError` naming the key:
+`type(x) is int` (a bool or `38400.0` is refused) and in `VALID_ADAPTER_BAUDRATES`.
+Absent passes and is never injected (validate's output is unchanged;
+`obd_connection.py` applies `DEFAULT_ADAPTER_BAUDRATE` itself). It RAISES, with
+no log-and-fall-back: a quiet default baud is the 30 s-per-key-on failure class
+(US-817-c, Atlas 2026-10-28). `ConfigValidator` is the validator the car runs
+(`main.py` and powerwatch both call it); `validateObdConfig` is not on the
+production path (US-817-d audits its remaining checks). `DEFAULT_ADAPTER_BAUDRATE`
+(38400) and `VALID_ADAPTER_BAUDRATES` have ONE home, `common/config/validator.py`;
+pi modules import them from there. The key `connectionTimeoutSeconds` keeps its
+name (rename out of scope).
 
 **Environment file (`/etc/default/obdlink`):**
 
@@ -6947,8 +6957,12 @@ codeAlert, entries}`.
     (Iris contract names).
   - `engine: {assessed}` -- true only when obd-live carries a FRESH COOLANT_TEMP reading
     (Q14). Engine off, stale or absent is false.
-  - `system` (US-877-c): `{assessed: true}` once a system-status verdict was handed in this
-    boot, else `{assessed: false, reason: 'not_read'}` (the SYSTEM source, below).
+  - `system` (US-877-c): `{assessed: true, issueCount}` once a system-status verdict was
+    handed in this boot, else `{assessed: false, reason: 'not_read'}` (the SYSTEM source,
+    below). `issueCount` (US-897-f) is the handed-in `verdict.issueCount` from
+    `buildSystemVerdict`, carried through unchanged: the SAME integer System's
+    `n ISSUES` reads, never a second count over the members. Anything that is not an int
+    >= 0 (bool included) is published as null, and null never yields "clear".
   - `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
 - **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
   stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus, round}` (`codeStatus`
@@ -7082,7 +7096,13 @@ legacy AlertManager owns that section (config.json).
   (US-869-c, one title whatever its `feeds`), wifi `WIFI NOT READ`, pi `PI OVER LIMIT`, sync
   `SYNC NOT COMPLETE` (US-917-c, Iris; one title for S1, S2 and S3). `sentence` = the member's `reason` verbatim (the page composes nothing);
   `value`/`unit`/`directive` null; inert on the page (the ENGINE row pattern, no control).
-  A key not in the table is skipped with one WARNING per key (A5).
+  A key not in the table gets the fallback title `SYSTEM_TITLE_FALLBACK` (`SYSTEM ISSUE`, Iris's
+  words), with its own reason as the sentence, plus one WARNING per key (US-897-f, Atlas
+  2026-10-28; supersedes A5's skip). Every counted member therefore yields exactly ONE entry, so
+  the icon count equals System's `n ISSUES` by construction, not only while the
+  `SYSTEM_TITLES` == `VERDICT_MEMBER_ORDER` pin holds (that pin stays, so the fallback normally
+  never paints). Only a malformed member (not a mapping, or a non-string key or reason) is
+  still skipped; the emitter cannot produce one.
 - **Episode**: `firstSeenTs` = the payload `ts` of the episode's first verdict, unchanged while
   the member's reason changes; `lastSeenTs` advances to each payload's `ts` (A2). A member that
   leaves the verdict is REMOVED (a watch is never "listed until acked"). Acks follow G1
@@ -7092,7 +7112,12 @@ legacy AlertManager owns that section (config.json).
   `firstSeenTs`: they are not seeded (A4). No `alert_log` row (A6).
 - **Page**: in the codes-read nothing-found state, `carousel.js warningsQuietView` prints
   `System checks not read yet.` while `sources.system.assessed` is false, then `Data checks are
-  not built yet.` while `sources.data.assessed` is false (both `tone: 'secondary'`).
+  not built yet.` while `sources.data.assessed` is false (both `tone: 'secondary'`). When
+  `sources.system.assessed` is true it reads `sources.system.issueCount` and nothing else
+  (US-897-f): `System checks clear.` (`tone: 'primary'`) ONLY when it is exactly 0; an int > 0
+  prints `System has n issue(s).` (`tone: 'amber'`, the defence-in-depth line for a member that
+  shows no entry); null or anything else prints no System line, and never "clear". The words
+  are Iris's (specs/v030-warnings-page-design.md §4.3).
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.
@@ -8840,12 +8865,20 @@ Always a key; `issueCount == len(members)`; members in the fixed order `bt`,
     - `<n>` comma-grouped. Driving is never a case; `sync.stale` and
       `isSyncStaleWhileDriving` are not inputs and are unchanged;
       `edrRowsWaiting` never counts.
-    - **Config guard (Atlas G4):** `validateObdConfig` rejects an EFFECTIVE
+    - **Config guard (Atlas G4; moved by US-817-c, 2026-10-28):**
+      `ConfigValidator.validate` (src/common/config/validator.py, the
+      validator `main.py` and powerwatch run) rejects an EFFECTIVE
       `pi.dashboard.syncStaleThresholdSeconds` (else
-      `DEFAULT_SYNC_STALE_THRESHOLD_SECONDS`, 120) that is not greater than
-      the effective `pi.sync.intervalSeconds` (else the validator default,
-      60) with a `ConfigValidationError` naming both keys. At or below the
-      interval, S3 would flicker between two normal pushes.
+      `DEFAULT_SYNC_STALE_THRESHOLD_SECONDS`, 120, Spool S-3) that is not
+      greater than the effective `pi.sync.intervalSeconds` (else the module
+      `DEFAULTS` value, 60 -- never the instance's defaults, which the OBD
+      loader builds without that key) with a `ConfigValidationError`
+      naming both keys. A non-number (bool included) is refused the same
+      way. It raises; no fallback. At or below the interval, S3 would
+      flicker between two normal pushes. `DEFAULT_SYNC_STALE_THRESHOLD_SECONDS`
+      has ONE home, `common/config/validator.py` (the orchestrator imports
+      it from there), and is not added to `DEFAULTS`: validate never
+      injects either key.
   - **Not counted:** ECU silent (`connecting`), away from home, any null. No
     UPS battery member (P5: no grounded band), banked. A UPS **gauge** fault is
     the `sensor` member's, not a UPS member (US-869-c).
