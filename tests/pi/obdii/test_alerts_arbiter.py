@@ -1848,10 +1848,14 @@ def test_system_piMember_isOneInertWatchEntry() -> None:
     """VC: verdict members [pi] -> entry system:pi:watch; sources.system assessed."""
     arbiter = _arbiter()
 
-    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+    payload = _systemStatus([{"key": "pi", "reason": _PI_REASON}])
+    arbiter.observeSystemStatus(payload)
     state = _buildSys(arbiter)
 
-    assert state["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): sources.system carries the verdict's issueCount.
+    assert state["sources"]["system"] == {
+        "assessed": True, "issueCount": payload["verdict"]["issueCount"],
+    }
     (entry,) = state["entries"]
     assert set(entry) == _ENTRY_KEYS
     assert entry == {
@@ -1878,10 +1882,14 @@ def test_system_piMember_isOneInertWatchEntry() -> None:
 def test_system_emptyVerdict_noEntries_assessedTrue() -> None:
     arbiter = _arbiter()
 
-    arbiter.observeSystemStatus(_systemStatus([]))
+    payload = _systemStatus([])
+    arbiter.observeSystemStatus(payload)
     state = _buildSys(arbiter)
 
-    assert state["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): sources.system carries the verdict's issueCount.
+    assert state["sources"]["system"] == {
+        "assessed": True, "issueCount": payload["verdict"]["issueCount"],
+    }
     assert state["entries"] == []
 
 
@@ -2013,11 +2021,15 @@ def test_system_memberClears_entryIsRemoved_notListedInactive() -> None:
     arbiter = _arbiter()
     arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
 
-    arbiter.observeSystemStatus(_systemStatus([], ts=_SYS_T1))
+    cleared = _systemStatus([], ts=_SYS_T1)
+    arbiter.observeSystemStatus(cleared)
     state = _buildSys(arbiter)
 
     assert state["entries"] == []
-    assert state["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): sources.system carries the verdict's issueCount.
+    assert state["sources"]["system"] == {
+        "assessed": True, "issueCount": cleared["verdict"]["issueCount"],
+    }
 
 
 def test_system_reasonChangesMidEpisode_idAndFirstSeenUnchanged() -> None:
@@ -2048,8 +2060,11 @@ def test_system_aNoneHandOff_keepsTheCachedVerdict_stillAssessed() -> None:
     assert _buildSys(arbiter) == before
 
 
-def test_system_unknownMemberKey_skippedWithOneWarning(caplog: pytest.LogCaptureFixture) -> None:
-    """Atlas A5: a key not in the title table makes no entry; one WARNING."""
+def test_system_unknownMemberKey_listedAsTheFallbackWithOneWarning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MOVED PIN (US-897-f; Atlas F2 supersedes A5): a key not in the title
+    table is one WATCH titled SYSTEM ISSUE with its own reason; one WARNING."""
     arbiter = _arbiter()
     payload = _systemStatus([{"key": "gps", "reason": "x"}, {"key": "pi", "reason": _PI_REASON}])
 
@@ -2057,7 +2072,11 @@ def test_system_unknownMemberKey_skippedWithOneWarning(caplog: pytest.LogCapture
         arbiter.observeSystemStatus(payload)
         arbiter.observeSystemStatus(payload)
 
-    assert [e["id"] for e in _buildSys(arbiter)["entries"]] == ["system:pi:watch"]
+    entries = _buildSys(arbiter)["entries"]
+    assert sorted(e["id"] for e in entries) == ["system:gps:watch", "system:pi:watch"]
+    (gps,) = [e for e in entries if e["key"] == "gps"]
+    assert (gps["title"], gps["tier"], gps["sentence"]) == (aa.SYSTEM_TITLE_FALLBACK, "watch", "x")
+    assert aa.SYSTEM_TITLE_FALLBACK == "SYSTEM ISSUE"
     warnings = [
         r for r in caplog.records if r.levelno == logging.WARNING and "gps" in r.getMessage()
     ]
@@ -2123,11 +2142,63 @@ def test_system_writesNoAlertLogRow(db: Any) -> None:
 def test_makeAlertsEmitter_carriesTheSystemSource(tmp_path: Path) -> None:
     emit = aa.makeAlertsEmitter(str(tmp_path / "states"))
     arbiter = _arbiter()
-    arbiter.observeSystemStatus(_systemStatus([]))
+    payload = _systemStatus([])
+    arbiter.observeSystemStatus(payload)
 
     written = emit(
         arbiter.episodes(), None, nowUtc=_NOW, dataSource="real", bootId="b7",
         systemSource=arbiter.systemSource(),
     )
 
-    assert written["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): sources.system carries the verdict's issueCount.
+    assert written["sources"]["system"] == {
+        "assessed": True, "issueCount": payload["verdict"]["issueCount"],
+    }
+
+
+# ------------------------------------- US-897-f: System's count, as published
+
+
+def test_system_issueCount_isTheVerdictsNumber_neverACountOfMembers() -> None:
+    """Atlas F9: the published number, even where it differs from the members
+    the arbiter could list (a malformed member is still skipped)."""
+    arbiter = _arbiter()
+    payload = {"ts": _SYS_T0, "verdict": {"issueCount": 2, "members": [{"key": "pi", "reason": 7}]}}
+
+    arbiter.observeSystemStatus(payload)
+    state = _buildSys(arbiter)
+
+    assert state["entries"] == []
+    assert arbiter.systemSource() == {"assessed": True, "issueCount": 2}
+    assert state["sources"]["system"] == {"assessed": True, "issueCount": 2}
+
+
+@pytest.mark.parametrize("bad", [True, False, -1, "1", None, 1.0, 1.5])
+def test_system_issueCount_notAnIntAtLeastZero_isHeldAsNull(bad: Any) -> None:
+    arbiter = _arbiter()
+
+    arbiter.observeSystemStatus({"ts": _SYS_T0, "verdict": {"issueCount": bad, "members": []}})
+
+    assert arbiter.systemSource() == {"assessed": True, "issueCount": None}
+    assert _buildSys(arbiter)["sources"]["system"] == {"assessed": True, "issueCount": None}
+
+
+def test_system_issueCount_aFailedHandOff_keepsTheHeldCount() -> None:
+    """A3: a None or verdict-less payload keeps what is held, count included."""
+    arbiter = _arbiter()
+    arbiter.observeSystemStatus(_systemStatus([{"key": "pi", "reason": _PI_REASON}]))
+
+    arbiter.observeSystemStatus(None)
+    arbiter.observeSystemStatus({"ts": _SYS_T1})
+
+    assert arbiter.systemSource() == {"assessed": True, "issueCount": 1}
+
+
+@pytest.mark.parametrize("bad", [True, -1, "1", None])
+def test_system_buildAlertsState_aBadIssueCountFromAnySource_publishesNull(bad: Any) -> None:
+    state = aa.buildAlertsState(
+        [], None, _NOW, dataSource=None, bootId="b7",
+        systemSource={"assessed": True, "issueCount": bad},
+    )
+
+    assert state["sources"]["system"] == {"assessed": True, "issueCount": None}

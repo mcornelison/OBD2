@@ -2848,6 +2848,7 @@ html, body {
   font-size: var(--fs-meta); line-height: var(--warn-line); color: var(--text-primary);
 }
 #alerts-card .warn-quiet-line[data-tone="secondary"] { color: var(--text-secondary); }
+#alerts-card .warn-quiet-line[data-tone="amber"] { color: var(--amber-warn); }
 #alerts-card .warn-list {
   display: flex; flex-direction: column;
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;

@@ -76,6 +76,7 @@ from pi.obdii.alerts_arbiter import (  # noqa: E402
     COOLANT_STOP_TITLE,
     RPM_OVER_REV_TITLE,
     AlertEpisode,
+    AlertsArbiter,
     _rpmSentence,
     buildAlertsState,
 )
@@ -424,6 +425,93 @@ def test_eitherSourceUnassessed_keepsItsOwnLine(which: str, line: str):
     payload["sources"]["data"] = {"assessed": True}
     del payload["sources"][which]
     assert [x["text"] for x in _page(payload)["quiet"]["lines"][1:]] == [line]
+
+
+# --- US-897-f: the System clause reads System's own issueCount ----------------
+
+SYSTEM_CLEAR = "System checks clear."
+
+
+def _alertsFromSystemStatus(systemStatus: dict[str, Any]) -> dict[str, Any]:
+    """states/alerts as the shipped provider writes it after a system-status
+    emit: a REAL arbiter, codes read, a fresh coolant (engine assessed)."""
+    arbiter = AlertsArbiter({}, driveIdProvider=lambda: None)
+    arbiter.observeSystemStatus(systemStatus)
+    return buildAlertsState(
+        arbiter.episodes(), FRESH_COOLANT, datetime(2026, 10, 20, 17, 30, tzinfo=UTC),
+        dataSource="real", bootId="boot-fixture-0001", codeSource=CODES_READ,
+        systemSource=arbiter.systemSource(),
+    )
+
+
+def _quietTexts(view: dict[str, Any]) -> list[str]:
+    quiet = view["quiet"]
+    texts = [view["header"]["text"]]
+    if quiet is not None:
+        texts += [quiet["head"]] + [line["text"] for line in quiet["lines"]]
+    return texts
+
+
+@_NODE_ONLY
+def test_systemClause_comesFromTheVerdictCount_untitledMemberNeverClear():
+    """US-897-f exit test (Atlas s1 + F2)."""
+    # (1) UNTITLED: 'gps' has no SYSTEM_TITLES row -> one SYSTEM ISSUE watch.
+    untitled = {"ts": NOW, "verdict": {"issueCount": 1, "members": [{"key": "gps", "reason": "x"}]}}
+    alerts = _alertsFromSystemStatus(untitled)
+    assert [(e["title"], e["tier"], e["sentence"]) for e in alerts["entries"]] == [
+        ("SYSTEM ISSUE", "watch", "x"),
+    ]
+    assert alerts["icon"]["count"] == 1
+    assert _views("systemVerdictView", [[untitled]])[0]["text"] == "1 ISSUE"
+    view = _page(alerts)
+    assert view["quiet"] is None, "an active row shows"
+    for text in _quietTexts(view):
+        assert "NO WARNINGS" not in text and "clear" not in text, text
+
+    # (2) POSITIVE CONTROL: an empty verdict.
+    view = _page(_alertsFromSystemStatus({"ts": NOW, "verdict": {"issueCount": 0, "members": []}}))
+    assert [(line["text"], line["tone"]) for line in view["quiet"]["lines"]] == [
+        ("Codes read at 5:20. Engine checks clear.", "primary"),
+        (SYSTEM_CLEAR, "primary"),
+        (DATA_NOT_BUILT, "secondary"),
+    ]
+
+    # (3) DEFENCE IN DEPTH: a malformed member is still skipped, so no row --
+    # the count speaks instead, amber, and never 'clear'.
+    for n, words in ((1, "System has 1 issue."), (2, "System has 2 issues.")):
+        malformed = {"ts": NOW, "verdict": {"issueCount": n, "members": [{"key": "pi", "reason": 7}]}}
+        alerts = _alertsFromSystemStatus(malformed)
+        assert alerts["entries"] == []
+        assert alerts["sources"]["system"]["issueCount"] == n
+        lines = _page(alerts)["quiet"]["lines"]
+        assert (words, "amber") in [(line["text"], line["tone"]) for line in lines]
+        assert lines[1] == {"text": words, "tone": "amber"}, "right after the codes line"
+        assert not any(SYSTEM_CLEAR in line["text"] for line in lines)
+
+    # (4) FAILS CLOSED: a bad count is published null and draws no System line.
+    for bad in (True, -1, "1", None):
+        alerts = _alertsFromSystemStatus({"ts": NOW, "verdict": {"issueCount": bad, "members": []}})
+        assert alerts["sources"]["system"] == {"assessed": True, "issueCount": None}
+        for published in (alerts, _fixture("checked-clean")):
+            published["sources"]["system"] = {"assessed": True, "issueCount": bad}
+            texts = [line["text"] for line in _page(published)["quiet"]["lines"]]
+            assert not any(t.startswith("System") for t in texts), (bad, texts)
+            assert not any(SYSTEM_CLEAR in t for t in texts), (bad, texts)
+
+
+@_NODE_ONLY
+def test_dom_systemHasIssues_amberLinePaintsAmberWarn():
+    """Atlas F4: the amber tone must WIN color: var(--amber-warn), not just
+    reach the DOM as data-tone."""
+    alerts = _alertsFromSystemStatus(
+        {"ts": NOW, "verdict": {"issueCount": 1, "members": [{"key": "pi", "reason": 7}]}}
+    )
+    _, surface, _ = _cardDom(alerts)
+    paths = [p for p in surface.pathsByClass("warn-quiet-line")
+             if _textOf(p[-1]) == "System has 1 issue."]
+    assert len(paths) == 1
+    assert paths[0][-1]["attrs"]["data-tone"] == "amber"
+    assert surface.winningDeclaration(paths[0], "color")[0] == "var(--amber-warn)"
 
 
 @_NODE_ONLY
