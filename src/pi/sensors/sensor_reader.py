@@ -668,7 +668,8 @@ class ImuReader(_BaseSensorReader):
     #    while the magnetometer served 1.
     #  - temp is deliberately NOT enrolled. It is a coarse, slowly-varying
     #    housekeeping channel that is already best-effort/honest-null, nobody has
-    #    measured its dither, and it feeds no displayed or derived field.
+    #    measured its dither, and it feeds no derived field. US-894-h: it IS
+    #    displayed, as states/imu chipTempC (the ICM-20948 DIE temperature).
     channelPolicies = {
         TOPIC_IMU_ACCEL: ChannelPolicy(
             plausible=magnitudeAtLeast(MIN_GRAVITY_MS2), invariance=True
@@ -814,8 +815,8 @@ class ImuReader(_BaseSensorReader):
             # for a repair again.
             keepAlive.requestRestore("bit-identical dwell reached")
         # US-500: the genuine adafruit_icm20x.ICM20948 does NOT expose
-        # .temperature (the clone/FakeImu assumption did). temp is NOT in the
-        # states/imu display contract and edr_imu_sample.temp_c is nullable, so a
+        # .temperature (the clone/FakeImu assumption did). states/imu chipTempC
+        # (US-894-h) is null + no_reading without it and edr_imu_sample.temp_c is nullable, so a
         # missing/bad temp degrades to honest-null (never fabricated) and must
         # NOT drop the accel/gyro/mag burst the card + EDR need. Best-effort,
         # decoupled from the atomic critical trio above.

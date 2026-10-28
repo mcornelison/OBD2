@@ -818,13 +818,24 @@
     }
     return looks;
   }
-  // US-894-c (spec s4.3, Iris I4, Atlas P9): the sync glyph is NEUTRAL. It
-  // used to paint `sync.stale` amber with no verdict member behind it -- an
-  // amber nobody counted, the s4.0 failure. Sync has no member until US-917,
-  // and the glyph goes amber exactly while that member is present.
+  // US-917-d (spec s4.3.1, CIO 2026-10-27): the sync glyph in four states,
+  // first match wins. `error` while the provider's `sync` member is present
+  // (amber over blue: a stuck sync retries, and blue would hide the error);
+  // `busy` while a push runs; `ok` once a delivery is on record; else
+  // `unknown` (also with no system-status). The page judges no case: the
+  // member is the provider's, and `sync.stale` is never read (it would turn
+  // the glyph amber on every drive).
   function syncGlyphState(data) {
-    return verdictMemberKeys(data).sync === true ? "amber" : "neutral";
+    if (verdictMemberKeys(data).sync === true) return "error";
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    if (sync.inProgress === true) return "busy";
+    if (sync.lastOkTs !== null && sync.lastOkTs !== undefined) return "ok";
+    return "unknown";
   }
+  // The hover text per state (s4.3.1), for the bench.
+  var SYNC_GLYPH_TITLES = {
+    error: "sync error", busy: "syncing", ok: "sync OK", unknown: "sync not read",
+  };
   // US-696 (CIO ruling 2026-09-09): there is NO `powerGlyphState`. The top-bar
   // lightning glyph was removed -- "if I can see the screen the power is on",
   // so restating it spent a slot in a band that has none to spare. The state
@@ -1012,6 +1023,9 @@
   // US-869-c (Atlas R4/R5): the ONE member naming every faulted feed
   // (system_status_emitter.VERDICT_SENSOR); its `feeds` lists them.
   var SENSOR_MEMBER_KEY = "sensor";
+  // US-917-d (s4.3.1): the provider's sync member (VERDICT_SYNC). Its reason
+  // opens the sentence's sync part, amber, in its own span.
+  var SYNC_MEMBER_KEY = "sync";
   // A4: the ECU states whose fact carries `ECU not answering`. A member-less
   // stall names that cause only from link.ecu; with the ECU up, or not read,
   // no cause is printed (on a cold boot it would be false).
@@ -1165,6 +1179,12 @@
         feed: feedTokens(sensorFeedNames(sensor)),
       });
     }
+    // US-917-d (s4.3 :190): the sync member's reason first in the sync part;
+    // the neutral away/rows words follow it.
+    var syncMember = verdictMember(data, [SYNC_MEMBER_KEY]);
+    if (syncMember !== null) {
+      parts.push({ text: syncMember.reason, level: "amber", member: SYNC_MEMBER_KEY, feed: null });
+    }
     // s4.3 (F-155): neutral, never counted; a null home is no word at all.
     if (wifi.home === false) {
       parts.push({ text: "away from home", level: "secondary", member: null, feed: null });
@@ -1176,7 +1196,8 @@
     var events = eventRowsText(sync.edrRowsWaiting);
     if (events !== null) parts.push({ text: events, level: "secondary", member: null, feed: null });
     var rowMember = capture.basis === "member" ? CAPTURE_MEMBER_KEY
-      : sensor !== null ? SENSOR_MEMBER_KEY : null;
+      : sensor !== null ? SENSOR_MEMBER_KEY
+        : syncMember !== null ? SYNC_MEMBER_KEY : null;
     var texts = [];
     for (var i = 0; i < parts.length; i++) texts.push(parts[i].text);
     var tail = " · " + syncWhenText(sync.lastOkTs, isObj(data) ? data.ts : null);
@@ -2134,8 +2155,11 @@
     // US-890-a: the Fuel card. Its source is still ltft-trend, but it paints
     // only the card's trend row (`slot`): the airflow / loop / trim / MPG rows
     // above it are the card's own markup and never wait on this gate.
+    // US-890-h: the trend moved to the FUEL TRIM detail, so the slot resolves
+    // inside `slotHost` (#fuel-detail), not inside the card; the card still
+    // carries data-gated.
     {
-      key: "ltft-trend", title: "Fuel", slot: ".fuel-trend",
+      key: "ltft-trend", title: "Fuel", slot: ".fuel-trend", slotHost: "fuel-detail",
       vehicleGated: true,
       noData: { label: FUEL_TREND_LABEL, reason: "no data -- trend not computed" },
     },
@@ -5171,8 +5195,8 @@
   // no value here carries a band (load at 100 % is expected on this turbo
   // engine and stays neutral -- a compound danger belongs to a provider).
   var ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"];
-  // The two vertical bars and their scale: 0-100 % of the bar's height. A
-  // geometry bound, not a threshold -- it paints no colour.
+  // The two bars and their scale: 0-100 % of the bar's width (horizontal since
+  // US-889-e). A geometry bound, not a threshold -- it paints no colour.
   var ENGINE_BAR_PIDS = ["ENGINE_LOAD", "THROTTLE_POS"];
   var ENGINE_BAR_MAX_PCT = 100;
 
@@ -5211,7 +5235,7 @@
     };
   }
 
-  // A bar's fill in % of its height, or null (nothing lit). Only a '%' reading
+  // A bar's fill in % of its width, or null (nothing lit). Only a '%' reading
   // can fill a 0-100 % bar; clamped so a value past the scale pins the bar
   // rather than overflowing the card.
   function engineBar(reading, unit) {
@@ -5634,20 +5658,22 @@
 
   // --- US-891-c O2 page (F-127) ------------------------------------------------
   //
-  // specs/v030-o2-page-design.md s3-s4 (layout A, stacked): per sensor the
-  // volts, their age and the provider's sample rate, a dot trace of the
-  // provider's window, and the verdict chips. A PURE CONSUMER of states/o2
+  // specs/v030-o2-page-design.md s3a-s4 (re-laid, US-891-e): per sensor the
+  // volts and their age beside a dot trace of the provider's window, and the
+  // verdict chips; the provider's sample rate and window print ONCE for both
+  // (one provider, one poll cycle). A PURE CONSUMER of states/o2
   // (src/pi/obdii/o2_state.py): the provider owns staleness, the window, the
   // mid-line volts and every verdict, and this page holds no threshold. A stale
   // sensor renders `last.value` dimmed with its age (drivingReading's rule), a
   // null one '--' + the provider's reason, and no states/o2 at all '--' +
   // 'no source' (the Driving page's word), never a zero.
   var O2_NO_SOURCE = "no source";
-  // The trace frame (spec s3: 456 x 44, 0-1 V) and the OEM mockup's edge pad
-  // and dot radius (proposals/2026-10-15-v030-o2-page-oem.html), in viewBox
-  // units. A volt outside 0-1 sits on the edge it passed.
-  var O2_TRACE_W = 456;
-  var O2_TRACE_H = 44;
+  // The trace frame (spec s3a: 324 x 52, 0-1 V -- the row beside the 112 px
+  // value column) and the OEM mockup's edge pad and dot radius
+  // (proposals/2026-10-15-v030-o2-page-oem.html), in viewBox units. A volt
+  // outside 0-1 sits on the edge it passed.
+  var O2_TRACE_W = 324;
+  var O2_TRACE_H = 52;
   var O2_TRACE_PAD = 3;
   var O2_TRACE_V_MIN = 0;
   var O2_TRACE_V_MAX = 1;
@@ -5682,22 +5708,23 @@
     return Math.max(0, Math.round((nowMs - t) / O2_MS_PER_SEC)) + " s";
   }
 
-  // The meta line's full form (Iris, PR #136): age, the provider's measured
-  // sample period and the provider's window in minutes.
-  function o2MetaText(ageText, data) {
-    var period = isNum(data.samplePeriodSec)
+  // The shared meta line (spec s3a, printed once): the provider's measured
+  // sample period and its window in minutes. Always a full line -- an unread
+  // field is '--' -- so no state changes the card's height.
+  function o2MetaText(data) {
+    var period = isObj(data) && isNum(data.samplePeriodSec)
       ? data.samplePeriodSec.toFixed(O2_PERIOD_DECIMALS) : "--";
-    var mins = isNum(data.windowSec)
+    var mins = isObj(data) && isNum(data.windowSec)
       ? String(Number((data.windowSec / O2_SEC_PER_MIN).toFixed(1))) : "--";
-    return ageText + " old · 1 sample / ~" + period + " s · last " + mins + " min";
+    return "1 sample / ~" + period + " s · last " + mins + " min";
   }
 
   function o2NotRead(reason) {
     return { text: "--", unit: "", stale: false, none: true, meta: reason };
   }
 
-  // One sensor's value row. `data` is the whole payload (rate and window).
-  function o2Reading(sensor, data, nowMs) {
+  // One sensor's value column: the volts and, under them, their age.
+  function o2Reading(sensor, nowMs) {
     if (!isObj(sensor)) return o2NotRead(drivingReasonText(null));
     var volts = sensor.value;
     if (sensor.stale === true) {
@@ -5708,7 +5735,7 @@
     }
     return {
       text: volts.toFixed(O2_VOLTS_DECIMALS), unit: " V", stale: sensor.stale === true,
-      none: false, meta: o2MetaText(o2AgeText(sensor.ts, nowMs), data),
+      none: false, meta: o2AgeText(sensor.ts, nowMs) + " old",
     };
   }
 
@@ -5742,16 +5769,18 @@
     if (!isObj(data)) {
       var none = { reading: o2NotRead(O2_NO_SOURCE), trace: { midY: null, dots: [] },
         chip: o2Chip(null, null) };
-      return { front: none, rear: none, catalyst: { chip: o2Chip(null, null) } };
+      return { front: none, rear: none, catalyst: { chip: o2Chip(null, null) },
+        meta: o2MetaText(null) };
     }
     return {
+      meta: o2MetaText(data),
       front: {
-        reading: o2Reading(data.front, data, nowMs),
+        reading: o2Reading(data.front, nowMs),
         trace: o2Trace(data.front, data),
         chip: o2Chip(data.frontVerdict, data.frontReason),
       },
       rear: {
-        reading: o2Reading(data.rear, data, nowMs),
+        reading: o2Reading(data.rear, nowMs),
         trace: o2Trace(data.rear, data),
         chip: o2Chip(null, data.rearVerdict),
       },
@@ -6127,6 +6156,52 @@
     );
   }
 
+  // -------------------------------------------------------------------------
+  // US-894-g (spec s4.6.3, CIO in car 2026-10-27) -- LAST UPDATED: WHEN each
+  // device last reported, never a value. One reader each and no new field:
+  // a feed's moment is the capture-health file's ts minus that feed's
+  // lastSampleSecondsAgo (the DATA detail's field); SYNC is sync.lastOkTs;
+  // WIFI is wifi.ts ONLY while source.wifi.available is true (Atlas RULED: a
+  // failed read stamps ts too, and a failed read is not a report). The age is
+  // the M7 rule against the tick's clock, so it grows while the file sits
+  // unchanged; the time is local, with seconds and no date. Undated -> `--`.
+  // A line carries no level and no member: an age has no band.
+  // -------------------------------------------------------------------------
+  var LAST_UPDATED_HEAD = "LAST UPDATED";
+  var LAST_UPDATED_FEEDS = [["obd", "OBD"], ["imu", "IMU"], ["light", "LIGHT"], ["ups", "UPS"]];
+
+  function lastUpdatedLine(key, label, ageSec, nowMs) {
+    var age = typeof nowMs === "number" && isFinite(nowMs) ? freshAgeText(ageSec) : null;
+    return {
+      key: key,
+      label: label,
+      value: age === null ? SYS_NO_DATA
+        : age + " · " + fmtTimeOfDay(new Date(nowMs - ageSec * 1000), true),
+    };
+  }
+
+  function lastUpdatedView(data, captureData, nowMs) {
+    var feeds = isObj(captureData) && isObj(captureData.feeds) ? captureData.feeds : {};
+    var fileAge = readAgeSec(captureData, nowMs);
+    var rows = [];
+    for (var i = 0; i < LAST_UPDATED_FEEDS.length; i++) {
+      var feed = isObj(feeds[LAST_UPDATED_FEEDS[i][0]]) ? feeds[LAST_UPDATED_FEEDS[i][0]] : {};
+      var ago = feed.lastSampleSecondsAgo;
+      var dated = fileAge !== null && typeof ago === "number" && isFinite(ago);
+      rows.push(lastUpdatedLine(
+        LAST_UPDATED_FEEDS[i][0], LAST_UPDATED_FEEDS[i][1], dated ? fileAge + ago : null, nowMs
+      ));
+    }
+    var source = isObj(data) && isObj(data.source) && isObj(data.source.wifi) ? data.source.wifi : {};
+    var wifi = isObj(data) && isObj(data.wifi) ? data.wifi : null;
+    rows.push(lastUpdatedLine(
+      "wifi", "WIFI", source.available === true ? readAgeSec(wifi, nowMs) : null, nowMs
+    ));
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    rows.push(lastUpdatedLine("sync", "SYNC", readAgeSec({ ts: sync.lastOkTs }, nowMs), nowMs));
+    return { head: LAST_UPDATED_HEAD, rows: rows };
+  }
+
   var api = {
     makeResilientLoop: makeResilientLoop,
     reportFetchAbort: reportFetchAbort,
@@ -6210,6 +6285,7 @@
     publishParked: publishParked,
     piLineView: piLineView,
     piDetailView: piDetailView,
+    lastUpdatedView: lastUpdatedView,
     uptimeText: uptimeText,
     systemStatusView: systemStatusView,
     dataRowView: dataRowView,
@@ -6445,8 +6521,32 @@
         line.appendChild(chevron);
         line.onclick = function () { openSysDetail("pi"); };
       }
+      appendSysUpdated(line);
       appendSysSettings(line);
       body.appendChild(line);
+    }
+
+    // US-894-g (spec s4.6.3): UPDATED on the verdict line, LEFT of SETTINGS ›,
+    // in every state. It says UPDATED (LAST UPDATED › would leave 4 px); the
+    // detail's title says LAST UPDATED. The ` ›` only while parked (I9) and
+    // the open gated again at tap time by the shared helper, so a link painted
+    // parked opens nothing once the car moves. Its tap stops at the link: the
+    // verdict line under it opens the Pi detail. It reads the parked fact
+    // itself: the unavailable verdict offers no Pi tap, yet LAST UPDATED does.
+    function appendSysUpdated(line) {
+      var parked = currentParked().parked === true;
+      var link = document.createElement("span");
+      link.className = "sys-updated";
+      link.textContent = parked ? "UPDATED ›" : "UPDATED";
+      if (parked) {
+        link.setAttribute("role", "button");
+        link.setAttribute("tabindex", "0");
+      }
+      link.addEventListener("click", function (e) {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        openPageDetail(LAST_UPDATED_DETAIL);
+      });
+      line.appendChild(link);
     }
 
     // US-895-a (spec s3, s4.7.2): SETTINGS › on the verdict line, in EVERY
@@ -6605,7 +6705,7 @@
       if (sysDetailOpen()) renderSysDetail(view);
       renderSystemBody(card, view);
       paintLinkChain(glyphEls.bt, view.glyphs.bt);
-      paintGlyph(glyphEls.sync, view.glyphs.sync, "sync");
+      paintSyncGlyph(glyphEls.sync, view.glyphs.sync);
       // ARCH-007: render the emitter's verdict. The display applies NO
       // threshold of its own (ruling s2.1) -- two rules for one fact disagree
       // the first time either moves.
@@ -6628,6 +6728,8 @@
     // and its chevron appear (or go) on the edge, not a tick later.
     function repaintSystemOnParkedEdge() {
       if (lastSysCard && lastSysView) renderSystemBody(lastSysCard, lastSysView);
+      // US-894-g: the unavailable verdict carries UPDATED too.
+      else if (lastSysCard) renderSystemUnavailable(lastSysCard);
     }
 
     // --- US-509 System-Status detail overlay (browser only) -----------------
@@ -6898,6 +7000,136 @@
       if (el) el.hidden = true;
     }
 
+    // --- US-894-g shared page-detail kit (spec s4.6.3) ---------------------
+    // The parked-only destination behind System's UPDATED ›, and next behind
+    // Engine HISTORY, Fuel FUEL TRIM and Motion IMU. It renders in
+    // #page-detail, a SIBLING of #sys-detail whose chrome leaves a 270 px body
+    // (Iris X-1 = (a), Atlas re-gate 2026-10-27); #sys-detail's own chrome
+    // leaves 253. An entry is { title, paint(bodyEl), refresh(read, nowMs) }:
+    // paint draws from what the entry holds; refresh (optional, async) re-reads
+    // through the tick's cached reader so an open detail follows the poll.
+    var pageDetailEntry = null;
+    // US-889-d (Engine spec s3a/s3b): the Engine page's button and its detail.
+    var ENGINE_HISTORY_BUTTON = "HISTORY";
+    var ENGINE_HISTORY_TITLE = "ENGINE HISTORY";
+    // US-890-h (Fuel spec s3a/s3b): the Fuel page's button and its detail.
+    var FUEL_TRIM_BUTTON = "FUEL TRIM";
+    var FUEL_TRIM_TITLE = "FUEL TRIM";
+    // US-892-d (Motion spec s3a): the health row opens the IMU detail.
+    var MOTION_IMU_TITLE = "IMU";
+
+    function pageDetailOpen() {
+      var el = document.getElementById("page-detail");
+      return !!el && el.hidden === false;
+    }
+
+    function paintPageDetail() {
+      var bodyEl = document.getElementById("page-detail-body");
+      if (!bodyEl || !pageDetailEntry) return;
+      var title = document.getElementById("page-detail-title");
+      if (title) title.textContent = pageDetailEntry.title;
+      bodyEl.textContent = "";
+      pageDetailEntry.paint(bodyEl);
+    }
+
+    // The ONLY gate is the parked fact read at tap time (Iris S119 review):
+    // openSysDetail's lastSysView guard would silently refuse a page detail
+    // before system-status has loaded, so it is deliberately not inherited.
+    function openPageDetail(entry) {
+      var el = document.getElementById("page-detail");
+      if (!el || !entry || currentParked().parked !== true) return;
+      pageDetailEntry = entry;
+      paintPageDetail();
+      el.hidden = false;
+    }
+
+    function closePageDetail() {
+      var el = document.getElementById("page-detail");
+      if (el) el.hidden = true;
+      pageDetailEntry = null;
+    }
+
+    // R1 (UIDEV-021): run on EVERY render tick, on the predicate the open uses,
+    // so `unknown` closes too. A destination screen must not hold the glass
+    // while the car moves; closing it shows the page it was opened from.
+    function closePageDetailUnlessParked() {
+      if (pageDetailOpen() && currentParked().parked !== true) closePageDetail();
+    }
+
+    async function refreshPageDetail(read, nowMs) {
+      if (!pageDetailOpen() || !pageDetailEntry) return;
+      var entry = pageDetailEntry;
+      if (typeof entry.refresh === "function") await entry.refresh(read, nowMs);
+      // The await can span a close (or another open): repaint only the same one.
+      if (pageDetailEntry === entry && pageDetailOpen()) paintPageDetail();
+    }
+
+    // The detail button (s4.6.3): a real control in the button grammar, with
+    // no state colour. While not parked it is `visibility: hidden` with its
+    // space kept (data-parked, repainted on the parked fact's edge), and its
+    // tap opens only through openPageDetail's tap-time gate.
+    function appendPageDetailButton(parent, label, entry) {
+      var btn = document.createElement("button");
+      btn.className = "page-detail-btn";
+      btn.setAttribute("data-parked", currentParked().parked === true ? "true" : "false");
+      var text = document.createElement("span");
+      text.className = "page-detail-btn-label";
+      text.textContent = label;
+      var chevron = document.createElement("span");
+      chevron.className = "page-detail-btn-chevron";
+      chevron.textContent = " ›";
+      btn.appendChild(text);
+      btn.appendChild(chevron);
+      btn.addEventListener("click", function (e) {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        openPageDetail(entry);
+      });
+      parent.appendChild(btn);
+      return btn;
+    }
+
+    function paintPageDetailButtons(fact) {
+      var parked = isObj(fact) && fact.parked === true ? "true" : "false";
+      var btns = document.querySelectorAll(".page-detail-btn");
+      for (var i = 0; i < btns.length; i++) btns[i].setAttribute("data-parked", parked);
+    }
+
+    // LAST UPDATED's inputs: the System poll's own reads (the same cached
+    // system-status and capture-health) on that tick's clock. Dropped with the
+    // view when system-status goes unreadable; an open detail re-reads them.
+    var lastUpdatedInputs = null;
+
+    function renderLastUpdated(bodyEl) {
+      var inputs = lastUpdatedInputs || {};
+      var view = lastUpdatedView(inputs.data, inputs.captureData, inputs.nowMs);
+      for (var i = 0; i < view.rows.length; i++) {
+        var row = document.createElement("div");
+        row.className = "page-detail-row";
+        row.setAttribute("data-row", view.rows[i].key);
+        var label = document.createElement("span");
+        label.className = "page-detail-label";
+        label.textContent = view.rows[i].label;
+        var value = document.createElement("span");
+        value.className = "page-detail-value";
+        value.textContent = view.rows[i].value;
+        row.appendChild(label);
+        row.appendChild(value);
+        bodyEl.appendChild(row);
+      }
+    }
+
+    var LAST_UPDATED_DETAIL = {
+      title: LAST_UPDATED_HEAD,
+      paint: renderLastUpdated,
+      refresh: async function (read, nowMs) {
+        lastUpdatedInputs = {
+          data: await read("system-status"),
+          captureData: await read("capture-health"),
+          nowMs: nowMs,
+        };
+      },
+    };
+
     // US-894-a: each `.chain-dot` in #glyph-bt carries its own data-state, keyed
     // by its data-layer. A dot the view has no look for falls to hollow rather
     // than keeping a previous paint (no stale-green).
@@ -6926,13 +7158,24 @@
       }
     }
 
+    // US-917-d (s4.3.1): the sync glyph's state and its title. `error` is the
+    // sync member's amber, so it alone carries data-level/data-member (the
+    // page-wide amber = members gate); any other state clears both.
+    function paintSyncGlyph(el, state) {
+      if (!el) return;
+      paintGlyph(el, state, "sync");
+      if (state === "error") setMemberLevel(el, "amber", "sync");
+      el.setAttribute("title", SYNC_GLYPH_TITLES[state] || SYNC_GLYPH_TITLES.unknown);
+    }
+
     // Honest-instrument reset: a missing/malformed system-status file returns the
     // glyphs to neutral so a prior good read can't linger green (no stale-green).
     // US-894-a: the chain resets to three HOLLOW dots -- an unreadable file is
-    // no reading of any layer (spec s4.2.1, AC 4).
+    // no reading of any layer (spec s4.2.1, AC 4). US-917-d: the sync glyph
+    // resets to its no-read state, `unknown`.
     function resetSystemGlyphs(glyphEls) {
       paintLinkChain(glyphEls.bt, linkChainGlyph(null));
-      paintGlyph(glyphEls.sync, "neutral", "sync");
+      paintSyncGlyph(glyphEls.sync, syncGlyphState(null));
       // US-894-d: no reading -> dim arcs, no slash (s4.4).
       paintGlyph(glyphEls.wifi, wifiGlyphState(null), "wifi");
     }
@@ -7024,35 +7267,63 @@
     }
 
     // US-889-b: paint `engineView` into the Engine card's FIXED skeleton
-    // (dashboard.html). Text, state attributes and the bars' fill height only:
-    // the stylesheet maps data-stale / data-note to tokens. The fill is a plain
-    // height with no transition, so a bar steps from one sample to the next.
+    // (dashboard.html). Text, state attributes and the bars' fill only: the
+    // stylesheet maps data-stale / data-note / data-null to tokens.
+    // US-889-e: each bar is a full-width horizontal gauge whose value sits
+    // INSIDE it, drawn twice -- .eng-on-track over the empty track and
+    // .eng-on-fill over the fill, clipped to the fill's width -- so it reads on
+    // both. The fill is a plain width with no transition, so a bar steps from
+    // one sample to the next. A null fill hides the fill and its copy: a value
+    // that was never read is an empty track with one '--', never a 0 % bar.
+    function paintEngineText(slot, reading) {
+      var valueEl = slot.querySelector(".eng-value");
+      if (valueEl) valueEl.textContent = reading.text;
+      var unitEl = slot.querySelector(".eng-unit");
+      if (unitEl) unitEl.textContent = reading.unit;
+    }
+
+    function paintEngineNote(slot, reading) {
+      slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+      slot.setAttribute("data-note", reading.noteKind || "none");
+      var noteEl = slot.querySelector(".eng-note");
+      if (noteEl) {
+        noteEl.textContent = reading.note;
+        noteEl.hidden = !reading.note;
+      }
+    }
+
     function renderEngineCard(card, view) {
       if (!card || !view) return;
       var slots = card.querySelectorAll(".eng-reading");
       for (var s = 0; s < slots.length; s++) {
-        var slot = slots[s];
-        var reading = view.readings[slot.getAttribute("data-pid")];
+        var reading = view.readings[slots[s].getAttribute("data-pid")];
         if (!reading) continue;
-        slot.setAttribute("data-stale", reading.stale ? "true" : "false");
-        slot.setAttribute("data-note", reading.noteKind || "none");
-        var valueEl = slot.querySelector(".eng-value");
-        if (valueEl) valueEl.textContent = reading.text;
-        var unitEl = slot.querySelector(".eng-unit");
-        if (unitEl) unitEl.textContent = reading.unit;
-        var noteEl = slot.querySelector(".eng-note");
-        if (noteEl) {
-          noteEl.textContent = reading.note;
-          noteEl.hidden = !reading.note;
-        }
+        paintEngineNote(slots[s], reading);
+        paintEngineText(slots[s], reading);
       }
       var cols = card.querySelectorAll(".eng-bar-col");
       for (var c = 0; c < cols.length; c++) {
-        var bar = view.bars[cols[c].getAttribute("data-pid")];
-        if (!bar) continue;
-        cols[c].setAttribute("data-stale", bar.stale ? "true" : "false");
+        var pid = cols[c].getAttribute("data-pid");
+        var barReading = view.readings[pid];
+        var bar = view.bars[pid];
+        if (!barReading || !bar) continue;
+        paintEngineNote(cols[c], barReading);
+        cols[c].setAttribute("data-null", barReading.value === null ? "true" : "false");
+        var copies = cols[c].querySelectorAll(".eng-bar-text");
+        for (var k = 0; k < copies.length; k++) paintEngineText(copies[k], barReading);
+        var lit = bar.fill !== null;
         var fill = cols[c].querySelector(".eng-bar-fill");
-        if (fill) fill.style.setProperty("height", (bar.fill === null ? 0 : bar.fill) + "%");
+        if (fill) {
+          fill.hidden = !lit;
+          if (lit) fill.style.setProperty("width", bar.fill + "%");
+        }
+        var onFill = cols[c].querySelector(".eng-on-fill");
+        if (onFill) {
+          onFill.hidden = !lit;
+          if (lit) {
+            onFill.style.setProperty("clip-path", "inset(0 calc(100% - " + bar.fill + "%) 0 0)");
+          }
+        }
       }
     }
 
@@ -7098,10 +7369,15 @@
       }
     }
 
-    function renderFuelLoopAndTrim(card, loopView, trimView) {
-      if (!card || !loopView || !trimView) return;
-      renderFuelSideSlot(card, ".fuel-loop", loopView);
-      renderFuelSideSlot(card, ".fuel-total-trim", trimView);
+    // US-890-h: the LOOP chip is on the glance AND repeated beside TOTAL TRIM
+    // in the FUEL TRIM detail (`detail`); TOTAL TRIM is in the detail only.
+    function renderFuelLoopAndTrim(card, detail, loopView, trimView) {
+      if (!loopView || !trimView) return;
+      if (card) renderFuelSideSlot(card, ".fuel-loop", loopView);
+      if (detail) {
+        renderFuelSideSlot(detail, ".fuel-loop", loopView);
+        renderFuelSideSlot(detail, ".fuel-total-trim", trimView);
+      }
     }
 
     // US-890-d: paint `fuelMpgView` into the three MPG slots (dashboard.html
@@ -7203,15 +7479,17 @@
       return box;
     }
 
-    // US-889-c: paint the scroll half. The history changes at most once per
-    // bucket (30 s) while the tick runs at 4 Hz, so the charts are rebuilt
+    // US-889-c: paint the history + status. The history changes at most once
+    // per bucket (30 s) while the tick runs at 4 Hz, so the charts are rebuilt
     // only when the view itself changed; the status row is text and state
-    // attributes on the fixed skeleton, like the readings above the fold.
+    // attributes on the fixed skeleton, like the readings on the card.
+    // US-889-d: `root` is #engine-detail (the ENGINE HISTORY detail), not the
+    // card -- a lookup on the card would find nothing and paint nothing.
     var engineHistoryKey = null;
 
-    function renderEngineScroll(card, historyView, statusView) {
-      if (!card) return;
-      var host = card.querySelector(".eng-history");
+    function renderEngineScroll(root, historyView, statusView) {
+      if (!root) return;
+      var host = root.querySelector(".eng-history");
       var key = JSON.stringify(historyView);
       if (host && key !== engineHistoryKey) {
         engineHistoryKey = key;
@@ -7224,7 +7502,7 @@
           }
         }
       }
-      var tiles = card.querySelectorAll(".eng-stat");
+      var tiles = root.querySelectorAll(".eng-stat");
       for (var t = 0; t < tiles.length; t++) {
         var pid = tiles[t].getAttribute("data-pid");
         var reading = pid === "RUNTIME_SEC" ? statusView.runTime
@@ -7240,7 +7518,7 @@
           noteEl.hidden = !reading.note;
         }
       }
-      var codesEl = card.querySelector(".eng-codes");
+      var codesEl = root.querySelector(".eng-codes");
       if (codesEl) {
         var codes = statusView.codes;
         codesEl.hidden = !codes;
@@ -7307,8 +7585,13 @@
         sub.textContent = text || "";
         sub.hidden = !text;
       }
+      // US-892-d (s3a): ONE sub-line -- the peak while the value reads, the
+      // reason when it doesn't. The peaks are always in the IMU detail.
       var peak = cell.querySelector(".motion-peak");
-      if (peak && v.peak !== undefined) peak.textContent = v.peak;
+      if (peak && v.peak !== undefined) {
+        peak.textContent = v.peak;
+        peak.hidden = v.none === true;
+      }
     }
 
     // The grade graph: rebuilt per paint from `motionGradeGraph` -- a handful
@@ -7353,7 +7636,7 @@
     // Before the first read the bands give way to US-700's LOADING tile; after
     // that every value carries its own '--' + reason. data-stale dims both
     // bands (the stylesheet), never blanks them.
-    function renderMotionCard(card, view, graph) {
+    function renderMotionCard(card, view, graph, detail) {
       if (!card || !view) return;
       var loading = card.querySelector(".motion-loading");
       var bands = card.querySelectorAll(".motion-band");
@@ -7372,29 +7655,59 @@
       paintMotionCell(card.querySelector(".motion-lat"), view.lat, ".motion-note");
       paintMotionGraph(card.querySelector(".motion-grade"), graph);
       renderMotionHealth(health, view.health);
+      renderMotionDetail(detail, view);
     }
 
-    // US-892-c: the health block. data-tone carries the status colour (the
-    // stylesheet maps it to a token); the sub-line is the reason or, for TILT
-    // FIX, the provenance. The block is not a .motion-band, so it never dims.
+    // One value + its reason (or provenance) into a health cell or detail
+    // row: data-tone carries the status colour (the stylesheet maps it to a
+    // token), an empty reason is hidden.
+    function paintMotionReading(el, v, valueCls, reasonCls) {
+      if (!el || !v) return;
+      el.setAttribute("data-tone", v.tone);
+      var value = el.querySelector(valueCls);
+      if (value) value.textContent = v.value;
+      var sub = el.querySelector(reasonCls);
+      if (sub) {
+        sub.textContent = v.sub || "";
+        sub.hidden = !v.sub;
+      }
+    }
+
+    // US-892-c: the health block; US-892-d (s3a) cut it to ONE row, COMPASS |
+    // GYRO -- UPDATED and TILT FIX are in the IMU detail. The block is not a
+    // .motion-band, so it never dims.
     function renderMotionHealth(block, health) {
       if (!block || !health) return;
-      var cells = [
-        [".motion-updated", health.updated], [".motion-compass", health.compass],
-        [".motion-tilt", health.tilt], [".motion-gyro", health.gyro],
-      ];
-      for (var i = 0; i < cells.length; i++) {
-        var cell = block.querySelector(cells[i][0]);
-        var v = cells[i][1];
-        if (!cell || !v) continue;
-        cell.setAttribute("data-tone", v.tone);
-        var value = cell.querySelector(".motion-hv");
-        if (value) value.textContent = v.value;
-        var sub = cell.querySelector(".motion-hsub");
-        if (sub) {
-          sub.textContent = v.sub || "";
-          sub.hidden = !v.sub;
-        }
+      paintMotionReading(block.querySelector(".motion-compass"), health.compass,
+                         ".motion-hv", ".motion-hsub");
+      paintMotionReading(block.querySelector(".motion-gyro"), health.gyro,
+                         ".motion-hv", ".motion-hsub");
+      paintMotionHealthCue(currentParked());
+    }
+
+    // The row's ' ›' shows only while parked, when its tap works (s3a, the
+    // I9 rule). Repainted on each Motion paint and on the parked fact's edge.
+    function paintMotionHealthCue(fact) {
+      var row = document.getElementById("motion-health");
+      var chevron = row ? row.querySelector(".motion-hchev") : null;
+      if (chevron) chevron.hidden = !(isObj(fact) && fact.parked === true);
+    }
+
+    // US-892-d: the IMU detail's six rows from the same motionView, painted
+    // whether or not the detail is open (Engine's pattern). The peaks are
+    // measurements: plain, never coloured, no reason.
+    function renderMotionDetail(detail, view) {
+      if (!detail || !view || !view.health) return;
+      var byRow = {
+        updated: view.health.updated, compass: view.health.compass,
+        tilt: view.health.tilt, gyro: view.health.gyro,
+        accel: healthCell(view.lon.peak, "plain"),
+        corner: healthCell(view.lat.peak, "plain"),
+      };
+      var rows = detail.querySelectorAll(".motion-drow");
+      for (var i = 0; i < rows.length; i++) {
+        paintMotionReading(rows[i], byRow[rows[i].getAttribute("data-row")],
+                           ".motion-dv", ".motion-dr");
       }
     }
 
@@ -7421,8 +7734,8 @@
         if (value) value.textContent = s.reading.text;
         var unit = row.querySelector(".o2-unit");
         if (unit) unit.textContent = s.reading.unit;
-        var meta = row.querySelector(".o2-meta");
-        if (meta) meta.textContent = s.reading.meta;
+        var age = row.querySelector(".o2-age");
+        if (age) age.textContent = s.reading.meta;
       }
       var svg = section.querySelector(".o2-trace");
       if (!svg) return;
@@ -7439,11 +7752,14 @@
       }
     }
 
-    // US-891-c: paint the O2 card from `o2View`.
+    // US-891-c: paint the O2 card from `o2View`. US-891-e: the one shared
+    // meta line sits under the rear sensor, above CATALYST.
     function renderO2Card(card, view) {
       if (!card || !view) return;
       paintO2Sensor(card.querySelector(".o2-front"), view.front);
       paintO2Sensor(card.querySelector(".o2-rear"), view.rear);
+      var meta = card.querySelector(".o2-meta");
+      if (meta) meta.textContent = view.meta;
       var cat = card.querySelector(".o2-cat");
       if (cat) paintO2Chip(cat.querySelector(".o2-chip"), view.catalyst.chip);
     }
@@ -7835,12 +8151,26 @@
     // test can never see. The flag is written on EVERY paint, including the
     // ungated one: left write-only-when-true it would latch, and a card that
     // says "gated" after the engine started is a stale claim about the vehicle.
+    // US-890-h: a slot host is looked up ONCE and held. The page-detail kit
+    // empties #page-detail-body when another detail opens, which detaches
+    // #fuel-detail until its own detail re-attaches it; a by-id lookup then
+    // finds nothing, and the gate would stop painting the trend.
+    var sourceSlotHosts = {};
+
+    function sourceSlotHost(id) {
+      if (!sourceSlotHosts[id]) sourceSlotHosts[id] = document.getElementById(id);
+      return sourceSlotHosts[id];
+    }
+
     function renderSourceCard(card, view) {
       if (!card || !view) return;
       // US-890-a: a source with a `slot` paints only that part of its card
       // (the Fuel card's trend row); every other source owns the whole body.
+      // US-890-h: a `slotHost` moves that slot out of the card (the FUEL TRIM
+      // detail), while data-gated stays on the card.
       var spec = sourceCardSpec(view.key);
-      var body = card.querySelector(spec && spec.slot ? spec.slot : ".card-body");
+      var root = spec && spec.slotHost ? sourceSlotHost(spec.slotHost) : card;
+      var body = root ? root.querySelector(spec && spec.slot ? spec.slot : ".card-body") : null;
       if (!body) return;
       card.setAttribute("data-gated", view.gated ? "true" : "false");
       // The typed NA is the card's whole body here, so the shipped
@@ -8761,6 +9091,24 @@
       // states/grade-history, polled on the 4 Hz tick like the other states.
       var motionCard = document.getElementById("motion-card");
       var lastGradeHistory = null;
+      // US-892-d (spec s3a): UPDATED, TILT FIX, the full reasons and the
+      // peaks live in #motion-detail, the IMU detail on the shared
+      // #page-detail host, painted with the card every time; the entry's
+      // paint only re-attaches it (Engine's pattern). The tap is the whole
+      // health row, gated at tap time by openPageDetail (parked only).
+      var motionDetail = document.getElementById("motion-detail");
+      var motionImuDetail = {
+        title: MOTION_IMU_TITLE,
+        paint: function (bodyEl) {
+          if (motionDetail) bodyEl.appendChild(motionDetail);
+        },
+      };
+      var motionHealthRow = document.getElementById("motion-health");
+      if (motionHealthRow) {
+        motionHealthRow.addEventListener("click", function () {
+          openPageDetail(motionImuDetail);
+        });
+      }
       // US-891-c: the O2 card, between Fuel and Motion; states/o2 on the tick.
       var o2Card = document.getElementById("o2-card");
       // US-888-a: the Driving card is the LANDING card (R5, `data-landing`).
@@ -8782,16 +9130,54 @@
       // US-890-b: the Fuel card's AIRFLOW row, from the same cached
       // states/obd-live on the same tick (the trend row is the source card's).
       var fuelCard = document.getElementById("fuel-card");
+      // US-890-h (spec s3b): TOTAL TRIM and the trend live in #fuel-detail,
+      // the FUEL TRIM detail on the shared #page-detail host, painted every
+      // tick open or not; the entry's paint only re-attaches it (Engine's
+      // pattern). The trend is the source card's slot (its slotHost).
+      var fuelDetail = document.getElementById("fuel-detail");
+      var fuelTrimDetail = {
+        title: FUEL_TRIM_TITLE,
+        paint: function (bodyEl) {
+          if (fuelDetail) bodyEl.appendChild(fuelDetail);
+        },
+      };
+      var fuelActions = fuelCard ? fuelCard.querySelector(".fuel-actions") : null;
+      if (fuelActions) {
+        var fuelTrimBtn = appendPageDetailButton(fuelActions, FUEL_TRIM_BUTTON, fuelTrimDetail);
+        fuelTrimBtn.id = "fuel-trim-btn";
+      }
       // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
       // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
       // first consumer since TD-us659), advanced once per tick from the same
       // states/gear the Driving card reads (US-511-b); the render sets data-tap from
       // it, and the handler honours only what is on the glass right now.
       var engineParked = parkedInit();
+      // US-889-d (spec s3b): the history + status live in #engine-detail, the
+      // ENGINE HISTORY detail on the shared #page-detail host. The tick paints
+      // it every time, open or not; the entry's paint only re-attaches it,
+      // because another detail's paint empties the body it ships in.
+      var engineDetail = document.getElementById("engine-detail");
+      var engineHistoryDetail = {
+        title: ENGINE_HISTORY_TITLE,
+        paint: function (bodyEl) {
+          if (engineDetail) bodyEl.appendChild(engineDetail);
+        },
+      };
+      var engineActions = engineCard ? engineCard.querySelector(".eng-actions") : null;
+      if (engineActions) {
+        var engineHistoryBtn = appendPageDetailButton(
+          engineActions, ENGINE_HISTORY_BUTTON, engineHistoryDetail
+        );
+        engineHistoryBtn.id = "engine-history-btn";
+      }
       var engineCodes = document.getElementById("engine-codes");
       if (engineCodes) {
         engineCodes.addEventListener("click", function () {
-          if (engineCodes.getAttribute("data-tap") === "true") openAlertsCard();
+          if (engineCodes.getAttribute("data-tap") !== "true") return;
+          // The Warnings page is the target (unchanged); the detail would
+          // cover it, so it closes first.
+          closePageDetail();
+          openAlertsCard();
         });
       }
       // US-890-f: the SINCE RESET reset (spec s4.3). `fuelReset` is the
@@ -9541,6 +9927,12 @@
       if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
       // US-894-b: the System page's taps follow the parked fact's edges.
       onParkedChange(repaintSystemOnParkedEdge);
+      // US-894-g: the shared page-detail host's ‹ BACK, and every detail
+      // button's visibility on the same edges.
+      var pageDetailBack = document.getElementById("page-detail-back");
+      if (pageDetailBack) pageDetailBack.addEventListener("click", closePageDetail);
+      onParkedChange(paintPageDetailButtons);
+      onParkedChange(paintMotionHealthCue);
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -9552,7 +9944,8 @@
             lastImu, nowMs, resolveImuStaleSec(global && global.DISPLAY_STALE),
             feedWaitedMs(feedSeen, "imu", feedStartedMs, nowMs)
           ),
-          motionGradeGraph(lastGradeHistory)
+          motionGradeGraph(lastGradeHistory),
+          motionDetail
         );
       }
 
@@ -9669,7 +10062,11 @@
             } else if (body && nd) renderNaBody(body, nd.label, nd.reason);
             // US-894-b (s4.1): the System page's unavailable path is the
             // verdict `--`, never ALL OK.
-            else if (body && name === "system-status") renderSystemUnavailable(card);
+            else if (body && name === "system-status") {
+              renderSystemUnavailable(card);
+              // US-894-g: LAST UPDATED's inputs go with the view.
+              lastUpdatedInputs = null;
+            }
             else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
@@ -9691,6 +10088,8 @@
             renderSystemStatusCard(
               card, systemStatusView(data, captureData, batteryData, nowMs), glyphEls
             );
+            // US-894-g: LAST UPDATED opens on this poll's reads and clock.
+            lastUpdatedInputs = { data: data, captureData: captureData, nowMs: nowMs };
           }
           // US-508: the standalone Motion branch is GONE with the card it
           // served -- the live instrument is now a FACE of the home slot,
@@ -9752,15 +10151,20 @@
           drivingCard, drivingView(await stateOnce("obd-live"), lastGear, nowMs)
         );
         renderEngineCard(engineCard, engineView(await stateOnce("obd-live"), nowMs));
-        // US-889-c: the scroll half -- this drive's history from
-        // states/engine-history alone, and the status row from the same cached
-        // obd-live, its codes tap gated on the debounced parked signal.
+        // US-889-c: the history + status (in the ENGINE HISTORY detail since
+        // US-889-d) -- this drive's history from states/engine-history alone,
+        // and the status row from the same cached obd-live, its codes tap
+        // gated on the debounced parked signal.
         // US-511-b: fed from THIS tick's states/gear (lastGear, read above --
         // no second fetch), never from system-status idle.
         engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);
         // US-894-b: the ONE write of the module's parked fact -- the debounced
         // value just advanced, and the RAW gear-known fact (Atlas B9 + A1).
         publishParked(engineParked.parked, isObj(lastGear) && lastGear.available === true);
+        // US-894-g (R1): an open page detail closes the tick the parked fact
+        // goes false; one still open re-reads and repaints on THIS tick's clock.
+        closePageDetailUnlessParked();
+        await refreshPageDetail(stateOnce, nowMs);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
         // moves the dismiss on first (a codeAlert-null re-read settles it).
@@ -9774,7 +10178,7 @@
         // THIS tick's parked signal.
         if (detailEntry) refreshCodeDetail(await stateOnce("dtc"));
         renderEngineScroll(
-          engineCard,
+          engineDetail,
           engineHistoryView(await stateOnce("engine-history")),
           engineStatusView(await stateOnce("obd-live"), engineParked.parked, nowMs)
         );
@@ -9783,6 +10187,7 @@
         // `fuel` block -- never from the raw status code or the trims.
         renderFuelLoopAndTrim(
           fuelCard,
+          fuelDetail,
           fuelLoopView(await stateOnce("obd-live")),
           fuelTotalTrimView(await stateOnce("obd-live"))
         );

@@ -103,8 +103,8 @@
      a 1080p->480x320 downsample softens every glyph and raises the floor).
      Pinned by tests/ui/test_dashboard_type_scale_values.py.
      US-887-a: --fs-giant is the sixth tier, ABOVE hero, for the Driving gear
-     alone (Atlas Rule-10 G-1); no existing tier moved. */
-  --fs-giant:       120px;     /* SSOT --fs-giant -- Driving gear (specs/v030-driving-page-design.md s3) */
+     alone (Atlas Rule-10 G-1); no existing tier moved. US-888-c: 120 -> 100 px. */
+  --fs-giant:       100px;    /* SSOT --fs-giant -- Driving gear (specs/v030-driving-page-design.md s3) */
   --fs-hero:        44px;      /* SSOT --fs-hero */
   --fs-primary:     34px;      /* SSOT --fs-primary */
   --fs-secondary:   26px;      /* SSOT --fs-secondary */
@@ -170,6 +170,8 @@
                                   value in US-484-a (see git history; the old
                                   literal is deliberately not repeated here so a
                                   grep for it stays a clean drift audit). */
+  --blue-busy:      #4FA8FF;   /* SSOT --blue-busy (UIDEV-018) -- activity
+                                  only: the sync glyph's `busy` (US-917-d). */
   --neutral-chip-bg: #2a2f37;  /* SSOT --neutral-chip-bg -- the deliberately
                                   un-alarming "no description yet" / "N/A this
                                   vehicle" chip. The token predates US-510; the
@@ -270,6 +272,13 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
+/* US-917-d (System s4.3.1): the sync glyph's four states. `#topbar .glyph` ties
+   `#glyph-sync[data-state]` on specificity, so each rule carries both ids (Iris
+   S119 review); `ok` reuses the shared green rule above. Amber is the sync
+   member alone (`error`); blue is activity, never a severity. */
+#topbar #glyph-sync[data-state="error"]   { color: var(--amber-warn); }
+#topbar #glyph-sync[data-state="busy"]    { color: var(--blue-busy); }
+#topbar #glyph-sync[data-state="unknown"] { color: var(--text-tertiary); }
 /* US-898-a (Iris U1): WiFi is a 1ch SVG, so the warnings icon has room. Relative
    units only; stroked in currentColor so the [data-state] colours above apply.
    Letter-spacing does not reach an atomic inline, so the glyph is exactly 1ch. */
@@ -668,6 +677,14 @@ html, body {
    state; a neutral navigation link, never a state colour. */
 .sys-settings {
   margin-left: auto; display: inline-flex; align-items: center;
+  min-height: var(--tap-min);
+  font-size: var(--fs-meta); letter-spacing: 0.06em; color: var(--text-secondary);
+}
+/* US-894-g (s4.6.3): UPDATED, LEFT of SETTINGS ›, in the .sys-settings type
+   WITHOUT its margin-left:auto: two auto margins on one line would split the
+   free space between them (Iris S119 review), so exactly one link carries it. */
+.sys-updated {
+  display: inline-flex; align-items: center;
   min-height: var(--tap-min);
   font-size: var(--fs-meta); letter-spacing: 0.06em; color: var(--text-secondary);
 }
@@ -1357,6 +1374,7 @@ html, body {
 .sys-diag-text {
   margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
 }
+
 /* US-894-d WIFI detail: the reason is amber only as the `wifi` member's. */
 .wifi-reason[data-level="amber"] .sys-diag-text { color: var(--amber-warn); }
 /* US-894-e (s4.6.1): the UPS detail. Every line is neutral (no UPS member);
@@ -1371,6 +1389,102 @@ html, body {
    neutral. */
 .pi-value { margin-left: auto; font-size: var(--fs-label); color: var(--text-primary); }
 .pi-row[data-level="amber"] .pi-value { color: var(--amber-warn); }
+
+/* --- US-894-g shared page-detail host (spec s4.6.3) ---------------------------
+   Iris X-1 = (a), Atlas re-gate 2026-10-27: the parked-only page details (System
+   LAST UPDATED; Engine HISTORY, Fuel FUEL TRIM, Motion IMU next) render in this
+   SIBLING of #sys-detail, whose chrome (4/10 padding, a 44 + 1 head, 8 px body
+   top) leaves only 253 px. This host has a 270 px BODY BUDGET to defend:
+   320 - 34 (head) - 8 - 8 (body padding) = 270, with no host padding and no
+   gap, and every consumer declares NO geometry of its own.
+
+   So its head follows the KEBAB precedent (#menu-btn::after): the head is
+   --bar-h tall with its 1 px rule INSIDE (border-box), and ‹ BACK paints in
+   that band while a transparent ::after grows its hit box to --tap-min -- 6 px
+   below the head, inside the body's 8 px padding-top, so it never covers a
+   body line. That INVERTS the US-556 `.menu-head` rule, where an overlay head
+   grows to the control because it has "no stage budget": this one has 270.
+   The geometry lives here as scoped properties, and
+   tests/ui/test_system_last_updated.py reads their declared sum (Q1). */
+#page-detail {
+  --pd-head-h: var(--bar-h);  /* the head band, its rule inside */
+  --pd-rule: 1px;             /* the head's bottom rule */
+  --pd-pad-y: 8px;            /* body padding, top and bottom */
+  --pd-pad-x: 12px;           /* head + body padding, each side */
+  --pd-line: 1.2;             /* every line box */
+  position: fixed; inset: 0; z-index: 45;
+  /* US-558: a DESTINATION, so a solid field (the P-4 rule). */
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  padding: 0; box-sizing: border-box; overflow: hidden;
+}
+#page-detail[hidden] { display: none; }
+.page-detail-head {
+  flex: 0 0 auto;
+  display: flex; align-items: stretch;
+  height: var(--pd-head-h); box-sizing: border-box;
+  padding: 0 var(--pd-pad-x);
+  border-bottom: var(--pd-rule) solid var(--surface);
+}
+/* `position: relative` anchors the ::after to the button, not to the host. */
+#page-detail-back {
+  position: relative;
+  min-width: var(--tap-min); min-height: 0;
+  padding: 0; background: transparent; border: 0; color: var(--accent);
+  font-size: var(--fs-label); line-height: var(--pd-line); text-align: left;
+}
+#page-detail-back::after {
+  content: ""; position: absolute;
+  left: 0; right: 0; top: 0; height: var(--tap-min);
+}
+.page-detail-title {
+  margin-left: auto; align-self: center;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); line-height: var(--pd-line);
+  white-space: nowrap; color: var(--text-primary);
+}
+/* No detail scrolls (the CIO's no-scroll rule): each detail's budget is
+   modelled. Should one ever overflow, the bar shows -- never a silent clip. */
+.page-detail-body {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 0;
+  padding: var(--pd-pad-y) var(--pd-pad-x);
+  overflow-y: auto; touch-action: pan-y;
+}
+/* One line per fact, >= --row-min: a Michroma label in the 4.5em row column
+   (the System row's), a mono value. Neutral: a detail line has no band. */
+.page-detail-row {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 0.5em;
+  min-height: var(--row-min);
+  font-size: var(--fs-label); line-height: var(--pd-line);
+}
+.page-detail-label {
+  flex: 0 0 4.5em;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); white-space: nowrap; color: var(--text-secondary);
+}
+.page-detail-value {
+  min-width: 0;
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+/* The detail BUTTON (s4.6.3): a real control in the button grammar, with no
+   state colour. Not parked, it keeps its space and paints nothing. */
+.page-detail-btn {
+  display: inline-flex; align-items: center;
+  height: var(--tap-min); box-sizing: border-box;
+  padding: 0 12px;
+  background: transparent; color: var(--text-primary);
+  border: 1px solid var(--text-secondary); border-radius: var(--radius);
+}
+.page-detail-btn[data-parked="false"] { visibility: hidden; }
+.page-detail-btn-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label);
+}
+.page-detail-btn-chevron { font-family: var(--font-mono); font-size: var(--fs-label); }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)
@@ -1480,6 +1594,14 @@ html, body {
   --drv-label-line: 1.2;      /* label + note line box (labels may wrap) */
   --drv-value-line: 1.2;      /* reading line box */
   --drv-gear-line: 1;         /* the gear glyph's box is exactly its size */
+  /* US-888-c (spec s3, R2): pulls the gear's cap top up onto the COOLANT/RPM
+     label cap tops; moves with --fs-giant (100px) and the label size/lines.
+     michroma-brand.woff2: uPM 2048, sCapHeight 1536, sTypoAscender 2368,
+     sTypoDescender -544, lineGap 0, USE_TYPO_METRICS. Cap top below the line-box
+     top = (L*fs - 1.421875*fs)/2 + 0.40625*fs: gear (100, L 1) 19.53 px, label
+     (15, L 1.2) 4.43 px down its 18 px box -> -15.10, rounded. Pinned by
+     tests/ui/test_driving_page.py (recomputed; fails at |delta| >= 1 px). */
+  --drv-gear-top: -15px;
   --drv-stale-opacity: 0.4;   /* stale = dimmed (spec s4.4) */
   --drv-hint-stroke: 3px;     /* hollow hint digit outline (spec s4.2, US-904-b) */
   --drv-hint-arrow: 30px;     /* hint arrow box, square (spec s4.2, US-904-b) */
@@ -1520,15 +1642,18 @@ html, body {
   flex: 1; min-height: 0;
   display: grid; grid-template-columns: var(--drv-col) 1fr var(--drv-col);
 }
+/* US-888-c (R2): all three columns start at the top, so the label cap tops sit
+   at one height in every state (plain, wrapped, note) and --drv-gear-top can
+   hold the gear on them. */
 #driving-card .drv-col {
-  display: flex; flex-direction: column; justify-content: space-around;
+  display: flex; flex-direction: column; justify-content: flex-start;
   gap: var(--drv-gap); min-width: 0;
 }
 #driving-card .drv-right {
   text-align: right;
 }
 #driving-card .drv-centre {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
   gap: var(--drv-gap); text-align: center;
 }
 /* Labels: Michroma (spec s4.3: labels + gear only), letter-spacing 0, allowed
@@ -1548,6 +1673,10 @@ html, body {
 #driving-card .drv-value {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-primary); color: var(--text-primary);
+}
+/* US-888-c (D-10): the speed alone reads a tier up; the smaller gear pays. */
+#driving-card .drv-speed .drv-value {
+  font-size: var(--fs-hero);
 }
 #driving-card .drv-unit {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
@@ -1595,6 +1724,7 @@ html, body {
   position: relative;
   font-family: var(--font-display); font-weight: 400; font-synthesis: none;
   font-size: var(--fs-giant); line-height: var(--drv-gear-line);
+  margin-top: var(--drv-gear-top);
   color: var(--text-primary);
 }
 #driving-card .drv-gear[data-measured="false"] {
@@ -1647,76 +1777,133 @@ html, body {
 
 /* --- US-889-b Engine card, layout B above the fold (F-127) ------------------ */
 /* specs/v030-engine-page-design.md s3/s4. Tokens only; the layout's geometry
-   (26 x 120 px bars, the gaps) has no token, so -- as on #driving-card (S103
+   (the bars, the gaps) has no token, so -- as on #driving-card (S103
    G-4) -- it is declared ONCE here as properties scoped to the card and every
    rule below consumes them. This block is the only place in the Engine rules
    that may hold a literal px (tests/ui/test_engine_page.py, the CSS gate).
    No value is ever coloured by state: load at 100 % is expected on this turbo
    engine (spec s4) and the bars are --accent (the unbanded rule). No motion:
-   a bar steps from one sample to the next and never sweeps between them. */
-#engine-card {
-  --eng-bar-w: 26px;          /* vertical bar width (spec s3) */
-  --eng-bar-h: 120px;         /* vertical bar height, 0-100 % (spec s3) */
-  --eng-col-gap: 16px;        /* bars -> readings */
-  --eng-bars-gap: 12px;       /* between the two bars */
-  --eng-gap: 6px;             /* between stacked rows */
-  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
-  --eng-unit-gap: 4px;        /* number -> unit */
-  --eng-line: 1.2;            /* every line box */
+   a bar steps from one sample to the next and never sweeps between them.
+   US-889-d (spec s3a/s3b): the history + status left the card for the ENGINE
+   HISTORY detail, #engine-detail inside the shared #page-detail host. --eng-*
+   scoped to #engine-card would not reach it there, so the detail's geometry
+   is scoped to #engine-detail itself; the host's own chrome stays --pd-*. */
+#engine-card,
+#engine-detail {
+  --eng-line: 1.2;            /* every line box (never `normal`: the Pi's mono face) */
   --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
-  /* US-889-c, the scroll half (OEM mockup 2026-10-14; spec s3 status fit). */
-  --eng-section-gap: 8px;     /* between history graphs; rule -> content */
-  --eng-rule: 1px;            /* the line above the history and the status */
-  --eng-graph-h: 46px;        /* one history chart's height */
+  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
+}
+#engine-card {
+  /* US-889-e (CIO ruling 2026-10-27): two full-width horizontal bars. Body
+     254: header 18 + 2 + bar 48 = 68; + 8 + 68 = 144; + 14 -> footer 158-254. */
+  --eng-bar-h: 48px;          /* one horizontal bar's height (also each value's line box) */
+  --eng-head-gap: 2px;        /* header line -> its bar */
+  --eng-gauge-gap: 8px;       /* LOAD bar -> THROTTLE header */
+  --eng-foot-gap: 14px;       /* THROTTLE bar -> footer */
+  --eng-foot-h: 96px;         /* the footer box (TIMING stack + HISTORY ›) */
+  --eng-col-gap: 16px;        /* TIMING stack -> HISTORY › */
+  --eng-gap: 6px;             /* between stacked rows in the TIMING stack */
+  --eng-unit-gap: 4px;        /* number -> unit */
+}
+#engine-detail {
+  /* US-889-c's history + status (OEM mockup 2026-10-14; spec s3 status fit). */
+  --eng-section-gap: 8px;     /* between history graphs; rule -> status */
+  --eng-rule: 1px;            /* the line above the status */
+  --eng-graph-h: 40px;        /* one history chart's height (spec s3b: was 46) */
   --eng-graph-stroke: 2px;    /* the neutral history line */
   --eng-span-amber: 0.26;     /* amber span fill strength under the line */
   --eng-span-red: 0.32;       /* red span fill strength under the line */
   --eng-stat-gap: 8px;        /* status grid gap (spec s3: 104.0 + 160.0 + 8) */
 }
-/* The body keeps the shared .card-body guard (overflow-y auto + the scroll
-   cue): the scroll half (US-889-c) lives below the fold. */
+/* The body keeps the shared .card-body guard (overflow-y auto), but nothing
+   lives below the fold (spec s3a: no scroll, no cue). */
 #engine-card .card-body {
-  display: flex; flex-direction: column; gap: var(--eng-gap);
+  display: flex; flex-direction: column; gap: var(--eng-foot-gap);
 }
-#engine-card .eng-main {
+#engine-card .eng-gauges {
   flex: none;
-  display: flex; align-items: flex-start; gap: var(--eng-col-gap);
+  display: flex; flex-direction: column; gap: var(--eng-gauge-gap);
 }
-#engine-card .eng-bars {
-  flex: none;
-  display: flex; gap: var(--eng-bars-gap);
-}
+/* One gauge: its header line (label left, age / reason right) over its bar.
+   data-stale dims the bar and its value, never the header's amber age. */
 #engine-card .eng-bar-col {
-  display: flex; flex-direction: column; align-items: center; gap: var(--eng-gap);
+  display: flex; flex-direction: column; gap: var(--eng-head-gap);
 }
-#engine-card .eng-bar-col[data-stale="true"] {
+#engine-card .eng-bar-col[data-stale="true"] .eng-bar {
   opacity: var(--eng-stale-opacity);
 }
+#engine-card .eng-bar-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--eng-inline-gap); min-width: 0;
+}
+#engine-card .eng-bar-head .eng-note {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 #engine-card .eng-bar {
-  position: relative;
-  width: var(--eng-bar-w); height: var(--eng-bar-h);
+  position: relative; flex: none;
+  width: 100%; height: var(--eng-bar-h);
   background-color: var(--line); border-radius: var(--radius);
   overflow: hidden;
 }
-/* carousel.js sets the fill's height (0-100 %) from the latest sample. */
+/* carousel.js sets the fill's width (0-100 %) from the latest sample; a null
+   reading hides it (never a 0 % fill). */
 #engine-card .eng-bar-fill {
-  position: absolute; left: 0; right: 0; bottom: 0;
+  position: absolute; left: 0; top: 0; bottom: 0;
   background-color: var(--accent);
 }
-#engine-card .eng-readings {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column; gap: var(--eng-gap);
+/* The value, twice, over the whole bar and centred in it: .eng-on-track under
+   the fill in warm white, .eng-on-fill above it in --bg, clipped by carousel.js
+   to the fill's width. The line box IS the bar's height, so neither copy can
+   push the bar past 48 px (Atlas gate 2026-10-27). */
+#engine-card .eng-bar-text {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  text-align: center; white-space: nowrap;
+  line-height: var(--eng-bar-h);
 }
-/* One row: label, value + unit, note -- on a shared baseline. LOAD wraps its
-   label onto its own line above the hero number (spec s3). */
+#engine-card .eng-on-track {
+  color: var(--text-primary);
+}
+#engine-card .eng-on-fill {
+  color: var(--bg);
+}
+#engine-card .eng-bar-text .eng-value,
+#engine-card .eng-bar-text .eng-unit {
+  color: inherit;
+}
+#engine-card .eng-bar-text .eng-unit {
+  line-height: var(--eng-line);
+}
+/* Not read: '--' in the tertiary ink, one copy, no fill. */
+#engine-card .eng-bar-col[data-null="true"] .eng-on-track .eng-value {
+  color: var(--text-tertiary);
+}
+/* TIMING / value / caption stacked on the left, HISTORY › bottom right. */
+#engine-card .eng-foot {
+  flex: none; height: var(--eng-foot-h);
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--eng-col-gap);
+}
+/* TIMING: label, value + unit, note -- on a shared baseline. The label and
+   the caption take their own lines; a note that does not fit beside the
+   number wraps below it, never off the column. */
 #engine-card .eng-reading {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--eng-inline-gap);
+  align-self: flex-start; flex: 1; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  column-gap: var(--eng-inline-gap); row-gap: var(--eng-gap);
 }
-#engine-card .eng-load .eng-label {
+#engine-card .eng-reading .eng-label,
+#engine-card .eng-reading .eng-basis {
   flex-basis: 100%;
 }
+/* HISTORY ›, bottom right of the footer (the shared detail button). */
+#engine-card .eng-actions {
+  flex: none;
+  display: flex; justify-content: flex-end;
+}
 /* Labels: Michroma (frame spec s4.3), letter-spacing 0. */
-#engine-card .eng-label {
+#engine-card .eng-label,
+#engine-detail .eng-label {
   font-family: var(--font-display); font-weight: 400; font-synthesis: none;
   font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--eng-line);
   color: var(--text-secondary);
@@ -1746,68 +1933,65 @@ html, body {
 #engine-card .eng-reading[data-stale="true"] .eng-line {
   opacity: var(--eng-stale-opacity);
 }
-#engine-card .eng-note {
+#engine-card .eng-note,
+#engine-detail .eng-note {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary);
 }
-#engine-card .eng-reading[data-note="age"] .eng-note {
+#engine-card .eng-reading[data-note="age"] .eng-note,
+#engine-card .eng-bar-col[data-note="age"] .eng-note {
   color: var(--amber-warn);
 }
 #engine-card .eng-basis {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary);
 }
-#engine-card .eng-cue {
-  flex: none;
-  font-family: var(--font-mono); font-size: var(--fs-meta);
-  line-height: var(--eng-line); color: var(--text-secondary);
-}
-/* --- US-889-c the scroll half: history + status (spec s3-s4, ACs 5-11) ---- */
+/* --- US-889-c history + status, in the ENGINE HISTORY detail (US-889-d) --- */
 /* The history line is neutral warm white. A span's colour comes ONLY from the
    provider's per-bucket band (data-band, set by carousel.js from the point):
    this sheet maps band -> token and judges nothing. No motion: the line steps
-   bucket to bucket and never animates between them. */
-#engine-card .eng-history {
+   bucket to bucket and never animates between them. The detail head already
+   draws the rule above the history, so the history starts at the body's top;
+   the status keeps its own rule. */
+#engine-detail .eng-history {
   flex: none;
   display: flex; flex-direction: column; gap: var(--eng-section-gap);
-  border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
-  padding-top: var(--eng-section-gap);
 }
-#engine-card .eng-hist {
+#engine-detail .eng-hist {
   display: flex; flex-direction: column;
 }
-#engine-card .eng-hist-head {
+#engine-detail .eng-hist-head {
   display: flex; align-items: baseline; gap: var(--eng-inline-gap);
 }
-#engine-card .eng-hist-window {
+#engine-detail .eng-hist-window {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary); white-space: nowrap;
 }
-#engine-card .eng-hist-row {
+#engine-detail .eng-hist-row {
   display: flex; align-items: center; gap: var(--eng-inline-gap);
 }
-#engine-card .eng-hist-chart {
+#engine-detail .eng-hist-chart {
   display: block; flex: 1; min-width: 0; height: var(--eng-graph-h);
 }
-#engine-card .eng-hist-line {
+#engine-detail .eng-hist-line {
   fill: none; stroke: var(--text-primary); stroke-width: var(--eng-graph-stroke);
   vector-effect: non-scaling-stroke;
 }
-#engine-card .eng-hist-span[data-band="amber"] {
+#engine-detail .eng-hist-span[data-band="amber"] {
   fill: var(--amber-warn); fill-opacity: var(--eng-span-amber);
 }
-#engine-card .eng-hist-span[data-band="red"] {
+#engine-detail .eng-hist-span[data-band="red"] {
   fill: var(--critical-red); fill-opacity: var(--eng-span-red);
 }
-#engine-card .eng-hist-end {
+#engine-detail .eng-hist-end {
   flex: none; white-space: nowrap;
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-meta); line-height: var(--eng-line); color: var(--text-primary);
 }
-#engine-card .eng-hist-unit {
+#engine-detail .eng-hist-unit {
   color: var(--text-secondary);
 }
-#engine-card .eng-absence {
+#engine-detail .eng-absence {
   margin: 0;
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-tertiary);
@@ -1815,30 +1999,30 @@ html, body {
 /* Status grid (spec s3, measured 2026-10-15): RUN TIME sized to its content,
    CHECK ENGINE takes the rest; values in the fixed-width face at --fs-label,
    CHECK ENGINE on two lines (ON, then the count) so a 3-digit count fits. */
-#engine-card .eng-status {
+#engine-detail .eng-status {
   flex: none;
   display: grid; grid-template-columns: max-content 1fr; gap: var(--eng-stat-gap);
   border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
   padding-top: var(--eng-section-gap);
 }
-#engine-card .eng-stat {
+#engine-detail .eng-stat {
   display: flex; flex-direction: column; min-width: 0;
 }
-#engine-card .eng-stat-value,
-#engine-card .eng-codes {
+#engine-detail .eng-stat-value,
+#engine-detail .eng-codes {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-label); line-height: var(--eng-line); white-space: nowrap;
   color: var(--text-primary);
 }
-#engine-card .eng-stat[data-stale="true"] .eng-stat-value,
-#engine-card .eng-stat[data-stale="true"] .eng-codes {
+#engine-detail .eng-stat[data-stale="true"] .eng-stat-value,
+#engine-detail .eng-stat[data-stale="true"] .eng-codes {
   opacity: var(--eng-stale-opacity);
 }
-#engine-card .eng-stat[data-note="age"] .eng-note {
+#engine-detail .eng-stat[data-note="age"] .eng-note {
   color: var(--amber-warn);
 }
 /* Moving, the count is information, not a link: secondary, no tap target. */
-#engine-card .eng-codes[data-tap="false"] {
+#engine-detail .eng-codes[data-tap="false"] {
   color: var(--text-secondary);
 }
 
@@ -1850,8 +2034,13 @@ html, body {
    colour comes ONLY from the provider's level (data-level on .fuel-trend-row):
    amber and down both map to --amber-warn -- a fuel-trim drift is WATCH, not
    "pull over" (Spool per-surface ruling #4, the rule the Fuel Trim bars kept).
-   The dots, the baseline and an ok median stay neutral. */
-#fuel-card {
+   The dots, the baseline and an ok median stay neutral.
+   US-890-h (spec s3a/s3b): TOTAL TRIM and the trend left the glance for the
+   FUEL TRIM detail, #fuel-detail inside the shared #page-detail host. --fuel-*
+   scoped to #fuel-card would not reach it there, so the scope is shared with
+   #fuel-detail; the host's own chrome stays --pd-* (no geometry here). */
+#fuel-card,
+#fuel-detail {
   --fuel-gap: 6px;            /* between stacked rows */
   --fuel-inline-gap: 8px;     /* label -> value -> note on one row */
   --fuel-col-gap: 12px;       /* between side-by-side readings */
@@ -1889,14 +2078,17 @@ html, body {
   border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
   padding-top: var(--fuel-gap);
 }
-#fuel-card .fuel-reading {
+#fuel-card .fuel-reading,
+#fuel-detail .fuel-reading {
   display: flex; flex-direction: column; min-width: 0;
 }
-#fuel-card .fuel-label {
+#fuel-card .fuel-label,
+#fuel-detail .fuel-label {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary); white-space: nowrap;
 }
-#fuel-card .fuel-value {
+#fuel-card .fuel-value,
+#fuel-detail .fuel-value {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-primary); line-height: var(--fuel-line); color: var(--text-primary);
 }
@@ -1904,7 +2096,8 @@ html, body {
   font-size: var(--fs-hero);
 }
 /* "not published": a reason, never a reading -- the value it explains is "--". */
-#fuel-card .fuel-note {
+#fuel-card .fuel-note,
+#fuel-detail .fuel-note {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary);
 }
@@ -1949,7 +2142,8 @@ html, body {
    (the .fuel-value default, --fs-primary, neutral); its "--" is dimmed ONLY
    for open_loop (data-dimmed), the reason that says the trims are not being
    applied. Side notes never wrap: "not applied in open loop" is one line. */
-#fuel-card .fuel-chip {
+#fuel-card .fuel-chip,
+#fuel-detail .fuel-chip {
   align-self: flex-end;
   font-size: var(--fs-label); white-space: nowrap;
   padding: var(--fuel-chip-pad-y) var(--fuel-chip-pad-x);
@@ -1958,11 +2152,12 @@ html, body {
   color: var(--text-primary);
 }
 #fuel-card .fuel-loop .fuel-note,
-#fuel-card .fuel-total-trim .fuel-note,
-#fuel-card .fuel-total-trim .fuel-value {
+#fuel-detail .fuel-loop .fuel-note,
+#fuel-detail .fuel-total-trim .fuel-note,
+#fuel-detail .fuel-total-trim .fuel-value {
   white-space: nowrap;
 }
-#fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value {
+#fuel-detail .fuel-total-trim[data-dimmed="true"] .fuel-value {
   opacity: var(--fuel-stale-opacity);
 }
 /* US-890-d MPG row (spec s4.3/s4.6). Labels are Michroma at --fs-meta (Iris
@@ -2019,44 +2214,59 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   background: var(--bg);
 }
+/* US-890-h: FUEL TRIM ›, bottom right of the glance (the shared detail
+   button, spec s3a). */
+#fuel-card .fuel-actions {
+  flex: none;
+  display: flex; justify-content: flex-end;
+}
+/* The FUEL TRIM detail (spec s3b): TOTAL TRIM with the LOOP chip beside it,
+   then the trend at full width under a rule. */
+#fuel-detail {
+  display: flex; flex-direction: column; gap: var(--fuel-gap);
+}
+#fuel-detail .fuel-trim-row {
+  flex: none;
+  display: flex; justify-content: space-between; gap: var(--fuel-col-gap);
+}
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */
-#fuel-card .fuel-trend {
+#fuel-detail .fuel-trend {
   flex: none;
   border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
   padding-top: var(--fuel-gap);
 }
-#fuel-card .fuel-trend-row {
+#fuel-detail .fuel-trend-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--fuel-inline-gap);
 }
-#fuel-card .fuel-trend-value {
+#fuel-detail .fuel-trend-value {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-secondary); line-height: var(--fuel-line); color: var(--text-primary);
 }
-#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-value,
-#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-value {
+#fuel-detail .fuel-trend-row[data-level="amber"] .fuel-trend-value,
+#fuel-detail .fuel-trend-row[data-level="down"] .fuel-trend-value {
   color: var(--amber-warn);
 }
-#fuel-card .fuel-trend-reason {
+#fuel-detail .fuel-trend-reason {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary);
 }
-#fuel-card .fuel-trend-chart {
+#fuel-detail .fuel-trend-chart {
   display: block; flex: 1; min-width: 0; height: var(--fuel-trend-h);
 }
-#fuel-card .fuel-trend-baseline {
+#fuel-detail .fuel-trend-baseline {
   stroke: var(--text-tertiary); stroke-width: var(--fuel-stroke);
   stroke-dasharray: var(--fuel-dash); vector-effect: non-scaling-stroke;
 }
-#fuel-card .fuel-trend-median {
+#fuel-detail .fuel-trend-median {
   stroke: var(--text-primary); stroke-width: var(--fuel-stroke);
   vector-effect: non-scaling-stroke;
 }
-#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-median,
-#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-median {
+#fuel-detail .fuel-trend-row[data-level="amber"] .fuel-trend-median,
+#fuel-detail .fuel-trend-row[data-level="down"] .fuel-trend-median {
   stroke: var(--amber-warn);
 }
-#fuel-card .fuel-trend-dot {
+#fuel-detail .fuel-trend-dot {
   stroke: var(--text-secondary); stroke-width: var(--fuel-dot);
   stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
@@ -2211,17 +2421,21 @@ html, body {
   color: var(--text-secondary); white-space: nowrap;
 }
 
-/* US-891-c (F-127; specs/v030-o2-page-design.md s3, layout A): the O2 page --
-   FRONT and REAR stacked, each a head (label + chip), the volts row and the
-   dot trace, then the CATALYST head. Tokens only: no literal colour, and the
-   one px is the trace height (spec s3); every other length is em or a token.
-   No box has a fixed height except the trace and nothing hides overflow, so
-   a long line wraps rather than clips. Labels and the live chip are Michroma;
+/* US-891-c (F-127; specs/v030-o2-page-design.md s3a, re-laid by US-891-e):
+   the O2 page -- FRONT and REAR stacked, each a head (label + chip), then ONE
+   row: the value column (volts over age) and the dot trace; then the ONE
+   shared meta line and the CATALYST head. Nothing needs a scroll: 231.4 of
+   the 254 px body (spec s3a). Tokens only: no literal colour, and the only px
+   are the three s3a sizes; every other length is em or a token. No box has a
+   fixed height except the trace and nothing hides overflow, so a long line
+   wraps rather than clips. Labels and the live chip are Michroma;
    the withheld chip is lower case, so --font-mono (the subset has no a-z).
    The live chip carries no state colour: a verdict is a description, not a
    severity. Stale dims the last value (shared rule). */
 #o2-card {
-  --o2-trace-h: 44px;           /* the trace (spec s3: 456 x 44) */
+  --o2-trace-h: 52px;           /* the trace (spec s3a: 324 x 52) */
+  --o2-val-w: 112px;            /* the value column: '0.00 V' is 106 px */
+  --o2-col-gap: 12px;           /* value column | trace */
   --o2-stale-opacity: 0.4;      /* stale = dimmed (shared rule) */
   --o2-line: 1;                 /* value + chip line boxes */
   --o2-note-line: 1.2;          /* label / meta line boxes */
@@ -2229,7 +2443,7 @@ html, body {
 #o2-card .card-body { display: flex; flex-direction: column; }
 #o2-card .o2-sensor,
 #o2-card .o2-cat {
-  flex: none; display: flex; flex-direction: column; gap: 0.15em; padding-block: 0.2em;
+  flex: none; display: flex; flex-direction: column; gap: 0.15em; padding-block: 0.1em;
   min-width: 0;
 }
 #o2-card .o2-sensor + .o2-sensor,
@@ -2256,7 +2470,10 @@ html, body {
   border: thin dashed var(--text-tertiary);
 }
 #o2-card .o2-row {
-  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.5em; min-width: 0;
+  display: flex; align-items: flex-start; column-gap: var(--o2-col-gap); min-width: 0;
+}
+#o2-card .o2-valcol {
+  flex: none; width: var(--o2-val-w); display: flex; flex-direction: column;
 }
 #o2-card .o2-line { white-space: nowrap; line-height: var(--o2-line); }
 #o2-card .o2-value {
@@ -2268,12 +2485,14 @@ html, body {
 }
 #o2-card .o2-row[data-none="true"] .o2-value { color: var(--text-tertiary); }
 #o2-card .o2-row[data-stale="true"] .o2-line { opacity: var(--o2-stale-opacity); }
+#o2-card .o2-age,
 #o2-card .o2-meta {
   font-family: var(--font-mono); font-size: var(--fs-meta); line-height: var(--o2-note-line);
   font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 0;
 }
+#o2-card .o2-meta { flex: none; }
 #o2-card .o2-trace {
-  display: block; width: 100%; height: var(--o2-trace-h); overflow: visible;
+  display: block; flex: 1 1 0; min-width: 0; height: var(--o2-trace-h); overflow: visible;
 }
 #o2-card .o2-trace-mid {
   stroke: var(--text-tertiary); stroke-width: 1; stroke-dasharray: 4 4; fill: none;
@@ -2290,8 +2509,8 @@ html, body {
    dims both bands (Iris M4); numbers are never coloured (no g band exists).
    No meter, dot or trail (US-733). */
 #motion-card {
-  --motion-band-gap: 6px;       /* between the two bands */
-  --motion-band-pad: 6px;       /* band padding, top and bottom */
+  --motion-band-gap: 4px;       /* between the two bands (s3a: 6 -> 4) */
+  --motion-band-pad: 4px;       /* band padding, top and bottom (s3a: 6 -> 4) */
   --motion-rule: 1px;           /* the line between the bands */
   --motion-pitch-w: 132px;      /* the PITCH column (mockup .top) */
   --motion-col-gap: 10px;       /* between columns */
@@ -2337,10 +2556,15 @@ html, body {
   font-size: var(--fs-label); color: var(--text-secondary); white-space: pre;
 }
 #motion-card .motion-cell[data-none="true"] .motion-value { color: var(--text-tertiary); }
+/* US-892-d (s3a, AC 17): every reason is ONE line with an ellipsis -- the
+   full text is in the IMU detail. A block, min-width 0: text-overflow alone
+   renders nothing on an inline span. A g cell shows ONE of note / peak. */
 #motion-card .motion-sub,
 #motion-card .motion-note {
+  display: block; min-width: 0;
   font-size: var(--fs-meta); line-height: var(--motion-note-line);
-  color: var(--text-secondary); white-space: nowrap;
+  color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #motion-card .motion-cell[data-warn="true"] .motion-sub { color: var(--amber-warn); }
 #motion-card .motion-peak {
@@ -2361,12 +2585,12 @@ html, body {
 #motion-card .motion-graph-dot { fill: var(--accent); }
 #motion-card .motion-graph-end { font-size: var(--fs-meta); fill: var(--text-primary); }
 #motion-card .motion-graph-empty { font-size: var(--fs-meta); fill: var(--text-tertiary); }
-/* US-892-c: the IMU health block (spec s3 2 x 2, Iris M2/M4/M5, Atlas C3).
-   Columns 1fr / max-content: the right column takes its widest status word,
-   the left (UPDATED, TILT FIX) the rest. Values --fs-label, reasons and the
-   TILT FIX provenance --fs-meta on the value's baseline. A reason NEVER sizes
-   a column: contain: inline-size makes it add 0 to max-content and it wraps
-   inside its column. data-tone maps to a token here and judges nothing;
+/* US-892-c: the IMU health block (Iris M2/M4/M5, Atlas C3). US-892-d (s3a):
+   ONE row, COMPASS | GYRO, columns 1fr / max-content -- GYRO takes its
+   status word, COMPASS the rest. Values --fs-label, reasons --fs-meta on the
+   value's baseline. A reason NEVER sizes a column (contain: inline-size adds
+   0 to max-content) and is one line with an ellipsis (AC 17); the full text
+   is in the IMU detail. data-tone maps to a token here and judges nothing;
    plain keeps --text-primary. Not a .motion-band, so stale never dims it. */
 #motion-card .motion-health {
   flex: none; display: grid; grid-template-columns: 1fr max-content;
@@ -2387,8 +2611,59 @@ html, body {
 #motion-card .motion-hcell[data-tone="warn"] .motion-hv { color: var(--amber-warn); }
 #motion-card .motion-hcell[data-tone="none"] .motion-hv { color: var(--text-tertiary); }
 #motion-card .motion-hsub {
-  flex: 1 1 0; min-width: 0; contain: inline-size;
+  display: block; flex: 1 1 0; min-width: 0; contain: inline-size;
   font-size: var(--fs-meta); line-height: var(--motion-note-line); color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The row's ' ›' (s3a, the I9 rule): only while parked, when the tap works
+   (carousel.js sets hidden). Neutral: a detail cue carries no state colour. */
+#motion-card .motion-hchev {
+  flex: none; font-size: var(--fs-label); line-height: var(--motion-health-line);
+  color: var(--text-primary); white-space: pre;
+}
+
+/* US-892-d (Motion spec s3a, UIDEV-021/022): the IMU detail, #motion-detail
+   inside US-894-g's #page-detail host. Declares NO host geometry (that stays
+   --pd-*); its own row geometry is scoped here. A row is a 128 px label
+   column (COMPASS at Michroma --fs-meta + 0.06em = 120.2 px, plus its 8 px
+   gap) and the value column, min-height --row-min. The value is mono
+   --fs-label and its reason sits inline after it at --fs-meta, both on the
+   Pi's Liberation Mono line ratio (30 px at 26 px, never `normal`). The
+   reason WRAPS here, clamped to 2 lines (-webkit-line-clamp + ellipsis, the
+   only cut): 23.1 + 17.3 = 40.4 <= 44, so a wrap never grows a row. */
+#motion-detail {
+  --motion-d-label-w: 128px;    /* label column incl. its 8 px gap */
+  --motion-d-reason-gap: 6px;   /* value -> reason (Iris M2) */
+  --motion-d-label-line: 1.2;   /* the label's line box (18 px) */
+  --motion-d-label-track: 0.06em;
+  --motion-d-mono-line: 1.154;  /* Liberation Mono: 30 / 26 */
+  display: flex; flex-direction: column;
+}
+#motion-detail .motion-drow {
+  display: grid; grid-template-columns: var(--motion-d-label-w) minmax(0, 1fr);
+  align-items: center; min-height: var(--row-min);
+}
+#motion-detail .motion-dlabel {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); line-height: var(--motion-d-label-line);
+  letter-spacing: var(--motion-d-label-track);
+  white-space: nowrap; color: var(--text-secondary);
+}
+#motion-detail .motion-dval {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; text-overflow: ellipsis; white-space: normal; min-width: 0;
+  font-size: var(--fs-meta); line-height: var(--motion-d-mono-line);
+}
+#motion-detail .motion-dv {
+  font-size: var(--fs-label); line-height: var(--motion-d-mono-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#motion-detail .motion-drow[data-tone="ok"] .motion-dv { color: var(--green-ok); }
+#motion-detail .motion-drow[data-tone="warn"] .motion-dv { color: var(--amber-warn); }
+#motion-detail .motion-drow[data-tone="none"] .motion-dv { color: var(--text-tertiary); }
+#motion-detail .motion-dr {
+  margin-left: var(--motion-d-reason-gap);
+  font-size: var(--fs-meta); line-height: var(--motion-d-mono-line); color: var(--text-secondary);
 }
 
 /* US-893-b (F-127; specs/v030-light-page-design.md layout A + glyph, with the

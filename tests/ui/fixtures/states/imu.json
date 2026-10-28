@@ -15,7 +15,8 @@
     "reasons": {
       "altitude": "no_source",
       "pitchDeg": "pitch_unseeded",
-      "gradePct": "pitch_unseeded"
+      "gradePct": "pitch_unseeded",
+      "chipTempC": "no_reading"
     },
     "fusionEngine": "legacy",
     "peaks": {
@@ -24,7 +25,8 @@
       "leftG": null,
       "rightG": null,
       "sinceTs": null
-    }
+    },
+    "chipTempC": null
   },
   "driving": {
     "available": true,
@@ -49,6 +51,7 @@
       "leftG": 0.44,
       "rightG": 0.47,
       "sinceTs": "2026-10-20T14:58:02.1Z"
-    }
+    },
+    "chipTempC": 41.3
   }
 }

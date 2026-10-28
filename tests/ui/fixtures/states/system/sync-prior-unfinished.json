@@ -1,0 +1,170 @@
+{
+  "description": "AC 17 S1: the last key-off was clean but its sync ended OUTSTANDING (server down, 1,240 rows kept) and nothing has synced this boot -> the sync member 'Last sync didn't finish · 1,240 rows kept', 1 ISSUE, amber first in the DATA sentence's sync part, the glyph 'error'.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T22:55:12Z",
+      "syncStale": false,
+      "syncRowsWaiting": 1240,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "syncStaleThresholdS": 120.0,
+      "priorShutdown": {
+        "verdict": "clean",
+        "reason": "clean_poweroff",
+        "lastStage": "poweroff",
+        "label": "CLEAN (reason: clean_poweroff)",
+        "endedAtTs": "2026-10-22T03:14:55Z",
+        "endedAtAbsence": null,
+        "notAfterTs": "2026-10-22T20:05:10Z",
+        "notAfterLabel": "next boot recorded (upper bound)",
+        "caveat": null,
+        "dataQuality": null
+      },
+      "syncPriorCustody": {
+        "verdict": "OUTSTANDING",
+        "outstandingRows": 1240,
+        "countIsComplete": true,
+        "kind": "at_home_server_down",
+        "ts": "2026-10-22T03:14:50Z",
+        "current": true
+      }
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T22:55:12Z",
+        "stale": false,
+        "rowsWaiting": 1240,
+        "edrRowsWaiting": 0,
+        "notCounted": [],
+        "inProgress": false,
+        "priorCustody": {
+          "verdict": "OUTSTANDING",
+          "outstandingRows": 1240,
+          "countIsComplete": true,
+          "kind": "at_home_server_down",
+          "ts": "2026-10-22T03:14:50Z",
+          "current": true
+        },
+        "syncedThisBoot": false
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": {
+        "verdict": "clean",
+        "reason": "clean_poweroff",
+        "lastStage": "poweroff",
+        "label": "CLEAN (reason: clean_poweroff)",
+        "endedAtTs": "2026-10-22T03:14:55Z",
+        "endedAtAbsence": null,
+        "notAfterTs": "2026-10-22T20:05:10Z",
+        "notAfterLabel": "next boot recorded (upper bound)",
+        "caveat": null,
+        "dataQuality": null
+      },
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "sync",
+            "reason": "Last sync didn't finish · 1,240 rows kept"
+          }
+        ]
+      }
+    }
+  }
+}

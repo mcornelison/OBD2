@@ -997,6 +997,8 @@ def runShutdownSplash(
     dispatchLogoEvents: bool = True,
     logoEventMs: int | None = None,
     dispatchTransitionEnd: bool = True,
+    dispatchBarTransitionEnd: bool = True,
+    barEventMs: int | None = None,
 ) -> dict[str, Any]:
     """Run the SHIPPED shutdown-state-poll.js against a shutdown-state sequence.
 
@@ -1029,6 +1031,13 @@ def runShutdownSplash(
     transitionend unless ``dispatchTransitionEnd`` is False. Adds
     ``logoLog``, ``animationEvents``, ``fadeStartedAtMs``,
     ``transitionEndDispatched``, ``blackAtMs`` and ``stageOpacity``.
+
+    US-870-e: ``posts`` is every POST the page made ({route, method, token,
+    body, atMs}). #bar-fill's transitionend falls due one run
+    (``barEventMs``, else its computed transitionDuration) after each width
+    write a live transition animates, unless ``dispatchBarTransitionEnd`` is
+    False; ``barEvents`` lists those dispatched ({width, atMs}) and
+    ``fillWrites`` every write of #bar-fill's width ({width, atMs}).
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
     return _runProbe(
@@ -1045,6 +1054,8 @@ def runShutdownSplash(
             "dispatchLogoEvents": dispatchLogoEvents,
             "logoEventMs": logoEventMs,
             "dispatchTransitionEnd": dispatchTransitionEnd,
+            "dispatchBarTransitionEnd": dispatchBarTransitionEnd,
+            "barEventMs": barEventMs,
         },
     )
 

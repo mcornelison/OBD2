@@ -112,8 +112,9 @@
      --fs-giant (US-887-a, V0.30, Atlas Rule-10 G-1 2026-10-13) is a SIXTH tier
      ABOVE hero, and exactly one glyph earns it: the Driving page's gear
      (specs/v030-driving-page-design.md D-10). It joins the TOP of the
-     descending scale and moved no existing tier. */
-  --fs-giant:       120px;     /* Driving gear (specs/v030-driving-page-design.md s3) */
+     descending scale and moved no existing tier. US-888-c: 120 -> 100 px (CIO
+     in car 2026-10-27), paying for the speed at --fs-hero; still the top tier. */
+  --fs-giant:       100px;    /* Driving gear (specs/v030-driving-page-design.md s3) */
   --fs-hero:        44px;
   --fs-primary:     34px;
   --fs-secondary:   26px;
@@ -167,6 +168,7 @@
      tests/ui/test_splash_token_ssot.py. */
   --t-spin:         3.0s;      /* one logo rotation                           */
   --t-fade:         0.5s;      /* the hand-off fade                           */
+  --t-bar:          0.6s;      /* the shutdown bar's glide to each read       */
   --bright-low:     0.25;      /* logo brightness steps                       */
   --bright-mid:     0.50;
   --bright-hi:      0.75;
@@ -207,6 +209,12 @@
   /* --- OK / MINOR / linked ------------------------------------------------ */
   --green-ok:       #35C46A;   /* MINOR DTC tier, OK/healthy, "linked",
                                   trust-badge verified. Added per Atlas A-8.  */
+
+  /* --- Busy (activity only; frame-and-style s4.2, UIDEV-018) ------------- */
+  --blue-busy:      #4FA8FF;   /* "in progress", never a severity, never data.
+                                  ONE user: the top-bar sync glyph's `busy`
+                                  (System s4.3.1, CIO 2026-10-27). ~7.4:1 on
+                                  --surface.                                  */
 
   /* --- Neutral chip ------------------------------------------------------- */
   --neutral-chip-bg: #2a2f37;  /* "no description yet" + "N/A this vehicle"

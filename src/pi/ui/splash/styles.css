@@ -26,6 +26,8 @@
  *          !important, replaces the root rule's own cursor declaration.
  * Changed: 2026-10-26 -- US-869-h: the letterbox -- a 480x320 #stage scaled by
  *          --scale (stage-scale.js), centred in #splash-stage.
+ * Changed: 2026-10-27 -- US-870-e: #bar-fill / #bar-kept glide on width over
+ *          --t-bar (mirrored from tokens.css); none under reduced motion.
  * ==========================================================================*/
 
 /* --- Brand face (US-869-e; the dashboard's face, US-887-b) -------------------
@@ -75,6 +77,7 @@
   /* Motion: the retired splash.svg's timings, promoted into tokens.css (C-Atlas-3). */
   --t-spin:         3.0s;
   --t-fade:         0.5s;
+  --t-bar:          0.6s;
   --bright-low:     0.25;
   --bright-mid:     0.50;
   --bright-hi:      0.75;
@@ -203,7 +206,12 @@ body.logo-up #mark { opacity: 1; }
    The boot checklist's slot, reused: y 194-282, x 52-428, four 22 px rows (Iris
    R2) -- the track, the tick labels, label line 1, label line 2. Fill
    --accent (step progress is unbanded), track --surface, ticks and the 75 %
-   marker --line. The fill's width is the only thing the page script writes. */
+   marker --line. The fill's width is the only thing the page script writes.
+   US-870-e (spec §2.1, CIO 2026-10-27: smooth, not jumpy): the fill and the
+   amber stretch glide to each width the script writes over var(--t-bar). The
+   glide ends on the value read, never past it; the fill's transitionend at
+   100 % is the page's "seen full". Not a timer: nothing waits on it but that
+   event. */
 #progress {
   position: absolute; top: 194px; left: 52px; width: 376px; height: 88px;
   font-family: var(--font-mono);
@@ -218,6 +226,7 @@ body.logo-up #mark { opacity: 1; }
 #bar-fill {
   position: absolute; top: 0; bottom: 0; left: 0; width: 0%;
   background: var(--accent);
+  transition: width var(--t-bar) ease-out;
 }
 
 /* US-883-c: a sync that ended with rows left -- the unfilled stretch of the
@@ -226,6 +235,7 @@ body.logo-up #mark { opacity: 1; }
 #bar-kept {
   position: absolute; top: 0; bottom: 0; left: 75%; width: 0%;
   background: var(--amber-warn);
+  transition: width var(--t-bar) ease-out;
 }
 
 .bar-tick {
@@ -361,7 +371,7 @@ body.degraded #logo { animation-play-state: paused; }
   }
   body.feed-finished #logo { filter: brightness(var(--bright-hi)) !important; }
   body.r1-met #logo { filter: brightness(var(--bright-max)) !important; }
-  #mark, #warning, #splash-stage { transition: none !important; }
+  #mark, #warning, #splash-stage, #bar-fill, #bar-kept { transition: none !important; }
 }
 
 @keyframes amber-fade-in { from { opacity: 0; } to { opacity: 1; } }

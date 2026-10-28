@@ -31,6 +31,9 @@
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-c System page DATA row.
 # 2026-10-24    | Rex (US-869-c)| the `sensor` member on the DATA row and detail;
 #               |              | per-part members + data-feed; the guard extended.
+# 2026-10-27    | Rex (US-917-d)| MOVED PIN (spec s4.3.1): the sync glyph has four
+#               |              | states; sync-stale-glyph (recording, stale, a
+#               |              | delivery on record, no member) is now `ok`.
 # ================================================================================
 ################################################################################
 
@@ -323,13 +326,15 @@ def test_fixture_syncDaysOld_readsOct12_neverABareTime():
 
 
 @_needsNode
-def test_fixture_syncStaleGlyph_theGlyphIsNeutral_noMember():
+def test_fixture_syncStaleGlyph_theGlyphIsOk_noMember():
+    # MOVED PIN (US-917-d, s4.3.1): `stale` is never read; with no member and
+    # a delivery on record the glyph is `ok` (was `neutral`).
     status, capture = _payloads("sync-stale-glyph")
     view = _call("systemStatusView", status, capture)
 
     assert status["sync"]["stale"] is True
     assert status["verdict"]["issueCount"] == 0
-    assert view["glyphs"]["sync"] == "neutral"
+    assert view["glyphs"]["sync"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -681,13 +686,15 @@ def test_dom_theDetailsUpsFeedIsAmber_onlyWithTheMember(monkeypatch):
 
 
 @_needsNode
-def test_dom_theSyncGlyphIsNeutral_onTheStaleFixture(monkeypatch):
+def test_dom_theSyncGlyphIsGreenNotAmber_onTheStaleFixture(monkeypatch):
+    # MOVED PIN (US-917-d, s4.3.1): stale while driving is never amber; the
+    # delivery on record paints `ok` green (was neutral).
     monkeypatch.setenv("TZ", _ZONE)
     surface = _render("sync-stale-glyph")
     glyph = surface.pathById("glyph-sync")
-    assert glyph[-1]["attrs"]["data-state"] == "neutral"
+    assert glyph[-1]["attrs"]["data-state"] == "ok"
     colour = surface.winningDeclaration(glyph, "color")
-    assert colour is None or colour[0] not in (AMBER, GREEN)
+    assert colour is not None and colour[0] == GREEN
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-f AC 7 amber = members gate.
 # 2026-10-24    | Rex (US-869-c)| 30 fixtures (the three sensor ones).
+# 2026-10-27    | Rex (US-917-d)| 41 fixtures (the eleven sync-* ones, AC 17).
 # ================================================================================
 ################################################################################
 
@@ -217,7 +218,8 @@ def test_theSubjectIsEveryFixtureExceptSettings_andIsNotEmpty():
     # directory listing cannot pass the gate vacuously).
     assert set(names) == {n for n in gen.fixtureNames() if not n.startswith("settings-")}
     # MOVED PIN (US-869-c): + imu-faulted, imu-ups-faulted, imu-faulted-ecu-down.
-    assert len(names) == 30
+    # MOVED PIN (US-917-d): + the eleven sync-* fixtures (spec s4.3.1, AC 17).
+    assert len(names) == 30 + 11
     assert not [n for n in names if n.startswith("settings-")]
     for named in ("two-issues", "pi-hot", "pi-multi-limit", "verdict-absent"):
         assert named in names

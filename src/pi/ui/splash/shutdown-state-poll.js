@@ -39,6 +39,13 @@
  *          stage fade; the page then stays black and dies with the power.
  *          Every wait asks motionGate.willFire first; false advances that part
  *          at once. cancelled exits at any point with no close-out.
+ *          US-870-e (spec §2.1 / §5a, CIO 2026-10-27): the dim spin starts on
+ *          the first reverse animationiteration where >= MIN_REVERSE_TURNS
+ *          turns are complete AND the bar was SEEN full -- #bar-fill's
+ *          transitionend at 100 % (the 100 % read itself when no transitionend
+ *          will fire). Reaching black, by any path, POSTs
+ *          /shutdown-splash-done exactly once (never after cancelled): the
+ *          poweroff waits for it (US-870-d).
  *          The splash is a pure CONSUMER -- ShutdownSequencer is the SSOT of
  *          shutdown phase; this script only renders what it reads.
  *
@@ -61,6 +68,7 @@
  * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress bar + step words)
  * Updated: 2026-10-25 -- Sprint 114 US-883-c (the at-home sync part + words)
  * Updated: 2026-10-25 -- Sprint 114 US-870-c (the logo's spins + close-out)
+ * Updated: 2026-10-27 -- Sprint 119 US-870-e (two turns, seen full, done once)
  * ==========================================================================*/
 (function () {
   "use strict";
@@ -291,9 +299,17 @@
   var STEP_BLACK = 5;      // body.black: the stage is at opacity 0
   var LOGO_CLASSES = ["spin-rev", "spin-dim", "dim-down"];
 
+  // US-870-e: the reverse turns the logo must complete before the dim spin
+  // (spec §2.1, CIO 2026-10-27: three turns minimum -- two reverse + the dim).
+  var MIN_REVERSE_TURNS = 2;
+  var SPLASH_DONE_ROUTE = "/shutdown-splash-done";   // states_http_server, US-870-d
+
   var logoStep = STEP_NONE;
   var logoLive = false;      // the current part's animation event will fire
   var full = false;          // the bar has been drawn to 100 %
+  var seenFull = false;      // ... and its glide there has ended (US-870-e)
+  var reverseTurns = 0;      // completed reverse turns: animationiteration count
+  var doneSent = false;      // the done POST went (once, on black)
   var logoListening = false;
 
   function willFire(el, kind) {
@@ -306,9 +322,12 @@
     logoListening = true;
     logo.addEventListener("animationiteration", function (ev) {
       if (aborted || (ev && ev.target && ev.target !== logo)) return;
+      if (logoStep !== STEP_SPIN) return;
       // The reverse spin finishes the rotation it is in: the dim spin starts
-      // on the iteration boundary after the 100 % read, never mid-turn.
-      if (logoStep === STEP_SPIN && full) enterLogoStep(STEP_DIM);
+      // on an iteration boundary, never mid-turn, once enough turns are
+      // complete and the bar has been seen full.
+      reverseTurns += 1;
+      if (reverseTurns >= MIN_REVERSE_TURNS && seenFull) enterLogoStep(STEP_DIM);
     });
     logo.addEventListener("animationend", function (ev) {
       if (aborted || (ev && ev.target && ev.target !== logo)) return;
@@ -335,16 +354,43 @@
       return;
     }
     // No animation event will fire (reduced motion, styles missing): the part
-    // advances on the read that started it (Atlas G2, C-Atlas-6).
-    if (step === STEP_SPIN && full) enterLogoStep(STEP_DIM);
+    // advances on the read that started it (Atlas G2, C-Atlas-6). With no
+    // turns to count, the bar seen full is the whole condition.
+    if (step === STEP_SPIN && seenFull) enterLogoStep(STEP_DIM);
     else if (step === STEP_DIM) enterLogoStep(STEP_DIM_DOWN);
     else if (step === STEP_DIM_DOWN) enterFade();
   }
 
+  // The single convergence of every black path (the stage's transitionend,
+  // no transitionend, no stage), so the done signal lives here.
   function enterBlack() {
     if (logoStep === STEP_BLACK) return;
     logoStep = STEP_BLACK;
     document.body.classList.add("black");
+    signalDone();
+  }
+
+  /**
+   * US-870-e (Q3, Atlas S119): tell the sequencer the page is done, exactly
+   * once and never after an abort (cancelled included). The poweroff waits on
+   * this (US-870-d), bounded by its own ceiling; a failed POST is logged, and
+   * the page stays black and dies with the power either way.
+   */
+  function signalDone() {
+    if (doneSent || aborted) return;
+    doneSent = true;
+    try {
+      fetch(SPLASH_DONE_ROUTE, {
+        method: "POST",
+        cache: "no-store",
+        headers: token ? { "X-Splash-Token": token } : {},
+        body: "",
+      }).then(null, function (e) {
+        console.log("[shutdown-splash] done POST failed: " + e);
+      });
+    } catch (e) {
+      console.log("[shutdown-splash] done POST failed: " + e);
+    }
   }
 
   function enterFade() {
@@ -369,11 +415,28 @@
     stage.style.opacity = "0";
   }
 
-  // The 100 % read. A live reverse spin turns on to its next
-  // animationiteration; one with no event to wait for advances now.
+  // The 100 % read. The bar is SEEN full when its glide there ends: on
+  // #bar-fill's transitionend, or on this read when none will fire.
   function noteFull() {
     if (full) return;
     full = true;
+    var fill = document.getElementById("bar-fill");
+    if (!willFire(fill, "transition")) {
+      noteSeenFull();
+      return;
+    }
+    fill.addEventListener("transitionend", function (ev) {
+      if (aborted || (ev && ev.target && ev.target !== fill)) return;
+      if (ev && ev.propertyName && ev.propertyName !== "width") return;
+      noteSeenFull();
+    });
+  }
+
+  // A live reverse spin turns on to its next animationiteration that has
+  // enough turns; one with no event to wait for advances now.
+  function noteSeenFull() {
+    if (seenFull) return;
+    seenFull = true;
     if (logoStep === STEP_SPIN && !logoLive) enterLogoStep(STEP_DIM);
   }
 

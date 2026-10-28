@@ -43,7 +43,7 @@
          warnings icon took the room, and the bound now says no FIFTH glyph. -->
     <div class="topbar-left">
       <span class="glyph" id="glyph-bt" title="Bluetooth"><svg class="chain-mark" viewBox="0 0 36 20" aria-hidden="true" focusable="false"><path class="chain-line" d="M10 10H14M22 10H26"/><circle class="chain-dot" data-layer="bt" data-state="hollow" cx="6" cy="10" r="4"/><circle class="chain-dot" data-layer="adapter" data-state="hollow" cx="18" cy="10" r="4"/><circle class="chain-dot" data-layer="ecu" data-state="hollow" cx="30" cy="10" r="4"/></svg></span>
-      <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
+      <span class="glyph" id="glyph-sync" data-state="unknown" title="sync not read">⇅</span>
       <!-- US-696 (CIO ruling 2026-09-09): the lightning POWER glyph stood here
            and was removed -- "if I can see the screen the power is on", so
            restating it spent a slot in a band that has none to spare. The
@@ -253,61 +253,50 @@
            skeleton ships "--" because nothing has been read before the first
            poll. TIMING_ADVANCE is base timing, not knock (no knock source
            without ECMLink), so the caption is markup and always on the glass.
-           The cue points at the scroll half (history + status, US-889-c). -->
+           US-889-d (spec s3a, CIO option B): the page no longer scrolls. LOAD
+           sits alone at --fs-hero, THROTTLE | TIMING share a 2 x 1fr row, and
+           the history + status moved to the ENGINE HISTORY detail behind the
+           HISTORY › button carousel.js appends to .eng-actions (parked only).
+           US-889-e (CIO ruling 2026-10-27): LOAD and THROTTLE are full-width
+           horizontal bars, a header line above each (label left, age/reason
+           right) and the value INSIDE the bar, drawn twice: .eng-on-track over
+           the empty track, .eng-on-fill over the fill (clipped to its width by
+           carousel.js). The footer stacks TIMING / value / caption on the left
+           with HISTORY › bottom right. -->
       <section class="card" id="engine-card" aria-label="Engine" data-page-name="ENGINE">
         <div class="card-body">
-          <div class="eng-main">
-            <div class="eng-bars" aria-hidden="true">
-              <div class="eng-bar-col" data-pid="ENGINE_LOAD" data-stale="false">
-                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
+          <div class="eng-gauges">
+            <div class="eng-bar-col eng-load" data-pid="ENGINE_LOAD" data-stale="false" data-note="none" data-null="true">
+              <div class="eng-bar-head">
                 <span class="eng-label">LOAD</span>
+                <span class="eng-note" hidden></span>
               </div>
-              <div class="eng-bar-col" data-pid="THROTTLE_POS" data-stale="false">
-                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
-                <span class="eng-label">THR</span>
+              <div class="eng-bar">
+                <span class="eng-bar-text eng-on-track"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <div class="eng-bar-fill" hidden></div>
+                <span class="eng-bar-text eng-on-fill" aria-hidden="true" hidden><span class="eng-value">--</span><span class="eng-unit"></span></span>
               </div>
             </div>
-            <div class="eng-readings">
-              <div class="eng-reading eng-load" data-pid="ENGINE_LOAD" data-stale="false" data-note="none">
-                <span class="eng-label">LOAD</span>
-                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-                <span class="eng-note" hidden></span>
-              </div>
-              <div class="eng-reading" data-pid="THROTTLE_POS" data-stale="false" data-note="none">
+            <div class="eng-bar-col" data-pid="THROTTLE_POS" data-stale="false" data-note="none" data-null="true">
+              <div class="eng-bar-head">
                 <span class="eng-label">THROTTLE</span>
-                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
                 <span class="eng-note" hidden></span>
               </div>
-              <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
-                <span class="eng-label">TIMING</span>
-                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-                <span class="eng-note" hidden></span>
+              <div class="eng-bar">
+                <span class="eng-bar-text eng-on-track"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <div class="eng-bar-fill" hidden></div>
+                <span class="eng-bar-text eng-on-fill" aria-hidden="true" hidden><span class="eng-value">--</span><span class="eng-unit"></span></span>
               </div>
-              <span class="eng-basis">base timing · not knock</span>
             </div>
           </div>
-          <span class="eng-cue">↓ history and status below</span>
-          <!-- US-889-c, the scroll half (spec s3-s4, ACs 5-11). The history
-               charts are BUILT by carousel.js from states/engine-history
-               (`engineHistoryView`) -- a chart exists only when there is a
-               point to draw; an empty history is the typed absence and no
-               chart. The status row reads states/obd-live: RUN TIME is the
-               ECU's RUNTIME_SEC (never the drive's duration), CHECK ENGINE is
-               MIL_ON by value, and its count line is a tap to the Alerts card
-               ONLY while parked (data-tap). No O2 SENSORS tile until US-891. -->
-          <div class="eng-history"></div>
-          <div class="eng-status">
-            <div class="eng-stat" data-pid="RUNTIME_SEC" data-stale="false" data-note="none">
-              <span class="eng-label eng-stat-label">RUN TIME</span>
-              <span class="eng-stat-value">--</span>
+          <div class="eng-foot">
+            <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
+              <span class="eng-label">TIMING</span>
+              <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
               <span class="eng-note" hidden></span>
+              <span class="eng-basis">base timing · not knock</span>
             </div>
-            <div class="eng-stat" data-pid="MIL_ON" data-stale="false" data-note="none">
-              <span class="eng-label eng-stat-label">CHECK ENGINE</span>
-              <span class="eng-stat-value">--</span>
-              <span class="eng-codes" id="engine-codes" data-tap="false" hidden></span>
-              <span class="eng-note" hidden></span>
-            </div>
+            <div class="eng-actions"><!-- JS appends HISTORY › --></div>
           </div>
         </div>
       </section>
@@ -338,7 +327,13 @@
            `.fuel-reset-progress` the hold, #fuel-reset-confirm the confirm.
            US-922: each MPG slot's value sits in a `.fuel-line` with a
            `.fuel-unit`, the AIRFLOW g/s pattern; "MPG" shows only with a
-           figure, never beside a "--" (fuel spec s4.3). -->
+           figure, never beside a "--" (fuel spec s4.3).
+           US-890-h (spec s3a/s3b, CIO 2026-10-27): the glance is AIRFLOW +
+           the LOOP chip, then the three MPG figures. TOTAL TRIM and the trend
+           moved to #fuel-detail (the FUEL TRIM detail, in the shared
+           #page-detail host) behind the button carousel.js appends to
+           .fuel-actions (parked only); the vehicle gate follows the trend
+           there (sourceCardSpec slotHost). -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
@@ -353,11 +348,6 @@
               <div class="fuel-reading fuel-loop" data-slot="loop" data-note="reason" data-dimmed="false">
                 <span class="fuel-label">LOOP</span>
                 <span class="fuel-value fuel-chip">--</span>
-                <span class="fuel-note">not read</span>
-              </div>
-              <div class="fuel-reading fuel-total-trim" data-slot="total-trim" data-note="reason" data-dimmed="false">
-                <span class="fuel-label">TOTAL TRIM</span>
-                <span class="fuel-value">--</span>
                 <span class="fuel-note">not read</span>
               </div>
             </div>
@@ -383,7 +373,7 @@
               <span class="fuel-reset-progress" hidden aria-hidden="true"><span class="fuel-reset-progress-fill"></span></span>
             </div>
           </div>
-          <div class="fuel-trend">unavailable</div>
+          <div class="fuel-actions"><!-- JS appends the detail button --></div>
           <!-- US-890-f: the in-page reset confirm (spec s4.3). Opened only by a
                parked 2 s hold on SINCE RESET; Yes posts /fuel-reset, No
                changes nothing. Ships hidden. -->
@@ -399,10 +389,11 @@
           </div>
         </div>
       </section>
-      <!-- US-891-c (F-127; specs/v030-o2-page-design.md s3, layout A, stacked):
+      <!-- US-891-c (F-127; specs/v030-o2-page-design.md s3a, re-laid US-891-e):
            the O2 page, between Fuel and Motion (O-1). carousel.js
-           (`renderO2Card`) paints every value from states/o2 ALONE: the
-           volts row, the meta line, the dot trace and the chips. No
+           (`renderO2Card`) paints every value from states/o2 ALONE: each
+           sensor's value column (volts over age) beside its dot trace, the
+           ONE shared meta line under the rear, and the chips. No
            `data-state`: each value carries its own '--' + reason, and the
            skeleton ships the no-source faces. Labels are Michroma, double
            spaced (the subset has no middle dot). -->
@@ -414,10 +405,12 @@
               <span class="o2-chip" data-live="false">no source</span>
             </div>
             <div class="o2-row" data-none="true" data-stale="false">
-              <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
-              <span class="o2-meta">no source</span>
+              <div class="o2-valcol">
+                <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
+                <span class="o2-age">no source</span>
+              </div>
+              <svg class="o2-trace" viewBox="0 0 324 52" aria-hidden="true"></svg>
             </div>
-            <svg class="o2-trace" viewBox="0 0 456 44" aria-hidden="true"></svg>
           </div>
           <div class="o2-sensor o2-rear">
             <div class="o2-head">
@@ -425,11 +418,14 @@
               <span class="o2-chip" data-live="false">no source</span>
             </div>
             <div class="o2-row" data-none="true" data-stale="false">
-              <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
-              <span class="o2-meta">no source</span>
+              <div class="o2-valcol">
+                <span class="o2-line"><span class="o2-value">--</span><span class="o2-unit"></span></span>
+                <span class="o2-age">no source</span>
+              </div>
+              <svg class="o2-trace" viewBox="0 0 324 52" aria-hidden="true"></svg>
             </div>
-            <svg class="o2-trace" viewBox="0 0 456 44" aria-hidden="true"></svg>
           </div>
+          <div class="o2-meta">1 sample / ~-- s · last -- min</div>
           <div class="o2-cat">
             <div class="o2-head">
               <span class="o2-label">CATALYST</span>
@@ -473,35 +469,29 @@
               <span class="motion-label">ACCEL BRAKE</span>
               <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
               <span class="motion-note">not read</span>
-              <span class="motion-peak">peak ▲-- ▼--</span>
+              <span class="motion-peak" hidden>peak ▲-- ▼--</span>
             </div>
             <div class="motion-cell motion-lat" data-none="true">
               <span class="motion-label">CORNER</span>
               <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
               <span class="motion-note">not read</span>
-              <span class="motion-peak">peak L-- R--</span>
+              <span class="motion-peak" hidden>peak L-- R--</span>
             </div>
           </div>
-          <!-- US-892-c: the IMU health block, a 2 x 2 grid (left UPDATED /
-               TILT FIX, right COMPASS / GYRO, by auto-flow). Not a
-               .motion-band: it never dims (Iris M4). carousel.js
-               (`renderMotionHealth`) sets each cell's data-tone and texts. -->
-          <div class="motion-health">
-            <div class="motion-hcell motion-updated" data-tone="none">
-              <span class="motion-label">UPDATED</span>
-              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
-            </div>
+          <!-- US-892-c: the IMU health block. US-892-d (spec s3a, CIO
+               2026-10-27): ONE row, COMPASS | GYRO; UPDATED and TILT FIX
+               moved to the IMU detail (#motion-detail). Not a .motion-band:
+               it never dims (Iris M4). carousel.js (`renderMotionHealth`)
+               sets each cell's data-tone and texts; a PARKED tap on the row
+               opens the IMU detail, and the ' ›' shows only while parked. -->
+          <div class="motion-health" id="motion-health" role="button" aria-label="IMU detail">
             <div class="motion-hcell motion-compass" data-tone="none">
               <span class="motion-label">COMPASS</span>
               <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
             </div>
-            <div class="motion-hcell motion-tilt" data-tone="none">
-              <span class="motion-label">TILT FIX</span>
-              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
-            </div>
             <div class="motion-hcell motion-gyro" data-tone="none">
               <span class="motion-label">GYRO</span>
-              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span><span class="motion-hchev" hidden> ›</span></span>
             </div>
           </div>
         </div>
@@ -579,6 +569,83 @@
          The chip previously shipped that sentinel as a hard literal, so every
          build on the panel looked identical. -->
     <span id="version-chip">__DEPLOY_VERSION__</span>
+  </div>
+
+  <!-- US-894-g shared page-detail host (spec s4.6.3; Iris X-1 = (a), Atlas
+       re-gate 2026-10-27): a SIBLING of #sys-detail, not a reuse of it. Its
+       chrome (34 px head, 8 px body padding top and bottom) leaves a 270 px
+       body; #sys-detail's leaves 253. System's LAST UPDATED renders here, and
+       Engine HISTORY, Fuel FUEL TRIM and Motion IMU next. Opens only while
+       parked, and closes the tick the car leaves parked (R1). -->
+  <div id="page-detail" hidden role="dialog" aria-label="Page detail">
+    <header class="page-detail-head">
+      <button id="page-detail-back" aria-label="Back to the page">‹ BACK</button>
+      <span id="page-detail-title" class="page-detail-title"></span>
+    </header>
+    <div id="page-detail-body" class="page-detail-body">
+      <!-- JS fills the detail. US-889-d: the ENGINE HISTORY content ships
+           here so the tick paints it whether or not it is open; its entry's
+           paint re-attaches it after another detail cleared the body.
+           US-889-c (spec s3-s4, ACs 5-11): the history charts are BUILT by
+           carousel.js from states/engine-history (`engineHistoryView`) -- a
+           chart exists only when there is a point to draw; an empty history
+           is the typed absence and no chart. The status row reads
+           states/obd-live: RUN TIME is the ECU's RUNTIME_SEC (never the
+           drive's duration), CHECK ENGINE is MIL_ON by value, and its count
+           line is a tap to the Alerts card ONLY while parked (data-tap). -->
+      <div id="engine-detail" class="eng-detail">
+        <div class="eng-history"></div>
+        <div class="eng-status">
+          <div class="eng-stat" data-pid="RUNTIME_SEC" data-stale="false" data-note="none">
+            <span class="eng-label eng-stat-label">RUN TIME</span>
+            <span class="eng-stat-value">--</span>
+            <span class="eng-note" hidden></span>
+          </div>
+          <div class="eng-stat" data-pid="MIL_ON" data-stale="false" data-note="none">
+            <span class="eng-label eng-stat-label">CHECK ENGINE</span>
+            <span class="eng-stat-value">--</span>
+            <span class="eng-codes" id="engine-codes" data-tap="false" hidden></span>
+            <span class="eng-note" hidden></span>
+          </div>
+        </div>
+      </div>
+      <!-- US-890-h (Fuel spec s3b): the FUEL TRIM detail, shipped here like
+           #engine-detail. TOTAL TRIM with the LOOP chip repeated beside it
+           (trim is read against the loop), then the trend at full width --
+           the same two elements, moved: no new data, no verdict. The trend
+           is the ltft-trend source card's slot, so the vehicle gate paints
+           "no engine data" here. -->
+      <div id="fuel-detail" class="fuel-detail">
+        <div class="fuel-trim-row">
+          <div class="fuel-reading fuel-total-trim" data-slot="total-trim" data-note="reason" data-dimmed="false">
+            <span class="fuel-label">TOTAL TRIM</span>
+            <span class="fuel-value">--</span>
+            <span class="fuel-note">not read</span>
+          </div>
+          <div class="fuel-reading fuel-loop" data-slot="loop" data-note="reason" data-dimmed="false">
+            <span class="fuel-label">LOOP</span>
+            <span class="fuel-value fuel-chip">--</span>
+            <span class="fuel-note">not read</span>
+          </div>
+        </div>
+        <div class="fuel-trend">unavailable</div>
+      </div>
+      <!-- US-892-d (Motion spec s3a, UIDEV-021/022): the IMU detail, shipped
+           here like #engine-detail and painted from the same motionView on
+           every Motion paint. Six rows -- UPDATED, COMPASS, TILT FIX, GYRO
+           and this drive's two peak lines -- each a Michroma label and a
+           mono value with its FULL reason inline after it (wraps, clamped
+           to 2 lines). data-tone carries the same status colour as the
+           glance; the peaks and TILT FIX are measurements, never coloured. -->
+      <div id="motion-detail" class="motion-detail">
+        <div class="motion-drow" data-row="updated" data-tone="none"><span class="motion-dlabel">UPDATED</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="compass" data-tone="none"><span class="motion-dlabel">COMPASS</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="tilt" data-tone="none"><span class="motion-dlabel">TILT FIX</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="gyro" data-tone="none"><span class="motion-dlabel">GYRO</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="accel" data-tone="plain"><span class="motion-dlabel">ACCEL</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">peak ▲-- ▼--</span><span class="motion-dr" hidden></span></span></div></div>
+        <div class="motion-drow" data-row="corner" data-tone="plain"><span class="motion-dlabel">CORNER</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">peak L-- R--</span><span class="motion-dr" hidden></span></span></div></div>
+      </div>
+    </div>
   </div>
 
   <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases

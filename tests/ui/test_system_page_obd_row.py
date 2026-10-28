@@ -42,6 +42,8 @@
 #               |              | the Pi detail with the version chip.
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-895-a): SETTINGS › on the verdict
 #               |              | line in every state, so '--' reads '--SETTINGS ›'.
+# 2026-10-27    | Ralph (Rex)  | MOVED PIN (US-894-g): UPDATED left of SETTINGS ›,
+#               |              | so '--' reads '--UPDATEDSETTINGS ›' unparked.
 # ================================================================================
 ################################################################################
 
@@ -766,7 +768,8 @@ def test_thePage_unreadableSystemStatus_isTheVerdictTwoHyphens_neverAllOk():
     surface = _render(None, parked=False)
     card = _systemCard(surface)
     # MOVED PIN (US-895-a): SETTINGS › sits on the verdict line in every state.
-    assert _text(card) == "--SETTINGS ›"
+    # MOVED PIN (US-894-g): so does UPDATED, left of it (no ' ›' unparked).
+    assert _text(card) == "--UPDATEDSETTINGS ›"
     assert surface.pathsByClass("sys-row") == []
     verdict = surface.pathsByClass("sys-verdict")[0]
     assert verdict[-1]["attrs"]["data-level"] == "unavailable"
@@ -780,7 +783,8 @@ def test_thePage_aFileThatVanishes_dropsBackToTwoHyphens():
         steps=[{"setRoutes": {"/system-status": None}}, {"flush": 4}],
     )
     # MOVED PIN (US-895-a): SETTINGS › sits on the verdict line in every state.
-    assert _text(_systemCard(surface)) == "--SETTINGS ›"
+    # MOVED PIN (US-894-g): so does UPDATED, left of it (no ' ›' unparked).
+    assert _text(_systemCard(surface)) == "--UPDATEDSETTINGS ›"
 
 
 @_needsNode

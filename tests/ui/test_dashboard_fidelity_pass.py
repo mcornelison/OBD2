@@ -50,6 +50,8 @@
 #                               deep-edge token pins retired.
 # 2026-10-26    | Ralph (Rex)  | US-891-c -- MOVED PIN: the O2 labels and live chip
 #                               join the font-display set (O2 spec s3).
+# 2026-10-27    | Ralph (Rex)  | US-894-g -- MOVED PIN: the page-detail title,
+#                               line labels and detail-button label join it.
 # ================================================================================
 ################################################################################
 
@@ -451,7 +453,24 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     REAR  AFTER CAT / CATALYST) and its LIVE verdict chip (SWITCHING / STUCK
     LEAN / STUCK RICH) are Michroma (O2 spec s3). The withheld chip is lower
     case, so --font-mono; the volts and the meta line stay --font-mono, pinned
-    in tests/ui/test_o2_page.py."""
+    in tests/ui/test_o2_page.py.
+
+    MOVED PIN (US-894-g): the shared page-detail host's TITLE and its line
+    LABELS, and the detail button's LABEL, are Michroma (System spec s4.6.3:
+    "the title in Michroma", "the label is Michroma --fs-label", the button's
+    "Michroma --fs-label label"). The values and the button's ' ›' stay
+    --font-mono, pinned in tests/ui/test_system_last_updated.py.
+
+    MOVED PIN (US-889-d): the Engine history + status LABELS (COOLANT /
+    INTAKE AIR / BATTERY, RUN TIME / CHECK ENGINE) moved with their rows into
+    the ENGINE HISTORY detail, #engine-detail; same rule, a second scope. Their
+    values stay --font-mono, pinned in tests/ui/test_engine_history_render.py.
+
+    MOVED PIN (US-892-d): the IMU detail's row LABELS (UPDATED / COMPASS /
+    TILT FIX / GYRO / ACCEL / CORNER) are Michroma --fs-meta (Motion spec s3a,
+    Iris UIDEV-022: "the label is Michroma --fs-meta"). Their values, reasons
+    and peak glyphs stay --font-mono, pinned in
+    tests/ui/test_motion_imu_detail.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -463,9 +482,11 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#driving-card .drv-label",
         "#driving-card .drv-gear",
         "#engine-card .eng-label",
+        "#engine-detail .eng-label",
         "#fuel-card .fuel-mpg .fuel-label",
         "#nav-card .nav-label",
         "#motion-card .motion-label",
+        "#motion-detail .motion-dlabel",
         "#o2-card .o2-label",
         '#o2-card .o2-chip[data-live="true"]',
         "#light-card .light-word",
@@ -478,6 +499,9 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#code-alert .code-alert-chip",
         "#code-alert-dismiss",
         ".sys-row-label",
+        ".page-detail-title",
+        ".page-detail-label",
+        ".page-detail-btn-label",
     }, bound
 
 

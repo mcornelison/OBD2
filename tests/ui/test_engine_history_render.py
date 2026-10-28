@@ -36,6 +36,12 @@
 #               |              | DTC_COUNT 1 reads '1 code ›' (spec s3:53).
 # 2026-10-22    | Ralph (Rex)  | US-511-b MOVED PIN: parked is states/gear (P/N),
 #               |              | so the parked boots serve a gear route too.
+# 2026-10-27    | Rex (US-889-d) | MOVED PINS: the history + status left the card
+#               |              | for the ENGINE HISTORY detail (#engine-detail on
+#               |              | the shared host): every .eng-hist*/.eng-stat*
+#               |              | selector re-scoped, the chart 46 -> 40 (:923), the
+#               |              | renderEngineScroll call (:794), and the DOM checks
+#               |              | that read 'on the glass' open the detail first.
 # ================================================================================
 ################################################################################
 
@@ -65,11 +71,9 @@ from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
 )
 from tests.ui.test_dashboard_fidelity_pass import _stripJsComments  # noqa: E402
 from tests.ui.test_engine_page import (  # noqa: E402
-    _bodyWidthPx,
     _child,
     _classes,
     _decl,
-    _enginePaths,
     _engineRules,
     _monoWidth,
     _ms,
@@ -77,6 +81,7 @@ from tests.ui.test_engine_page import (  # noqa: E402
     _rule,
     _textOf,
 )
+from tests.ui.test_system_last_updated import _geometry  # noqa: E402
 from tests.ui.test_topbar_three_column_grid import michromaWidthPx  # noqa: E402
 
 _HTML = os.path.join(rh.DASHBOARD_DIR, "dashboard.html")
@@ -183,6 +188,26 @@ def _param(value: float | None, unit: str, **extra: Any) -> dict[str, Any]:
     return entry
 
 
+def _detailWidthPx() -> float:
+    """The ENGINE HISTORY detail's content width: the shared host's body,
+    480 less its declared padding each side (US-894-g)."""
+    return 480 - 2 * _geometry()["bodyPadX"]
+
+
+def _enginePaths(surface: rh.Surface, cls: str) -> list[list[dict[str, Any]]]:
+    """US-889-d: the history + status live in #engine-detail, not the card."""
+    return [
+        p for p in surface.pathsByClass(cls)
+        if any(n.get("attrs", {}).get("id") == "engine-detail" for n in p)
+    ]
+
+
+def _detailOpen(surface: rh.Surface) -> bool:
+    path = surface.pathById("page-detail")
+    assert path is not None
+    return path[-1]["attrs"].get("hidden") is None
+
+
 def _boot(
     history: Any = None, obdLive: Any = None, system: Any = None,
     steps: list[dict[str, Any]] | None = None, nowIso: str = "2026-10-20T15:12:30Z",
@@ -202,19 +227,28 @@ def _boot(
     return rh.dashboardSurface(dom["tree"])
 
 
-def _bootHistory(name: str) -> rh.Surface:
-    fx = _fixture(name)
-    return _boot(history=fx["engine-history"], nowIso=fx["now"])
-
-
 # Parked is the US-511 debounce: the parked GEAR (US-511-b) must be HELD for
 # parkedOnS (8 s).
 _HOLD_PARKED = [{"flush": 4}, {"advanceMs": 9000, "flush": 4}]
+# US-889-d: the history + status are on the glass only in the ENGINE HISTORY
+# detail, which opens only while parked (the HISTORY › button).
+_OPEN_DETAIL = [{"click": "engine-history-btn"}, {"flush": 2}]
+
+
+def _bootHistory(name: str) -> rh.Surface:
+    """MOVED PIN (US-889-d): parked, with the ENGINE HISTORY detail open."""
+    fx = _fixture(name)
+    return _boot(
+        history=fx["engine-history"], nowIso=fx["now"], gear=_gearParked(),
+        steps=_HOLD_PARKED + _OPEN_DETAIL,
+    )
 
 
 def _bootMil(name: str, parked: bool, click: bool = False) -> rh.Surface:
     fx = _fixture(name)
     steps = list(_HOLD_PARKED)
+    if parked:
+        steps += _OPEN_DETAIL
     if click:
         steps += [{"click": "engine-codes"}, {"flush": 2}]
     return _boot(
@@ -647,7 +681,8 @@ def test_dom_emptyAfterRestart_isTheAbsenceText_andNoChartElement():
 
 @_NODE_ONLY
 def test_dom_noEngineHistoryFile_isTheAbsenceText():
-    surface = _boot()
+    surface = _boot(gear=_gearParked(), steps=_HOLD_PARKED + _OPEN_DETAIL)
+    assert _detailOpen(surface)
     host = _historyHost(surface)
     assert [_textOf(p[-1]) for p in _descendants(host, "eng-absence")] == [ABSENCE]
     assert _descendants(host, "eng-hist-chart") == []
@@ -684,7 +719,7 @@ def test_dom_redSpan_isTheCriticalRedToken():
     payload["series"] = dict(payload["series"], COOLANT_TEMP=[
         {"ts": "2026-10-20T15:00:30Z", "value": 112.0, "band": "red"},
     ])
-    surface = _boot(history=payload)
+    surface = _boot(history=payload, gear=_gearParked(), steps=_HOLD_PARKED + _OPEN_DETAIL)
     span = _descendants(_histBox(surface, "COOLANT_TEMP"), "eng-hist-span")
     assert surface.winningDeclaration(span[0], "fill")[0] == "var(--critical-red)"
 
@@ -710,13 +745,15 @@ def test_dom_eachGraph_isLabelledWithItsNameAndWindow_andEndValue(name: str, win
 @_NODE_ONLY
 def test_dom_milOnTwelve_moving_showsTheCount_withNoTapTarget():
     """Validation row: mil-on-twelve-codes moving -> 'ON' / '12 codes ›'; tap
-    target absent, and a tap goes nowhere."""
+    target absent, and a tap goes nowhere. MOVED PIN (US-889-d): moving, the
+    ENGINE HISTORY detail cannot be open, so the line is painted (the tick
+    paints it open or not) but not on the glass."""
     surface = _bootMil("mil-on-twelve-codes", parked=False, click=True)
     tile = _stat(surface, "MIL_ON")
     assert _textOf(_child(tile, "eng-stat-value")[-1]) == "ON"
     codes = surface.pathById("engine-codes")
     assert codes is not None and _textOf(codes[-1]) == "12 codes ›"
-    assert surface.rendered(codes)
+    assert not _detailOpen(surface) and not surface.rendered(codes)
     assert codes[-1]["attrs"].get("data-tap") == "false"
     assert "role" not in codes[-1]["attrs"]
     assert _pageName(surface) != "ALERTS"
@@ -729,9 +766,12 @@ def test_dom_milOnTwelve_parked_isATapToTheAlertsCard():
     before = _bootMil("mil-on-twelve-codes", parked=True)
     codes = before.pathById("engine-codes")
     assert codes is not None and _textOf(codes[-1]) == "12 codes ›"
+    assert before.rendered(codes)
     assert codes[-1]["attrs"].get("data-tap") == "true"
     assert codes[-1]["attrs"].get("role") == "button"
     after = _bootMil("mil-on-twelve-codes", parked=True, click=True)
+    # US-889-d: the target is unchanged; the detail closes so Warnings shows.
+    assert not _detailOpen(after)
     assert _pageName(after) == "ALERTS"
 
 
@@ -761,7 +801,10 @@ def test_dom_everyMilFixture_paintsOnAndItsCount(name: str, count: int):
 @_NODE_ONLY
 def test_dom_milOff_hidesTheCountLine():
     obdLive = {"params": {"MIL_ON": _param(0.0, "mil"), "DTC_COUNT": _param(0.0, "count")}}
-    surface = _boot(obdLive=obdLive, system=_parked(), steps=_HOLD_PARKED, gear=_gearParked())
+    surface = _boot(
+        obdLive=obdLive, system=_parked(), steps=_HOLD_PARKED + _OPEN_DETAIL, gear=_gearParked()
+    )
+    assert _detailOpen(surface)
     assert _textOf(_child(_stat(surface, "MIL_ON"), "eng-stat-value")[-1]) == "OFF"
     codes = surface.pathById("engine-codes")
     assert codes is not None and not surface.rendered(codes)
@@ -770,7 +813,7 @@ def test_dom_milOff_hidesTheCountLine():
 @_NODE_ONLY
 def test_dom_runTimeAbsent_isDashDash_withNotReadShown():
     obdLive = json.loads(_read(os.path.join(_FIXTURES, "not-read-with-reason.json")))["obd-live"]
-    surface = _boot(obdLive=obdLive)
+    surface = _boot(obdLive=obdLive, gear=_gearParked(), steps=_HOLD_PARKED + _OPEN_DETAIL)
     tile = _stat(surface, "RUNTIME_SEC")
     assert _textOf(_child(tile, "eng-stat-value")[-1]) == "--"
     note = _child(tile, "eng-note")
@@ -778,9 +821,10 @@ def test_dom_runTimeAbsent_isDashDash_withNotReadShown():
 
 
 def test_noO2SensorsTile_untilUs891():
-    """Iris G-3: no O2 SENSORS tile in this story."""
-    markup = re.search(r'id="engine-card".*?</section>', _read(_HTML), re.S)
-    assert markup is not None
+    """Iris G-3: no O2 SENSORS tile in this story. MOVED PIN (US-889-d): the
+    status row now ships in #engine-detail."""
+    markup = re.search(r'id="engine-detail".*?</div>\s*</div>\s*</div>', _read(_HTML), re.S)
+    assert markup is not None and "eng-status" in markup.group(0)
     assert "O2" not in re.sub(r"<!--.*?-->", "", markup.group(0), flags=re.S)
 
 
@@ -790,8 +834,9 @@ def test_theTickRendersTheScrollHalf_fromEngineHistoryAndTheParkedDebounce():
         # MOVED PIN (US-511-b): the debounce is fed the gear, not idle.
         r"engineParked = parkedNext\(engineParked, gearParked\(lastGear\), nowMs, carouselCfg\);", js
     )
+    # MOVED PIN (US-889-d): the root is #engine-detail, not the card.
     assert re.search(
-        r"renderEngineScroll\(\s*engineCard,\s*engineHistoryView\(await stateOnce\(\"engine-history\"\)\),"
+        r"renderEngineScroll\(\s*engineDetail,\s*engineHistoryView\(await stateOnce\(\"engine-history\"\)\),"
         r"\s*engineStatusView\(await stateOnce\(\"obd-live\"\), engineParked\.parked, nowMs\)",
         js,
     )
@@ -840,12 +885,12 @@ def test_spanColour_isOnlyThroughTheDataBandTokens():
             assert re.search(r'\.eng-hist-span\[data-band="(amber|red)"\]$', sel), sel
         if "eng-hist-line" in sel:
             assert "data-band" not in sel and "amber" not in body and "red)" not in body
-    assert _decl(_rule('#engine-card .eng-hist-span[data-band="amber"]'), "fill") == "var(--amber-warn)"
-    assert _decl(_rule('#engine-card .eng-hist-span[data-band="red"]'), "fill") == "var(--critical-red)"
+    assert _decl(_rule('#engine-detail .eng-hist-span[data-band="amber"]'), "fill") == "var(--amber-warn)"
+    assert _decl(_rule('#engine-detail .eng-hist-span[data-band="red"]'), "fill") == "var(--critical-red)"
 
 
 def test_statusGrid_isMaxContentThen1fr_withAScoped8pxGap():
-    body = _rule("#engine-card .eng-status")
+    body = _rule("#engine-detail .eng-status")
     assert _decl(body, "display") == "grid"
     assert _decl(body, "grid-template-columns") == "max-content 1fr"
     assert _decl(body, "gap") == "var(--eng-stat-gap)"
@@ -862,7 +907,7 @@ def test_statusTilesAndGraphs_haveNoFixedHeightOrClip():
 
 
 def test_statusValues_areMonoAtFsLabel_noWrap():
-    for selector in ("#engine-card .eng-stat-value", "#engine-card .eng-codes"):
+    for selector in ("#engine-detail .eng-stat-value", "#engine-detail .eng-codes"):
         body = _rule(selector)
         assert _decl(body, "font-family") == "var(--font-mono)", selector
         assert _decl(body, "font-size") == "var(--fs-label)", selector
@@ -881,7 +926,7 @@ def _statusFits(count: str, runTime: str = "18:12", note: str = "not read") -> b
         _monoWidth(runTime, "var(--fs-label)"),
         _monoWidth(note, "var(--fs-meta)"),
     )
-    checkCol = _bodyWidthPx() - runCol - gap
+    checkCol = _detailWidthPx() - runCol - gap
     needs = max(
         michromaWidthPx("CHECK ENGINE", 15),
         _monoWidth("OFF", "var(--fs-label)"),
@@ -893,7 +938,8 @@ def _statusFits(count: str, runTime: str = "18:12", note: str = "not read") -> b
 
 def test_statusRow_specArithmetic_104Plus160Plus8Is272():
     total = michromaWidthPx("RUN TIME", 15) + michromaWidthPx("CHECK ENGINE", 15) + _px("var(--eng-stat-gap)")
-    assert round(total) == 272 and total <= _bodyWidthPx() == 448
+    # MOVED PIN (US-889-d): the row's width is the detail's (456), not the card's 448.
+    assert round(total) == 272 and total <= _detailWidthPx() == 456
 
 
 @pytest.mark.parametrize("count", ["12", "123"])
@@ -906,9 +952,9 @@ def test_statusFitModel_failsAPlantedOverflow():
 
 
 def _historyHeadFits(window: str) -> bool:
-    gap = _px(_decl(_rule("#engine-card .eng-hist-head"), "gap") or "")
+    gap = _px(_decl(_rule("#engine-detail .eng-hist-head"), "gap") or "")
     widest = max(michromaWidthPx(label, 15) for _, label in SERIES)
-    return widest + gap + _monoWidth("· " + window, "var(--fs-meta)") <= _bodyWidthPx()
+    return widest + gap + _monoWidth("· " + window, "var(--fs-meta)") <= _detailWidthPx()
 
 
 def test_historyHead_fitsTheWidestLabelAndWindow():
@@ -917,10 +963,11 @@ def test_historyHead_fitsTheWidestLabelAndWindow():
 
 
 def test_historyChart_leavesRoomForTheEndLabel():
-    gap = _px(_decl(_rule("#engine-card .eng-hist-row"), "gap") or "")
+    gap = _px(_decl(_rule("#engine-detail .eng-hist-row"), "gap") or "")
     end = _monoWidth("230°F", "var(--fs-meta)")
-    assert _bodyWidthPx() - gap - end > _bodyWidthPx() / 2
-    assert _px(_decl(_rule("#engine-card .eng-hist-chart"), "height") or "") == 46
+    assert _detailWidthPx() - gap - end > _detailWidthPx() / 2
+    # MOVED PIN (US-889-d, spec s3b): --eng-graph-h 46 -> 40.
+    assert _px(_decl(_rule("#engine-detail .eng-hist-chart"), "height") or "") == 40
 
 
 # ---------------------------------------------------------------------------

@@ -9,13 +9,15 @@
 #   checked that the ELEMENT is present and laid out, never its `data-state`.
 #   This file turns the glyph's behaviour into evidence.
 #
-#   THE RULE TODAY (US-894-c, spec s4.3 I4, Atlas P9). Amber means counted
-#   (spec s4.0): the glyph is amber EXACTLY while the provider's verdict has a
-#   `sync` member, and neutral (`--text-secondary`) otherwise. Sync has no
-#   member until US-917, so on every real payload the glyph is neutral --
-#   `sync.stale` alone no longer paints it amber, and nothing paints it green.
-#   The amber-with-a-member branch is pinned against a verdict carrying a
-#   synthetic `sync` member, the shape US-917 will publish.
+#   THE RULE TODAY (US-917-d, spec s4.3.1; was US-894-c's neutral/amber).
+#   Four states, first match wins: `error` (amber) EXACTLY while the
+#   provider's verdict has a `sync` member -- amber still means counted
+#   (s4.0); `busy` (--blue-busy) while sync.inProgress; `ok` (green) once
+#   sync.lastOkTs is on record; else `unknown` (--text-tertiary).
+#   `sync.stale` never paints anything. The member-driven cases here add a
+#   synthetic `sync` member to the real builder's verdict; the provider's own
+#   S1-S3 members are pinned on the generated sync-* fixtures
+#   (tests/ui/test_sync_glyph_four_states.py).
 #
 #   THE I-us633 FINDING (green by default) IS CLOSED by that rule: the old
 #   `s.stale === true ? "amber" : "ok"` made GREEN the default for every input
@@ -48,10 +50,15 @@
 #               |              | member and amber only with one; the I-us633
 #               |              | characterisations are re-recorded; the SYNC
 #               |              | tile is retired, so card text is the DATA row.
+# 2026-10-27    | Rex (US-917-d)| MOVED PINS (spec s4.3.1): FOUR states, first
+#               |              | match wins -- error (a sync member, amber),
+#               |              | busy (inProgress, blue), ok (lastOkTs on record,
+#               |              | green), unknown (grey). neutral/amber are gone;
+#               |              | the reset paints syncGlyphState(null) = unknown.
 # ================================================================================
 ################################################################################
 
-"""US-633 / US-894-c tests: the SYNC glyph is amber only for a counted member."""
+"""US-633 / US-894-c / US-917-d tests: the SYNC glyph's four states."""
 
 from __future__ import annotations
 
@@ -96,6 +103,9 @@ PANEL = (480, 320)
 GREEN = "var(--green-ok)"
 AMBER = "var(--amber-warn)"
 NEUTRAL = "var(--text-secondary)"
+# US-917-d: the busy and unknown looks.
+BLUE = "var(--blue-busy)"
+GREY = "var(--text-tertiary)"
 
 # Spool S-3 owns the real number; any positive threshold exercises the policy.
 _STALE_THRESHOLD_S = 300.0
@@ -104,8 +114,9 @@ _NOW = "2026-08-31T10:50:00Z"
 _FRESH_SYNC = "2026-08-31T10:49:22Z"
 _STALE_SYNC = "2026-08-31T09:00:00Z"
 
-# The member US-917 will publish. No producer emits it yet, so it is added to
-# the REAL builder's verdict here -- the only hand-set field in this file.
+# A `sync` member in US-917-c's shape, added to the REAL builder's verdict
+# here (no threshold is handed in, so the builder counts none itself) -- the
+# only hand-set field in this file.
 _SYNC_MEMBER = {"key": "sync", "reason": "Sync failing at home."}
 
 
@@ -208,8 +219,9 @@ def test_theHarnessActuallyReadsTheSyncGlyph_negativeControl():
     When: a payload carrying a `sync` member is rendered
     Then: the glyph resolves to a real state AND a real colour (amber).
     """
+    # MOVED PIN (US-917-d): the member's state is `error` (was `amber`).
     state, colour = _glyph(_withSyncMember(_systemStatus()))
-    assert state == "amber", f"harness read no glyph state: {state!r}"
+    assert state == "error", f"harness read no glyph state: {state!r}"
     assert colour == AMBER, f"harness read no glyph colour: {colour!r}"
 
 
@@ -248,84 +260,100 @@ def test_theStylesheetPaintsGreenOnlyForTheOkState():
 
 
 # ---------------------------------------------------------------------------
-# THE RULE (I4): neutral without a member, whatever the sync block says.
+# THE RULE (US-917-d, s4.3.1): error (member) > busy > ok (lastOkTs) > unknown.
+# MOVED PINS: each case below read `neutral` under US-894-c.
 # ---------------------------------------------------------------------------
 
 
-def test_syncGlyph_healthySync_rendersNeutral():
+def test_syncGlyph_healthySync_rendersOk():
     """
     Given: a sync that succeeded 38 s ago
     When: the shipped dashboard renders it
-    Then: neutral -- the glyph makes no green claim; the DATA row says when.
+    Then: ok, green -- a delivery is on record and no member is counted.
     """
     state, colour = _glyph(_systemStatus())
-    assert state == "neutral"
-    assert colour not in (GREEN, AMBER)
+    assert state == "ok"
+    assert colour == GREEN
 
 
-def test_syncGlyph_atlasDrainingBacklog_staysNeutral_punchListH2():
+def test_syncGlyph_atlasDrainingBacklog_isOkNeverAmber_punchListH2():
     """
     Given: Atlas's punch-list H2 shape -- sync working through a backlog
     When: rendered
-    Then: neutral, never amber: a draining backlog is health, not a fault,
-          and the backlog itself is the DATA row's `rows waiting`.
+    Then: ok, never amber: a draining backlog is health, not a fault, and the
+          backlog itself is the DATA row's `rows waiting`.
     """
     payload = _systemStatus(syncRowsWaiting=3000)
-    assert _glyph(payload)[0] == "neutral"
+    assert _glyph(payload)[0] == "ok"
     assert "3,000 rows waiting" in _dataRow(payload)["sentence"]
 
 
-def test_syncGlyph_staleWhileRecording_isNeutral_noMemberNoAmber():
+def test_syncGlyph_aPushRunning_rendersBusyBlue():
+    """
+    Given: sync.inProgress true (US-917-a) and no member
+    When: rendered
+    Then: busy, blue -- over the green of the delivery on record.
+    """
+    state, colour = _glyph(_systemStatus(syncInProgress=True))
+    assert state == "busy"
+    assert colour == BLUE
+
+
+def test_syncGlyph_staleWhileRecording_isOk_noMemberNoAmber():
     """
     Given: a drive recording with the last sync well past the threshold, so the
            shipped policy sets `sync.stale`
     When: the glyph renders it
-    Then: NEUTRAL, not amber. `stale` is not a verdict member (Atlas P9), and an
-          amber nobody counted is the s4.0 false instrument. (The US-633 pin
-          that this rendered amber is MOVED here, US-894-c.)
+    Then: ok, not amber. `stale` is not a verdict member (Atlas P9) and driving
+          is never a sync case (s4.3.1); an amber nobody counted is the s4.0
+          false instrument.
     """
     payload = _emitted("recording", _STALE_SYNC, driveId=51)
     assert payload["sync"]["stale"] is True
     assert payload["verdict"]["issueCount"] == 0
     state, colour = _glyph(payload)
-    assert state == "neutral"
+    assert state == "ok"
     assert colour != AMBER
 
 
-@pytest.mark.parametrize("lastOk", [None, "corrupt-value"])
-def test_syncGlyph_recordingWithNoUsableSync_isNeutral(lastOk):
+@pytest.mark.parametrize("lastOk, want", [(None, "unknown"), ("corrupt-value", "ok")])
+def test_syncGlyph_recordingWithNoUsableSync_isNeverAmber(lastOk, want):
     """
     Given: a drive recording with no sync on record, or a corrupt stamp -- the
            policy flags both stale
     When: rendered
-    Then: neutral; the DATA row carries the fact in words, never a raw string.
+    Then: never amber. Null is `unknown`; a non-null stamp is `ok` by the
+          s4.3.1 rule (lastOkTs non-null; the glyph does not parse it), and the
+          DATA row carries the fact in words, never a raw string.
     """
     payload = _emitted("recording", lastOk, driveId=51)
     assert payload["sync"]["stale"] is True
-    assert _glyph(payload)[0] == "neutral"
+    assert _glyph(payload)[0] == want
     row = _dataRow(payload)
     assert "corrupt-value" not in row["value"]
     assert row["value"].endswith("no sync on record" if lastOk is None else "synced --")
 
 
-def test_syncGlyph_withASyncMember_rendersAmber():
+def test_syncGlyph_withASyncMember_rendersError():
     """
-    Given: a verdict that COUNTS sync (the member US-917 will publish)
+    Given: a verdict that COUNTS sync, with a push running too
     When: rendered
-    Then: amber -- the glyph goes amber exactly while the member is present.
+    Then: error, amber -- the member wins over busy (amber over blue).
     """
-    payload = _withSyncMember(_emitted("recording", _STALE_SYNC, driveId=51))
+    payload = _withSyncMember(
+        _emitted("recording", _STALE_SYNC, driveId=51, syncInProgress=True)
+    )
     state, colour = _glyph(payload)
-    assert state == "amber"
+    assert state == "error"
     assert colour == AMBER
 
 
-def test_syncGlyph_goesAmberWhenTheMemberArrives_andNeutralWhenItLeaves():
+def test_syncGlyph_goesErrorWhenTheMemberArrives_andOkWhenItLeaves():
     """
     Given: a panel that painted a member-less payload
     When: the next poll carries a `sync` member, then the one after drops it
-    Then: neutral -> amber -> neutral. A glyph written once and never updated
-          fails here.
+    Then: ok -> error -> ok (amber straight to green on the delivery that
+          clears the member). A glyph written once and never updated fails.
     """
     plain = _systemStatus()
     counted = _withSyncMember(plain)
@@ -333,12 +361,12 @@ def test_syncGlyph_goesAmberWhenTheMemberArrives_andNeutralWhenItLeaves():
         copy.deepcopy(plain),
         steps=[{"flush": 4}, {"setRoutes": {"/system-status": counted}}, {"flush": 4}],
     )
-    assert state == "amber"
+    assert state == "error"
     state, _ = _glyph(
         copy.deepcopy(counted),
         steps=[{"flush": 4}, {"setRoutes": {"/system-status": plain}}, {"flush": 4}],
     )
-    assert state == "neutral"
+    assert state == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -347,15 +375,16 @@ def test_syncGlyph_goesAmberWhenTheMemberArrives_andNeutralWhenItLeaves():
 
 
 @pytest.mark.parametrize("shape", ["absent", "null"])
-def test_syncGlyph_syncBlockMissing_rendersNeutral(shape):
+def test_syncGlyph_syncBlockMissing_rendersUnknown(shape):
+    # MOVED PIN (US-917-d): unknown, grey (was neutral).
     payload = _systemStatus()
     if shape == "absent":
         del payload["sync"]
     else:
         payload["sync"] = None
     state, colour = _glyph(payload)
-    assert state == "neutral"
-    assert colour not in (GREEN, AMBER)
+    assert state == "unknown"
+    assert colour == GREY
 
 
 def test_dataRow_syncBlockAbsent_showsNoDateAndNoInventedCount():
@@ -373,95 +402,102 @@ def test_dataRow_syncBlockAbsent_showsNoDateAndNoInventedCount():
     assert "0 rows waiting" not in row["sentence"]
 
 
-def test_syncGlyph_stateFileMissingEntirely_rendersNeutral():
-    """No /system-status file at all -> neutral, the markup's starting value."""
-    assert _glyph(None)[0] == "neutral"
+def test_syncGlyph_stateFileMissingEntirely_rendersUnknown():
+    """No /system-status file at all -> unknown, the markup's starting value
+    (MOVED PIN, US-917-d: was neutral)."""
+    assert _glyph(None)[0] == "unknown"
 
 
 def test_syncGlyph_stateFileVanishesAfterACountedRead_doesNotLingerAmber():
     """
-    Given: a panel that painted an amber (member) glyph
+    Given: a panel that painted an error (member) glyph
     When: the state file then disappears (the emitter died, tmpfs cleared)
-    Then: the glyph returns to NEUTRAL -- `resetSystemGlyphs` holds; a lingering
-          paint from a dead emitter is a reading nobody is taking any more.
+    Then: the glyph returns to UNKNOWN -- `resetSystemGlyphs` paints
+          syncGlyphState(null); a lingering paint from a dead emitter is a
+          reading nobody is taking any more. (MOVED PIN, US-917-d.)
     """
     state, colour = _glyph(
         _withSyncMember(_systemStatus()),
         steps=[{"flush": 4}, {"setRoutes": {"/system-status": None}}, {"flush": 4}],
     )
-    assert state == "neutral", "a dead emitter left the sync glyph painted"
+    assert state == "unknown", "a dead emitter left the sync glyph painted"
     assert colour != AMBER
 
 
-def test_syncGlyph_stateFileKeptAfterACountedRead_staysAmber_control():
-    """The control: the same two-step render with the file kept stays amber."""
+def test_syncGlyph_stateFileKeptAfterACountedRead_staysError_control():
+    """The control: the same two-step render with the file kept stays error."""
     state, _ = _glyph(
         _withSyncMember(_systemStatus()), steps=[{"flush": 4}, {"flush": 4}]
     )
-    assert state == "amber"
+    assert state == "error"
 
 
 # ---------------------------------------------------------------------------
-# I-us633, RE-RECORDED (US-894-c). Each of these rendered GREEN before; the
-# member rule makes every one neutral.
+# I-us633, RE-RECORDED (US-894-c, then US-917-d). Green now has ONE source, a
+# delivery on record (lastOkTs non-null); never-synced is unknown, never green.
 # ---------------------------------------------------------------------------
 
 
-def test_recorded_neverSyncedWhileParked_isNeutralNotGreen():
+def test_recorded_neverSyncedWhileParked_isUnknownNotGreen():
     """
     Given: a parked Pi that has NEVER completed a sync, 4820 rows waiting
     When: the shipped policy runs and the panel renders it
-    Then: the glyph is neutral (it was GREEN under I-us633) and the DATA row
+    Then: the glyph is unknown (it was GREEN under I-us633) and the DATA row
           says `no sync on record` -- no `OK` above `never` anywhere.
     """
     payload = _emitted("idle", None, syncRowsWaiting=4820)
     assert payload["sync"]["stale"] is False, "the producer does not flag a parked Pi"
     state, colour = _glyph(payload)
-    assert state == "neutral"
+    assert state == "unknown"
     assert colour != GREEN
     row = _dataRow(payload)
     assert row["value"].endswith("no sync on record"), row
     assert "4,820 rows waiting" in row["sentence"], row
 
 
-def test_recorded_syncThirtySevenDaysBehindWhileParked_isNeutral_andDated():
+def test_recorded_syncThirtySevenDaysBehindWhileParked_isOk_andDated():
     """
-    Given: a parked Pi whose last data stored 2026-07-25 -- 37 days ago
+    Given: a parked Pi whose last data stored 2026-07-25 -- 37 days ago, built
+           with no S3 threshold (so the provider counts no member)
     When: rendered
-    Then: neutral (was green), and the row dates it `Jul 25`, never a bare time.
+    Then: ok, the colour of the last result (s4.3.1; only the provider's sync
+          member makes it error), and the row dates it `Jul 25`.
     """
     payload = _emitted("idle", "2026-07-25T10:00:00Z", syncRowsWaiting=48200)
     assert payload["sync"]["stale"] is False
-    assert _glyph(payload)[0] == "neutral"
+    assert _glyph(payload)[0] == "ok"
     assert _dataRow(payload)["value"].endswith("synced Jul 25")
 
 
 @pytest.mark.parametrize("stale", ["missing", "true"])
-def test_recorded_malformedStale_isNeutral(stale):
-    """A `stale` key missing, or the STRING "true": neutral (both were green)."""
+def test_recorded_malformedStale_isIgnored(stale):
+    """A `stale` key missing, or the STRING "true": `stale` is never read, so
+    the delivery on record decides -- ok (MOVED PIN, US-917-d: was neutral)."""
     payload = _systemStatus()
     if stale == "missing":
         del payload["sync"]["stale"]
     else:
         payload["sync"]["stale"] = "true"
-    assert _glyph(payload)[0] == "neutral"
+    assert _glyph(payload)[0] == "ok"
 
 
 def test_theGlyphHasExactlyOneAcquisition_offTheVerdict():
     """
     Given: ssot-design-pattern rule B -- one acquisition, many consumers
     When: carousel.js is read
-    Then: `syncGlyphState` is defined once and called once, from
-          `systemStatusView`, over the whole payload -- it reads the verdict's
-          members, never `sync.stale` or a second freshness source.
+    Then: `syncGlyphState` is defined once and called from `systemStatusView`
+          over the whole payload, plus by the reset with null (MOVED PIN,
+          US-917-d) -- it reads the verdict's members and the sync block,
+          never `sync.stale` or a second freshness source.
     """
     jsPath = os.path.join(rh.DASHBOARD_DIR, "carousel.js")
     with open(jsPath, encoding="utf-8") as fh:
         body = fh.read()
-    assert body.count("syncGlyphState(") == 2, (
-        "expected exactly one definition and one call site of syncGlyphState"
+    assert body.count("syncGlyphState(") == 3, (
+        "expected one definition, the view's call and the reset's null call"
     )
     assert "sync: syncGlyphState(data)," in body
+    assert "paintSyncGlyph(glyphEls.sync, syncGlyphState(null));" in body
     start = body.index("function syncGlyphState(")
     fn = body[start:body.index("\n  }", start)]
     assert "verdictMemberKeys(data)" in fn
