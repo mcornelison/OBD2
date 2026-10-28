@@ -43,6 +43,9 @@
 #               |              | with an SVG arrow; MOVED PINS: gear view keys,
 #               |              | fixture list (+2 hint fixtures).
 # 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
+# 2026-10-27    | Rex (US-888-c) | Gear 100 px top-aligned (--drv-gear-top pin), speed at
+#               |              | --fs-hero; MOVED PINS: _columnHeights and _readingWidth
+#               |              | read the speed's own size.
 # ================================================================================
 ################################################################################
 
@@ -846,6 +849,103 @@ def test_everyMichromaStringIsInTheSubset():
         michromaWidthPx(text, 15)
 
 
+# US-888-c (spec s3, R2): michroma-brand.woff2's vertical metrics, so the gear's
+# cap top can be lined up with the side labels' cap tops. unitsPerEm 2048, OS/2
+# sCapHeight 1536, sTypoAscender 2368, sTypoDescender -544, lineGap 0,
+# USE_TYPO_METRICS set: the content area is (2368 + 544) / 2048 em, centred in
+# the line box, and the cap top sits (2368 - 1536) / 2048 em below its top.
+MICHROMA_UPM = 2048
+MICHROMA_CAP_HEIGHT = 1536
+MICHROMA_ASCENDER = 2368
+MICHROMA_DESCENDER = -544
+# A drift this large between --drv-gear-top and the declared sizes fails (AC 2).
+GEAR_TOP_TOLERANCE_PX = 1.0
+SPEED_RULE = "#driving-card .drv-speed .drv-value"
+
+
+def _capTopPx(fontPx: float, lineHeight: float) -> float:
+    """Michroma's cap top below its line-box top, in px (spec s3)."""
+    content = (MICHROMA_ASCENDER - MICHROMA_DESCENDER) / MICHROMA_UPM
+    aboveCap = (MICHROMA_ASCENDER - MICHROMA_CAP_HEIGHT) / MICHROMA_UPM
+    return (lineHeight * fontPx - content * fontPx) / 2 + aboveCap * fontPx
+
+
+def _gearTopOffsetPx(giantPx: float) -> float:
+    """The gear's offset that puts its cap top on the labels' cap tops, from
+    the DECLARED gear line-height and the label rule's size and line-height."""
+    label = _rule("#driving-card .drv-label")
+    labelCap = _capTopPx(
+        _px(_decl(label, "font-size") or ""), _number(_decl(label, "line-height") or "")
+    )
+    gearLine = _number(_decl(_rule("#driving-card .drv-gear"), "line-height") or "")
+    return labelCap - _capTopPx(giantPx, gearLine)
+
+
+def _declaredGearTopPx() -> float:
+    match = re.fullmatch(r"(-?[0-9.]+)px", _scopedVars().get("--drv-gear-top", ""))
+    assert match is not None, "--drv-gear-top is not a px length in #driving-card"
+    return float(match.group(1))
+
+
+def test_gear_is_100px_and_speed_is_hero():
+    """US-888-c exit test (spec D-10, s3): gear 100 px, speed at --fs-hero, the
+    widest hint (digit + gap + arrow) inside the 208 px centre, and the
+    worst-case stack inside the 254 px body."""
+    giant = _px("var(--fs-giant)")
+    assert giant == 100
+    assert _decl(_rule(SPEED_RULE), "font-size") == "var(--fs-hero)"
+    assert _px("var(--fs-hero)") == 44
+    centre = _bodyWidthPx() - 2 * _px("var(--drv-col)")
+    assert centre == 208
+    gap = _px("var(--drv-gap)")
+    arrow = _px("var(--drv-hint-arrow)")
+    for digit in "12345":
+        assert michromaWidthPx(digit, giant) / 2 + centre / 2 + gap + arrow <= centre, digit
+    side, centreHeight = _columnHeights(_px("var(--drv-col)"))
+    used = _bodyHeightPx() - _mainHeightPx() + max(side, centreHeight)
+    assert used <= _bodyHeightPx() == 254, used
+
+
+def test_otherReadings_stayAtLeast34px_whileSpeedIsHero():
+    assert _px(_decl(_rule("#driving-card .drv-value"), "font-size") or "") >= 34
+    assert _px(_decl(_rule(SPEED_RULE), "font-size") or "") > _px("var(--fs-primary)")
+    assert 'class="drv-reading drv-speed" data-pid="SPEED"' in _drivingMarkup()
+
+
+def test_allThreeColumns_alignToTheStart():
+    """R2: with space-around the label cap tops moved 13.5 px between states,
+    so the gear could not be pinned to them. Every column starts at the top."""
+    for selector in ("#driving-card .drv-col", "#driving-card .drv-centre"):
+        assert _decl(_rule(selector), "justify-content") == "flex-start", selector
+
+
+def test_gearTop_matchesItsDerivation_fromTheDeclaredSizes():
+    """AC 2: --drv-gear-top is the label cap top minus the gear cap top, from
+    the declared --fs-giant, label size and line-heights (-15.10 at 100 px)."""
+    expected = _gearTopOffsetPx(_px("var(--fs-giant)"))
+    assert abs(expected - (-15.10)) < 0.01, expected
+    assert abs(_declaredGearTopPx() - expected) < GEAR_TOP_TOLERANCE_PX
+    assert _decl(_rule("#driving-card .drv-gear"), "margin-top") == "var(--drv-gear-top)"
+
+
+def test_gearTopPin_failsWhenTheGearSizeDrifts():
+    """Negative control: had --fs-giant stayed 120 px, the offset is -19.0,
+    and the -15 px token would be caught."""
+    assert abs(_declaredGearTopPx() - _gearTopOffsetPx(120)) >= GEAR_TOP_TOLERANCE_PX
+
+
+def test_noImuTemperature_onDriving():
+    """Atlas + Spool 2026-10-27: the IMU die temperature is never on Driving."""
+    css = " ".join(f"{sel} {{{body}}}" for sel, body in _drivingRules())
+    for where, text in {
+        "markup": _drivingMarkup(),
+        "css": css,
+        "drivingView": _jsFunction("drivingView"),
+    }.items():
+        for word in ("chipTemp", "cabin", "interior", "ambient"):
+            assert word not in text, (where, word)
+
+
 # ---------------------------------------------------------------------------
 # 5. The CSS gate -- tokens only; px only in the one scoped block.
 # ---------------------------------------------------------------------------
@@ -970,7 +1070,10 @@ def _columnHeights(colPx: float) -> tuple[float, float]:
     box = _rule("#driving-card .drv-box")
     edge = _px(_decl(box, "border-width") or "")
     centreGap = _px(_decl(_rule("#driving-card .drv-centre"), "gap") or "")
-    centre = gearBox + centreGap + valueLine + 2 * edge + noteLine
+    # MOVED PIN (US-888-c): the speed reads at its own size (--fs-hero). The
+    # gear's negative --drv-gear-top is NOT credited: the model stays worst case.
+    speedLine = _lineBox(_decl(_rule(SPEED_RULE), "font-size") or "", _decl(line, "line-height") or "")
+    centre = gearBox + centreGap + speedLine + 2 * edge + noteLine
     return max(left, right), centre
 
 
@@ -1005,9 +1108,9 @@ def _monoWidth(text: str, sizeVar: str) -> float:
     return len(text) * _px(sizeVar) * PI_MONO_ADVANCE_EM
 
 
-def _readingWidth(value: str, unit: str) -> float:
+def _readingWidth(value: str, unit: str, sizeVar: str = "var(--fs-primary)") -> float:
     gap = _px(_decl(_rule("#driving-card .drv-unit"), "margin-inline-start") or "")
-    width = _monoWidth(value, "var(--fs-primary)")
+    width = _monoWidth(value, sizeVar)
     if unit:
         width += gap + _monoWidth(unit, "var(--fs-label)")
     return width
@@ -1031,7 +1134,9 @@ def test_theCentreHoldsTheGearAndTheSpeedBox():
     box = _rule("#driving-card .drv-box")
     pad = _px(_decl(box, "padding-inline") or "")
     edge = _px(_decl(box, "border-width") or "")
-    assert _readingWidth("150", "mph") + 2 * (pad + edge) <= centre
+    # MOVED PIN (US-888-c): the speed's own size -- 150 mph at 44 px = 145.7 of 208.
+    speedSize = _decl(_rule(SPEED_RULE), "font-size") or ""
+    assert _readingWidth("150", "mph", speedSize) + 2 * (pad + edge) <= centre
 
 
 def test_everyLabelWord_fitsItsColumn_soAWrapNeverClips():

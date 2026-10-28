@@ -33,6 +33,7 @@
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-557 band budget + tokenization.
 # 2026-10-15    | Ralph (Rex)  | US-887-c -- card title row retired; body 254px.
 # 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: #dtc-ribbon band row retired.
+# 2026-10-27    | Ralph (Rex)  | US-888-c -- MOVED PIN: fs-giant 120 -> 100.
 # ================================================================================
 ################################################################################
 
@@ -435,7 +436,7 @@ def test_everyDriverReadTierSurvived():
     css = readCss(DASHBOARD_CSS)
     assert _declaredVar(css, ".tile-value", "font-size") == "fs-primary"
     assert scaleValues(css) == {
-        "fs-giant": 120,
+        "fs-giant": 100,  # MOVED PIN (US-888-c, D-10): was 120
         "fs-hero": 44,
         "fs-primary": 34,
         "fs-secondary": 26,

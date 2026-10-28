@@ -27,6 +27,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-540-a 3.5in legibility scale values.
+# 2026-10-27    | Ralph (Rex)  | US-888-c -- MOVED PIN: fs-giant 120 -> 100.
 # ================================================================================
 ################################################################################
 
@@ -45,7 +46,9 @@ from tests.ui.css_type_scale import (
 
 # Iris's scale for the 480x320 panel, read seated at arm's length (US-540-a AC1).
 LEGIBILITY_SCALE = {
-    "fs-giant": 120,  # US-887-a: Driving gear (specs/v030-driving-page-design.md s3)
+    # US-887-a: Driving gear (specs/v030-driving-page-design.md s3).
+    # MOVED PIN (US-888-c, D-10): 120 -> 100, CIO in car 2026-10-27.
+    "fs-giant": 100,
     "fs-hero": 44,
     "fs-primary": 34,
     "fs-secondary": 26,
