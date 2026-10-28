@@ -88,6 +88,7 @@ for _root in (_REPO_ROOT, _SRC):
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
+from common.config.validator import DEFAULT_SYNC_STALE_THRESHOLD_SECONDS  # noqa: E402
 from pi.diagnostics.disk_space_guard import (  # noqa: E402
     LOW_DISK_THRESHOLD_BYTES,
     DiskSpaceState,
@@ -112,7 +113,6 @@ from pi.obdii.capture_health import (  # noqa: E402
 )
 from pi.obdii.gear_derivation import GearReading  # noqa: E402
 from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
-from pi.obdii.orchestrator.types import DEFAULT_SYNC_STALE_THRESHOLD_SECONDS  # noqa: E402
 from pi.power.power_watch.contract import OutcomeKind  # noqa: E402
 from pi.splash.battery_health_emitter import (  # noqa: E402
     VERDICT_GOOD,

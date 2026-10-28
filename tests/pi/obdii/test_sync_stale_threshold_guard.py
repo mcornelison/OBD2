@@ -11,6 +11,7 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-10-27    | Rex (US-917-c) | Initial
+# 2026-10-28    | Rex (US-817-c) | Moved pins: drive the production ConfigValidator
 # ================================================================================
 ################################################################################
 
@@ -20,7 +21,8 @@ US-917-c config guard.
 The S3 sync member ("Not syncing at home") fires when ``lastOkTs`` is older
 than ``pi.dashboard.syncStaleThresholdSeconds``. A threshold at or below
 ``pi.sync.intervalSeconds`` would make it flicker between two normal pushes,
-so the loader refuses it -- comparing the EFFECTIVE values (Atlas G4): the
+so ConfigValidator refuses it (US-817-c: where main.py and powerwatch
+validate) -- comparing the EFFECTIVE values (Atlas G4): the
 configured key if present, else the default each consumer would fall back to.
 """
 
@@ -31,7 +33,12 @@ from typing import Any
 
 import pytest
 
-from src.pi.obdii.config import loader
+from common.config.validator import (
+    DEFAULT_SYNC_STALE_THRESHOLD_SECONDS,
+    DEFAULTS,
+    ConfigValidationError,
+    ConfigValidator,
+)
 
 _MINIMAL_CONFIG: dict[str, Any] = {
     "protocolVersion": "1.0.0",
@@ -60,19 +67,25 @@ def _config(*, threshold: Any = None, interval: Any = None) -> dict[str, Any]:
     return config
 
 
+def _validate(config: dict[str, Any]) -> dict[str, Any]:
+    # MOVED PIN (US-817-c): the production validator, not loader.validateObdConfig.
+    return ConfigValidator().validate(config)
+
+
 def _rejected(config: dict[str, Any]) -> str:
-    with pytest.raises(loader.ConfigValidationError) as excInfo:
-        loader.validateObdConfig(config)
+    # MOVED PIN (US-817-c): ConfigValidator raises ConfigValidationError itself.
+    with pytest.raises(ConfigValidationError) as excInfo:
+        _validate(config)
     return str(excInfo.value)
 
 
 def test_keyAbsent_interval60_passes() -> None:
     """G4 pin: the key is absent from config.json today; 120 > 60 passes."""
-    loader.validateObdConfig(_config(interval=60))
+    _validate(_config(interval=60))
 
 
 def test_keyAbsent_intervalAbsent_passes() -> None:
-    loader.validateObdConfig(_config())
+    _validate(_config())
 
 
 def test_keyAbsent_interval120_rejects_namingBothKeys() -> None:
@@ -93,11 +106,11 @@ def test_thresholdAtOrBelowInterval_rejects_namingBothKeys(threshold: Any) -> No
 
 @pytest.mark.parametrize("threshold", [61, 120, 300.5])
 def test_thresholdAboveInterval_passes(threshold: Any) -> None:
-    loader.validateObdConfig(_config(threshold=threshold, interval=60))
+    _validate(_config(threshold=threshold, interval=60))
 
 
 def test_thresholdAboveTheDefaultInterval_whenIntervalAbsent_passes() -> None:
-    loader.validateObdConfig(_config(threshold=61))
+    _validate(_config(threshold=61))
 
 
 def test_thresholdAtTheDefaultInterval_whenIntervalAbsent_rejects() -> None:
@@ -114,8 +127,8 @@ def test_nonNumericThreshold_rejects_namingTheKey(threshold: Any) -> None:
 
 def test_defaultsAreImportedFromTheirHomes() -> None:
     """No copied literal: the guard's fallbacks are the consumers' own."""
-    from common.config.validator import DEFAULTS
-    from pi.obdii.orchestrator.types import DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
+    # MOVED PIN (US-817-c): the fallbacks live on the validator, one home each.
+    validator = ConfigValidator()
 
-    assert loader._effectiveSyncStaleThresholdS({}) == DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
-    assert loader._effectiveSyncIntervalS({}) == DEFAULTS[_INTERVAL_KEY]
+    assert validator._effectiveSyncStaleThresholdS({}) == DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
+    assert validator._effectiveSyncIntervalS({}) == DEFAULTS[_INTERVAL_KEY]

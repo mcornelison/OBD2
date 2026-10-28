@@ -138,6 +138,8 @@
 #                |              | ~30 s auto-baud probe); one baudrate=None attempt
 #                |              | follows an explicit attempt the ELM did not
 #                |              | answer.  _obdFactory seam unchanged.
+# 2026-10-28    | Rex (US-817-c)| DEFAULT_ADAPTER_BAUDRATE imported from its one
+#                |              | home, common.config.validator.
 # ================================================================================
 ################################################################################
 
@@ -175,8 +177,9 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
+from common.config.validator import DEFAULT_ADAPTER_BAUDRATE
+
 from . import bluetooth_helper, bond_self_heal, decoders
-from .config.loader import DEFAULT_ADAPTER_BAUDRATE
 
 logger = logging.getLogger(__name__)
 

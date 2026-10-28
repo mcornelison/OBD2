@@ -12,6 +12,8 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-10-26    | Rex (US-817-a) | Initial
+# 2026-10-28    | Rex (US-817-c) | Moved pins: the rejection runs in ConfigValidator;
+#                                  the default is the common name
 # ================================================================================
 ################################################################################
 
@@ -37,6 +39,7 @@ from typing import Any
 
 import pytest
 
+import common.config.validator as commonValidator
 import src.pi.obdii.obd_connection as connModule
 from src.pi.obdii.config import loader
 from src.pi.obdii.obd_connection import ObdConnection
@@ -272,10 +275,17 @@ class TestAdapterBaudrateConfig:
 
     @pytest.mark.parametrize("baud", [12345, 0, -38400, "38400", 38400.0, True])
     def test_otherValues_rejectedNamingTheKey(self, baud) -> None:
-        with pytest.raises(loader.ConfigValidationError) as excInfo:
-            loader.validateObdConfig(_configWithBaud(baud))
+        # MOVED PIN (US-817-c): the rule runs in the production validator
+        # (main.py / powerwatch); loader.validateObdConfig now wraps it as
+        # ObdConfigError, which is not a ConfigValidationError.
+        with pytest.raises(commonValidator.ConfigValidationError) as excInfo:
+            commonValidator.ConfigValidator().validate(_configWithBaud(baud))
 
         assert "pi.bluetooth.adapterBaudrate" in str(excInfo.value)
+
+    def test_loaderDefault_isTheCommonName(self) -> None:
+        """US-817-c (Atlas F5): loader's name is the common object, so it cannot drift."""
+        assert loader.DEFAULT_ADAPTER_BAUDRATE is commonValidator.DEFAULT_ADAPTER_BAUDRATE
 
     def test_connectionUsesTheLoaderDefault_whenKeyAbsent(self, monkeypatch) -> None:
         fake = _ScriptedObd([CAR_CONNECTED])
@@ -283,4 +293,5 @@ class TestAdapterBaudrateConfig:
 
         _connection().connect()
 
-        assert fake.bauds == [loader.DEFAULT_ADAPTER_BAUDRATE]
+        # MOVED PIN (US-817-c): the default's one home is common.config.validator.
+        assert fake.bauds == [commonValidator.DEFAULT_ADAPTER_BAUDRATE]

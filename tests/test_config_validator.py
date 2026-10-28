@@ -44,6 +44,8 @@
 # 2026-10-22    | Rex (US-923)   | pi.fuel.resetMaxSpeedKph default 8 + positivity;
 #                                config.json carries it.
 # 2026-10-26    | Rex (US-891-a) | pi.display.o2.windowSec default 300 + positivity.
+# 2026-10-28    | Rex (US-817-c) | production validate() refuses a bad adapter baud
+#                                and a sync-stale threshold <= the sync interval.
 # ================================================================================
 ################################################################################
 
@@ -1919,3 +1921,72 @@ def test_piHealth_cpuTempLimit_inRange_accepted(value):
 def test_piHealth_absentUnderCustomDefaults_isSkipped():
     result = ConfigValidator(defaults={"logging.level": "INFO"}).validate(_baseCfg())
     assert "health" not in result.get("pi", {})
+
+
+# ---------------------------------------------------------------------------
+# US-817-c -- the baud and sync-stale checks run where the Pi validates
+# (main.py and powerwatch call ConfigValidator().validate), not only in the
+# loader nothing in production calls.
+# ---------------------------------------------------------------------------
+
+
+def _shippedConfig() -> dict[str, Any]:
+    """The repo's config.json, loaded as tests/common/test_cell_epoch_config.py does."""
+    with open(Path(__file__).parent.parent / 'config.json', encoding='utf-8-sig') as handle:
+        return json.load(handle)
+
+
+def test_productionValidator_refusesBadBaudAndStaleThreshold_shippedConfigPasses(
+    sampleConfig, monkeypatch
+):
+    """
+    Given: the production ConfigValidator() (main.py / powerwatch)
+    When: adapterBaudrate or the effective sync-stale threshold is bad
+    Then: validate raises naming the key(s); config.json passes with both rules run
+    """
+    import copy
+
+    baudKey = 'pi.bluetooth.adapterBaudrate'
+    thresholdKey = 'pi.dashboard.syncStaleThresholdSeconds'
+    intervalKey = 'pi.sync.intervalSeconds'
+
+    def withValues(baud=None, threshold=None, interval=None):
+        config = copy.deepcopy(sampleConfig)
+        if baud is not None:
+            config['pi'].setdefault('bluetooth', {})['adapterBaudrate'] = baud
+        if threshold is not None:
+            config['pi'].setdefault('dashboard', {})['syncStaleThresholdSeconds'] = threshold
+        if interval is not None:
+            config['pi'].setdefault('sync', {})['intervalSeconds'] = interval
+        return config
+
+    # (a) the baud: refused when present and not an ELM327 int rate; absent passes
+    for baud in [12345, 0, '38400', 38400.0, True]:
+        with pytest.raises(ConfigValidationError) as excInfo:
+            ConfigValidator().validate(withValues(baud=baud))
+        assert baudKey in str(excInfo.value), baud
+    ConfigValidator().validate(withValues())
+    for baud in [9600, 38400, 115200, 230400, 500000]:
+        ConfigValidator().validate(withValues(baud=baud))
+
+    # (b) the threshold, on EFFECTIVE values: refusals name both keys
+    for threshold, interval in [(60, 60), (None, 120), ('x', None)]:
+        with pytest.raises(ConfigValidationError) as excInfo:
+            ConfigValidator().validate(withValues(threshold=threshold, interval=interval))
+        assert thresholdKey in str(excInfo.value), (threshold, interval)
+        assert intervalKey in str(excInfo.value), (threshold, interval)
+    ConfigValidator().validate(withValues(threshold=61))
+    ConfigValidator().validate(withValues(interval=60))
+
+    # (c) the shipped config.json passes -- and both rules really ran on it
+    calls: list[str] = []
+    for name in ('_validateAdapterBaudrate', '_validateSyncStaleThreshold'):
+        original = getattr(ConfigValidator, name)
+
+        def spy(self, config, _original=original, _name=name):
+            calls.append(_name)
+            return _original(self, config)
+
+        monkeypatch.setattr(ConfigValidator, name, spy)
+    ConfigValidator().validate(_shippedConfig())
+    assert calls == ['_validateAdapterBaudrate', '_validateSyncStaleThreshold']

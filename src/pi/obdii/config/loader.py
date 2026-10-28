@@ -13,6 +13,8 @@
 # 2026-04-14    | Ralph Agent  | Sweep 2b — delete legacy _validateAlertThresholds and injection dict
 # 2026-10-26    | Rex (US-817-a) | pi.bluetooth.adapterBaudrate (default 38400), ELM327 rates only
 # 2026-10-27    | Rex (US-917-c) | sync-stale threshold must exceed pi.sync.intervalSeconds
+# 2026-10-28    | Rex (US-817-c) | both checks + their constants moved to
+#                                  common.config.validator (the production path)
 # ================================================================================
 ################################################################################
 
@@ -47,9 +49,8 @@ if str(srcPath) not in sys.path:
 
 from common.config.secrets_loader import loadEnvFile, resolveSecrets  # noqa: E402
 from common.config.validator import (  # noqa: E402
-    DEFAULTS as COMMON_DEFAULTS,
-)
-from common.config.validator import (  # noqa: E402
+    ADAPTER_BAUDRATE_KEY,
+    DEFAULT_ADAPTER_BAUDRATE,
     ConfigValidationError,
     ConfigValidator,
 )
@@ -73,22 +74,6 @@ OBD_REQUIRED_FIELDS: list[str] = [
 
 # Valid display modes
 VALID_DISPLAY_MODES = ['headless', 'minimal', 'developer']
-
-# US-817-a: the serial rate the OBD adapter is opened at.  Passing it to
-# obd.OBD(baudrate=) skips python-obd 0.7.3's auto_baudrate probe, whose
-# read(1024) always waits the full `timeout` (~30 s of every connect).
-# Source: Atlas MEASURED 38400 on 96/96 connects since 2026-09-19
-# (pm/inbox/2026-10-27-from-atlas-DESIGN-S118-producers-and-data.md).
-ADAPTER_BAUDRATE_KEY = 'pi.bluetooth.adapterBaudrate'
-DEFAULT_ADAPTER_BAUDRATE = 38400
-# The ELM327 serial rates; any other value is a configuration error.
-VALID_ADAPTER_BAUDRATES: frozenset[int] = frozenset({9600, 38400, 115200, 230400, 500000})
-
-# US-917-c (Atlas G4): the S3 sync member fires when the last sync is older
-# than the threshold, so a threshold at or below the push interval would make
-# it flicker between two normal pushes. Both are compared as EFFECTIVE values.
-SYNC_STALE_THRESHOLD_KEY = 'pi.dashboard.syncStaleThresholdSeconds'
-SYNC_INTERVAL_KEY = 'pi.sync.intervalSeconds'
 
 # Default values for optional OBD-II settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4.
@@ -263,6 +248,8 @@ def validateObdConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Validate OBD-II configuration and apply defaults.
 
+    Not on the production path; see US-817-d.
+
     Args:
         config: Raw configuration dictionary
 
@@ -291,8 +278,6 @@ def validateObdConfig(config: dict[str, Any]) -> dict[str, Any]:
     _validateProfilesConfig(config)
     _validateRealtimeParameters(config)
     _validateSimulatorConfig(config)
-    _validateAdapterBaudrate(config)
-    _validateSyncStaleThreshold(config)
 
     return config
 
@@ -357,70 +342,6 @@ def _validateDisplayMode(config: dict[str, Any]) -> None:
             f"Invalid display mode: '{displayMode}'. "
             f"Must be one of: {', '.join(VALID_DISPLAY_MODES)}",
             invalidFields=['display.mode']
-        )
-
-
-def _validateAdapterBaudrate(config: dict[str, Any]) -> None:
-    """
-    Validate pi.bluetooth.adapterBaudrate is one of the ELM327 rates (US-817-a).
-
-    Args:
-        config: Configuration dictionary (defaults already applied)
-
-    Raises:
-        ConfigValidationError: If the value is not an int in
-            VALID_ADAPTER_BAUDRATES; the message names the key
-    """
-    baud = config.get('pi', {}).get('bluetooth', {}).get('adapterBaudrate')
-    # bool is an int subclass and 38400.0 == 38400; neither is a baud setting.
-    if type(baud) is not int or baud not in VALID_ADAPTER_BAUDRATES:
-        raise ConfigValidationError(
-            f"Invalid {ADAPTER_BAUDRATE_KEY}: {baud!r}. Must be one of the ELM327 "
-            f"rates: {', '.join(str(b) for b in sorted(VALID_ADAPTER_BAUDRATES))}"
-        )
-
-
-def _effectiveSyncStaleThresholdS(config: dict[str, Any]) -> Any:
-    """pi.dashboard.syncStaleThresholdSeconds, else the orchestrator's default."""
-    # Imported here: pi.obdii's package init loads this module before the
-    # orchestrator package, which would otherwise import half-built.
-    from ..orchestrator.types import DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
-
-    value = config.get('pi', {}).get('dashboard', {}).get('syncStaleThresholdSeconds')
-    return DEFAULT_SYNC_STALE_THRESHOLD_SECONDS if value is None else value
-
-
-def _effectiveSyncIntervalS(config: dict[str, Any]) -> Any:
-    """pi.sync.intervalSeconds, else the shared validator's default."""
-    value = config.get('pi', {}).get('sync', {}).get('intervalSeconds')
-    return COMMON_DEFAULTS[SYNC_INTERVAL_KEY] if value is None else value
-
-
-def _validateSyncStaleThreshold(config: dict[str, Any]) -> None:
-    """
-    Reject a sync-stale threshold at or below the sync interval (US-917-c, G4).
-
-    Args:
-        config: Configuration dictionary (defaults already applied)
-
-    Raises:
-        ConfigValidationError: If either effective value is not a number, or
-            the threshold is not greater than the interval; the message names
-            both keys
-    """
-    threshold = _effectiveSyncStaleThresholdS(config)
-    interval = _effectiveSyncIntervalS(config)
-    for value in (threshold, interval):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ConfigValidationError(
-                f"{SYNC_STALE_THRESHOLD_KEY} ({threshold!r}) and {SYNC_INTERVAL_KEY} "
-                f"({interval!r}) must both be numbers of seconds"
-            )
-    if threshold <= interval:
-        raise ConfigValidationError(
-            f"{SYNC_STALE_THRESHOLD_KEY} ({threshold}) must be greater than "
-            f"{SYNC_INTERVAL_KEY} ({interval}): a sync is only late after a "
-            "missed push, or the at-home sync warning flickers between pushes"
         )
 
 
