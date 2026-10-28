@@ -250,7 +250,8 @@ def test_theButton_hasNoStateColour_cascade():
 
 def test_theButtonIsTheSharedKit_wiredOnce():
     js = _read(_JS)
-    assert js.count("appendPageDetailButton(") == 2  # the definition + this call
+    # MOVED PIN (US-890-h): the definition, this call and the Fuel FUEL TRIM call.
+    assert js.count("appendPageDetailButton(") == 3
     assert re.search(
         r"appendPageDetailButton\(\s*engineActions,\s*ENGINE_HISTORY_BUTTON,\s*engineHistoryDetail\s*\)",
         js,

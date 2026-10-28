@@ -1976,8 +1976,13 @@ html, body {
    colour comes ONLY from the provider's level (data-level on .fuel-trend-row):
    amber and down both map to --amber-warn -- a fuel-trim drift is WATCH, not
    "pull over" (Spool per-surface ruling #4, the rule the Fuel Trim bars kept).
-   The dots, the baseline and an ok median stay neutral. */
-#fuel-card {
+   The dots, the baseline and an ok median stay neutral.
+   US-890-h (spec s3a/s3b): TOTAL TRIM and the trend left the glance for the
+   FUEL TRIM detail, #fuel-detail inside the shared #page-detail host. --fuel-*
+   scoped to #fuel-card would not reach it there, so the scope is shared with
+   #fuel-detail; the host's own chrome stays --pd-* (no geometry here). */
+#fuel-card,
+#fuel-detail {
   --fuel-gap: 6px;            /* between stacked rows */
   --fuel-inline-gap: 8px;     /* label -> value -> note on one row */
   --fuel-col-gap: 12px;       /* between side-by-side readings */
@@ -2015,14 +2020,17 @@ html, body {
   border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
   padding-top: var(--fuel-gap);
 }
-#fuel-card .fuel-reading {
+#fuel-card .fuel-reading,
+#fuel-detail .fuel-reading {
   display: flex; flex-direction: column; min-width: 0;
 }
-#fuel-card .fuel-label {
+#fuel-card .fuel-label,
+#fuel-detail .fuel-label {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary); white-space: nowrap;
 }
-#fuel-card .fuel-value {
+#fuel-card .fuel-value,
+#fuel-detail .fuel-value {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-primary); line-height: var(--fuel-line); color: var(--text-primary);
 }
@@ -2030,7 +2038,8 @@ html, body {
   font-size: var(--fs-hero);
 }
 /* "not published": a reason, never a reading -- the value it explains is "--". */
-#fuel-card .fuel-note {
+#fuel-card .fuel-note,
+#fuel-detail .fuel-note {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary);
 }
@@ -2075,7 +2084,8 @@ html, body {
    (the .fuel-value default, --fs-primary, neutral); its "--" is dimmed ONLY
    for open_loop (data-dimmed), the reason that says the trims are not being
    applied. Side notes never wrap: "not applied in open loop" is one line. */
-#fuel-card .fuel-chip {
+#fuel-card .fuel-chip,
+#fuel-detail .fuel-chip {
   align-self: flex-end;
   font-size: var(--fs-label); white-space: nowrap;
   padding: var(--fuel-chip-pad-y) var(--fuel-chip-pad-x);
@@ -2084,11 +2094,12 @@ html, body {
   color: var(--text-primary);
 }
 #fuel-card .fuel-loop .fuel-note,
-#fuel-card .fuel-total-trim .fuel-note,
-#fuel-card .fuel-total-trim .fuel-value {
+#fuel-detail .fuel-loop .fuel-note,
+#fuel-detail .fuel-total-trim .fuel-note,
+#fuel-detail .fuel-total-trim .fuel-value {
   white-space: nowrap;
 }
-#fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value {
+#fuel-detail .fuel-total-trim[data-dimmed="true"] .fuel-value {
   opacity: var(--fuel-stale-opacity);
 }
 /* US-890-d MPG row (spec s4.3/s4.6). Labels are Michroma at --fs-meta (Iris
@@ -2145,44 +2156,59 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   background: var(--bg);
 }
+/* US-890-h: FUEL TRIM ›, bottom right of the glance (the shared detail
+   button, spec s3a). */
+#fuel-card .fuel-actions {
+  flex: none;
+  display: flex; justify-content: flex-end;
+}
+/* The FUEL TRIM detail (spec s3b): TOTAL TRIM with the LOOP chip beside it,
+   then the trend at full width under a rule. */
+#fuel-detail {
+  display: flex; flex-direction: column; gap: var(--fuel-gap);
+}
+#fuel-detail .fuel-trim-row {
+  flex: none;
+  display: flex; justify-content: space-between; gap: var(--fuel-col-gap);
+}
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */
-#fuel-card .fuel-trend {
+#fuel-detail .fuel-trend {
   flex: none;
   border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
   padding-top: var(--fuel-gap);
 }
-#fuel-card .fuel-trend-row {
+#fuel-detail .fuel-trend-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--fuel-inline-gap);
 }
-#fuel-card .fuel-trend-value {
+#fuel-detail .fuel-trend-value {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-secondary); line-height: var(--fuel-line); color: var(--text-primary);
 }
-#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-value,
-#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-value {
+#fuel-detail .fuel-trend-row[data-level="amber"] .fuel-trend-value,
+#fuel-detail .fuel-trend-row[data-level="down"] .fuel-trend-value {
   color: var(--amber-warn);
 }
-#fuel-card .fuel-trend-reason {
+#fuel-detail .fuel-trend-reason {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary);
 }
-#fuel-card .fuel-trend-chart {
+#fuel-detail .fuel-trend-chart {
   display: block; flex: 1; min-width: 0; height: var(--fuel-trend-h);
 }
-#fuel-card .fuel-trend-baseline {
+#fuel-detail .fuel-trend-baseline {
   stroke: var(--text-tertiary); stroke-width: var(--fuel-stroke);
   stroke-dasharray: var(--fuel-dash); vector-effect: non-scaling-stroke;
 }
-#fuel-card .fuel-trend-median {
+#fuel-detail .fuel-trend-median {
   stroke: var(--text-primary); stroke-width: var(--fuel-stroke);
   vector-effect: non-scaling-stroke;
 }
-#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-median,
-#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-median {
+#fuel-detail .fuel-trend-row[data-level="amber"] .fuel-trend-median,
+#fuel-detail .fuel-trend-row[data-level="down"] .fuel-trend-median {
   stroke: var(--amber-warn);
 }
-#fuel-card .fuel-trend-dot {
+#fuel-detail .fuel-trend-dot {
   stroke: var(--text-secondary); stroke-width: var(--fuel-dot);
   stroke-linecap: round; vector-effect: non-scaling-stroke;
 }

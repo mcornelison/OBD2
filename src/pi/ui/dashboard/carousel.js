@@ -2134,8 +2134,11 @@
     // US-890-a: the Fuel card. Its source is still ltft-trend, but it paints
     // only the card's trend row (`slot`): the airflow / loop / trim / MPG rows
     // above it are the card's own markup and never wait on this gate.
+    // US-890-h: the trend moved to the FUEL TRIM detail, so the slot resolves
+    // inside `slotHost` (#fuel-detail), not inside the card; the card still
+    // carries data-gated.
     {
-      key: "ltft-trend", title: "Fuel", slot: ".fuel-trend",
+      key: "ltft-trend", title: "Fuel", slot: ".fuel-trend", slotHost: "fuel-detail",
       vehicleGated: true,
       noData: { label: FUEL_TREND_LABEL, reason: "no data -- trend not computed" },
     },
@@ -6983,6 +6986,9 @@
     // US-889-d (Engine spec s3a/s3b): the Engine page's button and its detail.
     var ENGINE_HISTORY_BUTTON = "HISTORY";
     var ENGINE_HISTORY_TITLE = "ENGINE HISTORY";
+    // US-890-h (Fuel spec s3a/s3b): the Fuel page's button and its detail.
+    var FUEL_TRIM_BUTTON = "FUEL TRIM";
+    var FUEL_TRIM_TITLE = "FUEL TRIM";
 
     function pageDetailOpen() {
       var el = document.getElementById("page-detail");
@@ -7296,10 +7302,15 @@
       }
     }
 
-    function renderFuelLoopAndTrim(card, loopView, trimView) {
-      if (!card || !loopView || !trimView) return;
-      renderFuelSideSlot(card, ".fuel-loop", loopView);
-      renderFuelSideSlot(card, ".fuel-total-trim", trimView);
+    // US-890-h: the LOOP chip is on the glance AND repeated beside TOTAL TRIM
+    // in the FUEL TRIM detail (`detail`); TOTAL TRIM is in the detail only.
+    function renderFuelLoopAndTrim(card, detail, loopView, trimView) {
+      if (!loopView || !trimView) return;
+      if (card) renderFuelSideSlot(card, ".fuel-loop", loopView);
+      if (detail) {
+        renderFuelSideSlot(detail, ".fuel-loop", loopView);
+        renderFuelSideSlot(detail, ".fuel-total-trim", trimView);
+      }
     }
 
     // US-890-d: paint `fuelMpgView` into the three MPG slots (dashboard.html
@@ -8035,12 +8046,26 @@
     // test can never see. The flag is written on EVERY paint, including the
     // ungated one: left write-only-when-true it would latch, and a card that
     // says "gated" after the engine started is a stale claim about the vehicle.
+    // US-890-h: a slot host is looked up ONCE and held. The page-detail kit
+    // empties #page-detail-body when another detail opens, which detaches
+    // #fuel-detail until its own detail re-attaches it; a by-id lookup then
+    // finds nothing, and the gate would stop painting the trend.
+    var sourceSlotHosts = {};
+
+    function sourceSlotHost(id) {
+      if (!sourceSlotHosts[id]) sourceSlotHosts[id] = document.getElementById(id);
+      return sourceSlotHosts[id];
+    }
+
     function renderSourceCard(card, view) {
       if (!card || !view) return;
       // US-890-a: a source with a `slot` paints only that part of its card
       // (the Fuel card's trend row); every other source owns the whole body.
+      // US-890-h: a `slotHost` moves that slot out of the card (the FUEL TRIM
+      // detail), while data-gated stays on the card.
       var spec = sourceCardSpec(view.key);
-      var body = card.querySelector(spec && spec.slot ? spec.slot : ".card-body");
+      var root = spec && spec.slotHost ? sourceSlotHost(spec.slotHost) : card;
+      var body = root ? root.querySelector(spec && spec.slot ? spec.slot : ".card-body") : null;
       if (!body) return;
       card.setAttribute("data-gated", view.gated ? "true" : "false");
       // The typed NA is the card's whole body here, so the shipped
@@ -8982,6 +9007,22 @@
       // US-890-b: the Fuel card's AIRFLOW row, from the same cached
       // states/obd-live on the same tick (the trend row is the source card's).
       var fuelCard = document.getElementById("fuel-card");
+      // US-890-h (spec s3b): TOTAL TRIM and the trend live in #fuel-detail,
+      // the FUEL TRIM detail on the shared #page-detail host, painted every
+      // tick open or not; the entry's paint only re-attaches it (Engine's
+      // pattern). The trend is the source card's slot (its slotHost).
+      var fuelDetail = document.getElementById("fuel-detail");
+      var fuelTrimDetail = {
+        title: FUEL_TRIM_TITLE,
+        paint: function (bodyEl) {
+          if (fuelDetail) bodyEl.appendChild(fuelDetail);
+        },
+      };
+      var fuelActions = fuelCard ? fuelCard.querySelector(".fuel-actions") : null;
+      if (fuelActions) {
+        var fuelTrimBtn = appendPageDetailButton(fuelActions, FUEL_TRIM_BUTTON, fuelTrimDetail);
+        fuelTrimBtn.id = "fuel-trim-btn";
+      }
       // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
       // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
       // first consumer since TD-us659), advanced once per tick from the same
@@ -10021,6 +10062,7 @@
         // `fuel` block -- never from the raw status code or the trims.
         renderFuelLoopAndTrim(
           fuelCard,
+          fuelDetail,
           fuelLoopView(await stateOnce("obd-live")),
           fuelTotalTrimView(await stateOnce("obd-live"))
         );

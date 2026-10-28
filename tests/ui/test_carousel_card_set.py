@@ -422,10 +422,15 @@ class TestFuelTrimGateSurvivesTheSplit:
         # with no Fuel Trim card the text below is "" and passes for the wrong
         # reason, which is precisely how a retired card reads as a fixed gate.
         assert "Fuel" in _visibleCards(surface), "nothing to look at"
-        text = _cardText(surface, "card-body", "Fuel")
+        # MOVED PIN (US-890-h): the trend moved to the FUEL TRIM detail
+        # (#fuel-detail, on the shared page-detail host), so the gate speaks
+        # THERE; the card's glance and the detail are both checked for a leak.
+        detail = surface.pathById("fuel-detail")
+        assert detail is not None, "no FUEL TRIM detail to look at"
+        text = _cardText(surface, "card-body", "Fuel") + _text(detail[-1])
         assert "%" not in text, f"a gated fuel trim leaked a reading: {text!r}"
         assert "2.5" not in text, f"a gated fuel trim leaked its trend: {text!r}"
-        assert "no engine data" in text, f"the gate did not speak: {text!r}"
+        assert "no engine data" in _text(detail[-1]), f"the gate did not speak: {text!r}"
 
     def test_theLightCardStaysLiveBesideTheGate(self):
         """

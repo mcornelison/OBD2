@@ -60,6 +60,13 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
 #               |              | (9 -> 8).
 # 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
+# 2026-10-27    | Rex (US-890-h) | MOVED PINS: TOTAL TRIM + the trend moved to the
+#                                FUEL TRIM detail (#fuel-detail, spec s3a/s3b).
+#                                _inFuel/_fuelRules also read #fuel-detail; the
+#                                trend/trim DOM tests open the detail (parked
+#                                tap); the upper-row tests drop TOTAL TRIM from
+#                                the glance; the trim/trend CSS pins name
+#                                #fuel-detail; _sidePath takes the root.
 # ================================================================================
 ################################################################################
 
@@ -84,6 +91,7 @@ import render_harness as rh  # noqa: E402
 from pi.splash.ltft_trend_emitter import REASON_RELEARNING_AFTER_RESET  # noqa: E402
 from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
     _driving,
+    _gearParked,
     _parked,
 )
 from tests.ui.test_dashboard_fidelity_pass import _stripJsComments  # noqa: E402
@@ -161,6 +169,9 @@ _FUEL_ECONOMY_SLOTS = ("mpg-this-drive", "mpg-since-reset")
 UNPUBLISHED_SLOTS = [
     (s, lbl) for s, lbl in UPPER_SLOTS if s not in _OBD_LIVE_SLOTS + _FUEL_ECONOMY_SLOTS
 ]
+# MOVED PIN (US-890-h, spec s3a): TOTAL TRIM left the glance for the FUEL TRIM
+# detail; the glance's rows are the rest, in the same order.
+GLANCE_SLOTS = [(s, lbl) for s, lbl in UPPER_SLOTS if s != "total-trim"]
 NOT_PUBLISHED = "not published"
 TREND_LABEL = "FUEL TRIM TREND"
 GATED_REASON = "no engine data"
@@ -225,7 +236,9 @@ def _fuelMarkup() -> str:
 
 
 def _inFuel(path: list[dict[str, Any]]) -> bool:
-    return any(n.get("attrs", {}).get("id") == "fuel-card" for n in path)
+    # MOVED PIN (US-890-h): the trend and TOTAL TRIM live in #fuel-detail, the
+    # FUEL TRIM detail on the shared page-detail host.
+    return any(n.get("attrs", {}).get("id") in ("fuel-card", "fuel-detail") for n in path)
 
 
 def _fuelPaths(surface: rh.Surface, cls: str) -> list[list[dict[str, Any]]]:
@@ -242,6 +255,7 @@ def _boot(
     nowIso: str = "2026-10-20T15:12:30Z",
     obdLive: Any = None,
     fuelEconomy: Any = None,
+    openDetail: bool = False,
 ) -> rh.Surface:
     routes: dict[str, Any] = {}
     if trend is not None:
@@ -252,13 +266,19 @@ def _boot(
         routes["/obd-live"] = obdLive
     if fuelEconomy is not None:
         routes["/fuel-economy"] = fuelEconomy
-    dom = rh.runDashboard(routes=routes, nowMs=_ms(nowIso), steps=[{"flush": 4}])
+    steps: list[dict[str, Any]] = [{"flush": 4}]
+    if openDetail:
+        # US-890-h: the detail opens on a parked tap only (gear P held 8 s).
+        routes["/gear"] = _gearParked()
+        steps += [{"advanceMs": 9000, "flush": 4}, {"click": "fuel-trim-btn"}, {"flush": 2}]
+    dom = rh.runDashboard(routes=routes, nowMs=_ms(nowIso), steps=steps)
     return rh.dashboardSurface(dom["tree"])
 
 
 def _bootFixture(name: str) -> rh.Surface:
+    # MOVED PIN (US-890-h): the trend renders in the FUEL TRIM detail, open.
     fx = _fixture(name)
-    return _boot(trend=fx["ltft-trend"], system=_driving(), nowIso=fx["now"])
+    return _boot(trend=fx["ltft-trend"], system=_driving(), nowIso=fx["now"], openDetail=True)
 
 
 def _dotDrives(surface: rh.Surface) -> list[str]:
@@ -269,7 +289,7 @@ def _fuelRules() -> list[tuple[str, str]]:
     return [
         (rule.selector.strip(), rule.declarations)
         for rule in rh.parseCss(_read(_CSS))
-        if "#fuel-card" in rule.selector
+        if "#fuel-card" in rule.selector or "#fuel-detail" in rule.selector
     ]
 
 
@@ -355,13 +375,14 @@ def test_upperRows_stayDashDashUnderEveryTrendState(trend: str | None, system: s
     payload = None if trend is None else _trend(trend)
     sysPayload = {"driving": _driving(), "parked": _parked(), None: None}[system]
     surface = _boot(trend=payload, system=sysPayload)
-    assert _fuelText(surface, "fuel-label")[: len(UPPER_SLOTS)] == [lbl for _s, lbl in UPPER_SLOTS]
-    assert _fuelText(surface, "fuel-value") == ["--"] * len(UPPER_SLOTS)
+    # MOVED PIN (US-890-h): the glance rows, without TOTAL TRIM.
+    assert _fuelText(surface, "fuel-label")[: len(GLANCE_SLOTS)] == [lbl for _s, lbl in GLANCE_SLOTS]
+    assert _fuelText(surface, "fuel-value") == ["--"] * len(GLANCE_SLOTS)
     # US-890-b/c/d: no obd-live and no fuel-economy file -> AIRFLOW, LOOP,
     # TOTAL TRIM, THIS DRIVE and SINCE RESET say why ("no source"), never
     # blank; LAST 30 S is still "not published".
     assert _fuelText(surface, "fuel-note") == [
-        NOT_PUBLISHED if (s, lbl) in UNPUBLISHED_SLOTS else "no source" for s, lbl in UPPER_SLOTS
+        NOT_PUBLISHED if (s, lbl) in UNPUBLISHED_SLOTS else "no source" for s, lbl in GLANCE_SLOTS
     ]
 
 
@@ -581,11 +602,11 @@ def test_trimThresholdGate_catchesAPlantedThreshold(planted: str):
 
 def test_css_trendColour_onlyThroughDataLevel():
     for selector in (
-        '#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-value',
-        '#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-value',
+        '#fuel-detail .fuel-trend-row[data-level="amber"] .fuel-trend-value',
+        '#fuel-detail .fuel-trend-row[data-level="down"] .fuel-trend-value',
     ):
         assert "var(--amber-warn)" in _rule(selector), selector
-    assert "var(--text-primary)" in _rule("#fuel-card .fuel-trend-value")
+    assert "var(--text-primary)" in _rule("#fuel-detail .fuel-trend-value")
 
 
 def test_css_dotsNeverColour():
@@ -597,7 +618,7 @@ def test_css_dotsNeverColour():
 
 def test_css_fuelRules_useTokensOutsideTheScopedBlock():
     for selector, body in _fuelRules():
-        if selector == "#fuel-card":
+        if selector in ("#fuel-card", "#fuel-detail"):
             continue
         assert not re.search(r"\b\d+px\b", body), (selector, body)
         assert "#" not in body, (selector, body)
@@ -1007,9 +1028,17 @@ def _withTrim(**trim: Any) -> dict[str, Any]:
             "dataSource": "real", "ts": "2026-10-20T15:12:30Z"}
 
 
-def _sidePath(surface: rh.Surface, slotCls: str, cls: str) -> list[dict[str, Any]]:
-    paths = [p for p in _fuelPaths(surface, cls) if any(slotCls in _classes(n) for n in p)]
-    assert len(paths) == 1, (slotCls, cls, len(paths))
+def _sidePath(
+    surface: rh.Surface, slotCls: str, cls: str, root: str = "fuel-detail"
+) -> list[dict[str, Any]]:
+    # MOVED PIN (US-890-h): TOTAL TRIM is in #fuel-detail only; the LOOP chip is
+    # on the glance (#fuel-card) AND repeated beside TOTAL TRIM in the detail.
+    paths = [
+        p for p in _fuelPaths(surface, cls)
+        if any(slotCls in _classes(n) for n in p)
+        and any(n.get("attrs", {}).get("id") == root for n in p)
+    ]
+    assert len(paths) == 1, (slotCls, cls, root, len(paths))
     return paths[0]
 
 
@@ -1092,13 +1121,18 @@ def test_chip_unknownLoopValue_isDashDash_neverAGuess(loop: Any):
 def test_dom_loopAndTrimPaintTheViews(name: str):
     chip, chipNote, trim, trimNote, dimmed = _SIDE_EXPECTED[name]
     fx = _fixture(name)
-    surface = _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"])
-    assert _textOf(_sidePath(surface, "fuel-loop", "fuel-value")[-1]) == chip
+    surface = _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"], openDetail=True)
+    for root in ("fuel-card", "fuel-detail"):
+        assert _textOf(_sidePath(surface, "fuel-loop", "fuel-value", root)[-1]) == chip, root
     assert _textOf(_sidePath(surface, "fuel-total-trim", "fuel-value")[-1]) == trim
-    for slotCls, note in (("fuel-loop", chipNote), ("fuel-total-trim", trimNote)):
-        notePath = _sidePath(surface, slotCls, "fuel-note")
-        assert _textOf(notePath[-1]) == note, (name, slotCls)
-        assert surface.rendered(notePath) == bool(note), (name, slotCls)
+    for slotCls, note, root in (
+        ("fuel-loop", chipNote, "fuel-card"),
+        ("fuel-loop", chipNote, "fuel-detail"),
+        ("fuel-total-trim", trimNote, "fuel-detail"),
+    ):
+        notePath = _sidePath(surface, slotCls, "fuel-note", root)
+        assert _textOf(notePath[-1]) == note, (name, slotCls, root)
+        assert surface.rendered(notePath) == bool(note), (name, slotCls, root)
     slot = _sidePath(surface, "fuel-total-trim", "fuel-value")[-2]
     assert slot["attrs"].get("data-dimmed") == ("true" if dimmed else "false")
 
@@ -1122,9 +1156,11 @@ def test_dom_openLoop_dimsTheTrimDashDash_closedAndStaleDoNot():
 def test_dom_chipAndTrim_neverColoured(name: str):
     fx = _fixture(name)
     surface = _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"])
-    for slotCls in ("fuel-loop", "fuel-total-trim"):
+    for slotCls, root in (
+        ("fuel-loop", "fuel-card"), ("fuel-loop", "fuel-detail"), ("fuel-total-trim", "fuel-detail"),
+    ):
         for cls in ("fuel-value", "fuel-note", "fuel-label"):
-            path = _sidePath(surface, slotCls, cls)
+            path = _sidePath(surface, slotCls, cls, root)
             for prop in ("color", "background-color", "border-color"):
                 won = surface.winningDeclaration(path, prop)
                 if won is not None:
@@ -1149,7 +1185,7 @@ def test_css_totalTrimIsFsPrimary_andOnlyOpenLoopDims():
         if "fuel-total-trim" in selector:
             assert _decl(body, "font-size") is None, selector
             if _decl(body, "opacity") is not None:
-                assert selector == '#fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value'
+                assert selector == '#fuel-detail .fuel-total-trim[data-dimmed="true"] .fuel-value'
 
 
 # The fit rule: "not applied in open loop" (24 chars) fits its tile. The harness
@@ -1204,7 +1240,11 @@ def test_sideFitModel_failsAPlantedOverflow():
 
 
 def test_css_sideNotesNeverWrap():
-    for selector in ("#fuel-card .fuel-loop .fuel-note", "#fuel-card .fuel-total-trim .fuel-note"):
+    for selector in (
+        "#fuel-card .fuel-loop .fuel-note",
+        "#fuel-detail .fuel-loop .fuel-note",
+        "#fuel-detail .fuel-total-trim .fuel-note",
+    ):
         assert _decl(_rule(selector), "white-space") == "nowrap", selector
 
 

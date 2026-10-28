@@ -321,7 +321,13 @@
            `.fuel-reset-progress` the hold, #fuel-reset-confirm the confirm.
            US-922: each MPG slot's value sits in a `.fuel-line` with a
            `.fuel-unit`, the AIRFLOW g/s pattern; "MPG" shows only with a
-           figure, never beside a "--" (fuel spec s4.3). -->
+           figure, never beside a "--" (fuel spec s4.3).
+           US-890-h (spec s3a/s3b, CIO 2026-10-27): the glance is AIRFLOW +
+           the LOOP chip, then the three MPG figures. TOTAL TRIM and the trend
+           moved to #fuel-detail (the FUEL TRIM detail, in the shared
+           #page-detail host) behind the button carousel.js appends to
+           .fuel-actions (parked only); the vehicle gate follows the trend
+           there (sourceCardSpec slotHost). -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
@@ -336,11 +342,6 @@
               <div class="fuel-reading fuel-loop" data-slot="loop" data-note="reason" data-dimmed="false">
                 <span class="fuel-label">LOOP</span>
                 <span class="fuel-value fuel-chip">--</span>
-                <span class="fuel-note">not read</span>
-              </div>
-              <div class="fuel-reading fuel-total-trim" data-slot="total-trim" data-note="reason" data-dimmed="false">
-                <span class="fuel-label">TOTAL TRIM</span>
-                <span class="fuel-value">--</span>
                 <span class="fuel-note">not read</span>
               </div>
             </div>
@@ -366,7 +367,7 @@
               <span class="fuel-reset-progress" hidden aria-hidden="true"><span class="fuel-reset-progress-fill"></span></span>
             </div>
           </div>
-          <div class="fuel-trend">unavailable</div>
+          <div class="fuel-actions"><!-- JS appends the detail button --></div>
           <!-- US-890-f: the in-page reset confirm (spec s4.3). Opened only by a
                parked 2 s hold on SINCE RESET; Yes posts /fuel-reset, No
                changes nothing. Ships hidden. -->
@@ -601,6 +602,27 @@
             <span class="eng-note" hidden></span>
           </div>
         </div>
+      </div>
+      <!-- US-890-h (Fuel spec s3b): the FUEL TRIM detail, shipped here like
+           #engine-detail. TOTAL TRIM with the LOOP chip repeated beside it
+           (trim is read against the loop), then the trend at full width --
+           the same two elements, moved: no new data, no verdict. The trend
+           is the ltft-trend source card's slot, so the vehicle gate paints
+           "no engine data" here. -->
+      <div id="fuel-detail" class="fuel-detail">
+        <div class="fuel-trim-row">
+          <div class="fuel-reading fuel-total-trim" data-slot="total-trim" data-note="reason" data-dimmed="false">
+            <span class="fuel-label">TOTAL TRIM</span>
+            <span class="fuel-value">--</span>
+            <span class="fuel-note">not read</span>
+          </div>
+          <div class="fuel-reading fuel-loop" data-slot="loop" data-note="reason" data-dimmed="false">
+            <span class="fuel-label">LOOP</span>
+            <span class="fuel-value fuel-chip">--</span>
+            <span class="fuel-note">not read</span>
+          </div>
+        </div>
+        <div class="fuel-trend">unavailable</div>
       </div>
     </div>
   </div>
