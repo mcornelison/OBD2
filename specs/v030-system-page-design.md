@@ -308,7 +308,7 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 
 #### 4.6.2 Pi detail (S7)
 - **CPU temperature:** `cpuTempC` at its 0.1 °C as read, with `limit 80 °C` beside it.
-- **IMU chip temp (CIO 2026-10-27, UIDEV-020; name ruled by Atlas + Spool):** the ICM-20948 **die** temperature, `IMU chip temp  41.3 °C`, at the provider's published precision (rounding is the provider's, applied last).
+- **IMU chip temp (CIO 2026-10-27, UIDEV-020; name ruled by Atlas + Spool):** the ICM-20948 **die** temperature, `IMU CHIP TEMP  41.3 °C`, at the provider's published precision (rounding is the provider's, applied last).
   - **No band and no colour:** `--text-primary`, no `limit` text beside it, and it never enters `pi.overLimit`. The missing limit is what tells it apart from the CPU line above it.
   - `--` when `chipTempC` is null (`reasons.chipTempC: no_reading`), or `states/imu` has `available: false`, or its `ts` is stale under the existing `states/imu` staleness rule (Atlas US-888: one clock, no second staleness rule).
   - **Banned words:** `cabin`, `interior`, `ambient`. It is the chip's own temperature, which runs above the air around it.
