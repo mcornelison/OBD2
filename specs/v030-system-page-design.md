@@ -254,6 +254,8 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
   - `null` (`not_read`, `nmcli_absent`, or associated with no level) ⇒ dim `--text-tertiary` arcs, **no slash** (a slash claims `down`, and lit arcs claim a level);
   - `down` ⇒ the slashed glyph;
   - `read_failed` ⇒ amber, the one amber WiFi state.
+  - `up` (or `weak`) with `home: true` ⇒ **green, at any strength** (CIO R-A 2026-10-27; weak-at-home ruled 2026-10-28). Colour says HOME; the lit arcs say strength.
+  - `up` (or `weak`) with `home` false or null ⇒ neutral `--text-secondary` arcs. Away from home is not a fault.
 
 ### 4.5 UPS (S5)
 - **Source:** `states/battery-health` (`vcellV`, `soc`, the health verdict, `ts`) for the cell. The **sensed** power source is `system-status.power.source` (`external` | `battery`, US-668), the field shipped `powerTile` reads. `system-status` carries no VCELL or SOC.
@@ -349,8 +351,13 @@ relay(CIO, in car 2026-10-27): *"have the bottom navigation called last updated 
 - **Where it renders:** the one detail overlay (§4.6 I8 `#sys-detail`, or a sibling with the same rules; the element is Ralph's call). It is solid (the P-4 rule: a navigational overlay is a destination).
 - **Header:** `‹ BACK` top left; the title in Michroma.
 - **Host (X-1, Atlas S119 gate, UIDEV-021, S119 review 2026-10-27):** a sibling of `#sys-detail` whose chrome gives 270 px: a **34 px header** (= `--bar-h`), body padding 8 px top and bottom, no extra gap. `#sys-detail`'s own chrome (4/10 padding, 44 + 1 header, 8 px body top and row gap) leaves only 253 px, so these details do NOT render there. `‹ BACK` paints inside the 34 px header and keeps a **≥ `--tap-min` hit box** through a transparent `::after` (the US-556 kebab rule: the visual box is not the hit box).
-- **Body:** 320 − 34 − 2 × 8 = **270 px**. **No detail scrolls** (the CIO's no-scroll rule, applied here too); each detail's spec carries its height budget. **Exception: the Pi detail (§4.6.2, CIO 2026-10-27).** Each budget is proven by a modelled height test from the declared CSS and tokens, with a planted-overflow negative control. Atlas's headless check on the Pi at deploy is the authority.
+- **Body:** 320 − 34 − 2 × 8 = **270 px**. ~~No detail scrolls; exception the Pi detail.~~ **Every System row detail MAY SCROLL (CIO RULED 2026-10-28; extends the 2026-10-27 Pi ruling): OBD, DATA, WIFI, UPS and Pi.** They are parked-only diagnostics (R1 closes them on leaving parked), so they are exempt from the no-scroll rule. Atlas's V0.30.18 measurements: OBD 417, DATA 843, WIFI 363, UPS 609, Pi 518 against 320.
+  - The scroll is on the `#sys-detail` body container (`overflow-y: auto`), so all five share it; the bar paints only when content overflows.
+  - **Visible scrollbar, never hidden** (no silent clip). The CIO also ruled 2026-10-28 to remove `--hide-scrollbars` from the two dashboard units, so the bar actually paints on the Pi.
+  - No height budget and no re-lay; the shared `appendDataFact` card layout is unchanged. AC: the last row of the tallest real case (DATA) is reachable by scrolling.
+  - **LAST UPDATED and the other non-row details keep their no-scroll budgets** (AC 16).
 - **Leaving parked closes it (R1, UIDEV-021, S119 review 2026-10-27):** when `currentParked()` goes false, an open page detail closes and its page shows. A destination screen must not hold the glass while the car moves.
+  - **Not `#dtc-detail`** (Iris 2026-10-28): the Warnings code view is built to stay readable in motion, with the clear locked by `stop to clear` (Warnings §clear gate). R1 covers the System row details and the page details only.
 - **Opens only while parked.** The opener is either a `›` link (System) or the **detail button**.
 - **The detail button:**
   - Michroma `--fs-label` label, ` ›` in mono, `--text-primary` text;
@@ -565,7 +572,7 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `capture-stalled` | `capture` member, value `stalled`, reason verbatim |
 | `away-from-home` | `wifi.home false`, `away from home`, rows waiting, uncounted |
 | `rows-not-counted` | `notCounted: ["<table>", "<table>"]` ⇒ `12,345+ rows waiting` on the row, the names in the detail, never folded into the count |
-| `wifi-weak-home` | `home` green, `weak signal`, glyph neutral |
+| `wifi-weak-home` | `home` green, `weak signal`, glyph **green** (CIO 2026-10-28; was neutral) |
 | `wifi-not-read` | `null`, `not_read` ⇒ `--`, `not read yet`, uncounted |
 | `wifi-associated-no-level` | W1: `available: true`, `state: null`, `ssid` set, `rssiDbm` null ⇒ the `home` word, `<ssid> · no signal level`, glyph unslashed |
 | `wifi-nmcli-absent` | dev box ⇒ `--`, `no WiFi tool on this host`, uncounted |

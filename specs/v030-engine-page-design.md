@@ -109,6 +109,12 @@ relay(CIO, 2026-10-27, from the S119 preview): rotate LOAD and THROTTLE to horiz
 - **Null / not read:** empty track, `--` centred in `--text-tertiary` (one copy, no fill); the reason in `--fs-meta`, right-aligned on the header line. **Never a 0 % fill for null**: 0 % is a measurement, `--` is the absence of one.
 - **Footer** (96 px, 14 px below the THROTTLE bar): TIMING stacked on the left (label `--fs-meta` / `22° BTDC` `--fs-primary` / `base timing · not knock` `--fs-meta`); `HISTORY ›` bottom right (the shared button, §3a rules). Stacked, not inline: inline TIMING + note (~330 px) + HISTORY (~179 px) would overrun 448.
 - **Height budget** (modelled from tokens, line-height 1.2): 18 + 2 + 48 + 8 + 18 + 2 + 48 + 14 + 96 = **254 of 254**. No scroll, no cue.
+- **TIMING note (US-889-f, S120; Iris ruling 2026-10-28, option a).** Atlas's V0.30.18 fit check: with a TIMING note shown the page measured 260 of 254 (6 px scroll), because the bar header lines grew from 18 to 21 px each with a note in them.
+  - A TIMING note (not read, or stale) goes on the **TIMING label line, right-aligned**: the same grammar as the bar headers (label left, age or reason right). The footer keeps exactly 3 rows: label line / value / `base timing · not knock`.
+  - **`base timing · not knock` never yields to a note** (§4, AC 3): a stale or unread timing is exactly when the number is most likely to be misread as a knock gauge.
+  - **Colour:** a REASON is `--text-secondary`; a stale AGE stays `--amber-warn` (as shipped, and as on the bar headers).
+  - **Room:** the TIMING column is 448 − 16 gap − 179 HISTORY = 253 px; `TIMING` at 15 px is 76.0 px (michroma-advances.json), + 8 gap ⇒ **169 px = 18 mono characters** at `--fs-meta`. Every note text is ≤ 18 characters (longest `engine not running`, 18). A longer text needs a shorter word, never a wrap or a shrink.
+  - **Every header line holds 18 px with a note shown** (bar headers and the TIMING label line alike).
 
 ### 3b. The ENGINE HISTORY detail
 - Opens in the shared detail host (System §4.6.3, the X-1 sibling with the 34 px header): solid, `‹ BACK` top left, title `ENGINE HISTORY` (Michroma, 181.5 px at 15 px). The body is 320 − 34 header − 2 × 8 = **270 px**.
@@ -170,6 +176,7 @@ relay(CIO, 2026-10-27, from the S119 preview): rotate LOAD and THROTTLE to horiz
 19. **Horizontal bars (§3c, US-889-e).** Two bars, each 448 ± 1 px wide and 48 px high (modelled from CSS/tokens, with a planted-overflow negative control that fails). Fill width = value % ± 1 px at 0, 48, 71, 100. The value + ` %` sits inside the bar, both copies (track `--text-primary`, fill `--bg`, the fill copy clipped) at 0 % and 100 %. No separate readings column (grep).
 20. Stale: bar dims and the age is on the header line (`stale`). Null: empty track, `--` in `--text-tertiary`, reason on the header line, no fill (`not-read-with-reason`).
 21. Real browser, on the Pi (S119 deploy fit check): THROTTLE bar centre at panel y 162 ± 4 px; `scrollHeight <= clientHeight`; the value reads over both fill and track.
+22. TIMING note (US-889-f): on `stale` and `not-read-with-reason` the note is on the TIMING label line, `base timing · not knock` is still shown, the footer has 3 rows, every header line is 18 px with its note shown, and the modelled budget is ≤ 254 (planted 4th-row negative control fails). Real-browser recheck with real car-off obd-live (Atlas's 260 repro): `scrollHeight <= clientHeight`.
 
 ## 7. Fixtures
 `idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale` · `history-restarted-mid-drive` (`partial` true) · `timing-negative` (−4 ⇒ `4° ATDC`).
