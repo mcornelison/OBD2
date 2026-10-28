@@ -63,6 +63,9 @@
 #               |              | ups-gauge-unreadable gains its UPS read_failed
 #               |              | feed; imu-faulted, imu-ups-faulted and
 #               |              | imu-faulted-ecu-down (the `sensor` member).
+# 2026-10-27    | Rex (US-917-d)| the eleven sync-* fixtures (spec s4.3.1, AC 17):
+#               |              | sync.inProgress, priorCustody and the sync
+#               |              | member; S3 judged at the shipped threshold.
 # ================================================================================
 ################################################################################
 
@@ -75,6 +78,7 @@ import json
 import os
 import sys
 from typing import Any
+from zoneinfo import ZoneInfo
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "..", ".."))
@@ -108,15 +112,20 @@ from pi.obdii.capture_health import (  # noqa: E402
 )
 from pi.obdii.gear_derivation import GearReading  # noqa: E402
 from pi.obdii.gear_state_emitter import buildGearState  # noqa: E402
+from pi.obdii.orchestrator.types import DEFAULT_SYNC_STALE_THRESHOLD_SECONDS  # noqa: E402
+from pi.power.power_watch.contract import OutcomeKind  # noqa: E402
 from pi.splash.battery_health_emitter import (  # noqa: E402
     VERDICT_GOOD,
     buildBatteryHealthState,
 )
 from pi.splash.source_availability import REASON_UPS_UNREADABLE  # noqa: E402
 from pi.splash.system_status_emitter import (  # noqa: E402
+    PRIOR_CUSTODY_KEYS,
     REASON_WIFI_UNKNOWN,
     buildSystemStatusState,
+    isSyncStaleWhileDriving,
 )
+from pi.sync.backlog import BACKLOG_OUTSTANDING  # noqa: E402
 
 NOW = "2026-10-22T23:10:00Z"
 ZONE = "America/Chicago"
@@ -161,6 +170,39 @@ def _systemInputs(
     }
     inputs.update(overrides)
     return inputs
+
+
+# US-917-d: the shipped pi.dashboard.syncStaleThresholdSeconds default (Spool
+# S-3), the threshold the sync member's S3 case is judged against.
+_SYNC_STALE_THRESHOLD_S = DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
+# A delivery 40 s before NOW: inside the threshold, so S3 does not hold.
+_SYNC_RECENT = "2026-10-22T23:09:20Z"
+# The custody record the last key-off's sync wrote (powerwatch), before the
+# prior boot's last trail entry (_priorShutdown's prior_last_entry_ts).
+_CUSTODY_TS = "2026-10-22T03:14:50Z"
+
+
+def _syncInputs(link: dict, **overrides: Any) -> dict:
+    """A US-917-d sync-* system-status input set: _systemInputs with the S3
+    threshold supplied, as the production emitter supplies it."""
+    return _systemInputs(link, syncStaleThresholdS=_SYNC_STALE_THRESHOLD_S, **overrides)
+
+
+def _custody(
+    *, outstandingRows: int | None, countIsComplete: bool = True, current: bool = True,
+) -> dict:
+    """sync.priorCustody as readPriorCustody relays it: an at-home key-off
+    sync that ended with rows still OUTSTANDING (the server down)."""
+    block = {
+        "verdict": BACKLOG_OUTSTANDING,
+        "outstandingRows": outstandingRows,
+        "countIsComplete": countIsComplete,
+        "kind": OutcomeKind.AT_HOME_SERVER_DOWN.value,
+        "ts": _CUSTODY_TS,
+        "current": current,
+    }
+    assert tuple(block) == PRIOR_CUSTODY_KEYS
+    return block
 
 
 def _upChain() -> dict:
@@ -637,6 +679,103 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
             piHealth=_piHealth(cpuTempC=80.2),
         )},
     ),
+    # --- US-917-d: the sync member + the four-state glyph (spec s4.3.1, AC 17) --
+    "sync-ok": (
+        "AC 17: parked at home, nothing waiting, a delivery on record -> no "
+        "member, the sync glyph 'ok' (--green-ok), 'sync OK'.",
+        {"system-status": _syncInputs(_upChain())},
+    ),
+    "sync-busy": (
+        "AC 17: parked at home after a drive, a push running now (inProgress) "
+        "with 1,240 rows waiting and the last delivery 40 s ago -> no member, "
+        "the glyph 'busy' (--blue-busy), 'syncing'.",
+        {"system-status": _syncInputs(
+            _upChain(), syncInProgress=True, syncLastOkTs=_SYNC_RECENT, syncRowsWaiting=1240,
+        )},
+    ),
+    "sync-prior-unfinished": (
+        "AC 17 S1: the last key-off was clean but its sync ended OUTSTANDING "
+        "(server down, 1,240 rows kept) and nothing has synced this boot -> "
+        "the sync member 'Last sync didn't finish · 1,240 rows kept', 1 ISSUE, "
+        "amber first in the DATA sentence's sync part, the glyph 'error'.",
+        {"system-status": _syncInputs(
+            _upChain(), syncRowsWaiting=1240,
+            priorShutdown=_priorShutdown(1, "clean_poweroff"),
+            syncPriorCustody=_custody(outstandingRows=1240),
+        )},
+    ),
+    "sync-prior-unfinished-count-unknown": (
+        "AC 17 S1: as sync-prior-unfinished, but the custody count is "
+        "incomplete -> 'Last sync didn't finish · row count unknown'.",
+        {"system-status": _syncInputs(
+            _upChain(), syncRowsWaiting=1240,
+            priorShutdown=_priorShutdown(1, "clean_poweroff"),
+            syncPriorCustody=_custody(outstandingRows=None, countIsComplete=False),
+        )},
+    ),
+    "sync-cut-off": (
+        "AC 17 S2: the last stop was cut off (priorShutdown ungraceful) with "
+        "3,880 rows waiting; the custody record on disk is an OLDER shutdown's "
+        "(its 1,240 rows kept is never read) -> 'Last stop was cut off · sync "
+        "result unknown · 3,880 rows waiting', the glyph 'error'.",
+        {"system-status": _syncInputs(
+            _upChain(), syncRowsWaiting=3880,
+            priorShutdown=_priorShutdown(0, "died_mid_drain"),
+            syncPriorCustody=_custody(outstandingRows=1240, current=False),
+        )},
+    ),
+    "sync-home-stuck": (
+        "AC 17 S3: parked at home, 482 rows waiting, the last delivery at "
+        "4:02 PM (over the stale threshold) and no push running -> 'Not "
+        "syncing at home · 482 rows waiting · last sent 4:02 PM', the glyph "
+        "'error'.",
+        {"system-status": _syncInputs(
+            _upChain(), syncLastOkTs="2026-10-22T21:02:00Z", syncRowsWaiting=482,
+        )},
+    ),
+    "sync-busy-during-error": (
+        "AC 17: sync-home-stuck while a retry push is running (inProgress) -> "
+        "the glyph stays 'error' (amber over blue), the member unchanged.",
+        {"system-status": _syncInputs(
+            _upChain(), syncInProgress=True, syncLastOkTs="2026-10-22T21:02:00Z",
+            syncRowsWaiting=482,
+        )},
+    ),
+    "sync-driving-old": (
+        "AC 17: recording away from home, the last delivery 30 min old so the "
+        "producer flags sync.stale -> NO member (driving is never a case), the "
+        "glyph 'ok'.",
+        {"system-status": _syncInputs(
+            _upChain(), driveState="recording", driveId=212,
+            wifiSsid="Starbucks WiFi", wifiRssiDbm=-75, wifiHome=False,
+            syncLastOkTs="2026-10-22T22:40:00Z", syncRowsWaiting=900,
+            syncStale=isSyncStaleWhileDriving(
+                "recording", "2026-10-22T22:40:00Z", NOW, thresholdS=_SYNC_STALE_THRESHOLD_S,
+            ),
+        )},
+    ),
+    "sync-away-backlog": (
+        "AC 17: parked away from home, 900 rows waiting, the last delivery "
+        "this morning -> no member (away is never a case), the glyph 'ok'.",
+        {"system-status": _syncInputs(
+            _upChain(), wifiSsid="Starbucks WiFi", wifiRssiDbm=-75, wifiHome=False,
+            syncLastOkTs="2026-10-22T13:02:40Z", syncRowsWaiting=900,
+        )},
+    ),
+    "sync-never": (
+        "AC 17: no delivery on record (lastOkTs null), nothing waiting -> no "
+        "member, the glyph 'unknown' (--text-tertiary), 'sync not read'.",
+        {"system-status": _syncInputs(_upChain(), syncLastOkTs=None)},
+    ),
+    "sync-custody-missing": (
+        "AC 17: a clean last key-off with no custody record read (priorCustody "
+        "null) -> no S1 member (an absence is not a measurement); the glyph "
+        "follows lastOkTs: 'ok'.",
+        {"system-status": _syncInputs(
+            _upChain(), priorShutdown=_priorShutdown(1, "clean_poweroff"),
+            syncPriorCustody=None,
+        )},
+    ),
 }
 
 # --- US-895-a: the Settings lock (spec s4.7.2, AC 8/9, s7) -------------------
@@ -898,8 +1037,10 @@ def buildFixture(name: str) -> dict[str, Any]:
     capture = None
     if "capture-health" in inputs:
         capture = _captureHealth(inputs["capture-health"])
+    # US-917-d: S3's 'last sent' prints in the fixture's own zone, never the
+    # generating host's (a ZoneInfo is not JSON, so it is not an input).
     payloads["system-status"] = buildSystemStatusState(
-        **inputs["system-status"], captureHealth=capture
+        **inputs["system-status"], captureHealth=capture, localZone=ZoneInfo(ZONE)
     )
     if capture is not None:
         payloads["capture-health"] = capture

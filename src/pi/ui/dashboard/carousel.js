@@ -818,13 +818,24 @@
     }
     return looks;
   }
-  // US-894-c (spec s4.3, Iris I4, Atlas P9): the sync glyph is NEUTRAL. It
-  // used to paint `sync.stale` amber with no verdict member behind it -- an
-  // amber nobody counted, the s4.0 failure. Sync has no member until US-917,
-  // and the glyph goes amber exactly while that member is present.
+  // US-917-d (spec s4.3.1, CIO 2026-10-27): the sync glyph in four states,
+  // first match wins. `error` while the provider's `sync` member is present
+  // (amber over blue: a stuck sync retries, and blue would hide the error);
+  // `busy` while a push runs; `ok` once a delivery is on record; else
+  // `unknown` (also with no system-status). The page judges no case: the
+  // member is the provider's, and `sync.stale` is never read (it would turn
+  // the glyph amber on every drive).
   function syncGlyphState(data) {
-    return verdictMemberKeys(data).sync === true ? "amber" : "neutral";
+    if (verdictMemberKeys(data).sync === true) return "error";
+    var sync = isObj(data) && isObj(data.sync) ? data.sync : {};
+    if (sync.inProgress === true) return "busy";
+    if (sync.lastOkTs !== null && sync.lastOkTs !== undefined) return "ok";
+    return "unknown";
   }
+  // The hover text per state (s4.3.1), for the bench.
+  var SYNC_GLYPH_TITLES = {
+    error: "sync error", busy: "syncing", ok: "sync OK", unknown: "sync not read",
+  };
   // US-696 (CIO ruling 2026-09-09): there is NO `powerGlyphState`. The top-bar
   // lightning glyph was removed -- "if I can see the screen the power is on",
   // so restating it spent a slot in a band that has none to spare. The state
@@ -1012,6 +1023,9 @@
   // US-869-c (Atlas R4/R5): the ONE member naming every faulted feed
   // (system_status_emitter.VERDICT_SENSOR); its `feeds` lists them.
   var SENSOR_MEMBER_KEY = "sensor";
+  // US-917-d (s4.3.1): the provider's sync member (VERDICT_SYNC). Its reason
+  // opens the sentence's sync part, amber, in its own span.
+  var SYNC_MEMBER_KEY = "sync";
   // A4: the ECU states whose fact carries `ECU not answering`. A member-less
   // stall names that cause only from link.ecu; with the ECU up, or not read,
   // no cause is printed (on a cold boot it would be false).
@@ -1165,6 +1179,12 @@
         feed: feedTokens(sensorFeedNames(sensor)),
       });
     }
+    // US-917-d (s4.3 :190): the sync member's reason first in the sync part;
+    // the neutral away/rows words follow it.
+    var syncMember = verdictMember(data, [SYNC_MEMBER_KEY]);
+    if (syncMember !== null) {
+      parts.push({ text: syncMember.reason, level: "amber", member: SYNC_MEMBER_KEY, feed: null });
+    }
     // s4.3 (F-155): neutral, never counted; a null home is no word at all.
     if (wifi.home === false) {
       parts.push({ text: "away from home", level: "secondary", member: null, feed: null });
@@ -1176,7 +1196,8 @@
     var events = eventRowsText(sync.edrRowsWaiting);
     if (events !== null) parts.push({ text: events, level: "secondary", member: null, feed: null });
     var rowMember = capture.basis === "member" ? CAPTURE_MEMBER_KEY
-      : sensor !== null ? SENSOR_MEMBER_KEY : null;
+      : sensor !== null ? SENSOR_MEMBER_KEY
+        : syncMember !== null ? SYNC_MEMBER_KEY : null;
     var texts = [];
     for (var i = 0; i < parts.length; i++) texts.push(parts[i].text);
     var tail = " · " + syncWhenText(sync.lastOkTs, isObj(data) ? data.ts : null);
@@ -6684,7 +6705,7 @@
       if (sysDetailOpen()) renderSysDetail(view);
       renderSystemBody(card, view);
       paintLinkChain(glyphEls.bt, view.glyphs.bt);
-      paintGlyph(glyphEls.sync, view.glyphs.sync, "sync");
+      paintSyncGlyph(glyphEls.sync, view.glyphs.sync);
       // ARCH-007: render the emitter's verdict. The display applies NO
       // threshold of its own (ruling s2.1) -- two rules for one fact disagree
       // the first time either moves.
@@ -7137,13 +7158,24 @@
       }
     }
 
+    // US-917-d (s4.3.1): the sync glyph's state and its title. `error` is the
+    // sync member's amber, so it alone carries data-level/data-member (the
+    // page-wide amber = members gate); any other state clears both.
+    function paintSyncGlyph(el, state) {
+      if (!el) return;
+      paintGlyph(el, state, "sync");
+      if (state === "error") setMemberLevel(el, "amber", "sync");
+      el.setAttribute("title", SYNC_GLYPH_TITLES[state] || SYNC_GLYPH_TITLES.unknown);
+    }
+
     // Honest-instrument reset: a missing/malformed system-status file returns the
     // glyphs to neutral so a prior good read can't linger green (no stale-green).
     // US-894-a: the chain resets to three HOLLOW dots -- an unreadable file is
-    // no reading of any layer (spec s4.2.1, AC 4).
+    // no reading of any layer (spec s4.2.1, AC 4). US-917-d: the sync glyph
+    // resets to its no-read state, `unknown`.
     function resetSystemGlyphs(glyphEls) {
       paintLinkChain(glyphEls.bt, linkChainGlyph(null));
-      paintGlyph(glyphEls.sync, "neutral", "sync");
+      paintSyncGlyph(glyphEls.sync, syncGlyphState(null));
       // US-894-d: no reading -> dim arcs, no slash (s4.4).
       paintGlyph(glyphEls.wifi, wifiGlyphState(null), "wifi");
     }

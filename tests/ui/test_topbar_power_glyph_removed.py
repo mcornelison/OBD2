@@ -70,6 +70,8 @@
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-f): the drill-down
 #               |              | (systemIssueRows) is deleted, US-759 (comment
 #               |              | only; the UPS-row pins are unchanged).
+# 2026-10-27    | Rex (US-917-d)| MOVED PIN (spec s4.3.1): the sync glyph's four
+#               |              | states -- no member + a delivery on record = ok.
 # ================================================================================
 ################################################################################
 
@@ -289,7 +291,8 @@ def test_glyphView_carriesTheOtherThreeStates_andNoPowerKey():
     assert sorted(view["glyphs"]) == ["bt", "sync", "wifi"]
     assert view["glyphs"]["bt"] == {"bt": "ok", "adapter": "ok", "ecu": "ok"}
     # MOVED PIN (US-894-c, I4): the sync glyph is neutral without a member.
-    assert view["glyphs"]["sync"] == "neutral"
+    # MOVED PIN (US-917-d, s4.3.1): no member, lastOkTs on record -> ok.
+    assert view["glyphs"]["sync"] == "ok"
 
 
 # ---------------------------------------------------------------------------

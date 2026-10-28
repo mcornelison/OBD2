@@ -170,6 +170,8 @@
                                   value in US-484-a (see git history; the old
                                   literal is deliberately not repeated here so a
                                   grep for it stays a clean drift audit). */
+  --blue-busy:      #4FA8FF;   /* SSOT --blue-busy (UIDEV-018) -- activity
+                                  only: the sync glyph's `busy` (US-917-d). */
   --neutral-chip-bg: #2a2f37;  /* SSOT --neutral-chip-bg -- the deliberately
                                   un-alarming "no description yet" / "N/A this
                                   vehicle" chip. The token predates US-510; the
@@ -270,6 +272,13 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
+/* US-917-d (System s4.3.1): the sync glyph's four states. `#topbar .glyph` ties
+   `#glyph-sync[data-state]` on specificity, so each rule carries both ids (Iris
+   S119 review); `ok` reuses the shared green rule above. Amber is the sync
+   member alone (`error`); blue is activity, never a severity. */
+#topbar #glyph-sync[data-state="error"]   { color: var(--amber-warn); }
+#topbar #glyph-sync[data-state="busy"]    { color: var(--blue-busy); }
+#topbar #glyph-sync[data-state="unknown"] { color: var(--text-tertiary); }
 /* US-898-a (Iris U1): WiFi is a 1ch SVG, so the warnings icon has room. Relative
    units only; stroked in currentColor so the [data-state] colours above apply.
    Letter-spacing does not reach an atomic inline, so the glyph is exactly 1ch. */

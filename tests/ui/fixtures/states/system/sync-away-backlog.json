@@ -1,0 +1,127 @@
+{
+  "description": "AC 17: parked away from home, 900 rows waiting, the last delivery this morning -> no member (away is never a case), the glyph 'ok'.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T13:02:40Z",
+      "syncStale": false,
+      "syncRowsWaiting": 900,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "Starbucks WiFi",
+      "wifiRssiDbm": -75,
+      "wifiHome": false,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "syncStaleThresholdS": 120.0
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T13:02:40Z",
+        "stale": false,
+        "rowsWaiting": 900,
+        "edrRowsWaiting": 0,
+        "notCounted": [],
+        "inProgress": false,
+        "priorCustody": null,
+        "syncedThisBoot": false
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "weak",
+        "ssid": "Starbucks WiFi",
+        "rssiDbm": -75,
+        "home": false,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 0,
+        "members": []
+      }
+    }
+  }
+}

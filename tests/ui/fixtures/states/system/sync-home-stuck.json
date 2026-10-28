@@ -1,0 +1,132 @@
+{
+  "description": "AC 17 S3: parked at home, 482 rows waiting, the last delivery at 4:02 PM (over the stale threshold) and no push running -> 'Not syncing at home · 482 rows waiting · last sent 4:02 PM', the glyph 'error'.",
+  "now": "2026-10-22T23:10:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "system-status": {
+      "syncLastOkTs": "2026-10-22T21:02:00Z",
+      "syncStale": false,
+      "syncRowsWaiting": 482,
+      "syncEdrRowsWaiting": 0,
+      "syncNotCounted": [],
+      "powerSource": "external",
+      "driveState": "idle",
+      "driveId": null,
+      "nowIso": "2026-10-22T23:10:00Z",
+      "wifiAvailable": true,
+      "wifiSsid": "DeathstarWifi",
+      "wifiRssiDbm": -55,
+      "wifiHome": true,
+      "wifiTs": "2026-10-22T23:10:00Z",
+      "piHealth": null,
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "syncStaleThresholdS": 120.0
+    }
+  },
+  "payloads": {
+    "system-status": {
+      "sync": {
+        "lastOkTs": "2026-10-22T21:02:00Z",
+        "stale": false,
+        "rowsWaiting": 482,
+        "edrRowsWaiting": 0,
+        "notCounted": [],
+        "inProgress": false,
+        "priorCustody": null,
+        "syncedThisBoot": false
+      },
+      "power": {
+        "source": "external",
+        "reasons": {}
+      },
+      "wifi": {
+        "state": "up",
+        "ssid": "DeathstarWifi",
+        "rssiDbm": -55,
+        "home": true,
+        "ts": "2026-10-22T23:10:00Z"
+      },
+      "pi": {
+        "cpuTempC": null,
+        "cpuTempTs": null,
+        "cpuTempLimitC": null,
+        "throttled": null,
+        "throttledHex": null,
+        "throttledSinceBoot": null,
+        "throttledTs": null,
+        "diskFreeBytes": null,
+        "diskThresholdBytes": null,
+        "diskVerdict": null,
+        "diskTs": null,
+        "uptimeS": null,
+        "uptimeTs": null,
+        "overLimit": []
+      },
+      "link": {
+        "bt": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "adapter": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        },
+        "ecu": {
+          "state": "up",
+          "ts": "2026-10-22T22:41:05Z",
+          "lastOkTs": "2026-10-22T23:10:00Z"
+        }
+      },
+      "drive": {
+        "state": "idle",
+        "driveId": null,
+        "lastDrive": null,
+        "distanceKm": null,
+        "distanceSinceTs": null,
+        "elapsedSec": null,
+        "distancePartial": null
+      },
+      "idle": false,
+      "priorShutdown": null,
+      "runMode": "live",
+      "source": {
+        "obd": {
+          "available": true,
+          "reason": null
+        },
+        "wifi": {
+          "available": true,
+          "reason": null
+        }
+      },
+      "ts": "2026-10-22T23:10:00Z",
+      "verdict": {
+        "issueCount": 1,
+        "members": [
+          {
+            "key": "sync",
+            "reason": "Not syncing at home · 482 rows waiting · last sent 4:02 PM"
+          }
+        ]
+      }
+    }
+  }
+}
