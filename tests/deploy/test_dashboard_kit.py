@@ -363,17 +363,20 @@ assert.strictEqual(rv.glyphs.bt.bt, 'amber', 'BT dot amber on a bt member');
 
 // I-4: a stale-while-driving sync is SHOWN, never counted.
 // MOVED PIN (US-894-c, spec s4.3 Iris I4, Atlas P9): the SYNC tile is retired
-// and `sync.stale` has no verdict member, so the glyph is neutral (amber only
-// with a `sync` member, US-917); the DATA row carries the stamp.
+// and `sync.stale` has no verdict member; the DATA row carries the stamp.
+// MOVED PIN (US-917-d): the glyph never reads sync.stale -- with lastOkTs set
+// and no `sync` member it is 'ok' (no neutral state remains); stale is shown on
+// the DATA row only, and amber needs a `sync` member.
 const stale = JSON.parse(JSON.stringify(reconn));
 stale.sync.stale = true;
 const sv = c.systemStatusView(stale);
 assert.strictEqual(sv.tiles, undefined, 'the SYNC tile is retired (no tiles left)');
-assert.strictEqual(sv.glyphs.sync, 'neutral', 'stale sync glyph neutral without a member');
+assert.strictEqual(sv.glyphs.sync, 'ok', 'stale sync glyph ok without a member (US-917-d)');
 assert.ok(/synced /.test(sv.rows[1].value), 'the DATA row carries the stamp');
 const counted = JSON.parse(JSON.stringify(stale));
 counted.verdict.members.push({key: 'sync', reason: 'x'});
-assert.strictEqual(c.systemStatusView(counted).glyphs.sync, 'amber', 'amber with a sync member');
+// MOVED PIN (US-917-d): the counted state is named 'error' (painted --amber-warn).
+assert.strictEqual(c.systemStatusView(counted).glyphs.sync, 'error', 'error with a sync member');
 
 // F-1 (honest-instrument): a fully-degraded underlying state NEVER renders a
 // green/ok tile or glyph.
