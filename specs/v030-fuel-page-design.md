@@ -131,7 +131,7 @@ relay(CIO, in car 2026-10-27): *"there seems to be a lot of information on this 
   - **Its own refusal word: `slow to reset`** (13 characters, inside the 16-character row rule). It's what the server's 409 `driving` now shows. Not `park to reset` (false: parking isn't needed) and not `stop to …` (the System/Warnings word, false here: at 5 mph the reset works).
   - **`speed_unknown` ⇒ `speed unknown`** (13), now live: the provider names it, so the page shows the provider's word, not a guess. Both texts appear only as a refusal outcome beside the LATEST value, not as a standing line.
   - **`resetting…` shows from `Yes`, not from the 200** (Atlas 2026-10-15, S105 rulings Q4 UX note): the POST can take up to `pi.fuel.resetTimeoutSec` (5 s), and the single-threaded states server stalls the page's reads meanwhile. The confirm clock (`pi.display.stale.fuelResetConfirmSec`, default 6 s) starts at the 200.
-  - **The page never holds a cached "old value".** It always renders the LATEST `states/fuel-economy` read, plus the outcome text; the only time it masks the provider is `resetting…`, bounded by the confirm window. 409 `driving` ⇒ provider value + `slow to reset`; 503 / `unavailable` / `reset failed: …` ⇒ provider value + `couldn't reset`; **504 ⇒ `couldn't confirm`** (the server doesn't know whether the reset landed, and the next read settles it, so if it did land the page shows the new total); confirm timeout ⇒ provider value + `couldn't confirm`.
+  - **The page never holds a cached "old value".** It always renders the LATEST `states/fuel-economy` read, plus the outcome text; the only time it masks the provider is `resetting…`, bounded by the confirm window. 409 `driving` ⇒ provider value + `slow to reset`; 503 / `unavailable` / `reset failed: …` ⇒ provider value + `couldn't reset`; **504 ⇒ `unconfirmed`** (the server doesn't know whether the reset landed, and the next read settles it, so if it did land the page shows the new total); confirm timeout ⇒ provider value + `unconfirmed`.
 
 ### 4.4 Fuel-trim trend
 - Source: the **US-661 trend contract** (epoch baseline, qualifying drives, 5-drive median).
@@ -147,7 +147,7 @@ relay(CIO, in car 2026-10-27): *"there seems to be a lot of information on this 
 - Any null ⇒ `--` + reason on the glass. Stale (> the shared timeout key) ⇒ dim + age, same rule as the driving page.
 
 ### 4.6 Reason texts
-Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and each is ≤ 16 characters for the MPG row fit.
+Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and each is ≤ 15 characters for the MPG row fit.
 
 | Code | Source | Text on glass |
 |---|---|---|
@@ -161,10 +161,10 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 | reset `speed_unknown` | same (S112 I4, US-923) | `speed unknown` |
 | reset `unavailable` | same | `couldn't reset` |
 | reset `reset failed: …` | same (free text) | `couldn't reset` (the raw text goes to the log; it doesn't fit) |
-| reset HTTP 504, or no confirming read within `fuelResetConfirmSec` | `states_http_server.py:487-495` (outcome unknown) | `couldn't confirm` (16 chars), beside the LATEST provider value |
+| reset HTTP 504, or no confirming read within `fuelResetConfirmSec` | `states_http_server.py:487-495` (outcome unknown) | `unconfirmed` (11 chars; was `couldn't confirm`, CIO 2026-10-27), beside the LATEST provider value |
 | any code not in this table | — | the raw code string, never blank (US-852 rule) |
 
-**Fit rule:** every text here is ≤ 16 characters (longest `no fuel counted`, 15). A new code needs a text that fits, or its row wraps to two lines. It never shrinks (same rule as INTAKE AIR on Driving).
+**Fit rule:** every text here is ≤ 15 characters (longest `no fuel counted`, 15). *(Correction, UIDEV-023 from Ralph's US-890-h finding: the rule said ≤ 16, but 16 characters at `--fs-meta` 15 px mono measure 144.5 px against the 141.3 px MPG column; 15 characters are ≈ 135.5 px. `couldn't confirm` (16) overflowed by ~3 px, so the CIO picked `unconfirmed`.)* A new code needs a text that fits, or its row wraps to two lines. It never shrinks (same rule as INTAKE AIR on Driving).
 
 ## 5. Data contract (re-verified on origin/dev 2026-10-15)
 
@@ -195,7 +195,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 10. LAST 30 S and total trim ≥ 34 px; THIS DRIVE / SINCE RESET `--fs-secondary` (parked-read). No reason text wider than its MPG column (§4.6 fit rule).
 11. Tokens-only CSS; geometry as scoped custom properties on the card (S103 G-4 rule).
 12. **DoD (R15): CIO judgement in the car.**
-13. **Nothing needs a scroll (CIO 2026-10-27, §3a):** in a real browser (Chromium, 480 × 320 stage, shipped fonts), `#fuel-card .card-body` and the FUEL TRIM detail body each have `scrollHeight <= clientHeight` on the widest-reason fixtures and on the two states that add the reset outcome line: `fuel/reset-allowed-true.json` + long-press + `Yes` with the POST held pending (`resetting…`), and `fuel/reset-confirm-timeout.json` (`couldn't confirm`).
+13. **Nothing needs a scroll (CIO 2026-10-27, §3a):** in a real browser (Chromium, 480 × 320 stage, shipped fonts), `#fuel-card .card-body` and the FUEL TRIM detail body each have `scrollHeight <= clientHeight` on the widest-reason fixtures and on the two states that add the reset outcome line: `fuel/reset-allowed-true.json` + long-press + `Yes` with the POST held pending (`resetting…`), and `fuel/reset-confirm-timeout.json` (`unconfirmed`).
 14. No TOTAL TRIM and no trend on the glance (render harness). The FUEL TRIM detail shows both, under the unchanged §4.2/§4.4 rules, on a parked tap only. The `FUEL TRIM ›` button is `visibility: hidden` when not parked and takes no state colour.
 
 ## 7. Fixtures

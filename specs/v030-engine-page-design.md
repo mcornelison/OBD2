@@ -1,7 +1,7 @@
 # V0.30 Engine page — design spec
 
 **Author:** Iris (UI/UX) · **Date:** 2026-10-13 · **Status:** CIO-APPROVED design, awaiting V0.30 DoD + grooming
-**Mockup:** `proposals/2026-10-13-v030-engine-page.html` → https://claude.ai/artifact/RiqWXfdDVJiLS5TGrodKgA (**layout B, vertical bars, is the locked one**)
+**Mockup:** `proposals/2026-10-13-v030-engine-page.html` → https://claude.ai/artifact/RiqWXfdDVJiLS5TGrodKgA (layout B, vertical bars, locked 2026-10-13). **Superseded 2026-10-27 by §3c (horizontal bars, CIO):** https://claude.ai/artifact/K25rz4TeiivyLMcHsvUfQ4 (Engine panel), source `proposals/2026-10-27-s119-preview.html`
 **DoD lines served:** 7 (themed pages: Engine), 8 · **Retires** F-129's Engine-card concept (its MAF centrepiece moved to the Fuel page)
 **Canonical home:** `specs/` in the repo via a bench.
 
@@ -21,7 +21,7 @@
 | E-5 | Fit | **Live above the fold; scroll for the rest** (Warnings scroll rule) |
 | E-6 | History window | **This drive** |
 | E-7 | O2 | **Its own page** (see O2 spec) |
-| E-8 | Layout | **B · Vertical bars** |
+| E-8 | Layout | ~~B · Vertical bars~~ → **full-width horizontal bars, value inside** (CIO 2026-10-27, §3c) |
 
 ## 3. Layout (480 × 320; body 258 visible; content scrolls)
 
@@ -72,6 +72,8 @@ relay(CIO, confirmed 2026-10-27, via Marcus): option B. *"a button that would ta
 └──────────────────────────────────────────────┘
 ```
 
+> ⚠️ **The bar and readings bullets below are superseded by §3c (CIO 2026-10-27).** The HISTORY button and parked rules still hold.
+
 - **Bars** `--eng-bar-h` 120 → **168 px** (26 px wide, unchanged). The bar column is 168 + 4 + 18 label = 190 px.
 - **Readings, right of the bars** (448 − 64 bars − 16 gap = 368 px):
   - LOAD on its own row (label 18 + `--fs-hero` 44);
@@ -82,6 +84,31 @@ relay(CIO, confirmed 2026-10-27, via Marcus): option B. *"a button that would ta
   - **neutral**: it navigates, it judges nothing, so it takes no state colour (the shared detail button, System §4.6.3).
 - **Height:** about **202 of 254**; bars 190. *(Correction, UIDEV-021, S119 review 2026-10-27: the old `readings 66` didn't add up from its parts, 18 + 44 = 62 at line-height 1. The pass number is a modelled budget from the declared tokens and line-heights, ≤ 254, never this estimate.)* **No scroll, no cue**: the `.eng-cue` element and its ↓ are deleted.
 - **The button shows only while parked** (§4.7.2 of System, the one parked rule). While not parked it is `visibility: hidden`: its space is kept, so nothing moves when the car stops.
+
+### 3c. Horizontal bars, value inside (CIO ruled 2026-10-27, UIDEV-023; built US-889-e, S119)
+
+relay(CIO, 2026-10-27, from the S119 preview): rotate LOAD and THROTTLE to horizontal, across the whole screen, the percentage inside the bar, a header above each. *"I like it a lot more than the old one. Keep it the way it is."* It replaces the §3a bar column and the readings column; the HISTORY button, the parked rule and §3b are unchanged.
+
+```
+┌──────────────────────────────────────────────┐
+│ LOAD                                         │  header 0-18
+│ ███████████████████71 %░░░░░░░░░░░░░░        │  bar 20-68  (--fs-hero)
+│ THROTTLE                                     │  header 76-94
+│ ███████████████48 %░░░░░░░░░░░░░░░░░░        │  bar 96-144 (--fs-primary), centre = panel y 162
+│ TIMING                                       │
+│ 22° BTDC                     ┌────────────┐  │  footer 158-254
+│ base timing · not knock      │ HISTORY  › │  │  parked only
+└──────────────────────────────────────────────┘
+```
+
+- **Bars:** two, full card-body width (**448 px** = 480 − 2 × 16 card padding), **48 px** high (`--eng-bar-h`), 1 px `--line` border, `overflow: hidden`. Fill grows from the left, width = value % of the track, `--accent` (unbanded rule, unchanged), no transition: the value steps per sample.
+- **Header above each bar:** `LOAD`, `THROTTLE`, Michroma `--fs-meta`, line-height `--eng-line` 1.2 (18 px), 2 px to the bar.
+- **Value inside, centred:** LOAD `--fs-hero` 44, THROTTLE `--fs-primary` 34 (tiers unchanged), unit ` %` in `--fs-label`, tabular-nums. The value's line box equals the bar (`line-height: var(--eng-bar-h)`; 44 × 1.2 = 52.8 would overflow 48, Atlas gate).
+- **Two copies of the value** so it reads over both parts: `--text-primary` over the empty track; `--bg` over the fill, that copy clipped to the fill width. Both stay inside the bar box.
+- **Stale:** the bar and its value dim (`--eng-stale-opacity`); the age shows in `--fs-meta`, right-aligned on that bar's header line.
+- **Null / not read:** empty track, `--` centred in `--text-tertiary` (one copy, no fill); the reason in `--fs-meta`, right-aligned on the header line. **Never a 0 % fill for null**: 0 % is a measurement, `--` is the absence of one.
+- **Footer** (96 px, 14 px below the THROTTLE bar): TIMING stacked on the left (label `--fs-meta` / `22° BTDC` `--fs-primary` / `base timing · not knock` `--fs-meta`); `HISTORY ›` bottom right (the shared button, §3a rules). Stacked, not inline: inline TIMING + note (~330 px) + HISTORY (~179 px) would overrun 448.
+- **Height budget** (modelled from tokens, line-height 1.2): 18 + 2 + 48 + 8 + 18 + 2 + 48 + 14 + 96 = **254 of 254**. No scroll, no cue.
 
 ### 3b. The ENGINE HISTORY detail
 - Opens in the shared detail host (System §4.6.3, the X-1 sibling with the 34 px header): solid, `‹ BACK` top left, title `ENGINE HISTORY` (Michroma, 181.5 px at 15 px). The body is 320 − 34 header − 2 × 8 = **270 px**.
@@ -140,6 +167,9 @@ relay(CIO, confirmed 2026-10-27, via Marcus): option B. *"a button that would ta
 16. Render harness: the `HISTORY ›` button is `visibility: hidden` when not parked and visible when parked; while not parked a tap opens nothing. Parked, a tap opens the detail with title `ENGINE HISTORY`, and `‹ BACK` returns to the Engine page.
 17. The button's winning `color` and `border-color` are `--text-primary` / `--text-secondary`: no state colour (it's navigation, not a verdict).
 18. bigDoD, CIO in the car: the Engine page reads without scrolling, and the HISTORY button is obvious.
+19. **Horizontal bars (§3c, US-889-e).** Two bars, each 448 ± 1 px wide and 48 px high (modelled from CSS/tokens, with a planted-overflow negative control that fails). Fill width = value % ± 1 px at 0, 48, 71, 100. The value + ` %` sits inside the bar, both copies (track `--text-primary`, fill `--bg`, the fill copy clipped) at 0 % and 100 %. No separate readings column (grep).
+20. Stale: bar dims and the age is on the header line (`stale`). Null: empty track, `--` in `--text-tertiary`, reason on the header line, no fill (`not-read-with-reason`).
+21. Real browser, on the Pi (S119 deploy fit check): THROTTLE bar centre at panel y 162 ± 4 px; `scrollHeight <= clientHeight`; the value reads over both fill and track.
 
 ## 7. Fixtures
 `idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale` · `history-restarted-mid-drive` (`partial` true) · `timing-negative` (−4 ⇒ `4° ATDC`).
