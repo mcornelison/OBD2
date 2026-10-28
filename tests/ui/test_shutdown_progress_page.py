@@ -24,6 +24,7 @@
 #                                outcome words + cross-language guards. MOVED
 #                                PINs (US-883-c): away, normal-home, hold-due,
 #                                mid-drain-switch frames.
+# 2026-10-27    | Ralph (Rex)  | US-870-e: a 25 -> 75 read is one width write.
 # ================================================================================
 ################################################################################
 
@@ -206,6 +207,23 @@ def test_fastPath_fills33_67_100_withItsWords():
         (67, "recording what synced", "step 2 of 3"),
         (100, "powering off", "step 3 of 3"),
     ]
+
+
+def test_a25To75Read_writesTheWidthOnce_noJsStepsBetween():
+    """US-870-e (spec s5a Smooth): the glide is the stylesheet's transition. A
+    25 -> 75 read writes 75 % straight away; no write lands between the two."""
+    away = _sync("away", None, None, None)
+    sequence = [
+        _state("flushing", _step(1, 4, "shed"), away),
+        _state("flushing", _step(3, 4, "custody"), away),
+    ]
+    result = _run(sequence)
+
+    widths = [w["width"] for w in result["fillWrites"]]
+    assert set(widths) == {"25%", "75%"}
+    firstAt75 = widths.index("75%")
+    assert all(w == "25%" for w in widths[:firstAt75])
+    assert all(w == "75%" for w in widths[firstAt75:])
 
 
 def test_away_normalPathOfFive_fills20_40_60_80_100():

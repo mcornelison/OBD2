@@ -17,6 +17,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-25    | Ralph (Rex)  | Initial -- US-870-c shutdown spins + close-out.
+# 2026-10-27    | Ralph (Rex)  | US-870-e: >= 2 reverse turns + the bar seen
+#               |              | full before the dim spin; the done POST once
+#               |              | on black; the bar's width transition. MOVED
+#               |              | PINS: test_awayFastPath_... and
+#               |              | test_fullMidRotation_... (dim after 2 turns);
+#               |              | test_cancelledDuringTheDimSpin_... re-timed
+#               |              | so it still cancels DURING the dim spin.
 # ================================================================================
 ################################################################################
 
@@ -53,11 +60,15 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "states" / "shutdown"
 _POLL_MS = 250
 _ROTATION_MS = 3_000  # what the probe computes from the 3s animationDuration
 _DIM_DOWN_MS = 500  # ... and from the dim-down's 0.5s
+_MIN_REVERSE_TURNS = 2  # spec §2.1: >= 2 completed reverse turns before the dim spin
+_SPLASH_DONE_ROUTE = "/shutdown-splash-done"
 
-# What the browser computes with styles.css present: the stage fade and, while
-# a logo class is on, #logo's animation.
+# What the browser computes with styles.css present: the stage fade, the bar's
+# width transition (--t-bar) and, while a logo class is on, #logo's animation.
 _LIVE: dict[str, Any] = {
     "splash-stage": {"transitionDuration": "0.5s"},
+    "bar-fill": {"transitionDuration": "0.6s"},
+    "bar-kept": {"transitionDuration": "0.6s"},
     "logo": {
         "spin-rev": {"animationName": "spin", "animationDuration": "3s"},
         "spin-dim": {"animationName": "spin", "animationDuration": "3s"},
@@ -148,22 +159,24 @@ class TestCloseOut:
         """
         Given: the VCELL fast path (shed, custody, poweroff 3/3), every part live
         When: the probe dispatches each run's event
-        Then: the reverse spin loops; the iteration after the 100 % read starts
-              the dim spin; its animationend the dim-down; that animationend the
-              fade; the stage's transitionend leaves it black
+        Then: the reverse spin loops; the 100 % read lands in turn 1, so the
+              dim spin waits for turn 2's iteration (US-870-e, MOVED PIN: it
+              was turn 1's); its animationend the dim-down; that animationend
+              the fade; the stage's transitionend leaves it black
         """
         result = rh.runShutdownSplash(_sequence("fast-path"), computedStyles=_LIVE, rounds=60)
 
         paintAt = _parts(result)[0][1]
         fullAt = _fullAtMs(result)
-        dimAt = paintAt + _ROTATION_MS
-        assert paintAt < fullAt < dimAt  # 100 % lands mid-rotation
+        dimAt = paintAt + _MIN_REVERSE_TURNS * _ROTATION_MS
+        assert paintAt < fullAt < paintAt + _ROTATION_MS  # 100 % lands in turn 1
         assert _parts(result) == [
             ("spin-rev", paintAt),
             ("spin-dim", dimAt),
             ("dim-down", dimAt + _ROTATION_MS),
         ]
         assert _events(result) == [
+            ("animationiteration", "spin-rev", paintAt + _ROTATION_MS),
             ("animationiteration", "spin-rev", dimAt),
             ("animationend", "spin-dim", dimAt + _ROTATION_MS),
             ("animationend", "dim-down", dimAt + _ROTATION_MS + _DIM_DOWN_MS),
@@ -198,14 +211,15 @@ class TestCloseOut:
         assert result["blackAtMs"] is None
 
     def test_fullMidRotation_dimSpinWaitsForTheNextIteration(self):
-        """Negative: 100 % read 1 s into a turn -> the dim spin starts on the boundary."""
+        """Negative: 100 % read 1 s into turn 1 -> the dim spin starts on a boundary,
+        and (US-870-e, MOVED PIN) not before turn 2's: turn 1's is too few turns."""
         states = [_flushing(1, 2, "shed")] * 4 + [_flushing(2, 2, "poweroff")]
         result = rh.runShutdownSplash(states, computedStyles=_LIVE, rounds=60)
 
         paintAt = _parts(result)[0][1]
         fullAt = _fullAtMs(result)
         assert fullAt - paintAt < _ROTATION_MS
-        assert _parts(result)[1] == ("spin-dim", paintAt + _ROTATION_MS)
+        assert _parts(result)[1] == ("spin-dim", paintAt + _MIN_REVERSE_TURNS * _ROTATION_MS)
 
     def test_cancelledMidSpin_exitsAtOnce_noCloseOut(self):
         """Negative: key back on mid-spin -> exit on that read, nothing dims."""
@@ -221,14 +235,17 @@ class TestCloseOut:
         assert result["blackAtMs"] is None
 
     def test_cancelledDuringTheDimSpin_exitsWithNoFurtherPart(self):
-        states = [_flushing(5, 5, "poweroff")] * 9 + [
+        # US-870-e: the dim spin now starts after 2 reverse turns (~6.25 s), so
+        # the cancel is read at 7.5 s -- inside it -- as this test intends.
+        states = [_flushing(5, 5, "poweroff")] * 15 + [
             {"phase": "cancelled", "reason": "power_restored"}
         ]
         result = rh.runShutdownSplash(states, computedStyles=_LIVE, rounds=60)
 
         assert result["closed"] and result["terminalCause"] == "cancelled"
-        assert "dim-down" not in [part for part, _ in _parts(result)]
+        assert [part for part, _ in _parts(result)] == ["spin-rev", "spin-dim"]
         assert result["blackAtMs"] is None
+        assert result["posts"] == []
 
     def test_liveWithNoEventDispatched_waitsForItsOwnEvent(self):
         """The control: parts live but the browser fires nothing -> no step advances."""
@@ -238,6 +255,122 @@ class TestCloseOut:
 
         assert [part for part, _ in _parts(result)] == ["spin-rev"]
         assert result["blackAtMs"] is None
+
+
+def _iterations(result: dict[str, Any]) -> list[int]:
+    return [at for kind, part, at in _events(result) if kind == "animationiteration"]
+
+
+def _donePosts(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in result["posts"] if p["route"] == _SPLASH_DONE_ROUTE]
+
+
+@_NODE_ONLY
+class TestThreeTurnsSeenFullDoneOnce:
+    """US-870-e (spec §2.1, §5a): two reverse turns and the bar seen full before
+    the dim spin; the done POST exactly once, on black, never on cancelled."""
+
+    def test_nothing_to_sync_runs_two_reverse_turns_before_dim(self):
+        """
+        Given: at home with nothing to sync, every part live
+        When: the probe dispatches the logo's, the bar's and the stage's events
+        Then: 2 reverse iterations, the dim spin, the dim-down, the fade, black,
+              then ONE POST /shutdown-splash-done with the token and an empty body
+        """
+        result = rh.runShutdownSplash(
+            _sequence("nothing-to-sync"), computedStyles=_LIVE, rounds=80
+        )
+
+        paintAt = _parts(result)[0][1]
+        dimAt = paintAt + _MIN_REVERSE_TURNS * _ROTATION_MS
+        assert _events(result) == [
+            ("animationiteration", "spin-rev", paintAt + _ROTATION_MS),
+            ("animationiteration", "spin-rev", dimAt),
+            ("animationend", "spin-dim", dimAt + _ROTATION_MS),
+            ("animationend", "dim-down", dimAt + _ROTATION_MS + _DIM_DOWN_MS),
+        ]
+        assert [part for part, _ in _parts(result)] == ["spin-rev", "spin-dim", "dim-down"]
+        fadeAt = dimAt + _ROTATION_MS + _DIM_DOWN_MS
+        assert result["fadeStartedAtMs"] == fadeAt
+        assert result["blackAtMs"] == fadeAt
+        # The bar was seen full -- its 100 % transitionend -- before the dim spin.
+        fullSeen = [e["atMs"] for e in result["barEvents"] if e["width"] == "100%"]
+        assert fullSeen and fullSeen[0] <= dimAt
+        assert result["posts"] == [
+            {
+                "route": _SPLASH_DONE_ROUTE,
+                "method": "POST",
+                "token": "test-token",
+                "body": "",
+                "atMs": fadeAt,
+            }
+        ]
+        assert not result["closed"]
+
+    def test_reducedMotion_onePost(self):
+        result = rh.runShutdownSplash(
+            _sequence("nothing-to-sync"),
+            computedStyles=_LIVE,
+            reducedMotion=True,
+            dispatchTransitionEnd=False,
+            rounds=60,
+        )
+
+        assert result["animationEvents"] == []
+        assert result["blackAtMs"] == _fullAtMs(result)
+        assert len(_donePosts(result)) == 1
+        assert result["posts"][0]["atMs"] == result["blackAtMs"]
+
+    def test_stylesMissing_onePost(self):
+        result = rh.runShutdownSplash(
+            _sequence("nothing-to-sync"),
+            computedStyles={},
+            dispatchLogoEvents=False,
+            dispatchTransitionEnd=False,
+            rounds=60,
+        )
+
+        assert result["blackAtMs"] == _fullAtMs(result)
+        assert len(_donePosts(result)) == 1
+
+    def test_cancelledMidSpin_zeroPosts(self):
+        states = _sequence("nothing-to-sync")[:5] + [
+            {"phase": "cancelled", "reason": "power_restored"}
+        ]
+        result = rh.runShutdownSplash(states, computedStyles=_LIVE, rounds=60)
+
+        assert result["closed"] and result["terminalCause"] == "cancelled"
+        assert result["posts"] == []
+
+    def test_barTransitionEndWithheld_spinKeepsLooping_noDim_noPost(self):
+        """Negative: the bar is drawn 100 % but its transitionend never comes:
+        the bar was not SEEN full, so the reverse spin keeps looping."""
+        result = rh.runShutdownSplash(
+            _sequence("nothing-to-sync"),
+            computedStyles=_LIVE,
+            dispatchBarTransitionEnd=False,
+            rounds=80,
+        )
+
+        assert result["progress"]["fill"] == "100%"
+        assert len(_iterations(result)) >= 4
+        assert [part for part, _ in _parts(result)] == ["spin-rev"]
+        assert result["fadeStartedAtMs"] is None and result["blackAtMs"] is None
+        assert result["posts"] == []
+
+    def test_fullAfterManyTurns_dimOnTheFirstBoundaryAfterTheBarIsSeenFull(self):
+        """Home drain finishing mid-turn 4: the bar glides to 100 %, its
+        transitionend fires, and the dim spin starts at the next boundary."""
+        states = [_flushing(1, 2, "drain")] * 20 + [_flushing(2, 2, "poweroff")]
+        result = rh.runShutdownSplash(states, computedStyles=_LIVE, rounds=100)
+
+        seenFullAt = next(e["atMs"] for e in result["barEvents"] if e["width"] == "100%")
+        dimAt = _parts(result)[1][1]
+        assert _parts(result)[1][0] == "spin-dim"
+        assert _iterations(result)[-1] == dimAt
+        assert seenFullAt <= dimAt < seenFullAt + _ROTATION_MS
+        assert len([at for at in _iterations(result) if at < dimAt]) >= _MIN_REVERSE_TURNS
+        assert len(_donePosts(result)) == 1
 
 
 @_NODE_ONLY
@@ -363,6 +496,21 @@ class TestShutdownLogoStyles:
     def test_reducedMotion_noAnimationOnAnyShutdownPart(self):
         for part in ("spin-rev", "spin-dim", "dim-down"):
             assert _decl(f"animating {part}", "logo", "animation", reducedMotion=True) == "none"
+        # US-870-e: the bar's glide is motion too.
+        for elementId in ("bar-fill", "bar-kept"):
+            assert _decl("animating", elementId, "transition", reducedMotion=True) == "none"
+
+    def test_barFillAndKept_glideOnWidth_byTheBarToken(self):
+        """US-870-e (spec §2.1 / §5a Smooth): one width transition, var(--t-bar), ease-out."""
+        for elementId in ("bar-fill", "bar-kept"):
+            assert _decl("animating", elementId, "transition") == "width var(--t-bar) ease-out"
+
+    def test_tBar_declaredOnceInTokensCss_andMirroredInTheSplashRoot(self):
+        tokens = _stripCssComments((SPLASH_DIR.parent / "tokens.css").read_text(encoding="utf-8"))
+        styles = _stripCssComments(STYLES_CSS.read_text(encoding="utf-8"))
+
+        assert re.findall(r"--t-bar\s*:\s*([^;]+);", tokens) == ["0.6s"]
+        assert re.findall(r"--t-bar\s*:\s*([^;]+);", styles) == ["0.6s"]
 
 
 class TestPollJsHasNoTimer:

@@ -51,20 +51,32 @@
  *          page started ({part, atMs, live}); `blackAtMs` is when body.black
  *          went on.
  *
+ *          US-870-e: every POST the page makes is recorded in `posts` ({route,
+ *          method, token, body, atMs}) and answered 204. #bar-fill's
+ *          transitionend falls due one run (`barEventMs`, else its computed
+ *          transitionDuration) after each width change that a live transition
+ *          animates -- a newer write restarts it, as the browser's would -- and
+ *          is dispatched unless `dispatchBarTransitionEnd` is false.
+ *          `barEvents` is every one dispatched ({width, atMs}); `fillWrites`
+ *          every write of #bar-fill's width ({width, atMs}).
+ *
  *          Invoked as:  node shutdown_probe.js <inputJsonPath>
  *          Input:  {pollJsPath, motionGatePath, tree, shutdownStates, rounds,
  *                   emitIntervalMs, computedStyles, reducedMotion,
- *                   dispatchLogoEvents, logoEventMs, dispatchTransitionEnd}
+ *                   dispatchLogoEvents, logoEventMs, dispatchTransitionEnd,
+ *                   dispatchBarTransitionEnd, barEventMs}
  *          Output: {closed, closedAtMs, terminalCause, terminalRecord,
  *                   consoleLines, painted, paintedOnPoll, stageVisibility,
  *                   polls, elapsedMs, progress, progressLog, logoLog,
  *                   animationEvents, fadeStartedAtMs, transitionEndDispatched,
- *                   blackAtMs, stageOpacity, tree}
+ *                   blackAtMs, stageOpacity, posts, barEvents, fillWrites,
+ *                   tree}
  * Author:  Ralph Agent (Rex)
  * Created: 2026-08-10 -- Sprint 73 US-549 (I-043 observable terminal reason)
  * Updated: 2026-10-25 -- Sprint 114 US-870-b (progress + progressLog)
  * Updated: 2026-10-25 -- Sprint 114 US-883-c (progress.kept)
  * Updated: 2026-10-25 -- Sprint 114 US-870-c (the logo's events)
+ * Updated: 2026-10-27 -- Sprint 119 US-870-e (posts + the bar's transitionend)
  * ==========================================================================*/
 "use strict";
 
@@ -88,6 +100,22 @@ async function main() {
   let closed = false;
   let closedAtMs = null;
   let polls = 0;
+
+  // US-870-e: every write of #bar-fill's width, in order -- the proof that a
+  // 25 -> 75 read is one write and the glide is the stylesheet's, not JS steps.
+  const fillWrites = [];
+  const fillEl = doc.getElementById("bar-fill");
+  if (fillEl && fillEl.style) {
+    Object.defineProperty(fillEl.style, "width", {
+      get: function () {
+        return this._props.width || "";
+      },
+      set: function (value) {
+        this._props.width = String(value);
+        fillWrites.push({ width: String(value), atMs: virtualMs });
+      },
+    });
+  }
 
   // The state file is indexed by TIME, not by poll count: the sequencer emits on
   // its own transitions while the splash reads at 250 ms, so a poll sees whatever
@@ -158,8 +186,21 @@ async function main() {
   global.window = win;
   global.performance = win.performance;
   global.document = doc;
-  global.fetch = function (url) {
+  const posts = [];
+  global.fetch = function (url, options) {
     const route = String(url).split("?")[0];
+    const method = (options && options.method) || "GET";
+    if (method === "POST") {
+      const headers = (options && options.headers) || {};
+      posts.push({
+        route: route,
+        method: method,
+        token: typeof headers["X-Splash-Token"] === "string" ? headers["X-Splash-Token"] : null,
+        body: options && options.body !== undefined ? options.body : null,
+        atMs: virtualMs,
+      });
+      return Promise.resolve({ ok: true, status: 204 });
+    }
     if (route === "/shutdown-state") {
       const idx = Math.min(Math.floor(virtualMs / emitIntervalMs), states.length - 1);
       polls += 1;
@@ -300,11 +341,40 @@ async function main() {
     transitionEndDispatched = true;
     stage.dispatch("transitionend", { target: stage, propertyName: "opacity" });
   }
+  // US-870-e: the browser's half of #bar-fill's width transition. A write that
+  // a live transition animates is due one run later; a newer write before then
+  // restarts it (the browser cancels the old run), and one with no transition
+  // fires nothing.
+  const dispatchBarTransitionEnd = input.dispatchBarTransitionEnd !== false;
+  const barEvents = [];
+  let barWidth = null;
+  let barDueMs = null;
+  function barRunMs(fill) {
+    if (typeof input.barEventMs === "number") return input.barEventMs;
+    const raw = win.getComputedStyle(fill).transitionDuration;
+    const n = parseFloat(raw);
+    return /ms$/.test(raw) ? n : n * 1000;
+  }
+  function maybeEndBar() {
+    const fill = doc.getElementById("bar-fill");
+    if (!fill || !fill.style) return;
+    const width = fill.style.width || null;
+    if (width !== barWidth) {
+      barWidth = width;
+      barDueMs = width !== null && barRunMs(fill) > 0 ? virtualMs + barRunMs(fill) : null;
+    }
+    if (barDueMs === null || virtualMs < barDueMs) return;
+    barDueMs = null;
+    if (!dispatchBarTransitionEnd) return;
+    barEvents.push({ width: width, atMs: virtualMs });
+    fill.dispatch("transitionend", { target: fill, propertyName: "width" });
+  }
   async function settle() {
     await dom.drainMicrotasks();
     // Bounded: each pass lets at most one logo event land and the page answer
     // it, so a zero-length run cascades dim spin -> dim-down -> fade at once.
     for (let pass = 0; pass < 16; pass++) {
+      maybeEndBar();
       const advanced = maybeAdvanceLogo();
       maybeEndFade();
       await dom.drainMicrotasks();
@@ -348,6 +418,9 @@ async function main() {
       transitionEndDispatched: transitionEndDispatched,
       blackAtMs: blackAtMs,
       stageOpacity: stage && stage.style ? stage.style.opacity || null : null,
+      posts: posts,
+      barEvents: barEvents,
+      fillWrites: fillWrites,
       tree: dom.serialize(doc.body),
     })
   );
