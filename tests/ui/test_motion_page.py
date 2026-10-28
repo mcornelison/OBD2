@@ -876,14 +876,15 @@ def _healthMarkup() -> str:
 
 
 def test_skeleton_healthBlock_fourCellsInGridOrder_notReadFaces():
-    """Left column UPDATED / TILT FIX, right COMPASS / GYRO: in a 2-column
-    auto-flow grid that is the source order UPDATED, COMPASS, TILT FIX, GYRO."""
+    """MOVED PIN (US-892-d, spec s3a): the block is ONE row, COMPASS | GYRO;
+    UPDATED and TILT FIX moved to the IMU detail (#motion-detail), pinned in
+    tests/ui/test_motion_imu_detail.py."""
     m = _healthMarkup()
     labels = re.findall(r'<span class="motion-label">([^<]+)</span>', m)
-    assert labels == ["UPDATED", "COMPASS", "TILT FIX", "GYRO"]
+    assert labels == ["COMPASS", "GYRO"]
     cells = re.findall(r'class="motion-hcell (motion-\w+)"', m)
-    assert cells == ["motion-updated", "motion-compass", "motion-tilt", "motion-gyro"]
-    assert m.count('class="motion-hv">--<') == 4
+    assert cells == ["motion-compass", "motion-gyro"]
+    assert m.count('class="motion-hv">--<') == 2
     assert 'class="motion-band' not in m  # never dims with the bands (Iris M4)
 
 
@@ -992,37 +993,67 @@ def _tone(card: dict[str, Any], cls: str) -> str:
     return _one(card, cls)["attrs"]["data-tone"]
 
 
+def _bootDetail(name: str, shiftMs: int = 0) -> dict[str, Any]:
+    """US-892-d: #motion-detail, the IMU detail -- painted with the card on
+    every Motion paint, open or not."""
+    fx = _fixture(name)
+    dom = rh.runDashboard(routes={"/imu": fx["imu"], "/grade-history": fx["gradeHistory"]},
+                          nowMs=_now(name) + shiftMs, steps=[{"flush": 4}],
+                          displayStale=STALE)
+    roots = dom["tree"] if isinstance(dom["tree"], list) else [dom["tree"]]
+    hits = [n for r in roots
+            for n in _find(r, lambda n: n.get("attrs", {}).get("id") == "motion-detail")]
+    assert len(hits) == 1
+    return hits[0]
+
+
+def _drow(detail: dict[str, Any], row: str) -> dict[str, Any]:
+    (hit,) = _find(detail, lambda n: n.get("attrs", {}).get("data-row") == row)
+    return hit
+
+
+def _dcell(detail: dict[str, Any], row: str) -> str:
+    return " ".join(_leafTexts(_drow(detail, row)))
+
+
 @_NODE_ONLY
 def test_dom_storyExample_healthBlock():
+    """MOVED PIN (US-892-d, spec s3a): COMPASS | GYRO on the glance; UPDATED
+    and TILT FIX are read in the IMU detail."""
     card = _boot("health-trusted")
-    assert _hcell(card, "motion-updated") == "UPDATED 0 s ago"
+    detail = _bootDetail("health-trusted")
+    assert _dcell(detail, "updated") == "UPDATED 0 s ago"
     assert _hcell(card, "motion-compass") == "COMPASS calibrated"
-    assert _hcell(card, "motion-tilt") == f"TILT FIX {MINUS}0.45{DEG} from 14 stops"
+    assert _dcell(detail, "tilt") == f"TILT FIX {MINUS}0.45{DEG} from 14 stops"
     assert _hcell(card, "motion-gyro") == "GYRO plausible"
-    assert [_tone(card, c) for c in ("motion-updated", "motion-compass",
-                                     "motion-tilt", "motion-gyro")] == [
+    assert [_drow(detail, "updated")["attrs"]["data-tone"], _tone(card, "motion-compass"),
+            _drow(detail, "tilt")["attrs"]["data-tone"], _tone(card, "motion-gyro")] == [
         "plain", "ok", "plain", "ok"]
 
 
 @_NODE_ONLY
 def test_dom_compassLegacyEngine_dashPlusReason_andTheWidestTiltFix():
+    """MOVED PIN (US-892-d): TILT FIX is read in the IMU detail."""
     card = _boot("compass-legacy-engine")
     assert _hcell(card, "motion-compass") == "COMPASS -- not published"
     assert _tone(card, "motion-compass") == "none"
-    assert _hcell(card, "motion-tilt") == f"TILT FIX {MINUS}10.00{DEG} from 999 stops"
+    detail = _bootDetail("compass-legacy-engine")
+    assert _dcell(detail, "tilt") == f"TILT FIX {MINUS}10.00{DEG} from 999 stops"
 
 
 @_NODE_ONLY
 def test_dom_compassUncalibrated_amber_andOneStop():
+    """MOVED PIN (US-892-d): TILT FIX is read in the IMU detail."""
     card = _boot("compass-uncalibrated")
     assert _hcell(card, "motion-compass") == "COMPASS not calibrated"
     assert _tone(card, "motion-compass") == "warn"
-    assert _hcell(card, "motion-tilt") == f"TILT FIX +0.45{DEG} from 1 stop"
+    assert _dcell(_bootDetail("compass-uncalibrated"), "tilt") == f"TILT FIX +0.45{DEG} from 1 stop"
 
 
 @_NODE_ONLY
 def test_dom_noStopsYet_andTheGyroCases():
-    assert _hcell(_boot("no-stops-yet"), "motion-tilt") == "TILT FIX -- no stops yet"
+    """MOVED PIN (US-892-d): TILT FIX is read in the IMU detail."""
+    assert _dcell(_bootDetail("no-stops-yet"), "tilt") == "TILT FIX -- no stops yet"
     implausible = _boot("gyro-implausible")
     assert _hcell(implausible, "motion-gyro") == "GYRO implausible"
     assert _tone(implausible, "motion-gyro") == "warn"
@@ -1033,10 +1064,13 @@ def test_dom_noStopsYet_andTheGyroCases():
 
 @_NODE_ONLY
 def test_dom_stale_updatedTurnsAmber_theHealthBlockIsNotABand():
+    """MOVED PIN (US-892-d): the amber UPDATED age is read in the IMU detail
+    (and on System LAST UPDATED); stale still dims the top two bands only."""
     card = _boot("stale-imu")
     assert card["attrs"]["data-stale"] == "true"
-    assert _hcell(card, "motion-updated") == "UPDATED 3 s ago"
-    assert _tone(card, "motion-updated") == "warn"
+    detail = _bootDetail("stale-imu")
+    assert _dcell(detail, "updated") == "UPDATED 3 s ago"
+    assert _drow(detail, "updated")["attrs"]["data-tone"] == "warn"
     health = _one(card, "motion-health")
     assert "motion-band" not in _classes(health) and "hidden" not in health["attrs"]
 

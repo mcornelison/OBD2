@@ -2442,8 +2442,8 @@ html, body {
    dims both bands (Iris M4); numbers are never coloured (no g band exists).
    No meter, dot or trail (US-733). */
 #motion-card {
-  --motion-band-gap: 6px;       /* between the two bands */
-  --motion-band-pad: 6px;       /* band padding, top and bottom */
+  --motion-band-gap: 4px;       /* between the two bands (s3a: 6 -> 4) */
+  --motion-band-pad: 4px;       /* band padding, top and bottom (s3a: 6 -> 4) */
   --motion-rule: 1px;           /* the line between the bands */
   --motion-pitch-w: 132px;      /* the PITCH column (mockup .top) */
   --motion-col-gap: 10px;       /* between columns */
@@ -2489,10 +2489,15 @@ html, body {
   font-size: var(--fs-label); color: var(--text-secondary); white-space: pre;
 }
 #motion-card .motion-cell[data-none="true"] .motion-value { color: var(--text-tertiary); }
+/* US-892-d (s3a, AC 17): every reason is ONE line with an ellipsis -- the
+   full text is in the IMU detail. A block, min-width 0: text-overflow alone
+   renders nothing on an inline span. A g cell shows ONE of note / peak. */
 #motion-card .motion-sub,
 #motion-card .motion-note {
+  display: block; min-width: 0;
   font-size: var(--fs-meta); line-height: var(--motion-note-line);
-  color: var(--text-secondary); white-space: nowrap;
+  color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #motion-card .motion-cell[data-warn="true"] .motion-sub { color: var(--amber-warn); }
 #motion-card .motion-peak {
@@ -2513,12 +2518,12 @@ html, body {
 #motion-card .motion-graph-dot { fill: var(--accent); }
 #motion-card .motion-graph-end { font-size: var(--fs-meta); fill: var(--text-primary); }
 #motion-card .motion-graph-empty { font-size: var(--fs-meta); fill: var(--text-tertiary); }
-/* US-892-c: the IMU health block (spec s3 2 x 2, Iris M2/M4/M5, Atlas C3).
-   Columns 1fr / max-content: the right column takes its widest status word,
-   the left (UPDATED, TILT FIX) the rest. Values --fs-label, reasons and the
-   TILT FIX provenance --fs-meta on the value's baseline. A reason NEVER sizes
-   a column: contain: inline-size makes it add 0 to max-content and it wraps
-   inside its column. data-tone maps to a token here and judges nothing;
+/* US-892-c: the IMU health block (Iris M2/M4/M5, Atlas C3). US-892-d (s3a):
+   ONE row, COMPASS | GYRO, columns 1fr / max-content -- GYRO takes its
+   status word, COMPASS the rest. Values --fs-label, reasons --fs-meta on the
+   value's baseline. A reason NEVER sizes a column (contain: inline-size adds
+   0 to max-content) and is one line with an ellipsis (AC 17); the full text
+   is in the IMU detail. data-tone maps to a token here and judges nothing;
    plain keeps --text-primary. Not a .motion-band, so stale never dims it. */
 #motion-card .motion-health {
   flex: none; display: grid; grid-template-columns: 1fr max-content;
@@ -2539,8 +2544,59 @@ html, body {
 #motion-card .motion-hcell[data-tone="warn"] .motion-hv { color: var(--amber-warn); }
 #motion-card .motion-hcell[data-tone="none"] .motion-hv { color: var(--text-tertiary); }
 #motion-card .motion-hsub {
-  flex: 1 1 0; min-width: 0; contain: inline-size;
+  display: block; flex: 1 1 0; min-width: 0; contain: inline-size;
   font-size: var(--fs-meta); line-height: var(--motion-note-line); color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The row's ' ›' (s3a, the I9 rule): only while parked, when the tap works
+   (carousel.js sets hidden). Neutral: a detail cue carries no state colour. */
+#motion-card .motion-hchev {
+  flex: none; font-size: var(--fs-label); line-height: var(--motion-health-line);
+  color: var(--text-primary); white-space: pre;
+}
+
+/* US-892-d (Motion spec s3a, UIDEV-021/022): the IMU detail, #motion-detail
+   inside US-894-g's #page-detail host. Declares NO host geometry (that stays
+   --pd-*); its own row geometry is scoped here. A row is a 128 px label
+   column (COMPASS at Michroma --fs-meta + 0.06em = 120.2 px, plus its 8 px
+   gap) and the value column, min-height --row-min. The value is mono
+   --fs-label and its reason sits inline after it at --fs-meta, both on the
+   Pi's Liberation Mono line ratio (30 px at 26 px, never `normal`). The
+   reason WRAPS here, clamped to 2 lines (-webkit-line-clamp + ellipsis, the
+   only cut): 23.1 + 17.3 = 40.4 <= 44, so a wrap never grows a row. */
+#motion-detail {
+  --motion-d-label-w: 128px;    /* label column incl. its 8 px gap */
+  --motion-d-reason-gap: 6px;   /* value -> reason (Iris M2) */
+  --motion-d-label-line: 1.2;   /* the label's line box (18 px) */
+  --motion-d-label-track: 0.06em;
+  --motion-d-mono-line: 1.154;  /* Liberation Mono: 30 / 26 */
+  display: flex; flex-direction: column;
+}
+#motion-detail .motion-drow {
+  display: grid; grid-template-columns: var(--motion-d-label-w) minmax(0, 1fr);
+  align-items: center; min-height: var(--row-min);
+}
+#motion-detail .motion-dlabel {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); line-height: var(--motion-d-label-line);
+  letter-spacing: var(--motion-d-label-track);
+  white-space: nowrap; color: var(--text-secondary);
+}
+#motion-detail .motion-dval {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; text-overflow: ellipsis; white-space: normal; min-width: 0;
+  font-size: var(--fs-meta); line-height: var(--motion-d-mono-line);
+}
+#motion-detail .motion-dv {
+  font-size: var(--fs-label); line-height: var(--motion-d-mono-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#motion-detail .motion-drow[data-tone="ok"] .motion-dv { color: var(--green-ok); }
+#motion-detail .motion-drow[data-tone="warn"] .motion-dv { color: var(--amber-warn); }
+#motion-detail .motion-drow[data-tone="none"] .motion-dv { color: var(--text-tertiary); }
+#motion-detail .motion-dr {
+  margin-left: var(--motion-d-reason-gap);
+  font-size: var(--fs-meta); line-height: var(--motion-d-mono-line); color: var(--text-secondary);
 }
 
 /* US-893-b (F-127; specs/v030-light-page-design.md layout A + glyph, with the

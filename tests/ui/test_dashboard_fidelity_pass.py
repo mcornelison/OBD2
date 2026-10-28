@@ -464,7 +464,13 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     MOVED PIN (US-889-d): the Engine history + status LABELS (COOLANT /
     INTAKE AIR / BATTERY, RUN TIME / CHECK ENGINE) moved with their rows into
     the ENGINE HISTORY detail, #engine-detail; same rule, a second scope. Their
-    values stay --font-mono, pinned in tests/ui/test_engine_history_render.py."""
+    values stay --font-mono, pinned in tests/ui/test_engine_history_render.py.
+
+    MOVED PIN (US-892-d): the IMU detail's row LABELS (UPDATED / COMPASS /
+    TILT FIX / GYRO / ACCEL / CORNER) are Michroma --fs-meta (Motion spec s3a,
+    Iris UIDEV-022: "the label is Michroma --fs-meta"). Their values, reasons
+    and peak glyphs stay --font-mono, pinned in
+    tests/ui/test_motion_imu_detail.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -480,6 +486,7 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#fuel-card .fuel-mpg .fuel-label",
         "#nav-card .nav-label",
         "#motion-card .motion-label",
+        "#motion-detail .motion-dlabel",
         "#o2-card .o2-label",
         '#o2-card .o2-chip[data-live="true"]',
         "#light-card .light-word",

@@ -6989,6 +6989,8 @@
     // US-890-h (Fuel spec s3a/s3b): the Fuel page's button and its detail.
     var FUEL_TRIM_BUTTON = "FUEL TRIM";
     var FUEL_TRIM_TITLE = "FUEL TRIM";
+    // US-892-d (Motion spec s3a): the health row opens the IMU detail.
+    var MOTION_IMU_TITLE = "IMU";
 
     function pageDetailOpen() {
       var el = document.getElementById("page-detail");
@@ -7518,8 +7520,13 @@
         sub.textContent = text || "";
         sub.hidden = !text;
       }
+      // US-892-d (s3a): ONE sub-line -- the peak while the value reads, the
+      // reason when it doesn't. The peaks are always in the IMU detail.
       var peak = cell.querySelector(".motion-peak");
-      if (peak && v.peak !== undefined) peak.textContent = v.peak;
+      if (peak && v.peak !== undefined) {
+        peak.textContent = v.peak;
+        peak.hidden = v.none === true;
+      }
     }
 
     // The grade graph: rebuilt per paint from `motionGradeGraph` -- a handful
@@ -7564,7 +7571,7 @@
     // Before the first read the bands give way to US-700's LOADING tile; after
     // that every value carries its own '--' + reason. data-stale dims both
     // bands (the stylesheet), never blanks them.
-    function renderMotionCard(card, view, graph) {
+    function renderMotionCard(card, view, graph, detail) {
       if (!card || !view) return;
       var loading = card.querySelector(".motion-loading");
       var bands = card.querySelectorAll(".motion-band");
@@ -7583,29 +7590,59 @@
       paintMotionCell(card.querySelector(".motion-lat"), view.lat, ".motion-note");
       paintMotionGraph(card.querySelector(".motion-grade"), graph);
       renderMotionHealth(health, view.health);
+      renderMotionDetail(detail, view);
     }
 
-    // US-892-c: the health block. data-tone carries the status colour (the
-    // stylesheet maps it to a token); the sub-line is the reason or, for TILT
-    // FIX, the provenance. The block is not a .motion-band, so it never dims.
+    // One value + its reason (or provenance) into a health cell or detail
+    // row: data-tone carries the status colour (the stylesheet maps it to a
+    // token), an empty reason is hidden.
+    function paintMotionReading(el, v, valueCls, reasonCls) {
+      if (!el || !v) return;
+      el.setAttribute("data-tone", v.tone);
+      var value = el.querySelector(valueCls);
+      if (value) value.textContent = v.value;
+      var sub = el.querySelector(reasonCls);
+      if (sub) {
+        sub.textContent = v.sub || "";
+        sub.hidden = !v.sub;
+      }
+    }
+
+    // US-892-c: the health block; US-892-d (s3a) cut it to ONE row, COMPASS |
+    // GYRO -- UPDATED and TILT FIX are in the IMU detail. The block is not a
+    // .motion-band, so it never dims.
     function renderMotionHealth(block, health) {
       if (!block || !health) return;
-      var cells = [
-        [".motion-updated", health.updated], [".motion-compass", health.compass],
-        [".motion-tilt", health.tilt], [".motion-gyro", health.gyro],
-      ];
-      for (var i = 0; i < cells.length; i++) {
-        var cell = block.querySelector(cells[i][0]);
-        var v = cells[i][1];
-        if (!cell || !v) continue;
-        cell.setAttribute("data-tone", v.tone);
-        var value = cell.querySelector(".motion-hv");
-        if (value) value.textContent = v.value;
-        var sub = cell.querySelector(".motion-hsub");
-        if (sub) {
-          sub.textContent = v.sub || "";
-          sub.hidden = !v.sub;
-        }
+      paintMotionReading(block.querySelector(".motion-compass"), health.compass,
+                         ".motion-hv", ".motion-hsub");
+      paintMotionReading(block.querySelector(".motion-gyro"), health.gyro,
+                         ".motion-hv", ".motion-hsub");
+      paintMotionHealthCue(currentParked());
+    }
+
+    // The row's ' ›' shows only while parked, when its tap works (s3a, the
+    // I9 rule). Repainted on each Motion paint and on the parked fact's edge.
+    function paintMotionHealthCue(fact) {
+      var row = document.getElementById("motion-health");
+      var chevron = row ? row.querySelector(".motion-hchev") : null;
+      if (chevron) chevron.hidden = !(isObj(fact) && fact.parked === true);
+    }
+
+    // US-892-d: the IMU detail's six rows from the same motionView, painted
+    // whether or not the detail is open (Engine's pattern). The peaks are
+    // measurements: plain, never coloured, no reason.
+    function renderMotionDetail(detail, view) {
+      if (!detail || !view || !view.health) return;
+      var byRow = {
+        updated: view.health.updated, compass: view.health.compass,
+        tilt: view.health.tilt, gyro: view.health.gyro,
+        accel: healthCell(view.lon.peak, "plain"),
+        corner: healthCell(view.lat.peak, "plain"),
+      };
+      var rows = detail.querySelectorAll(".motion-drow");
+      for (var i = 0; i < rows.length; i++) {
+        paintMotionReading(rows[i], byRow[rows[i].getAttribute("data-row")],
+                           ".motion-dv", ".motion-dr");
       }
     }
 
@@ -8986,6 +9023,24 @@
       // states/grade-history, polled on the 4 Hz tick like the other states.
       var motionCard = document.getElementById("motion-card");
       var lastGradeHistory = null;
+      // US-892-d (spec s3a): UPDATED, TILT FIX, the full reasons and the
+      // peaks live in #motion-detail, the IMU detail on the shared
+      // #page-detail host, painted with the card every time; the entry's
+      // paint only re-attaches it (Engine's pattern). The tap is the whole
+      // health row, gated at tap time by openPageDetail (parked only).
+      var motionDetail = document.getElementById("motion-detail");
+      var motionImuDetail = {
+        title: MOTION_IMU_TITLE,
+        paint: function (bodyEl) {
+          if (motionDetail) bodyEl.appendChild(motionDetail);
+        },
+      };
+      var motionHealthRow = document.getElementById("motion-health");
+      if (motionHealthRow) {
+        motionHealthRow.addEventListener("click", function () {
+          openPageDetail(motionImuDetail);
+        });
+      }
       // US-891-c: the O2 card, between Fuel and Motion; states/o2 on the tick.
       var o2Card = document.getElementById("o2-card");
       // US-888-a: the Driving card is the LANDING card (R5, `data-landing`).
@@ -9809,6 +9864,7 @@
       var pageDetailBack = document.getElementById("page-detail-back");
       if (pageDetailBack) pageDetailBack.addEventListener("click", closePageDetail);
       onParkedChange(paintPageDetailButtons);
+      onParkedChange(paintMotionHealthCue);
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -9820,7 +9876,8 @@
             lastImu, nowMs, resolveImuStaleSec(global && global.DISPLAY_STALE),
             feedWaitedMs(feedSeen, "imu", feedStartedMs, nowMs)
           ),
-          motionGradeGraph(lastGradeHistory)
+          motionGradeGraph(lastGradeHistory),
+          motionDetail
         );
       }
 

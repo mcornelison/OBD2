@@ -457,35 +457,29 @@
               <span class="motion-label">ACCEL BRAKE</span>
               <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
               <span class="motion-note">not read</span>
-              <span class="motion-peak">peak ▲-- ▼--</span>
+              <span class="motion-peak" hidden>peak ▲-- ▼--</span>
             </div>
             <div class="motion-cell motion-lat" data-none="true">
               <span class="motion-label">CORNER</span>
               <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
               <span class="motion-note">not read</span>
-              <span class="motion-peak">peak L-- R--</span>
+              <span class="motion-peak" hidden>peak L-- R--</span>
             </div>
           </div>
-          <!-- US-892-c: the IMU health block, a 2 x 2 grid (left UPDATED /
-               TILT FIX, right COMPASS / GYRO, by auto-flow). Not a
-               .motion-band: it never dims (Iris M4). carousel.js
-               (`renderMotionHealth`) sets each cell's data-tone and texts. -->
-          <div class="motion-health">
-            <div class="motion-hcell motion-updated" data-tone="none">
-              <span class="motion-label">UPDATED</span>
-              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
-            </div>
+          <!-- US-892-c: the IMU health block. US-892-d (spec s3a, CIO
+               2026-10-27): ONE row, COMPASS | GYRO; UPDATED and TILT FIX
+               moved to the IMU detail (#motion-detail). Not a .motion-band:
+               it never dims (Iris M4). carousel.js (`renderMotionHealth`)
+               sets each cell's data-tone and texts; a PARKED tap on the row
+               opens the IMU detail, and the ' ›' shows only while parked. -->
+          <div class="motion-health" id="motion-health" role="button" aria-label="IMU detail">
             <div class="motion-hcell motion-compass" data-tone="none">
               <span class="motion-label">COMPASS</span>
               <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
             </div>
-            <div class="motion-hcell motion-tilt" data-tone="none">
-              <span class="motion-label">TILT FIX</span>
-              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
-            </div>
             <div class="motion-hcell motion-gyro" data-tone="none">
               <span class="motion-label">GYRO</span>
-              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span><span class="motion-hchev" hidden> ›</span></span>
             </div>
           </div>
         </div>
@@ -623,6 +617,21 @@
           </div>
         </div>
         <div class="fuel-trend">unavailable</div>
+      </div>
+      <!-- US-892-d (Motion spec s3a, UIDEV-021/022): the IMU detail, shipped
+           here like #engine-detail and painted from the same motionView on
+           every Motion paint. Six rows -- UPDATED, COMPASS, TILT FIX, GYRO
+           and this drive's two peak lines -- each a Michroma label and a
+           mono value with its FULL reason inline after it (wraps, clamped
+           to 2 lines). data-tone carries the same status colour as the
+           glance; the peaks and TILT FIX are measurements, never coloured. -->
+      <div id="motion-detail" class="motion-detail">
+        <div class="motion-drow" data-row="updated" data-tone="none"><span class="motion-dlabel">UPDATED</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="compass" data-tone="none"><span class="motion-dlabel">COMPASS</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="tilt" data-tone="none"><span class="motion-dlabel">TILT FIX</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="gyro" data-tone="none"><span class="motion-dlabel">GYRO</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">--</span><span class="motion-dr">not read</span></span></div></div>
+        <div class="motion-drow" data-row="accel" data-tone="plain"><span class="motion-dlabel">ACCEL</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">peak ▲-- ▼--</span><span class="motion-dr" hidden></span></span></div></div>
+        <div class="motion-drow" data-row="corner" data-tone="plain"><span class="motion-dlabel">CORNER</span><div class="motion-dval"><span class="motion-dtext"><span class="motion-dv">peak L-- R--</span><span class="motion-dr" hidden></span></span></div></div>
       </div>
     </div>
   </div>
