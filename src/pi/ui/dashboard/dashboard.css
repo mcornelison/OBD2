@@ -1752,34 +1752,43 @@ html, body {
 
 /* --- US-889-b Engine card, layout B above the fold (F-127) ------------------ */
 /* specs/v030-engine-page-design.md s3/s4. Tokens only; the layout's geometry
-   (26 x 120 px bars, the gaps) has no token, so -- as on #driving-card (S103
+   (26 x 168 px bars, the gaps) has no token, so -- as on #driving-card (S103
    G-4) -- it is declared ONCE here as properties scoped to the card and every
    rule below consumes them. This block is the only place in the Engine rules
    that may hold a literal px (tests/ui/test_engine_page.py, the CSS gate).
    No value is ever coloured by state: load at 100 % is expected on this turbo
    engine (spec s4) and the bars are --accent (the unbanded rule). No motion:
-   a bar steps from one sample to the next and never sweeps between them. */
+   a bar steps from one sample to the next and never sweeps between them.
+   US-889-d (spec s3a/s3b): the history + status left the card for the ENGINE
+   HISTORY detail, #engine-detail inside the shared #page-detail host. --eng-*
+   scoped to #engine-card would not reach it there, so the detail's geometry
+   is scoped to #engine-detail itself; the host's own chrome stays --pd-*. */
+#engine-card,
+#engine-detail {
+  --eng-line: 1.2;            /* every line box (never `normal`: the Pi's mono face) */
+  --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
+  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
+}
 #engine-card {
   --eng-bar-w: 26px;          /* vertical bar width (spec s3) */
-  --eng-bar-h: 120px;         /* vertical bar height, 0-100 % (spec s3) */
-  --eng-col-gap: 16px;        /* bars -> readings */
+  --eng-bar-h: 168px;         /* vertical bar height, 0-100 % (spec s3a: was 120) */
+  --eng-col-gap: 16px;        /* bars -> readings; THROTTLE -> TIMING */
   --eng-bars-gap: 12px;       /* between the two bars */
   --eng-gap: 6px;             /* between stacked rows */
-  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
   --eng-unit-gap: 4px;        /* number -> unit */
-  --eng-line: 1.2;            /* every line box */
-  --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
-  /* US-889-c, the scroll half (OEM mockup 2026-10-14; spec s3 status fit). */
-  --eng-section-gap: 8px;     /* between history graphs; rule -> content */
-  --eng-rule: 1px;            /* the line above the history and the status */
-  --eng-graph-h: 46px;        /* one history chart's height */
+}
+#engine-detail {
+  /* US-889-c's history + status (OEM mockup 2026-10-14; spec s3 status fit). */
+  --eng-section-gap: 8px;     /* between history graphs; rule -> status */
+  --eng-rule: 1px;            /* the line above the status */
+  --eng-graph-h: 40px;        /* one history chart's height (spec s3b: was 46) */
   --eng-graph-stroke: 2px;    /* the neutral history line */
   --eng-span-amber: 0.26;     /* amber span fill strength under the line */
   --eng-span-red: 0.32;       /* red span fill strength under the line */
   --eng-stat-gap: 8px;        /* status grid gap (spec s3: 104.0 + 160.0 + 8) */
 }
-/* The body keeps the shared .card-body guard (overflow-y auto + the scroll
-   cue): the scroll half (US-889-c) lives below the fold. */
+/* The body keeps the shared .card-body guard (overflow-y auto), but nothing
+   lives below the fold any more (spec s3a: no scroll, no cue). */
 #engine-card .card-body {
   display: flex; flex-direction: column; gap: var(--eng-gap);
 }
@@ -1812,16 +1821,32 @@ html, body {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column; gap: var(--eng-gap);
 }
-/* One row: label, value + unit, note -- on a shared baseline. LOAD wraps its
-   label onto its own line above the hero number (spec s3). */
+/* One reading: label, value + unit, note -- on a shared baseline. Every label
+   wraps onto its own line above its number (spec s3a); a note that does not
+   fit beside the number wraps below it, never off the column. */
 #engine-card .eng-reading {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--eng-inline-gap);
+  min-width: 0;
 }
-#engine-card .eng-load .eng-label {
+#engine-card .eng-reading .eng-label {
   flex-basis: 100%;
 }
+/* THROTTLE | TIMING side by side, 2 x 1fr, with the timing caption under
+   TIMING (spec s3a). */
+#engine-card .eng-pair {
+  display: grid; grid-template-columns: 1fr 1fr;
+  column-gap: var(--eng-col-gap); row-gap: var(--eng-gap);
+}
+#engine-card .eng-pair .eng-basis {
+  grid-column: 2;
+}
+/* HISTORY ›, bottom right of the readings (the shared detail button). */
+#engine-card .eng-actions {
+  display: flex; justify-content: flex-end;
+}
 /* Labels: Michroma (frame spec s4.3), letter-spacing 0. */
-#engine-card .eng-label {
+#engine-card .eng-label,
+#engine-detail .eng-label {
   font-family: var(--font-display); font-weight: 400; font-synthesis: none;
   font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--eng-line);
   color: var(--text-secondary);
@@ -1851,7 +1876,8 @@ html, body {
 #engine-card .eng-reading[data-stale="true"] .eng-line {
   opacity: var(--eng-stale-opacity);
 }
-#engine-card .eng-note {
+#engine-card .eng-note,
+#engine-detail .eng-note {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary);
 }
@@ -1862,57 +1888,52 @@ html, body {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary);
 }
-#engine-card .eng-cue {
-  flex: none;
-  font-family: var(--font-mono); font-size: var(--fs-meta);
-  line-height: var(--eng-line); color: var(--text-secondary);
-}
-/* --- US-889-c the scroll half: history + status (spec s3-s4, ACs 5-11) ---- */
+/* --- US-889-c history + status, in the ENGINE HISTORY detail (US-889-d) --- */
 /* The history line is neutral warm white. A span's colour comes ONLY from the
    provider's per-bucket band (data-band, set by carousel.js from the point):
    this sheet maps band -> token and judges nothing. No motion: the line steps
-   bucket to bucket and never animates between them. */
-#engine-card .eng-history {
+   bucket to bucket and never animates between them. The detail head already
+   draws the rule above the history, so the history starts at the body's top;
+   the status keeps its own rule. */
+#engine-detail .eng-history {
   flex: none;
   display: flex; flex-direction: column; gap: var(--eng-section-gap);
-  border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
-  padding-top: var(--eng-section-gap);
 }
-#engine-card .eng-hist {
+#engine-detail .eng-hist {
   display: flex; flex-direction: column;
 }
-#engine-card .eng-hist-head {
+#engine-detail .eng-hist-head {
   display: flex; align-items: baseline; gap: var(--eng-inline-gap);
 }
-#engine-card .eng-hist-window {
+#engine-detail .eng-hist-window {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary); white-space: nowrap;
 }
-#engine-card .eng-hist-row {
+#engine-detail .eng-hist-row {
   display: flex; align-items: center; gap: var(--eng-inline-gap);
 }
-#engine-card .eng-hist-chart {
+#engine-detail .eng-hist-chart {
   display: block; flex: 1; min-width: 0; height: var(--eng-graph-h);
 }
-#engine-card .eng-hist-line {
+#engine-detail .eng-hist-line {
   fill: none; stroke: var(--text-primary); stroke-width: var(--eng-graph-stroke);
   vector-effect: non-scaling-stroke;
 }
-#engine-card .eng-hist-span[data-band="amber"] {
+#engine-detail .eng-hist-span[data-band="amber"] {
   fill: var(--amber-warn); fill-opacity: var(--eng-span-amber);
 }
-#engine-card .eng-hist-span[data-band="red"] {
+#engine-detail .eng-hist-span[data-band="red"] {
   fill: var(--critical-red); fill-opacity: var(--eng-span-red);
 }
-#engine-card .eng-hist-end {
+#engine-detail .eng-hist-end {
   flex: none; white-space: nowrap;
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-meta); line-height: var(--eng-line); color: var(--text-primary);
 }
-#engine-card .eng-hist-unit {
+#engine-detail .eng-hist-unit {
   color: var(--text-secondary);
 }
-#engine-card .eng-absence {
+#engine-detail .eng-absence {
   margin: 0;
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-tertiary);
@@ -1920,30 +1941,30 @@ html, body {
 /* Status grid (spec s3, measured 2026-10-15): RUN TIME sized to its content,
    CHECK ENGINE takes the rest; values in the fixed-width face at --fs-label,
    CHECK ENGINE on two lines (ON, then the count) so a 3-digit count fits. */
-#engine-card .eng-status {
+#engine-detail .eng-status {
   flex: none;
   display: grid; grid-template-columns: max-content 1fr; gap: var(--eng-stat-gap);
   border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
   padding-top: var(--eng-section-gap);
 }
-#engine-card .eng-stat {
+#engine-detail .eng-stat {
   display: flex; flex-direction: column; min-width: 0;
 }
-#engine-card .eng-stat-value,
-#engine-card .eng-codes {
+#engine-detail .eng-stat-value,
+#engine-detail .eng-codes {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   font-size: var(--fs-label); line-height: var(--eng-line); white-space: nowrap;
   color: var(--text-primary);
 }
-#engine-card .eng-stat[data-stale="true"] .eng-stat-value,
-#engine-card .eng-stat[data-stale="true"] .eng-codes {
+#engine-detail .eng-stat[data-stale="true"] .eng-stat-value,
+#engine-detail .eng-stat[data-stale="true"] .eng-codes {
   opacity: var(--eng-stale-opacity);
 }
-#engine-card .eng-stat[data-note="age"] .eng-note {
+#engine-detail .eng-stat[data-note="age"] .eng-note {
   color: var(--amber-warn);
 }
 /* Moving, the count is information, not a link: secondary, no tap target. */
-#engine-card .eng-codes[data-tap="false"] {
+#engine-detail .eng-codes[data-tap="false"] {
   color: var(--text-secondary);
 }
 

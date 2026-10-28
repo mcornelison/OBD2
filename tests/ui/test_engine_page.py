@@ -16,8 +16,9 @@
 #        Michroma;
 #     5. the CSS GATE -- tokens only, literal px only in the ONE #engine-card
 #        custom-property block, motion only when state-qualified;
-#     6. the FIT -- a height/width model of the above-the-fold half at 480x320
-#        from the shipped values, with negative controls.
+#     6. the FIT -- a height/width model of the whole glance at 480x320 from
+#        the declared values (US-889-d: no scroll, no cue), with negative
+#        controls.
 #   NOT GUARDED, stated rather than implied: the render harness resolves the
 #   cascade, not layout (render_harness.py fidelity limit 1), so "visible
 #   without scrolling" here is the arithmetic model in section 6; the glass
@@ -36,6 +37,10 @@
 # 2026-10-23    | Ralph (Rex)  | US-894-e -- MOVED PIN: the Battery card is retired
 #               |              | (9 -> 8).
 # 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
+# 2026-10-27    | Rex (US-889-d) | MOVED PINS (spec s3a): no scroll cue (:99, :504),
+#               |              | bars 26 x 168 (:641-643), the CSS gate admits the
+#               |              | #engine-detail scope, and the above-the-fold model
+#               |              | (:700/:704) is REPLACED by the glance budget.
 # ================================================================================
 ################################################################################
 
@@ -96,7 +101,8 @@ CARD_ORDER = [
 ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"]
 BAR_PIDS = ["ENGINE_LOAD", "THROTTLE_POS"]
 TIMING_BASIS = "base timing · not knock"
-SCROLL_CUE = "↓ history and status below"
+# US-889-d (spec s3a): the cue is deleted; the page no longer scrolls.
+RETIRED_CUE = "↓ history and status below"
 
 # This story's fixtures (spec s7). US-889-c adds its own to the same directory,
 # so the set is asserted as PRESENT, not as the directory's whole contents.
@@ -208,11 +214,13 @@ def _boot(name: str) -> rh.Surface:
 
 
 def _engineRules() -> list[tuple[str, str]]:
-    """Every dashboard.css rule that styles the Engine card (comments stripped)."""
+    """Every dashboard.css rule that styles the Engine card or, since US-889-d,
+    its ENGINE HISTORY detail (comments stripped)."""
     return [
         (rule.selector.strip(), rule.declarations)
         for rule in rh.parseCss(_read(DASHBOARD_CSS))
-        if "#engine-card" in rule.selector or ".eng-" in rule.selector
+        if "#engine-card" in rule.selector or "#engine-detail" in rule.selector
+        or ".eng-" in rule.selector
     ]
 
 
@@ -228,7 +236,9 @@ def _decl(body: str, prop: str) -> str | None:
 
 
 def _scopedVars() -> dict[str, str]:
-    block = _rule("#engine-card")
+    """The Engine's scoped properties: the card's and, since US-889-d, the
+    ENGINE HISTORY detail's (#engine-detail). The names do not collide."""
+    block = _rule("#engine-card") + " " + _rule("#engine-detail")
     return {
         name: value.strip() for name, value in re.findall(r"(--eng-[\w-]+)\s*:\s*([^;]+);", block)
     }
@@ -496,14 +506,22 @@ def test_theShippedDomPaintsTheView(name: str):
 
 @_NODE_ONLY
 @pytest.mark.parametrize("name", FIXTURE_NAMES)
-def test_timingBasis_andScrollCue_areOnTheGlass_inEveryFixture(name: str):
+def test_timingBasis_isOnTheGlass_andTheCueIsGone_inEveryFixture(name: str):
+    """MOVED PIN (US-889-d, spec s3a): was ..._andScrollCue_areOnTheGlass_...
+    -- the page no longer scrolls, so the cue is deleted."""
     surface = _boot(name)
     basis = _enginePaths(surface, "eng-basis")
     assert len(basis) == 1 and _textOf(basis[0][-1]) == TIMING_BASIS
     assert surface.rendered(basis[0])
-    cue = _enginePaths(surface, "eng-cue")
-    assert len(cue) == 1 and _textOf(cue[0][-1]) == SCROLL_CUE
-    assert surface.rendered(cue[0])
+    assert _enginePaths(surface, "eng-cue") == []
+
+
+def test_theCueAndItsArrow_areDeleted_grep():
+    """US-889-d AC: no .eng-cue and no '↓' remain in the Engine markup or rules."""
+    markup = re.sub(r"<!--.*?-->", "", _engineMarkup(), flags=re.S)
+    assert "eng-cue" not in markup and "↓" not in markup
+    assert RETIRED_CUE not in _read(_HTML)
+    assert all("eng-cue" not in sel for sel, _ in _engineRules())
 
 
 @_NODE_ONLY
@@ -559,7 +577,7 @@ def test_unitsAreNeverInTheLabelFont():
     """The degree glyph is not in the Michroma subset; a unit in the label font
     would fall back to another face."""
     for selector, body in _engineRules():
-        if "eng-unit" in selector or "eng-basis" in selector or "eng-cue" in selector:
+        if "eng-unit" in selector or "eng-basis" in selector:
             assert "var(--font-display)" not in body, selector
 
 
@@ -593,19 +611,25 @@ _COLOUR_LITERAL = re.compile(
 _PX_LITERAL = re.compile(r"(?<![\w-])[0-9.]+px\b")
 
 
+# MOVED PIN (US-889-d): the history + status render in the ENGINE HISTORY
+# detail, #engine-detail, whose geometry is scoped to it (spec s3b) -- the
+# card's --eng-* would not reach the shared host. Two scopes, one rule each.
+_SCOPES = ("#engine-card", "#engine-detail")
+
+
 def _gateViolations(rules: list[tuple[str, str]]) -> list[str]:
     bad = []
     for selector, body in rules:
-        if "#engine-card" not in selector:
-            bad.append(f"{selector}: an Engine rule not scoped to #engine-card")
+        if not any(scope in selector for scope in _SCOPES):
+            bad.append(f"{selector}: an Engine rule not scoped to #engine-card / #engine-detail")
         if _COLOUR_LITERAL.search(body):
             bad.append(f"{selector}: literal colour")
-        if selector == "#engine-card":
+        if selector in _SCOPES:
             for decl in filter(None, (d.strip() for d in body.split(";"))):
                 if not decl.startswith("--eng-"):
                     bad.append(f"{selector}: {decl} is not a scoped --eng- property")
         elif _PX_LITERAL.search(body):
-            bad.append(f"{selector}: literal px outside the #engine-card block")
+            bad.append(f"{selector}: literal px outside the scoped blocks")
         if re.search(r"\b(?:animation|transition)\s*:", body) and not re.search(
             r"\[data-[\w-]+=\"[^\"]+\"\]", selector
         ):
@@ -638,13 +662,21 @@ def test_layoutGeometry_isNotInRoot():
     assert root is not None and "--eng-" not in root.group(1)
 
 
-def test_barGeometry_is26x120():
+def test_barGeometry_is26x168():
+    """MOVED PIN (US-889-d, spec s3a): --eng-bar-h 120 -> 168."""
     assert _px(_decl(_rule("#engine-card .eng-bar"), "width") or "") == 26
-    assert _px(_decl(_rule("#engine-card .eng-bar"), "height") or "") == 120
+    assert _px(_decl(_rule("#engine-card .eng-bar"), "height") or "") == 168
 
 
 # ---------------------------------------------------------------------------
-# 6. Fit -- the above-the-fold half at 480x320 (no scrolling, no clipping).
+# 6. Fit -- the whole glance at 480x320 (no scrolling, no clipping).
+#    US-889-d, Q1 RULED by Atlas (S119 gate 2026-10-27): a MODELLED budget from
+#    the DECLARED rules (never copied literals), every term counted, each line
+#    charged its declared line-height (never `normal`), widths from the
+#    Michroma advances and the Pi's mono advance, against the body's 254.
+#    MOVED PIN: test_aboveTheFold_fitsTheBody_withTheCueVisible (:700) is
+#    REPLACED by test_glance_fitsTheBody_inEveryFitCase, and
+#    test_heightModel_failsAPlantedTallBar (:704) is its negative control.
 # ---------------------------------------------------------------------------
 
 
@@ -677,32 +709,22 @@ def _meta() -> str:
     return "var(--fs-meta)"
 
 
-def _aboveTheFoldHeight(barH: float | None = None) -> float:
-    """Worst case: every reading carries a note (inline on its row)."""
-    labelLine = _lineBox(_meta(), _decl(_rule("#engine-card .eng-label"), "line-height") or "")
-    lineH = _decl(_rule("#engine-card .eng-line"), "line-height") or ""
-    loadLine = _lineBox("var(--fs-hero)", lineH)
-    rowLine = _lineBox("var(--fs-primary)", lineH)
-    noteLine = _lineBox(_meta(), _decl(_rule("#engine-card .eng-basis"), "line-height") or "")
-    gap = _px(_decl(_rule("#engine-card .eng-readings"), "gap") or "")
-    # LOAD's label wraps above the hero number across the row's own gap; then
-    # load, throttle, timing and the basis caption stack with three gaps.
-    wrap = _px(_decl(_rule("#engine-card .eng-reading"), "gap") or "")
-    readings = labelLine + wrap + loadLine + rowLine + rowLine + noteLine + 3 * gap
-    bar = barH if barH is not None else _px("var(--eng-bar-h)")
-    barGap = _px(_decl(_rule("#engine-card .eng-bar-col"), "gap") or "")
-    bars = bar + barGap + labelLine
-    bodyGap = _px(_decl(_rule("#engine-card .card-body"), "gap") or "")
-    cue = _lineBox(_meta(), _decl(_rule("#engine-card .eng-cue"), "line-height") or "")
-    return max(readings, bars) + bodyGap + cue
+# Every rule whose line box the glance model charges. Each must declare an
+# explicit line-height token (the Pi renders the mono stack in Liberation
+# Mono, 30 px at 26 px under `normal`; the bench renders Consolas).
+_CHARGED = (
+    "#engine-card .eng-label",
+    "#engine-card .eng-line",
+    "#engine-card .eng-note",
+    "#engine-card .eng-basis",
+)
 
 
-def test_aboveTheFold_fitsTheBody_withTheCueVisible():
-    assert _aboveTheFoldHeight() <= _bodyHeightPx(), (_aboveTheFoldHeight(), _bodyHeightPx())
-
-
-def test_heightModel_failsAPlantedTallBar():
-    assert _aboveTheFoldHeight(barH=260) > _bodyHeightPx()
+def test_everyChargedLine_declaresALineHeightToken_neverNormal():
+    for selector in _CHARGED:
+        line = _decl(_rule(selector), "line-height")
+        assert line == "var(--eng-line)", (selector, line)
+    assert _number("var(--eng-line)") > 1
 
 
 def _barsWidth() -> float:
@@ -712,32 +734,173 @@ def _barsWidth() -> float:
     return load + gap + thr
 
 
-def _rowWidth(label: str, value: str, unit: str, note: str, sizeVar: str) -> float:
-    gap = _px(_decl(_rule("#engine-card .eng-reading"), "gap") or "")
-    unitGap = _px(_decl(_rule("#engine-card .eng-unit"), "margin-inline-start") or "")
-    width = _monoWidth(value, sizeVar) + unitGap + _monoWidth(unit, "var(--fs-label)")
-    if label:
-        width += michromaWidthPx(label, 15) + gap
-    if note:
-        width += gap + _monoWidth(note, _meta())
-    return width
-
-
 def _readingsWidth() -> float:
     colGap = _px(_decl(_rule("#engine-card .eng-main"), "gap") or "")
     return _bodyWidthPx() - _barsWidth() - colGap
 
 
-def test_everyRow_fitsTheReadingsColumn_worstCase():
-    col = _readingsWidth()
-    assert _rowWidth("THROTTLE", "100", "%", "not read", "var(--fs-primary)") <= col
-    assert _rowWidth("TIMING", "40", "° ATDC", "no source", "var(--fs-primary)") <= col
-    assert _rowWidth("", "100", "%", "no source", "var(--fs-hero)") <= col
-    assert _monoWidth(TIMING_BASIS, _meta()) <= col
-    assert _monoWidth(SCROLL_CUE, _meta()) <= _bodyWidthPx()
+def _pairColumnWidth() -> float:
+    """THROTTLE | TIMING, 2 x 1fr (spec s3a), across the pair's column gap."""
+    pair = _rule("#engine-card .eng-pair")
+    assert _decl(pair, "grid-template-columns") == "1fr 1fr"
+    return (_readingsWidth() - _px(_decl(pair, "column-gap") or "")) / 2
+
+
+def _valueWidth(value: str, unit: str, sizeVar: str) -> float:
+    """The number at its size, then the unit at --fs-label after its gap (the
+    timing unit sits on the number: its own rule zeroes the gap)."""
+    gap = _px(_decl(_rule("#engine-card .eng-unit"), "margin-inline-start") or "")
+    if unit.startswith("°"):
+        timing = _decl(_rule("#engine-card .eng-timing .eng-unit"), "margin-inline-start")
+        gap = 0.0 if timing == "0" else _px(timing or "")
+    width = _monoWidth(value, sizeVar)
+    if unit:
+        width += gap + _monoWidth(unit, "var(--fs-label)")
+    return width
+
+
+def _rowWidth(value: str, unit: str, note: str, sizeVar: str) -> float:
+    """Value + unit + note on ONE line (the label wraps above it, spec s3a)."""
+    gap = _px(_decl(_rule("#engine-card .eng-reading"), "gap") or "")
+    width = _valueWidth(value, unit, sizeVar)
+    if note:
+        width += gap + _monoWidth(note, _meta())
+    return width
+
+
+def _readingHeight(reading: dict[str, Any], sizeVar: str, col: float) -> float:
+    """Label line, the wrap gap, the value line -- and, when the note does not
+    fit beside the number, the wrap gap and the note's own line."""
+    label = _lineBox(_meta(), _decl(_rule("#engine-card .eng-label"), "line-height") or "")
+    value = _lineBox(sizeVar, _decl(_rule("#engine-card .eng-line"), "line-height") or "")
+    note = _lineBox(_meta(), _decl(_rule("#engine-card .eng-note"), "line-height") or "")
+    wrap = _px(_decl(_rule("#engine-card .eng-reading"), "gap") or "")
+    height = label + wrap + value
+    if reading["note"] and _rowWidth(reading["text"], reading["unit"], reading["note"], sizeVar) > col:
+        height += wrap + note
+    return height
+
+
+def _wrappedLines(text: str, sizeVar: str, col: float) -> int:
+    """Greedy word wrap in the fixed-width face: how many lines ``text`` takes
+    in ``col`` px. A single word wider than the column is a clip, not a wrap."""
+    lines, line = 1, ""
+    for word in text.split(" "):
+        assert _monoWidth(word, sizeVar) <= col, (word, col)
+        trial = f"{line} {word}" if line else word
+        if _monoWidth(trial, sizeVar) <= col:
+            line = trial
+        else:
+            lines, line = lines + 1, word
+    return lines
+
+
+def _buttonHeight() -> float:
+    """The shared detail button (US-894-g): its declared height, border-box."""
+    rules = rh.parseCss(_read(DASHBOARD_CSS))
+    body = " ".join(r.declarations for r in rules if r.selector.strip() == ".page-detail-btn")
+    assert _decl(body, "box-sizing") == "border-box"
+    return _px(_decl(body, "height") or "")
+
+
+def _glanceHeight(view: dict[str, Any], barH: float | None = None) -> float:
+    r = view["readings"]
+    load = _readingHeight(r["ENGINE_LOAD"], "var(--fs-hero)", _readingsWidth())
+    col = _pairColumnWidth()
+    cells = max(
+        _readingHeight(r["THROTTLE_POS"], "var(--fs-primary)", col),
+        _readingHeight(r["TIMING_ADVANCE"], "var(--fs-primary)", col),
+    )
+    pairRowGap = _px(_decl(_rule("#engine-card .eng-pair"), "row-gap") or "")
+    # The caption sits under TIMING, in TIMING's column, and wraps there.
+    basisLine = _lineBox(_meta(), _decl(_rule("#engine-card .eng-basis"), "line-height") or "")
+    basis = _wrappedLines(TIMING_BASIS, _meta(), col) * basisLine
+    gap = _px(_decl(_rule("#engine-card .eng-readings"), "gap") or "")
+    readings = load + gap + (cells + pairRowGap + basis) + gap + _buttonHeight()
+    labelLine = _lineBox(_meta(), _decl(_rule("#engine-card .eng-label"), "line-height") or "")
+    bar = barH if barH is not None else _px("var(--eng-bar-h)")
+    barGap = _px(_decl(_rule("#engine-card .eng-bar-col"), "gap") or "")
+    bars = bar + barGap + labelLine
+    # .eng-main is the body's only child now, so the body's gap is never spent.
+    return max(readings, bars)
+
+
+# The fit cases (story AC): wot-pull-load-100, not-read-with-reason, the
+# inline negative-timing case (TIMING_ADVANCE -40), plus stale (every note).
+_NEGATIVE_TIMING = {"params": {"TIMING_ADVANCE": _param(-40.0)}}
+
+
+def _fitViews() -> dict[str, dict[str, Any]]:
+    views = {name: _view(name) for name in ("wot-pull-load-100", "not-read-with-reason", "stale")}
+    views["timing-minus-40"] = _probe("engineView", _NEGATIVE_TIMING, 0)
+    return views
+
+
+@_NODE_ONLY
+def test_glance_fitsTheBody_inEveryFitCase():
+    body = _bodyHeightPx()
+    assert body == 254
+    views = _fitViews()
+    assert views["timing-minus-40"]["readings"]["TIMING_ADVANCE"]["text"] == "40"
+    for name, view in views.items():
+        height = _glanceHeight(view)
+        assert height <= body, (name, height, body)
+
+
+@_NODE_ONLY
+def test_heightModel_failsAPlantedTallBar():
+    """The negative control: a bar that no longer fits fails the same model."""
+    view = _view("wot-pull-load-100")
+    assert _glanceHeight(view) <= _bodyHeightPx()
+    assert _glanceHeight(view, barH=260) > _bodyHeightPx()
+
+
+@_NODE_ONLY
+def test_heightModel_chargesAWrappedNote():
+    """A note too wide to sit beside its number costs a line, so a planted wide
+    note grows the modelled height (the model is not blind to a wrap)."""
+    view = _view("not-read-with-reason")
+    wide = json.loads(json.dumps(view))
+    wide["readings"]["THROTTLE_POS"]["note"] = "x" * 40
+    assert _glanceHeight(wide) > _glanceHeight(view)
+
+
+def test_glanceGeometry_isTheSpecsReLay():
+    """Spec s3a: LOAD alone at --fs-hero; THROTTLE | TIMING 2 x 1fr at
+    --fs-primary; the caption under TIMING; HISTORY › after the readings."""
+    assert _px("var(--eng-bar-h)") == 168
+    assert _decl(_rule("#engine-card .eng-pair .eng-basis"), "grid-column") == "2"
+    assert _decl(_rule("#engine-card .eng-reading .eng-label"), "flex-basis") == "100%"
+    assert _decl(_rule("#engine-card .eng-actions"), "justify-content") == "flex-end"
+    markup = _engineMarkup()
+    pair = markup[markup.index('class="eng-pair"') : markup.index('class="eng-actions"')]
+    assert pair.index('data-pid="THROTTLE_POS"') < pair.index('data-pid="TIMING_ADVANCE"')
+    assert pair.index('data-pid="TIMING_ADVANCE"') < pair.index("eng-basis")
+    assert 'data-pid="ENGINE_LOAD"' not in pair
+
+
+def test_everyRow_fitsItsColumn_worstCase():
+    load = _readingsWidth()
+    col = _pairColumnWidth()
+    # A value + unit never wraps (a clipped number is a lie); a note may wrap.
+    assert _valueWidth("100", "%", "var(--fs-hero)") <= load
+    assert _valueWidth("100", "%", "var(--fs-primary)") <= col
+    assert _valueWidth("40", "° ATDC", "var(--fs-primary)") <= col
+    assert _valueWidth("22", "° BTDC", "var(--fs-primary)") <= col
+    for note in ("not read", "no source", "999 s"):
+        assert _monoWidth(note, _meta()) <= col, note
+    # The caption does NOT fit TIMING's column on one line (the spec's 176 px
+    # column left out the bar labels' Michroma width): it wraps to two lines
+    # there, which the height model charges, and is never clipped.
+    assert _monoWidth(TIMING_BASIS, _meta()) > col
+    assert _wrappedLines(TIMING_BASIS, _meta(), col) == 2
+    assert _decl(_rule("#engine-card .eng-basis"), "white-space") is None
+    for label in ("THROTTLE", "TIMING"):
+        assert michromaWidthPx(label, 15) <= col, label
+    # HISTORY ›: Michroma --fs-label + mono ' ›' + 12 px padding each side.
+    button = michromaWidthPx("HISTORY", _px("var(--fs-label)")) + _monoWidth(" ›", "var(--fs-label)")
+    assert button + 2 * 12 <= load
 
 
 def test_widthModel_failsAPlantedWideRow():
-    assert _rowWidth("THROTTLE", "100.00", "percent", "not read at all", "var(--fs-hero)") > (
-        _readingsWidth()
-    )
+    assert _valueWidth("100.00", "percent", "var(--fs-primary)") > _pairColumnWidth()

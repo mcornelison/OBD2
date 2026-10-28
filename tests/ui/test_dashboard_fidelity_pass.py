@@ -459,7 +459,12 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     LABELS, and the detail button's LABEL, are Michroma (System spec s4.6.3:
     "the title in Michroma", "the label is Michroma --fs-label", the button's
     "Michroma --fs-label label"). The values and the button's ' ›' stay
-    --font-mono, pinned in tests/ui/test_system_last_updated.py."""
+    --font-mono, pinned in tests/ui/test_system_last_updated.py.
+
+    MOVED PIN (US-889-d): the Engine history + status LABELS (COOLANT /
+    INTAKE AIR / BATTERY, RUN TIME / CHECK ENGINE) moved with their rows into
+    the ENGINE HISTORY detail, #engine-detail; same rule, a second scope. Their
+    values stay --font-mono, pinned in tests/ui/test_engine_history_render.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -471,6 +476,7 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#driving-card .drv-label",
         "#driving-card .drv-gear",
         "#engine-card .eng-label",
+        "#engine-detail .eng-label",
         "#fuel-card .fuel-mpg .fuel-label",
         "#nav-card .nav-label",
         "#motion-card .motion-label",

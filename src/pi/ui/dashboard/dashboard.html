@@ -253,7 +253,10 @@
            skeleton ships "--" because nothing has been read before the first
            poll. TIMING_ADVANCE is base timing, not knock (no knock source
            without ECMLink), so the caption is markup and always on the glass.
-           The cue points at the scroll half (history + status, US-889-c). -->
+           US-889-d (spec s3a, CIO option B): the page no longer scrolls. LOAD
+           sits alone at --fs-hero, THROTTLE | TIMING share a 2 x 1fr row, and
+           the history + status moved to the ENGINE HISTORY detail behind the
+           HISTORY › button carousel.js appends to .eng-actions (parked only). -->
       <section class="card" id="engine-card" aria-label="Engine" data-page-name="ENGINE">
         <div class="card-body">
           <div class="eng-main">
@@ -273,40 +276,20 @@
                 <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
                 <span class="eng-note" hidden></span>
               </div>
-              <div class="eng-reading" data-pid="THROTTLE_POS" data-stale="false" data-note="none">
-                <span class="eng-label">THROTTLE</span>
-                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-                <span class="eng-note" hidden></span>
+              <div class="eng-pair">
+                <div class="eng-reading" data-pid="THROTTLE_POS" data-stale="false" data-note="none">
+                  <span class="eng-label">THROTTLE</span>
+                  <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                  <span class="eng-note" hidden></span>
+                </div>
+                <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
+                  <span class="eng-label">TIMING</span>
+                  <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                  <span class="eng-note" hidden></span>
+                </div>
+                <span class="eng-basis">base timing · not knock</span>
               </div>
-              <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
-                <span class="eng-label">TIMING</span>
-                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-                <span class="eng-note" hidden></span>
-              </div>
-              <span class="eng-basis">base timing · not knock</span>
-            </div>
-          </div>
-          <span class="eng-cue">↓ history and status below</span>
-          <!-- US-889-c, the scroll half (spec s3-s4, ACs 5-11). The history
-               charts are BUILT by carousel.js from states/engine-history
-               (`engineHistoryView`) -- a chart exists only when there is a
-               point to draw; an empty history is the typed absence and no
-               chart. The status row reads states/obd-live: RUN TIME is the
-               ECU's RUNTIME_SEC (never the drive's duration), CHECK ENGINE is
-               MIL_ON by value, and its count line is a tap to the Alerts card
-               ONLY while parked (data-tap). No O2 SENSORS tile until US-891. -->
-          <div class="eng-history"></div>
-          <div class="eng-status">
-            <div class="eng-stat" data-pid="RUNTIME_SEC" data-stale="false" data-note="none">
-              <span class="eng-label eng-stat-label">RUN TIME</span>
-              <span class="eng-stat-value">--</span>
-              <span class="eng-note" hidden></span>
-            </div>
-            <div class="eng-stat" data-pid="MIL_ON" data-stale="false" data-note="none">
-              <span class="eng-label eng-stat-label">CHECK ENGINE</span>
-              <span class="eng-stat-value">--</span>
-              <span class="eng-codes" id="engine-codes" data-tap="false" hidden></span>
-              <span class="eng-note" hidden></span>
+              <div class="eng-actions"><!-- JS appends HISTORY › --></div>
             </div>
           </div>
         </div>
@@ -592,7 +575,34 @@
       <button id="page-detail-back" aria-label="Back to the page">‹ BACK</button>
       <span id="page-detail-title" class="page-detail-title"></span>
     </header>
-    <div id="page-detail-body" class="page-detail-body"><!-- JS fills the detail --></div>
+    <div id="page-detail-body" class="page-detail-body">
+      <!-- JS fills the detail. US-889-d: the ENGINE HISTORY content ships
+           here so the tick paints it whether or not it is open; its entry's
+           paint re-attaches it after another detail cleared the body.
+           US-889-c (spec s3-s4, ACs 5-11): the history charts are BUILT by
+           carousel.js from states/engine-history (`engineHistoryView`) -- a
+           chart exists only when there is a point to draw; an empty history
+           is the typed absence and no chart. The status row reads
+           states/obd-live: RUN TIME is the ECU's RUNTIME_SEC (never the
+           drive's duration), CHECK ENGINE is MIL_ON by value, and its count
+           line is a tap to the Alerts card ONLY while parked (data-tap). -->
+      <div id="engine-detail" class="eng-detail">
+        <div class="eng-history"></div>
+        <div class="eng-status">
+          <div class="eng-stat" data-pid="RUNTIME_SEC" data-stale="false" data-note="none">
+            <span class="eng-label eng-stat-label">RUN TIME</span>
+            <span class="eng-stat-value">--</span>
+            <span class="eng-note" hidden></span>
+          </div>
+          <div class="eng-stat" data-pid="MIL_ON" data-stale="false" data-note="none">
+            <span class="eng-label eng-stat-label">CHECK ENGINE</span>
+            <span class="eng-stat-value">--</span>
+            <span class="eng-codes" id="engine-codes" data-tap="false" hidden></span>
+            <span class="eng-note" hidden></span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases

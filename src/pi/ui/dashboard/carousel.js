@@ -6980,6 +6980,9 @@
     // paint draws from what the entry holds; refresh (optional, async) re-reads
     // through the tick's cached reader so an open detail follows the poll.
     var pageDetailEntry = null;
+    // US-889-d (Engine spec s3a/s3b): the Engine page's button and its detail.
+    var ENGINE_HISTORY_BUTTON = "HISTORY";
+    var ENGINE_HISTORY_TITLE = "ENGINE HISTORY";
 
     function pageDetailOpen() {
       var el = document.getElementById("page-detail");
@@ -7398,15 +7401,17 @@
       return box;
     }
 
-    // US-889-c: paint the scroll half. The history changes at most once per
-    // bucket (30 s) while the tick runs at 4 Hz, so the charts are rebuilt
+    // US-889-c: paint the history + status. The history changes at most once
+    // per bucket (30 s) while the tick runs at 4 Hz, so the charts are rebuilt
     // only when the view itself changed; the status row is text and state
-    // attributes on the fixed skeleton, like the readings above the fold.
+    // attributes on the fixed skeleton, like the readings on the card.
+    // US-889-d: `root` is #engine-detail (the ENGINE HISTORY detail), not the
+    // card -- a lookup on the card would find nothing and paint nothing.
     var engineHistoryKey = null;
 
-    function renderEngineScroll(card, historyView, statusView) {
-      if (!card) return;
-      var host = card.querySelector(".eng-history");
+    function renderEngineScroll(root, historyView, statusView) {
+      if (!root) return;
+      var host = root.querySelector(".eng-history");
       var key = JSON.stringify(historyView);
       if (host && key !== engineHistoryKey) {
         engineHistoryKey = key;
@@ -7419,7 +7424,7 @@
           }
         }
       }
-      var tiles = card.querySelectorAll(".eng-stat");
+      var tiles = root.querySelectorAll(".eng-stat");
       for (var t = 0; t < tiles.length; t++) {
         var pid = tiles[t].getAttribute("data-pid");
         var reading = pid === "RUNTIME_SEC" ? statusView.runTime
@@ -7435,7 +7440,7 @@
           noteEl.hidden = !reading.note;
         }
       }
-      var codesEl = card.querySelector(".eng-codes");
+      var codesEl = root.querySelector(".eng-codes");
       if (codesEl) {
         var codes = statusView.codes;
         codesEl.hidden = !codes;
@@ -8983,10 +8988,32 @@
       // states/gear the Driving card reads (US-511-b); the render sets data-tap from
       // it, and the handler honours only what is on the glass right now.
       var engineParked = parkedInit();
+      // US-889-d (spec s3b): the history + status live in #engine-detail, the
+      // ENGINE HISTORY detail on the shared #page-detail host. The tick paints
+      // it every time, open or not; the entry's paint only re-attaches it,
+      // because another detail's paint empties the body it ships in.
+      var engineDetail = document.getElementById("engine-detail");
+      var engineHistoryDetail = {
+        title: ENGINE_HISTORY_TITLE,
+        paint: function (bodyEl) {
+          if (engineDetail) bodyEl.appendChild(engineDetail);
+        },
+      };
+      var engineActions = engineCard ? engineCard.querySelector(".eng-actions") : null;
+      if (engineActions) {
+        var engineHistoryBtn = appendPageDetailButton(
+          engineActions, ENGINE_HISTORY_BUTTON, engineHistoryDetail
+        );
+        engineHistoryBtn.id = "engine-history-btn";
+      }
       var engineCodes = document.getElementById("engine-codes");
       if (engineCodes) {
         engineCodes.addEventListener("click", function () {
-          if (engineCodes.getAttribute("data-tap") === "true") openAlertsCard();
+          if (engineCodes.getAttribute("data-tap") !== "true") return;
+          // The Warnings page is the target (unchanged); the detail would
+          // cover it, so it closes first.
+          closePageDetail();
+          openAlertsCard();
         });
       }
       // US-890-f: the SINCE RESET reset (spec s4.3). `fuelReset` is the
@@ -9958,9 +9985,10 @@
           drivingCard, drivingView(await stateOnce("obd-live"), lastGear, nowMs)
         );
         renderEngineCard(engineCard, engineView(await stateOnce("obd-live"), nowMs));
-        // US-889-c: the scroll half -- this drive's history from
-        // states/engine-history alone, and the status row from the same cached
-        // obd-live, its codes tap gated on the debounced parked signal.
+        // US-889-c: the history + status (in the ENGINE HISTORY detail since
+        // US-889-d) -- this drive's history from states/engine-history alone,
+        // and the status row from the same cached obd-live, its codes tap
+        // gated on the debounced parked signal.
         // US-511-b: fed from THIS tick's states/gear (lastGear, read above --
         // no second fetch), never from system-status idle.
         engineParked = parkedNext(engineParked, gearParked(lastGear), nowMs, carouselCfg);
@@ -9984,7 +10012,7 @@
         // THIS tick's parked signal.
         if (detailEntry) refreshCodeDetail(await stateOnce("dtc"));
         renderEngineScroll(
-          engineCard,
+          engineDetail,
           engineHistoryView(await stateOnce("engine-history")),
           engineStatusView(await stateOnce("obd-live"), engineParked.parked, nowMs)
         );
