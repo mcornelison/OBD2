@@ -1643,6 +1643,8 @@ class TestBridgePeaks:
             tsUtc=_tsAt(0), gravity=_level(), linear=(0.0, 0.0, 0.0),
             pitchRad=bridge._pitchFusion.pitchRad,  # noqa: SLF001
             stopCount=0, biasRad=0.0, fusionEngine="legacy",
+            # US-894-h: the bridge supplies chipTempC on every write (none held here).
+            chipTempC=None,
         )
         assert state == json.loads(json.dumps(expected))
 
@@ -1695,6 +1697,8 @@ _IMU_FIXTURE_INPUTS: dict[str, Any] = {
         "pitchRad": None,
         "fusionEngine": "legacy",
         "peaks": GPeakTracker(0.5).snapshot(),
+        # US-894-h: no die temperature paired yet -> null + no_reading.
+        "chipTempC": None,
     },
     "driving": lambda: {
         "tsUtc": "2026-10-20T15:02:11.3Z",
@@ -1706,6 +1710,8 @@ _IMU_FIXTURE_INPUTS: dict[str, Any] = {
         "biasRad": 0.0021,
         "fusionEngine": "legacy",
         "peaks": _drivingPeaks(),
+        # US-894-h: the paired die temperature, published at 1 dp.
+        "chipTempC": 41.26,
     },
 }
 

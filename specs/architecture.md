@@ -4767,12 +4767,26 @@ frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
 
 **Bus → `states/imu` DERIVED bridge (US-478 / F-113, Sprint 66 / V0.29.20).** The
 same seam, one tier further: `src/pi/sensors/imu_state_bridge.py`
-(`ImuStateBridge`) subscribes to `raw.imu.{accel,mag}` + the retained
+(`ImuStateBridge`) subscribes to `raw.imu.{accel,gyro,mag,temp}` + the retained
 `state.sensor.imu` presence topic (LOSSY) and writes the **display-derived view**
 into `states/imu`. Two artifacts, deliberately separate (Atlas A-4): **raw**
 accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
 file is the *derived* view and holds no raw axes at all. **The reader computes,
 the display consumes** (Atlas DELTA-2) — the card never fuses.
+
+**`chipTempC` (US-894-h, S119; Atlas ruling 2026-10-27).** `states/imu` carries
+`chipTempC`: the ICM-20948 **die** temperature in °C at 1 dp, or `null` with a
+reason — a fact about the chip, not about the car's interior. The bridge holds the
+latest `raw.imu.temp` (published after accel in each burst) with its `tsCapture`
+and pairs it with the accel being written by capture age, the `_freshGyro` rule
+and window (`magMaxAgeSec`); freshness is the `states/imu` `ts`. Held value
+`None`, absent or outside the window → `null` + `reasons.chipTempC = "no_reading"`.
+When `unavailableReason` is set (`sensor_absent`, an accel gate refusal) it is
+`null` with **that** reason. It is **not** in `_DERIVED_FIELDS`: an unresolved tilt
+(`tilt_unresolved`) keeps the paired value, and no per-channel gate nulls it. No
+range gate and no freeze enrolment. `buildImuState` emits the key only when its
+caller supplies `chipTempC` (the bridge does on every write), so a payload built
+without it is unchanged.
 
 **Startup gyro recovery (A-34 / ARCH-027, 2026-09-16).** The ICM-20948's gyro
 channel can latch into a faulted analog state reporting **14–30 °/s on a

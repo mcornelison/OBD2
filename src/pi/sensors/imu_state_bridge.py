@@ -143,6 +143,9 @@
 #               |              | under a peaks-only lock (cross-thread caller).
 # 2026-10-23    | Rex (US-869-b) | presenceFault: the current presence fault,
 #               |              | set in _handlePresence, for capture-health.
+# 2026-10-27    | Rex (US-894-h) | states/imu chipTempC: the ICM-20948 die temp
+#               |              | (raw.imu.temp, paired by capture age), 1 dp or
+#               |              | null + reason; outside _DERIVED_FIELDS.
 # ================================================================================
 ################################################################################
 
@@ -243,6 +246,7 @@ __all__ = [
     "REASON_HEADING_UNSEEDED",
     "REASON_MAG_FROZEN",
     "REASON_NO_MAG",
+    "REASON_NO_READING",
     "assessMagRotation",
     "REASON_NO_SOURCE",
     "REASON_PITCH_OUT_OF_RANGE",
@@ -254,6 +258,7 @@ __all__ = [
     "TOPIC_IMU_ACCEL",
     "TOPIC_IMU_GYRO",
     "TOPIC_IMU_MAG",
+    "TOPIC_IMU_TEMP",
     "TOPIC_OBD_SPEED",
     "ZUPT_MIN_STOP_S",
     "GYRO_OFFSET_SEED_PATH",
@@ -281,6 +286,8 @@ GRADE_HISTORY_STATE_FILENAME = "grade-history"
 TOPIC_IMU_ACCEL = "raw.imu.accel"
 TOPIC_IMU_GYRO = "raw.imu.gyro"
 TOPIC_IMU_MAG = "raw.imu.mag"
+# US-894-h: the ICM-20948 die temperature, published after accel in each burst.
+TOPIC_IMU_TEMP = "raw.imu.temp"
 STATE_IMU_PRESENCE = "state.sensor.imu"
 
 # US-521: the OBD vehicle-speed topic, consumed ONLY as the ZUPT zero-velocity
@@ -337,6 +344,11 @@ _FUSION_ENGINES = (FUSION_ENGINE_IMUFUSION, FUSION_ENGINE_LEGACY)
 # collapsing the two would silently route an AHRS bridge back onto
 # computeHeadingDeg's uncalibrated bearing.
 _NO_HEADING_OVERRIDE: Any = object()
+
+# buildImuState's "chipTempC not supplied" marker (US-894-h). A sentinel for the
+# same reason: None is a MEANINGFUL answer (no paired reading -> no_reading), and
+# an omitted argument must leave the payload exactly as it was before the key.
+_NO_CHIP_TEMP: Any = object()
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
@@ -533,6 +545,12 @@ REASON_MAG_FROZEN = "mag_frozen"
 # that reason would send the operator after an acquisition fault that is not
 # there. Never replaced by a zero -- 0 deg reads as "facing north".
 REASON_HEADING_UNSEEDED = "heading_unseeded"
+# US-894-h: no die-temperature reading is paired with this write -- none held
+# yet, the reader published None, or the held one is outside the pairing window.
+REASON_NO_READING = "no_reading"
+
+# US-894-h: chipTempC display precision (the ICM-20948 DIE temperature, degC).
+_CHIP_TEMP_DECIMALS = 1
 
 # =========================== ARCH-056: THE FROZEN CHANNEL =====================
 # 🔴 WHY THIS GATE EXISTS, AND WHY THE EXISTING ONES CANNOT DO IT.
@@ -924,6 +942,7 @@ def buildImuState(
     headingCalibrated: bool | None = None,
     fusionEngine: str | None = None,
     peaks: dict[str, Any] | None = None,
+    chipTempC: Any = _NO_CHIP_TEMP,
 ) -> dict:
     """Assemble the states/imu payload (pure -- the Atlas Q-A contract).
 
@@ -981,10 +1000,17 @@ def buildImuState(
             given (the bridge gives it on every write). Not a reading of THIS
             burst, so it is outside _DERIVED_FIELDS and survives the
             sensor-absent and gate-refusal writes unchanged.
+        chipTempC: US-894-h -- the ICM-20948 DIE temperature (degC) paired with
+            this write, or None when there is none; published only when given
+            (the bridge gives it on every write). Rounded to 1 dp; None is null
+            with ``no_reading``. Keyed on ``unavailableReason`` ONLY: when it is
+            set chipTempC is null with that reason. It is outside
+            _DERIVED_FIELDS, so tilt_unresolved and the gates keep the value.
 
     Returns:
         ``{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg, gradePct,
-        altitude, stopCount, biasRad, reasons}`` (+ ``peaks`` when given). ``altitude`` is ALWAYS null
+        altitude, stopCount, biasRad, reasons}`` (+ ``peaks`` / ``chipTempC``
+        when given). ``altitude`` is ALWAYS null
         with reason
         ``"no_source"``: the ICM-20948 has no barometer, and a zeroed altitude
         would render as sea level -- a confident lie (US-519 derives it from
@@ -1027,6 +1053,18 @@ def buildImuState(
         state["headingCalibrated"] = bool(headingCalibrated)
     if peaks is not None:
         state["peaks"] = dict(peaks)
+    # US-894-h: set BEFORE the blanket return, keyed on unavailableReason and not
+    # on blanketReason -- an unresolved tilt is not an absent instrument, and the
+    # die temperature does not depend on the gravity reference.
+    if chipTempC is not _NO_CHIP_TEMP:
+        if unavailableReason is not None:
+            state["chipTempC"] = None
+            reasons["chipTempC"] = unavailableReason
+        elif chipTempC is None:
+            state["chipTempC"] = None
+            reasons["chipTempC"] = REASON_NO_READING
+        else:
+            state["chipTempC"] = round(float(chipTempC), _CHIP_TEMP_DECIMALS)
 
     blanketReason = unavailableReason
     if blanketReason is None and (gravity is None or _norm(gravity) < _MIN_GRAVITY_MS2):
@@ -1127,6 +1165,21 @@ def _vec3(value: Any) -> tuple[float, float, float] | None:
     if not all(math.isfinite(c) for c in out):
         return None
     return out
+
+
+def _finiteFloat(value: Any) -> float | None:
+    """Coerce a bus scalar to a finite float, else None (US-894-h).
+
+    Not a range gate: it only keeps a value the state writer cannot serialize
+    (allow_nan=False) from reaching it as a fabricated reading.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
 
 
 class GPeakTracker:
@@ -1514,6 +1567,9 @@ class ImuStateBridge:
         self._magCapture: float | None = None
         self._gyro: tuple[float, float, float] | None = None
         self._gyroCapture: float | None = None
+        # US-894-h: the latest raw.imu.temp (degC, None when the reader had none).
+        self._chipTemp: float | None = None
+        self._chipTempCapture: float | None = None
         self._lastWriteCapture: float | None = None
         # US-708: the last ZUPT stop count written to the log (change-only).
         self._lastLoggedStopCount = 0
@@ -1644,6 +1700,12 @@ class ImuStateBridge:
             self._gyro = _vec3(getattr(sample, "value", None))
             self._gyroCapture = float(getattr(sample, "tsCapture", 0.0))
             return True
+        if topic == TOPIC_IMU_TEMP:
+            # US-894-h: held like the gyro and paired with the next accel write
+            # by capture age. No range gate, no freeze enrolment (sensor_reader).
+            self._chipTemp = _finiteFloat(getattr(sample, "value", None))
+            self._chipTempCapture = float(getattr(sample, "tsCapture", 0.0))
+            return True
         if topic == TOPIC_OBD_SPEED:
             # US-521 ZUPT gate. Consumed as "is it zero", never as a magnitude.
             # ARCH-064: the AHRS DOES use the magnitude (km/h -> dv/dt and
@@ -1683,6 +1745,8 @@ class ImuStateBridge:
         self._magCapture = None
         self._gyro = None
         self._gyroCapture = None
+        self._chipTemp = None
+        self._chipTempCapture = None
         # An unplug supersedes any per-channel gate verdict: `sensor_absent` is
         # the more fundamental fact, and a stale `sensor_stale` marker left
         # behind would out-rank it on the next re-plug.
@@ -1703,6 +1767,7 @@ class ImuStateBridge:
             buildImuState(
                 tsUtc=tsUtc,
                 unavailableReason=REASON_SENSOR_ABSENT,
+                chipTempC=None,
                 **self._pitchDiagnostics(),
             )
         )
@@ -1752,7 +1817,12 @@ class ImuStateBridge:
         # the clock here publishes a fabricated freshness marker.
         tsUtc = getattr(sample, "tsUtc", "")
         self._writeState(
-            buildImuState(tsUtc=tsUtc, unavailableReason=reason, **self._pitchDiagnostics())
+            buildImuState(
+                tsUtc=tsUtc,
+                unavailableReason=reason,
+                chipTempC=None,
+                **self._pitchDiagnostics(),
+            )
         )
         self._lastWriteCapture = None
 
@@ -2057,6 +2127,7 @@ class ImuStateBridge:
                 gyroImplausible=self._pitchFusion.gyroImplausible,
                 magRotation=self._magRotation.value,
                 fieldReasons=self._fieldReasons(),
+                chipTempC=self._freshChipTemp(capture),
                 **engineHeading,
                 **self._pitchDiagnostics(),
             )
@@ -2158,6 +2229,19 @@ class ImuStateBridge:
             return None
         return resolveMountFrame(self._gyro)
 
+    def _freshChipTemp(self, capture: float) -> float | None:
+        """The die temperature paired with this burst, or None (US-894-h).
+
+        The _freshGyro rule and window: the reader publishes temp AFTER accel,
+        so the accel being written pairs with the previous burst's reading.
+        """
+        if self._chipTemp is None or self._chipTempCapture is None:
+            return None
+        age = capture - self._chipTempCapture
+        if age < 0.0 or age > self._magMaxAgeS:
+            return None
+        return self._chipTemp
+
     def _shouldWrite(self, capture: float) -> bool:
         """True when the display-cadence window has opened (or on first sample)."""
         if self._lastWriteCapture is None:
@@ -2235,6 +2319,7 @@ def createImuStateBridgeFromConfig(
             TOPIC_IMU_ACCEL,
             TOPIC_IMU_GYRO,
             TOPIC_IMU_MAG,
+            TOPIC_IMU_TEMP,
             TOPIC_OBD_SPEED,
             STATE_IMU_PRESENCE,
             # US-564: without these the reader would silence a gated channel and
