@@ -95,14 +95,15 @@ The CIO had to scroll to reach COMPASS `calibrated` (relay, 2026-10-27: *"The wo
   - ` ›` is appended to the row's last value **only while parked**, when the tap works (the I9 rule).
 - **Each g cell has ONE sub-line:** the peak line when the value reads; the reason when it doesn't (the reason replaces the peak, and the peaks are always in the IMU detail).
 - **Every reason in the health row and the g cells is one line with an ellipsis**, and the full text is in the IMU detail (the System rule: the ellipsis is the visible sign, so this is no silent clip). This replaces §3's wrap-inside-the-column rule here, because a wrapped reason adds a line the budget doesn't have.
+  - ⚠️ **Open, S120 (US-892-d F1, Iris ruling 2026-10-27, pending Atlas on C3):** the GYRO reason is the `max-content` column, and with `contain: inline-size` it gets ~33 px and shows `se…` on the glance. Ruling: drop `contain: inline-size` on the GYRO reason only (worst case `--` + `orientation unresolved` ~229 + `not calibrated` 168.6 ≈ 398 ≤ 448), with the column rule kept as an AC instead: the longest known GYRO and left-column reasons render in full, with no ellipsis, and the row is ≤ 448 (modelled), plus a planted over-long reason that must FAIL. If Atlas declines: the glance shows `--` alone, and the reason lives only in the IMU detail.
 - **Spacing:** `--motion-band-pad` 6 → **4 px**, `--motion-band-gap` 6 → **4 px**.
 - **Height budget (computed):**
-  - top band 8 + max(pitch 18 + 4 + 34 + 4 + 24 = 84, grade 18 + 4 + 58 = 80) = 92;
+  - top band 8 + max(pitch 18 + 4 + 34 + 4 + 18 = 78, grade 18 + 4 + 58 = 80) = 88; *(Correction, UIDEV-023 from Ralph's US-892-d F2: the PITCH sub-line is `--fs-meta`, 18 px line, as built in `#motion-card .motion-sub`, not 24. It was charged at `--fs-label`.)*
   - gap 4 + rule 1;
   - G band 8 + 18 + 4 + 34 + 4 + 24 = 92;
   - gap 4;
   - health 8 + 1 + 44 = 53;
-  - **total 246 of 254, 8 spare.**
+  - **total 242 of 254, 12 spare** (was 246; pinned as built by `test_glance_theFullCase_chargesEveryTerm`).
 - **The margin is thin, so the gate is a measurement** (AC 15). **If it fails on the Pi,** the peak lines move into the IMU detail too. That changes the CIO's M-4 ("now + peak this drive" on the page), so it goes back to him first.
 
 ## 4. Behaviour
