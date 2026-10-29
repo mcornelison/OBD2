@@ -1792,7 +1792,7 @@ html, body {
 #engine-detail {
   --eng-line: 1.2;            /* every line box (never `normal`: the Pi's mono face) */
   --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
-  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
+  --eng-inline-gap: 8px;      /* label -> note on a header line */
 }
 #engine-card {
   /* US-889-e (CIO ruling 2026-10-27): two full-width horizontal bars. Body
@@ -1833,11 +1833,20 @@ html, body {
 #engine-card .eng-bar-col[data-stale="true"] .eng-bar {
   opacity: var(--eng-stale-opacity);
 }
+/* US-889-f (Atlas S120 s2): a header line holds 18 px with its note shown.
+   align-items: baseline set the Michroma label and the mono note 3 px apart
+   (18 -> 21 per head, 260/254); centred, both children at --eng-line, the
+   line box is the label's. TIMING's label line (.eng-timing-head) is the same. */
 #engine-card .eng-bar-head {
-  display: flex; align-items: baseline; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   gap: var(--eng-inline-gap); min-width: 0;
 }
-#engine-card .eng-bar-head .eng-note {
+#engine-card .eng-timing-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--eng-inline-gap); min-width: 0;
+}
+#engine-card .eng-bar-head .eng-note,
+#engine-card .eng-timing-head .eng-note {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #engine-card .eng-bar {
@@ -1884,15 +1893,15 @@ html, body {
   display: flex; align-items: flex-end; justify-content: space-between;
   gap: var(--eng-col-gap);
 }
-/* TIMING: label, value + unit, note -- on a shared baseline. The label and
-   the caption take their own lines; a note that does not fit beside the
-   number wraps below it, never off the column. */
+/* TIMING: exactly three rows -- label line (label left, note right) / value
+   + unit / caption (US-889-f, Iris option (a)). The note never shares the
+   value's line, so it never wraps below it. */
 #engine-card .eng-reading {
   align-self: flex-start; flex: 1; min-width: 0;
   display: flex; flex-wrap: wrap; align-items: baseline;
-  column-gap: var(--eng-inline-gap); row-gap: var(--eng-gap);
+  row-gap: var(--eng-gap);
 }
-#engine-card .eng-reading .eng-label,
+#engine-card .eng-reading .eng-timing-head,
 #engine-card .eng-reading .eng-basis {
   flex-basis: 100%;
 }
