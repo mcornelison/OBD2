@@ -1,5 +1,5 @@
 {
-  "description": "On the home network inside the emitter's weak band -> 'home' green, 'DeathstarWifi · weak signal', the glyph neutral (weak is never amber), uncounted.",
+  "description": "On the home network inside the emitter's weak band -> 'home' green, 'DeathstarWifi · weak signal', the glyph green (home at any strength; weak is never amber), uncounted.",
   "now": "2026-10-22T23:10:00Z",
   "zone": "America/Chicago",
   "inputs": {

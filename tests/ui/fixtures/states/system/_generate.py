@@ -66,6 +66,8 @@
 # 2026-10-27    | Rex (US-917-d)| the eleven sync-* fixtures (spec s4.3.1, AC 17):
 #               |              | sync.inProgress, priorCustody and the sync
 #               |              | member; S3 judged at the shipped threshold.
+# 2026-10-28    | Rex (US-742) | wifi-weak-home description: the glyph green
+#               |              | (home at any strength).
 # ================================================================================
 ################################################################################
 
@@ -530,8 +532,8 @@ FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     # --- US-894-d: the WIFI row (spec s4.4, s7) ---------------------------
     "wifi-weak-home": (
         "On the home network inside the emitter's weak band -> 'home' green, "
-        "'DeathstarWifi · weak signal', the glyph neutral (weak is never "
-        "amber), uncounted.",
+        "'DeathstarWifi · weak signal', the glyph green (home at any "
+        "strength; weak is never amber), uncounted.",
         {"system-status": _systemInputs(_upChain(), wifiRssiDbm=-77)},
     ),
     "wifi-not-read": (

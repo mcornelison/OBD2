@@ -1558,8 +1558,11 @@
 
   // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3) + US-894-d (s4.4). The
   // emitter has ALREADY derived the band; this maps it to a glyph state and
-  // applies NO threshold of its own:
-  //   `up` ok; `weak` neutral (a band on a working link, never amber);
+  // applies NO threshold of its own. US-742: colour = home, arcs = strength
+  // (CIO R-A 2026-10-27; CIO ruling 2026-10-28):
+  //   `up` or `weak` at home (home === true, as the row's wifiHomeWord) ok;
+  //   `up` or `weak` elsewhere -- other network, or home not yet decided --
+  //   neutral (weak is a band on a working link, never amber);
   //   `down` the slashed glyph (a MEASUREMENT: we looked, no link);
   //   no reading -- not_read, nmcli_absent, associated with no level, or no
   //   payload -- `dim` arcs with NO slash (a slash claims down, lit arcs a
@@ -1571,8 +1574,9 @@
     // the member's (s4.0), so a failed read nothing counted stays dim.
     if (member || r.reason === WIFI_REASON_READ_FAILED) return member ? "amber" : "dim";
     if (!r.available) return "dim";
-    if (r.state === "up") return "ok";
-    if (r.state === "weak") return "neutral";
+    if (r.state === "up" || r.state === "weak") {
+      return r.wifi.home === true ? "ok" : "neutral";
+    }
     if (r.state === WIFI_STATE_DOWN) return "down";
     return "dim";
   }
