@@ -55,6 +55,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-746 swipe gesture guard.
+# 2026-10-28    | Ralph (Rex)  | US-894-i MOVED PIN: the System overlay's
+#               |              | scroller is #sys-detail-body (#sys-detail is
+#               |              | overflow hidden), so the exemption moves to it.
 # ================================================================================
 ################################################################################
 
@@ -100,7 +103,8 @@ _OVERFLOW_PROPS = ("overflow", "overflow-x", "overflow-y")
 _EXEMPT_SCROLLERS = {
     "#setup-menu": "fixed overlay OUTSIDE #track -- no card swipe starts on it",
     "#dtc-detail": "fixed overlay OUTSIDE #track -- no card swipe starts on it",
-    "#sys-detail": "fixed overlay OUTSIDE #track -- no card swipe starts on it",
+    # MOVED PIN (US-894-i): #sys-detail no longer scrolls; its body does.
+    "#sys-detail-body": "body of a fixed overlay OUTSIDE #track -- no card swipe starts on it",
 }
 
 

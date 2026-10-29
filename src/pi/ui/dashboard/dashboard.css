@@ -1350,9 +1350,19 @@ html, body {
      drill-downs that look different teach two interactions for one idea. */
   background: var(--bg);
   display: flex; flex-direction: column;
-  padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
+  /* US-894-i (s4.6.3): the overlay never scrolls -- its body does -- so
+     ‹ Back and the version chip stay put. */
+  padding: 4px 12px 10px; box-sizing: border-box; overflow: hidden;
 }
 #sys-detail[hidden] { display: none; }
+/* US-894-i (spec s4.6.3; CIO 2026-10-28 via Iris, Atlas F7): the ONE scroll
+   container for all five System details, never per detail. A detail taller
+   than the overlay scrolls with a VISIBLE bar -- the #setup-menu declarations
+   (US-895-a) -- never a silent clip. */
+#sys-detail-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--text-secondary) var(--surface);
+}
 /* US-887-c: the version chip's home; US-894-f: shown only in the Pi detail. */
 #sys-detail #version-chip { padding-top: var(--detail-gap); }
 #sys-detail-back {

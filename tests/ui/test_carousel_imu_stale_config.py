@@ -18,6 +18,9 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: imuView retired with the
 #                               Home card; the validation rows re-point at
 #                               resolveImuStaleSec, as its consumers call it.
+# 2026-10-28    | Ralph (Rex)  | US-894-i -- MOVED PIN: the System tick is the
+#                               third resolver call (the Pi detail's IMU CHIP
+#                               TEMP row), so the count moves 2 -> 3.
 # ================================================================================
 ################################################################################
 """US-882-c tests: the IMU stale window comes from window.DISPLAY_STALE."""
@@ -143,9 +146,11 @@ def test_unsubstitutedPlaceholder_behavesAsToday():
 def test_literalIsGoneFromTheStaleTest():
     """The stale comparison reads the resolver, not a bare constant.
     MOVED PIN (US-892-b): the comparison takes the window as an argument
-    (`age > staleSec`), and both IMU pages pass it the resolver's value."""
+    (`age > staleSec`), and both IMU pages pass it the resolver's value.
+    MOVED PIN (US-894-i): the System tick passes it too, for the Pi detail's
+    IMU CHIP TEMP row (the ONE IMU stale key, no second rule) -- three calls."""
     with open(_JS, encoding="utf-8") as fh:
         src = fh.read()
     assert "IMU_STALE_SEC)" not in src.replace("DEFAULT_IMU_STALE_SEC", "")
     assert "age > staleSec" in src
-    assert src.count("resolveImuStaleSec(global && global.DISPLAY_STALE)") == 2
+    assert src.count("resolveImuStaleSec(global && global.DISPLAY_STALE)") == 3

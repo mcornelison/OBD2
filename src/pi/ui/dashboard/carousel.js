@@ -1370,11 +1370,26 @@
     return "read " + (typeof ts === "string" ? fmtStamp(ts) : SYS_NO_DATA);
   }
 
+  // US-894-i (s4.6.2): the IMU die temperature from the ALREADY-POLLED
+  // states/imu payload, in the CPU row's form (the provider already rounds to
+  // 1 dp). `--` unless the payload is available, carries a finite chipTempC
+  // and is fresh under the ONE states/imu window (motionView's test: an
+  // undated payload or age > staleSec is stale). One clock, the payload's ts.
+  function piChipTempValue(imuData, nowMs, staleSec) {
+    if (!isObj(imuData) || imuData.available !== true) return SYS_NO_DATA;
+    if (!finiteNumber(imuData.chipTempC)) return SYS_NO_DATA;
+    var age = readAgeSec(imuData, nowMs);
+    if (age === null || !(age <= staleSec)) return SYS_NO_DATA;
+    return imuData.chipTempC.toFixed(1) + " °C";
+  }
+
   // The Pi detail (s4.6.2, parked; opened from the verdict and the Pi line):
-  // CPU, THROTTLING, DISK, UPTIME, each {value, note, read}; the version is
-  // the #version-chip itself (Atlas P8: the ONE .deploy-version reader), so
-  // it is not a field here. A row is amber only as the `pi` member's.
-  function piDetailView(data) {
+  // CPU, IMU CHIP TEMP, THROTTLING, DISK, UPTIME, each {value, note, read};
+  // the version is the #version-chip itself (Atlas P8: the ONE .deploy-version
+  // reader), so it is not a field here. A row is amber only as the `pi`
+  // member's. `imuData` / `staleSec` (US-894-i) are optional: without them the
+  // chip row reads `--`.
+  function piDetailView(data, imuData, nowMs, staleSec) {
     var pi = piBlock(data);
     var over = Array.isArray(pi.overLimit) ? pi.overLimit : [];
     var member = verdictMember(data, [PI_MEMBER_KEY]) !== null;
@@ -1406,6 +1421,9 @@
             finiteNumber(pi.cpuTempC) ? pi.cpuTempC.toFixed(1) + " °C" : SYS_NO_DATA,
             finiteNumber(pi.cpuTempLimitC) ? "limit " + piLimitText(pi.cpuTempLimitC) + " °C" : null,
             pi.cpuTempTs, level(PI_OVER_CPU_TEMP)),
+        // US-894-i: no limit, never in pi.overLimit, never a member: neutral.
+        row("chipTemp", "IMU CHIP TEMP", piChipTempValue(imuData, nowMs, staleSec), null,
+            isObj(imuData) ? imuData.ts : null, "neutral"),
         row("throttled", "THROTTLING", throttled,
             typeof pi.throttledHex === "string" ? pi.throttledHex : null,
             pi.throttledTs, level(PI_OVER_THROTTLED)),
@@ -1740,7 +1758,10 @@
   // POWER tile (powerTile) is gone with it.
   // US-894-f: the Pi line (only with a `pi` member) and the Pi detail behind
   // the verdict. The US-509 drill and its `tiles` are gone (US-759 closed).
-  function systemStatusView(data, captureData, batteryData, nowMs) {
+  // US-894-i: the Pi detail's IMU CHIP TEMP row reads the tick's
+  // already-polled states/imu (`imuData`) under its one stale window
+  // (`imuStaleSec`); both optional, so a 4-argument caller is unchanged.
+  function systemStatusView(data, captureData, batteryData, nowMs, imuData, imuStaleSec) {
     if (!isObj(data)) return null;
     return {
       // s4.1: the provider's count, never the page's.
@@ -1757,7 +1778,7 @@
       // s4.1 / s4.6.2: the Pi line under the verdict, and the Pi detail the
       // verdict (and the line) open -- the same read again.
       piLine: piLineView(data),
-      piDetail: piDetailView(data),
+      piDetail: piDetailView(data, imuData, nowMs, imuStaleSec),
       glyphs: {
         // US-894-a: the link chain ignores source.obd (s4.2.1).
         bt: linkChainGlyph(data),
@@ -6308,6 +6329,7 @@
     publishParked: publishParked,
     piLineView: piLineView,
     piDetailView: piDetailView,
+    piReadText: piReadText,
     lastUpdatedView: lastUpdatedView,
     uptimeText: uptimeText,
     systemStatusView: systemStatusView,
@@ -10110,8 +10132,15 @@
             // can resolve the cell against a different sample. A null yields
             // `--`, never a fabricated reading.
             var batteryData = await stateOnce("battery-health");
+            // US-894-i: the IMU CHIP TEMP row reads the imuTick's lastImu --
+            // NO new fetch -- under the ONE IMU stale key.
             renderSystemStatusCard(
-              card, systemStatusView(data, captureData, batteryData, nowMs), glyphEls
+              card,
+              systemStatusView(
+                data, captureData, batteryData, nowMs,
+                lastImu, resolveImuStaleSec(global && global.DISPLAY_STALE)
+              ),
+              glyphEls
             );
             // US-894-g: LAST UPDATED opens on this poll's reads and clock.
             lastUpdatedInputs = { data: data, captureData: captureData, nowMs: nowMs };
