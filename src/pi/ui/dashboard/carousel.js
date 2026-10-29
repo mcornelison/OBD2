@@ -9673,12 +9673,14 @@
         detailBody.appendChild(fixBox);
 
         // Log/sync footer (the capture-before-clear precondition, made visible).
+        // US-759: two plain facts, one separator. Each half renders its own
+        // field, so an inconsistent record shows as it is (Iris review F1).
         var footer = detailLine(
           "detail-footer",
           "",
-          (view.logged ? "✓ logged" : "· not yet logged") +
+          (view.logged === true ? "✓ logged" : "not logged") +
             " · " +
-            (view.syncAcked ? "✓ synced to server" : "· sync pending")
+            (view.syncAcked === true ? "✓ synced" : "not synced")
         );
         detailBody.appendChild(footer);
       }
