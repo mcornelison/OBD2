@@ -5512,7 +5512,8 @@
   //
   // Hold time: CIO F-6, "long-press the tile (~2 s)" (fuel spec s2).
   var FUEL_RESET_HOLD_MS = 2000;
-  // Every outcome text is <= 16 characters, the MPG row's fit rule (s4.6).
+  // Every outcome text is <= 15 characters (fuel spec s4.6), the MPG row's
+  // fit rule.
   var FUEL_RESET_HINT = "hold to reset";
   var FUEL_RESET_RESETTING = "resetting…";
   // US-923: the two gate refusals keep the provider's code as their key (fuel
@@ -5522,7 +5523,7 @@
     driving: "slow to reset",
     speed_unknown: "speed unknown",
     failed: "couldn't reset",
-    unconfirmed: "couldn't confirm",
+    unconfirmed: "unconfirmed",
   };
   // The refusals that come from the gate (fuel_reset_gate.resetAllowed's
   // reasons, via core.py _maybeServiceFuelResetRequest); every other 409

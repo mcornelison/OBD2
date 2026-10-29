@@ -917,8 +917,8 @@ DEFAULTS: dict[str, Any] = {
     'pi.display.stale.imuSec': 3.0,
     # US-890-f (F-127, Atlas Q4): after a 200 from POST /fuel-reset the kiosk
     # holds "resetting…" until a states/fuel-economy read carries the answered
-    # resetAtTs, for at most this long (clock from the 200), then says "couldn't
-    # confirm". states/fuel-economy publishes every 2.02-2.05 s (MEASURED
+    # resetAtTs, for at most this long (clock from the 200), then says
+    # "unconfirmed". states/fuel-economy publishes every 2.02-2.05 s (MEASURED
     # 2026-10-15) and the kiosk polls every 250 ms: 6 s is three publish periods,
     # so one missed publish still confirms with ~1.6 s to spare. Injected per
     # request as window.DISPLAY_STALE.fuelResetConfirmSec beside imuSec; NOT an
