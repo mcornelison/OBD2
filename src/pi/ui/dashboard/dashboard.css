@@ -2536,6 +2536,10 @@ html, body {
   --motion-health-row-gap: 4px; /* health grid rows (mockup .health) */
   --motion-hrow-gap: 6px;       /* value -> reason / provenance (Iris M2) */
   --motion-health-line: 1.1;    /* health value line boxes (mockup .hv) */
+  /* US-892-e: the GYRO column's cap. Atlas MEASURED 258.1 px, the widest
+     known GYRO cell ('-- orientation unresolved ›', parked), 2026-10-28;
+     240 cuts 7 known pairs. */
+  --motion-gyro-max: 260px;
 }
 #motion-card .card-body {
   display: flex; flex-direction: column; gap: var(--motion-band-gap);
@@ -2595,14 +2599,17 @@ html, body {
 #motion-card .motion-graph-end { font-size: var(--fs-meta); fill: var(--text-primary); }
 #motion-card .motion-graph-empty { font-size: var(--fs-meta); fill: var(--text-tertiary); }
 /* US-892-c: the IMU health block (Iris M2/M4/M5, Atlas C3). US-892-d (s3a):
-   ONE row, COMPASS | GYRO, columns 1fr / max-content -- GYRO takes its
-   status word, COMPASS the rest. Values --fs-label, reasons --fs-meta on the
-   value's baseline. A reason NEVER sizes a column (contain: inline-size adds
-   0 to max-content) and is one line with an ellipsis (AC 17); the full text
-   is in the IMU detail. data-tone maps to a token here and judges nothing;
-   plain keeps --text-primary. Not a .motion-band, so stale never dims it. */
+   ONE row, COMPASS | GYRO, columns 1fr / fit-content(--motion-gyro-max) --
+   GYRO takes its status word and reason, COMPASS the rest. Values
+   --fs-label, reasons --fs-meta on the value's baseline. The COMPASS reason
+   never sizes a column (contain: inline-size adds 0 to max-content); the
+   GYRO reason does, up to the cap (US-892-e, Atlas C3 ruling 2026-10-28:
+   the cap, not contain, keeps a reason from pushing COMPASS out). Every
+   reason is one line with an ellipsis (AC 17); the full text is in the IMU
+   detail. data-tone maps to a token here and judges nothing; plain keeps
+   --text-primary. Not a .motion-band, so stale never dims it. */
 #motion-card .motion-health {
-  flex: none; display: grid; grid-template-columns: 1fr max-content;
+  flex: none; display: grid; grid-template-columns: 1fr fit-content(var(--motion-gyro-max));
   column-gap: var(--motion-health-col-gap); row-gap: var(--motion-health-row-gap);
   padding-block: var(--motion-band-pad); border-top: var(--motion-rule) solid var(--line);
 }
@@ -2624,6 +2631,11 @@ html, body {
   font-size: var(--fs-meta); line-height: var(--motion-note-line); color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* US-892-e (Iris ruling (b) 2026-10-27): the GYRO reason reads in full, so it
+   may size its capped column. flex 1 1 0 stays: it does not zero the
+   max-content contribution (Atlas, measured), and flex: none would stop an
+   unmapped code shrinking -- and ellipsising -- inside the cap. */
+#motion-card .motion-gyro .motion-hsub { contain: none; }
 /* The row's ' ›' (s3a, the I9 rule): only while parked, when the tap works
    (carousel.js sets hidden). Neutral: a detail cue carries no state colour. */
 #motion-card .motion-hchev {
