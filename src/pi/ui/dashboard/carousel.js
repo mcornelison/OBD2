@@ -7045,6 +7045,13 @@
       if (el) el.hidden = true;
     }
 
+    // R1 for the System drill-downs (US-894-j): the page-detail closer's rule,
+    // on the predicate openSysDetail opens on, so `unknown` closes too. Run on
+    // EVERY render tick; closing shows the System page beneath it.
+    function closeSysDetailUnlessParked() {
+      if (sysDetailOpen() && currentParked().parked !== true) closeSysDetail();
+    }
+
     // --- US-894-g shared page-detail kit (spec s4.6.3) ---------------------
     // The parked-only destination behind System's UPDATED ›, and next behind
     // Engine HISTORY, Fuel FUEL TRIM and Motion IMU. It renders in
@@ -10217,7 +10224,9 @@
         publishParked(engineParked.parked, isObj(lastGear) && lastGear.available === true);
         // US-894-g (R1): an open page detail closes the tick the parked fact
         // goes false; one still open re-reads and repaints on THIS tick's clock.
+        // US-894-j: an open System drill-down (#sys-detail) closes the same way.
         closePageDetailUnlessParked();
+        closeSysDetailUnlessParked();
         await refreshPageDetail(stateOnce, nowMs);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read
