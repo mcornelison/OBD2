@@ -40,6 +40,8 @@
 # 2026-10-23    | Rex (US-894-f)| MOVED PIN: the drill is deleted (US-759); the
 #               |              | gate and diagnostics-renderer tests retire, the
 #               |              | rest read the view's piDetail.
+# 2026-10-28    | Rex (US-894-i)| MOVED PIN: the Pi detail gains IMU CHIP TEMP
+#               |              | directly below CPU (five labels).
 # ================================================================================
 ################################################################################
 
@@ -463,12 +465,13 @@ def test_systemDrill_healthySystem_isStillReachable():
           verdict opens the Pi detail (spec s4.1), which is always built --
           so the line is a real tap target (parked) on a healthy card too.
           The parked-only gate is pinned in test_system_page_pi_detail.py.
+          MOVED PIN (US-894-i): IMU CHIP TEMP sits directly below CPU.
     """
     view = _probe("systemStatusView", _sysState())
 
     assert view["piDetail"]["head"] == "PI"
     assert [r["label"] for r in view["piDetail"]["rows"]] == [
-        "CPU", "THROTTLING", "DISK", "UPTIME",
+        "CPU", "IMU CHIP TEMP", "THROTTLING", "DISK", "UPTIME",
     ]
     assert [r["key"] for r in view["rows"]] == ["obd", "data", "wifi", "ups"]
 

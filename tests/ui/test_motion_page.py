@@ -31,6 +31,9 @@
 # 2026-10-19    | Rex (US-892-b) | Initial -- Motion pitch, grade graph, g + peaks.
 # 2026-10-19    | Rex (US-892-c) | The IMU health block + 5 fixtures.
 # 2026-10-26    | Rex (US-891-c) | MOVED PIN: the O2 card joins between Fuel and Motion.
+# 2026-10-28    | Rex (US-892-e) | s6: GYRO reason in full, capped GYRO column (C3);
+#               |              | MOVED PINS: healthGrid cap, healthTiers contain,
+#               |              | widestTexts drops TILT/UPDATED for AC (3).
 # ================================================================================
 ################################################################################
 
@@ -896,11 +899,14 @@ def test_namingTraps_noHealthSectionNoHealthCardNames():
         assert name not in js, name
 
 
-def test_css_healthGrid_1frMaxContent_8pxColumnGap():
+def test_css_healthGrid_1frFitContentCap_8pxColumnGap():
+    """MOVED PIN (US-892-e, Atlas C3 ruling 2026-10-28 s3): the GYRO column
+    was max-content; it is now capped, fit-content(var(--motion-gyro-max))."""
     rules = _motionRules()
     body = rules["#motion-card .motion-health"]
     assert "display: grid" in body
-    assert "grid-template-columns: 1fr max-content" in body
+    assert "grid-template-columns: 1fr fit-content(var(--motion-gyro-max))" in body
+    assert re.search(r"--motion-gyro-max:\s*260px", rules["#motion-card"])
     assert "column-gap: var(--motion-health-col-gap)" in body
     assert re.search(r"--motion-health-col-gap:\s*8px", rules["#motion-card"])
     assert re.search(r"--motion-hrow-gap:\s*6px", rules["#motion-card"])
@@ -922,7 +928,12 @@ def test_css_healthTiers_valuesLabelReasonMeta_tonesAreTokens():
     assert "font-size: var(--fs-label)" in hv and "color: var(--text-primary)" in hv
     sub = rules["#motion-card .motion-hsub"]
     assert "font-size: var(--fs-meta)" in sub and "color: var(--text-secondary)" in sub
-    assert "contain: inline-size" in sub  # Atlas C3: a reason never sizes a column
+    # MOVED PIN (US-892-e): the base rule keeps contain for the COMPASS reason;
+    # the GYRO reason drops it and the capped column holds C3's intent (a
+    # reason never pushes COMPASS out; Atlas C3 ruling 2026-10-28 s3).
+    assert "contain: inline-size" in sub
+    assert "contain: none" in rules["#motion-card .motion-gyro .motion-hsub"]
+    assert "fit-content(var(--motion-gyro-max))" in rules["#motion-card .motion-health"]
     for tone, token in (("ok", "--green-ok"), ("warn", "--amber-warn"),
                         ("none", "--text-tertiary")):
         sel = f'#motion-card .motion-hcell[data-tone="{tone}"] .motion-hv'
@@ -939,7 +950,12 @@ def test_validation_widestTextsTogether_noCellClips():
     health text inherits --font-mono, advance 0.60205 em on the Pi): with
     'not calibrated', '−10.00° from 999 stops', 'implausible' and '999 s ago'
     together, the left column fits beside the max-content right column in the
-    448 px card body (480 - 2 x 16 px padding)."""
+    448 px card body (480 - 2 x 16 px padding).
+
+    MOVED PIN (US-892-e, Atlas review F2): TILT and UPDATED are no longer
+    glance cells (IMU detail only since US-892-d; their widths are pinned in
+    tests/ui/test_motion_imu_detail.py), so their assertions left; AC (3)
+    took their place: a COMPASS REASON may ellipsise -- one line, never wraps."""
     from css_type_scale import ADVANCE_OBSERVED
 
     tokens, rules = _read(_TOKENS), _motionRules()
@@ -955,18 +971,26 @@ def test_validation_widestTextsTogether_noCellClips():
     nowMs = _ms(legacy["ts"]) + 999_000
     h = _call("motionView", legacy, nowMs, IMU_SEC, None)["health"]
     assert h["compass"]["value"] == "not calibrated"
-    assert (h["tilt"]["value"], h["tilt"]["sub"]) == (f"{MINUS}10.00{DEG}", "from 999 stops")
-    assert h["updated"]["value"] == "999 s ago"
     implausible = _health("gyro-implausible")["gyro"]["value"]
     assert implausible == "implausible"
 
     right = max(w(h["compass"]["value"], label), w(implausible, label))
     left = 448 - colGap - right
-    tilt = w(h["tilt"]["value"], label) + rowGap + w(h["tilt"]["sub"], meta)
     assert round(right, 1) == 168.6 and round(left, 1) == 271.4  # Atlas C3, measured
-    assert tilt <= left, (tilt, left)
-    assert w(h["updated"]["value"], label) <= left
-    assert w("999+ s ago", label) <= left
+
+    # AC (3): the worst known pair (Atlas C3 ruling s3) -- the widest known
+    # GYRO cell, parked, beside a COMPASS '--' + reason. The reason does not fit
+    # what is left, and the rule it wins makes it ONE line with an ellipsis.
+    gyroCol = max(_gyroMaxContent(c, parked=True) for c in _gyroCells())
+    compassCol = _bodyWidth() - colGap - gyroCol
+    widest = max((c for c in _compassCells() if c["sub"]),
+                 key=lambda c: w(c["sub"], meta))
+    assert w(widest["value"], label) + rowGap + w(widest["sub"], meta) > compassCol
+    sub = rules["#motion-card .motion-hsub"]
+    for decl in ("display: block", "min-width: 0", "white-space: nowrap",
+                 "overflow: hidden", "text-overflow: ellipsis", "contain: inline-size"):
+        assert decl in sub, decl
+    assert not [s for s in rules if "motion-compass" in s]  # no COMPASS override
 
 
 # --- the shipped DOM ---------------------------------------------------------
@@ -1079,3 +1103,209 @@ def test_dom_stale_updatedTurnsAmber_theHealthBlockIsNotABand():
 def test_dom_beforeTheFirstRead_theHealthBlockGivesWayToLoading():
     early = _boot("climb-accel", routes={})
     assert "hidden" in _one(early, "motion-health")["attrs"]
+
+
+# ---------------------------------------------------------------------------
+# 6. US-892-e -- the GYRO reason in full, the GYRO column capped (Atlas C3
+#    ruling 2026-10-28 s3-s4; Iris ruling (b) 2026-10-27). The node harness has
+#    no layout engine: the grid is MODELLED from the declared rule, and the
+#    real-browser proof is Atlas's deploy fit check.
+#      GYRO column    = min(GYRO max-content, the cap read from the rule)
+#      COMPASS column = card body - --motion-health-col-gap - GYRO column
+# ---------------------------------------------------------------------------
+
+# imuReason passes an unknown code through raw (carousel.js imuReason).
+PLANTED_CODE = "some_future_provider_reason_code_nobody_mapped"
+PANEL = (480, 320)
+
+
+def _reasonCodes() -> list[str]:
+    """Every code IMU_REASON_TEXT names, read off carousel.js."""
+    src = _read(_JS)
+    table = src[src.index("var IMU_REASON_TEXT = {"):]
+    table = table[: table.index("};")]
+    codes = re.findall(r"^\s*(\w+):", table, re.M)
+    assert "sensor_absent" in codes and "tilt_unresolved" in codes
+    return codes
+
+
+def _passthroughCodes() -> list[str]:
+    """The gate's refusal codes: published raw, painted raw (no table entry)."""
+    from pi.sensors.plausibility_gate import REASON_SENSOR_MUTE, REASON_SENSOR_STALE
+
+    return [REASON_SENSOR_MUTE, REASON_SENSOR_STALE]
+
+
+def _noFeedHealth() -> dict[str, Any]:
+    return _call("motionView", None, _now("climb-accel"), IMU_SEC,
+                 _call("loadingGraceMs") + 4000)["health"]
+
+
+def _gyroFor(reasons: dict[str, str], pitchDeg: Any = None) -> dict[str, Any]:
+    imu = dict(_fixture("health-trusted")["imu"], pitchDeg=pitchDeg, reasons=reasons)
+    return _health("health-trusted", imu=imu)["gyro"]
+
+
+def _gyroCells() -> list[dict[str, Any]]:
+    """Every cell motionGyroCell can paint, from the view itself: plausible,
+    each pitchDeg code (named, passthrough, implausible), no code, no feed."""
+    plausible = _fixture("health-trusted")["imu"]["pitchDeg"]
+    return ([_gyroFor({}, plausible), _gyroFor({})]
+            + [_gyroFor({"pitchDeg": code}) for code in (*_reasonCodes(), *_passthroughCodes())]
+            + [_noFeedHealth()["gyro"]])
+
+
+def _compassCells() -> list[dict[str, Any]]:
+    """Every cell motionCompassCell can paint: calibrated, not calibrated,
+    absent with no reason, absent with each code, no feed."""
+    base = _fixture("compass-legacy-engine")["imu"]
+    payloads = [dict(base, headingCalibrated=True), dict(base, headingCalibrated=False), base]
+    payloads += [dict(base, reasons=dict(base["reasons"], headingCalibrated=code))
+                 for code in (*_reasonCodes(), *_passthroughCodes())]
+    return ([_health("compass-legacy-engine", imu=p)["compass"] for p in payloads]
+            + [_noFeedHealth()["compass"]])
+
+
+def _bodyWidth() -> float:
+    from tests.ui.test_engine_page import _bodyWidthPx
+
+    width = _bodyWidthPx()
+    assert width == 448
+    return width
+
+
+def _chevron() -> str:
+    m = re.search(r'class="motion-hchev"[^>]*>([^<]+)<', _read(_HTML))
+    assert m is not None
+    return m.group(1)
+
+
+def _hcellMaxContent(label: str, cell: dict[str, Any], parked: bool) -> float:
+    """max(the Michroma label, value + gap + reason at --fs-meta [+ gap + ' ›'])
+    in the Pi's mono advance (css_type_scale.ADVANCE_OBSERVED, 0.60205 em)."""
+    from css_type_scale import ADVANCE_OBSERVED
+
+    from tests.ui.test_topbar_three_column_grid import michromaWidthPx
+
+    tokens, scoped = _read(_TOKENS), _motionRules()["#motion-card"]
+    fsLabel, meta = _px("--fs-label", tokens), _px("--fs-meta", tokens)
+    gap = _px("--motion-hrow-gap", scoped)
+
+    def w(text: str, px: float) -> float:
+        return len(text) * ADVANCE_OBSERVED * px
+
+    row = w(cell["value"], fsLabel)
+    if cell["sub"]:
+        row += gap + w(cell["sub"], meta)
+    if parked:
+        row += gap + w(_chevron(), fsLabel)
+    return max(michromaWidthPx(label, meta), row)
+
+
+def _gyroMaxContent(cell: dict[str, Any], parked: bool) -> float:
+    return _hcellMaxContent("GYRO", cell, parked)
+
+
+def _gyroCap(css: str | None = None) -> float:
+    """The cap the health grid declares: fit-content(var(--x)) resolved
+    through #motion-card's scoped properties; `max-content` is no cap."""
+    rules = {r.selector.strip(): r.declarations for r in rh.parseCss(css or _read(_CSS))}
+    found = rh.declarationOf(rules["#motion-card .motion-health"], "grid-template-columns")
+    assert found is not None
+    cols = found[0]
+    if cols == "1fr max-content":
+        return float("inf")
+    m = re.fullmatch(r"1fr fit-content\(var\((--[\w-]+)\)\)", cols)
+    assert m is not None, cols
+    return _px(m.group(1), rules["#motion-card"])
+
+
+def _columns(gyroMaxContent: float, css: str | None = None) -> tuple[float, float]:
+    """(GYRO column, COMPASS column) for one GYRO cell's max-content."""
+    colGap = _px("--motion-health-col-gap", _motionRules()["#motion-card"])
+    gyroCol = min(gyroMaxContent, _gyroCap(css))
+    return gyroCol, _bodyWidth() - colGap - gyroCol
+
+
+def _compassValueOverflows(gyroCells: list[dict[str, Any]], compassCells: list[dict[str, Any]],
+                           css: str | None = None) -> list[tuple[str, str, bool]]:
+    """Every (GYRO text, COMPASS value, parked) whose COMPASS value (or label)
+    does not fit the COMPASS column beside that GYRO cell."""
+    from css_type_scale import ADVANCE_OBSERVED
+
+    fsLabel = _px("--fs-label", _read(_TOKENS))
+    out = []
+    for gyro in gyroCells:
+        for parked in (False, True):
+            _, compassCol = _columns(_gyroMaxContent(gyro, parked), css)
+            for compass in compassCells:
+                need = max(len(compass["value"]) * ADVANCE_OBSERVED * fsLabel,
+                           _hcellMaxContent("COMPASS", dict(compass, sub=None), False))
+                if need > compassCol:
+                    out.append((f"{gyro['value']} {gyro['sub']}", compass["value"], parked))
+    return out
+
+
+def _healthSurface(name: str) -> rh.Surface:
+    fx = _fixture(name)
+    tree = rh.runDashboard(routes={"/imu": fx["imu"], "/grade-history": fx["gradeHistory"]},
+                           nowMs=_now(name), steps=[{"flush": 4}], viewport=PANEL,
+                           displayStale=STALE)["tree"]
+    return rh.dashboardSurface(tree, viewport=PANEL)
+
+
+def _hsubPath(surface: rh.Surface, cellCls: str) -> list[dict[str, Any]]:
+    (path,) = [p for p in surface.pathsByClass("motion-hsub")
+               if any(cellCls in _classes(n) for n in p)]
+    return path
+
+
+@_NODE_ONLY
+def test_gyroReason_rendersInFull_cappedColumn_C3():
+    """US-892-e exit test (Atlas C3 ruling 2026-10-28 s3, ACs 1-4)."""
+    # (i) the cascade on the shipped DOM (gyro-unjudged, IMU unplugged).
+    surface = _healthSurface("gyro-unjudged")
+    gyroSub = _hsubPath(surface, "motion-gyro")
+    compassSub = _hsubPath(surface, "motion-compass")
+    assert _textOf(gyroSub[-1]) == "sensor not detected"
+    assert surface.winningDeclaration(gyroSub, "contain")[0] != "inline-size"
+    assert surface.winningDeclaration(compassSub, "contain")[0] == "inline-size"
+    health = surface.pathById("motion-health")
+    assert surface.winningDeclaration(health, "grid-template-columns")[0] == (
+        "1fr fit-content(var(--motion-gyro-max))")
+
+    # (ii) the model. AC (1): every known GYRO cell fits the cap, parked and not
+    # (conditional outcome: one over 260 is a STOP, never a raised cap).
+    cap = _gyroCap()
+    assert cap == 260
+    gyroCells, compassCells = _gyroCells(), _compassCells()
+    assert {"sensor not detected", "orientation unresolved", "starting up",
+            "unavailable", "no motion feed"} <= {c["sub"] for c in gyroCells}
+    widths = {(c["value"], c["sub"], parked): _gyroMaxContent(c, parked)
+              for c in gyroCells for parked in (False, True)}
+    over = {k: round(v, 2) for k, v in widths.items() if v > cap}
+    assert not over, over
+    # The story's own model of Atlas's measured 258.1 widest cell.
+    assert round(max(widths.values()), 2) == 258.84
+    assert max(widths, key=widths.get) == ("--", "orientation unresolved", True)
+
+    # AC (2): the COMPASS value never overflows its cell, for every pair.
+    assert not _compassValueOverflows(gyroCells, compassCells)
+
+    # AC (4): the planted code ellipsises inside the cap, COMPASS untouched.
+    planted = _gyroFor({"pitchDeg": PLANTED_CODE})
+    assert (planted["value"], planted["sub"]) == ("--", PLANTED_CODE)
+    for parked in (False, True):
+        assert _gyroMaxContent(planted, parked) > cap
+        assert _columns(_gyroMaxContent(planted, parked)) == _columns(cap)
+    assert not _compassValueOverflows([planted], compassCells)
+
+    # (iii) negative control: the same model with the cap removed fails AC (2)
+    # for the planted code (Atlas's 'contain off, no cap' row: it takes the
+    # row, COMPASS collapses).
+    uncapped = re.sub(r"grid-template-columns: 1fr fit-content\(var\(--motion-gyro-max\)\)",
+                      "grid-template-columns: 1fr max-content", _read(_CSS))
+    assert uncapped != _read(_CSS)
+    assert _gyroCap(uncapped) == float("inf")
+    assert _compassValueOverflows([planted], compassCells, uncapped)
+    assert not _compassValueOverflows(gyroCells, compassCells, uncapped)

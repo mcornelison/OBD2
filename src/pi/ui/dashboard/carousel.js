@@ -1370,11 +1370,26 @@
     return "read " + (typeof ts === "string" ? fmtStamp(ts) : SYS_NO_DATA);
   }
 
+  // US-894-i (s4.6.2): the IMU die temperature from the ALREADY-POLLED
+  // states/imu payload, in the CPU row's form (the provider already rounds to
+  // 1 dp). `--` unless the payload is available, carries a finite chipTempC
+  // and is fresh under the ONE states/imu window (motionView's test: an
+  // undated payload or age > staleSec is stale). One clock, the payload's ts.
+  function piChipTempValue(imuData, nowMs, staleSec) {
+    if (!isObj(imuData) || imuData.available !== true) return SYS_NO_DATA;
+    if (!finiteNumber(imuData.chipTempC)) return SYS_NO_DATA;
+    var age = readAgeSec(imuData, nowMs);
+    if (age === null || !(age <= staleSec)) return SYS_NO_DATA;
+    return imuData.chipTempC.toFixed(1) + " °C";
+  }
+
   // The Pi detail (s4.6.2, parked; opened from the verdict and the Pi line):
-  // CPU, THROTTLING, DISK, UPTIME, each {value, note, read}; the version is
-  // the #version-chip itself (Atlas P8: the ONE .deploy-version reader), so
-  // it is not a field here. A row is amber only as the `pi` member's.
-  function piDetailView(data) {
+  // CPU, IMU CHIP TEMP, THROTTLING, DISK, UPTIME, each {value, note, read};
+  // the version is the #version-chip itself (Atlas P8: the ONE .deploy-version
+  // reader), so it is not a field here. A row is amber only as the `pi`
+  // member's. `imuData` / `staleSec` (US-894-i) are optional: without them the
+  // chip row reads `--`.
+  function piDetailView(data, imuData, nowMs, staleSec) {
     var pi = piBlock(data);
     var over = Array.isArray(pi.overLimit) ? pi.overLimit : [];
     var member = verdictMember(data, [PI_MEMBER_KEY]) !== null;
@@ -1406,6 +1421,9 @@
             finiteNumber(pi.cpuTempC) ? pi.cpuTempC.toFixed(1) + " °C" : SYS_NO_DATA,
             finiteNumber(pi.cpuTempLimitC) ? "limit " + piLimitText(pi.cpuTempLimitC) + " °C" : null,
             pi.cpuTempTs, level(PI_OVER_CPU_TEMP)),
+        // US-894-i: no limit, never in pi.overLimit, never a member: neutral.
+        row("chipTemp", "IMU CHIP TEMP", piChipTempValue(imuData, nowMs, staleSec), null,
+            isObj(imuData) ? imuData.ts : null, "neutral"),
         row("throttled", "THROTTLING", throttled,
             typeof pi.throttledHex === "string" ? pi.throttledHex : null,
             pi.throttledTs, level(PI_OVER_THROTTLED)),
@@ -1558,8 +1576,11 @@
 
   // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3) + US-894-d (s4.4). The
   // emitter has ALREADY derived the band; this maps it to a glyph state and
-  // applies NO threshold of its own:
-  //   `up` ok; `weak` neutral (a band on a working link, never amber);
+  // applies NO threshold of its own. US-742: colour = home, arcs = strength
+  // (CIO R-A 2026-10-27; CIO ruling 2026-10-28):
+  //   `up` or `weak` at home (home === true, as the row's wifiHomeWord) ok;
+  //   `up` or `weak` elsewhere -- other network, or home not yet decided --
+  //   neutral (weak is a band on a working link, never amber);
   //   `down` the slashed glyph (a MEASUREMENT: we looked, no link);
   //   no reading -- not_read, nmcli_absent, associated with no level, or no
   //   payload -- `dim` arcs with NO slash (a slash claims down, lit arcs a
@@ -1571,8 +1592,9 @@
     // the member's (s4.0), so a failed read nothing counted stays dim.
     if (member || r.reason === WIFI_REASON_READ_FAILED) return member ? "amber" : "dim";
     if (!r.available) return "dim";
-    if (r.state === "up") return "ok";
-    if (r.state === "weak") return "neutral";
+    if (r.state === "up" || r.state === "weak") {
+      return r.wifi.home === true ? "ok" : "neutral";
+    }
     if (r.state === WIFI_STATE_DOWN) return "down";
     return "dim";
   }
@@ -1736,7 +1758,10 @@
   // POWER tile (powerTile) is gone with it.
   // US-894-f: the Pi line (only with a `pi` member) and the Pi detail behind
   // the verdict. The US-509 drill and its `tiles` are gone (US-759 closed).
-  function systemStatusView(data, captureData, batteryData, nowMs) {
+  // US-894-i: the Pi detail's IMU CHIP TEMP row reads the tick's
+  // already-polled states/imu (`imuData`) under its one stale window
+  // (`imuStaleSec`); both optional, so a 4-argument caller is unchanged.
+  function systemStatusView(data, captureData, batteryData, nowMs, imuData, imuStaleSec) {
     if (!isObj(data)) return null;
     return {
       // s4.1: the provider's count, never the page's.
@@ -1753,7 +1778,7 @@
       // s4.1 / s4.6.2: the Pi line under the verdict, and the Pi detail the
       // verdict (and the line) open -- the same read again.
       piLine: piLineView(data),
-      piDetail: piDetailView(data),
+      piDetail: piDetailView(data, imuData, nowMs, imuStaleSec),
       glyphs: {
         // US-894-a: the link chain ignores source.obd (s4.2.1).
         bt: linkChainGlyph(data),
@@ -3085,11 +3110,25 @@
   // US-877-c (Iris 2026-10-19): one line per unassessed source, System first.
   var WARNINGS_SYSTEM_NOT_READ_TEXT = "System checks not read yet.";
   var WARNINGS_DATA_NOT_BUILT_TEXT = "Data checks are not built yet.";
+  // US-897-f (spec v030-warnings-page-design.md 4.3; Atlas RULED 2026-10-28 s1):
+  // an assessed System speaks the verdict's own issueCount -- the number the
+  // System page's 'n ISSUES' reads -- clear only at exactly 0.
+  var WARNINGS_SYSTEM_CLEAR_TEXT = "System checks clear.";
 
   // A source is assessed only when the provider says exactly true; absent or
   // anything else is "not assessed" -- the direction that claims nothing.
   function warningSourceAssessed(sources, name) {
     return isObj(sources[name]) && sources[name].assessed === true;
+  }
+
+  // US-897-f: the assessed System line from the provider's issueCount. Exactly
+  // 0 is 'clear'; an int >= 1 says how many (amber); anything else -- absent,
+  // null, a bool, a string, a fraction, a negative -- is NO line, never 'clear'
+  // (Atlas s1: fails closed).
+  function warningsSystemLine(n) {
+    if (typeof n !== "number" || !isFinite(n) || n < 0 || Math.floor(n) !== n) return null;
+    if (n === 0) return { text: WARNINGS_SYSTEM_CLEAR_TEXT, tone: "primary" };
+    return { text: "System has " + n + (n === 1 ? " issue." : " issues."), tone: "amber" };
   }
 
   // When the codes were read, in the panel's one 12-hour clock without AM/PM
@@ -3125,7 +3164,8 @@
   // under it -- a row is never hidden). Code read assessed: 'NO WARNINGS', when
   // the codes were read (+ the engine clause only while engine is assessed),
   // then a not-read / not-built line for each of system and data while it is
-  // not assessed. Not assessed:
+  // not assessed (an assessed System speaks its count instead, US-897-f:
+  // warningsSystemLine). Not assessed:
   // '? NOT CHECKED YET' and why nothing can be claimed -- no other line, so the
   // card says nothing about any source. null while anything is active.
   function warningsQuietView(alerts, rows) {
@@ -3148,6 +3188,9 @@
     }];
     if (!warningSourceAssessed(sources, "system")) {
       lines.push({ text: WARNINGS_SYSTEM_NOT_READ_TEXT, tone: "secondary" });
+    } else {
+      var systemLine = warningsSystemLine(sources.system.issueCount);
+      if (systemLine) lines.push(systemLine);
     }
     if (!warningSourceAssessed(sources, "data")) {
       lines.push({ text: WARNINGS_DATA_NOT_BUILT_TEXT, tone: "secondary" });
@@ -5490,7 +5533,8 @@
   //
   // Hold time: CIO F-6, "long-press the tile (~2 s)" (fuel spec s2).
   var FUEL_RESET_HOLD_MS = 2000;
-  // Every outcome text is <= 16 characters, the MPG row's fit rule (s4.6).
+  // Every outcome text is <= 15 characters (fuel spec s4.6), the MPG row's
+  // fit rule.
   var FUEL_RESET_HINT = "hold to reset";
   var FUEL_RESET_RESETTING = "resetting…";
   // US-923: the two gate refusals keep the provider's code as their key (fuel
@@ -5500,7 +5544,7 @@
     driving: "slow to reset",
     speed_unknown: "speed unknown",
     failed: "couldn't reset",
-    unconfirmed: "couldn't confirm",
+    unconfirmed: "unconfirmed",
   };
   // The refusals that come from the gate (fuel_reset_gate.resetAllowed's
   // reasons, via core.py _maybeServiceFuelResetRequest); every other 409
@@ -6285,6 +6329,7 @@
     publishParked: publishParked,
     piLineView: piLineView,
     piDetailView: piDetailView,
+    piReadText: piReadText,
     lastUpdatedView: lastUpdatedView,
     uptimeText: uptimeText,
     systemStatusView: systemStatusView,
@@ -6998,6 +7043,13 @@
     function closeSysDetail() {
       var el = document.getElementById("sys-detail");
       if (el) el.hidden = true;
+    }
+
+    // R1 for the System drill-downs (US-894-j): the page-detail closer's rule,
+    // on the predicate openSysDetail opens on, so `unknown` closes too. Run on
+    // EVERY render tick; closing shows the System page beneath it.
+    function closeSysDetailUnlessParked() {
+      if (sysDetailOpen() && currentParked().parked !== true) closeSysDetail();
     }
 
     // --- US-894-g shared page-detail kit (spec s4.6.3) ---------------------
@@ -9651,12 +9703,14 @@
         detailBody.appendChild(fixBox);
 
         // Log/sync footer (the capture-before-clear precondition, made visible).
+        // US-759: two plain facts, one separator. Each half renders its own
+        // field, so an inconsistent record shows as it is (Iris review F1).
         var footer = detailLine(
           "detail-footer",
           "",
-          (view.logged ? "✓ logged" : "· not yet logged") +
+          (view.logged === true ? "✓ logged" : "not logged") +
             " · " +
-            (view.syncAcked ? "✓ synced to server" : "· sync pending")
+            (view.syncAcked === true ? "✓ synced" : "not synced")
         );
         detailBody.appendChild(footer);
       }
@@ -10085,8 +10139,15 @@
             // can resolve the cell against a different sample. A null yields
             // `--`, never a fabricated reading.
             var batteryData = await stateOnce("battery-health");
+            // US-894-i: the IMU CHIP TEMP row reads the imuTick's lastImu --
+            // NO new fetch -- under the ONE IMU stale key.
             renderSystemStatusCard(
-              card, systemStatusView(data, captureData, batteryData, nowMs), glyphEls
+              card,
+              systemStatusView(
+                data, captureData, batteryData, nowMs,
+                lastImu, resolveImuStaleSec(global && global.DISPLAY_STALE)
+              ),
+              glyphEls
             );
             // US-894-g: LAST UPDATED opens on this poll's reads and clock.
             lastUpdatedInputs = { data: data, captureData: captureData, nowMs: nowMs };
@@ -10163,7 +10224,9 @@
         publishParked(engineParked.parked, isObj(lastGear) && lastGear.available === true);
         // US-894-g (R1): an open page detail closes the tick the parked fact
         // goes false; one still open re-reads and repaints on THIS tick's clock.
+        // US-894-j: an open System drill-down (#sys-detail) closes the same way.
         closePageDetailUnlessParked();
+        closeSysDetailUnlessParked();
         await refreshPageDetail(stateOnce, nowMs);
         // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
         // the takeover painted from, against THIS tick's parked signal. The read

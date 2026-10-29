@@ -19,8 +19,8 @@
 #     - the detail declares NO host geometry (no --pd-* of its own);
 #     - Q1 (Atlas S119 gate): MODELLED height budgets from the DECLARED
 #       CSS/tokens -- the glance <= the 254 px card body charging every line
-#       any MPG state can show at once (so the 'resetting…', "couldn't
-#       confirm" and widest-reason fit cases are bounded by it), and the
+#       any MPG state can show at once (so the 'resetting…', 'unconfirmed'
+#       and widest-reason fit cases are bounded by it), and the
 #       detail <= the host's 270 px body -- each with a planted-overflow
 #       negative control that FAILS; widths from michroma-advances.json and
 #       the Pi's mono advance.
@@ -436,7 +436,7 @@ def _ruled(selector: str, root: str, css: str | None = None) -> float:
 def _glanceHeight(css: str | None = None) -> float:
     """The glance at its tallest: EVERY line any state can show at once is
     charged together (airflow note shown; each MPG slot's note, flag, reset
-    line and hold bar all shown), so 'resetting…', "couldn't confirm" and the
+    line and hold bar all shown), so 'resetting…', 'unconfirmed' and the
     widest reasons -- each one line, see the width test -- are inside it."""
     root = "#fuel-card"
     label = _textLine(root, "fuel-label", css)
@@ -563,15 +563,16 @@ def test_width_theTrendRow_staysOneLine_atItsWidestReason():
 
 
 def test_width_theGlanceFitCaseTexts_areOneLineEach():
-    """The fit-case texts the glance model charges as ONE line each. The
-    reasons fit their column; the reset line is nowrap, so it stays one line
-    whatever its width. "couldn't confirm" (US-890-f) is 144.5 px at the Pi's
-    mono advance in a 141.3 px column: it overflows by ~3 px sideways (no
-    height cost), pre-existing, reported to the PM rather than fixed here."""
+    """The fit-case texts the glance model charges as ONE line each, each
+    inside its MPG column (141.3 px). MOVED PIN (US-890-i): the unconfirmed
+    outcome is 'unconfirmed' (11 ch, 99.3 px) and now joins the fitting set;
+    the retired 16-character word (144.5 px, ~3 px over) is kept only as the
+    planted negative control the same width model must FAIL."""
     root = "#fuel-card"
     col = (_bodyWidthPx() - 2 * _px(_decl("#fuel-card .fuel-mpg", "gap"), root)) / 3
     meta = _px("var(--fs-meta)", root)
-    for text in ("resetting…", "no fuel counted", "too many gaps"):
+    for text in ("resetting…", "no fuel counted", "too many gaps", "unconfirmed"):
         assert _mono(text, meta) <= col, text
     assert _decl("#fuel-card .fuel-reset-line", "white-space") == "nowrap"
-    assert _mono("couldn't confirm", meta) > col  # recorded, not hidden
+    planted = "couldn't" + " confirm"  # the retired word, assembled
+    assert not (_mono(planted, meta) <= col)

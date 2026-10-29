@@ -2443,7 +2443,10 @@ def test_c_verdictPiMember_isTheSystemWatchOnStatesAlerts(tmp_path):
     alerts = _alertsAfterTick(orch, tmp_path)
 
     status = _readState(tmp_path, "system-status")
-    assert alerts["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): sources.system carries the verdict's issueCount.
+    assert alerts["sources"]["system"] == {
+        "assessed": True, "issueCount": status["verdict"]["issueCount"],
+    }
     pi = [e for e in _systemEntries(alerts) if e["key"] == "pi"]
     assert [e["id"] for e in pi] == ["system:pi:watch"]
     member = next(m for m in status["verdict"]["members"] if m["key"] == "pi")
@@ -2466,17 +2469,25 @@ def test_c_emitNow_keepsTheCachedSystemEntries_andObservesNothing(tmp_path):
     orch, holder = _systemOrch(tmp_path, dict(_PI_HOT))
     orch._emitSystemStatusState()
     _alertsAfterTick(orch, tmp_path)
+    held = _readState(tmp_path, "system-status")
     holder["pi"] = None  # the pi member clears on the NEXT system-status emit
 
     rebuilt = orch.emitNow()
 
-    assert rebuilt["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): the held verdict's issueCount rides the rebuild.
+    assert rebuilt["sources"]["system"] == {
+        "assessed": True, "issueCount": held["verdict"]["issueCount"],
+    }
     assert "system:pi:watch" in [e["id"] for e in _systemEntries(rebuilt)]
 
     orch._emitSystemStatusState()
     after = _alertsAfterTick(orch, tmp_path)
     assert "system:pi:watch" not in [e["id"] for e in _systemEntries(after)]
-    assert after["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): the new verdict's issueCount.
+    assert after["sources"]["system"] == {
+        "assessed": True,
+        "issueCount": _readState(tmp_path, "system-status")["verdict"]["issueCount"],
+    }
 
 
 def test_c_aFailedSystemStatusWrite_keepsTheCachedVerdict(tmp_path, monkeypatch):
@@ -2496,4 +2507,9 @@ def test_c_aFailedSystemStatusWrite_keepsTheCachedVerdict(tmp_path, monkeypatch)
 
     assert "system:pi:watch" in before
     assert [e["id"] for e in _systemEntries(after)] == before
-    assert after["sources"]["system"] == {"assessed": True}
+    # MOVED PIN (US-897-f): the held count is the last WRITTEN verdict's (the
+    # failed write left the first one on disk).
+    assert after["sources"]["system"] == {
+        "assessed": True,
+        "issueCount": _readState(tmp_path, "system-status")["verdict"]["issueCount"],
+    }

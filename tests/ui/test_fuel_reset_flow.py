@@ -83,7 +83,8 @@ RESETTING = "resetting…"
 SLOW = "slow to reset"
 SPEED_UNKNOWN = "speed unknown"
 FAILED = "couldn't reset"
-UNCONFIRMED = "couldn't confirm"
+# US-890-i MOVED PIN: the unconfirmed outcome is 'unconfirmed' (fuel spec s4.6).
+UNCONFIRMED = "unconfirmed"
 OLD_FIGURE = "≈24.6"
 CONFIRM_SEC = 6
 STALE = {"imuSec": 2.0, "fuelResetConfirmSec": CONFIRM_SEC}
@@ -283,9 +284,9 @@ def test_validation_200_resettingFromYesUntilTheMatchingRead():
     assert steps[4]["state"]["outcome"] is None
 
 
-def test_validation_504_couldntConfirm_thenTheLandedRead_neverTheOldFigure():
+def test_validation_504_unconfirmed_thenTheLandedRead_neverTheOldFigure():
     """Validation: 504, then the next read has resetAtTs T and mpg null ->
-    "couldn't confirm", then '--' 'too short yet'."""
+    "unconfirmed", then '--' 'too short yet'."""
     fx = _fixture("reset-unknown-504")
     after = _read("reset-unknown-504", "after")
     steps = _run(_confirmed(fx["response"]) + [{"type": "read", "read": after,
@@ -297,9 +298,9 @@ def test_validation_504_couldntConfirm_thenTheLandedRead_neverTheOldFigure():
     assert UNCONFIRMED not in last and OLD_FIGURE not in last
 
 
-def test_validation_200_noMatchingReadWithinSixSeconds_couldntConfirm():
+def test_validation_200_noMatchingReadWithinSixSeconds_unconfirmed():
     """Validation: 200, no read with resetAtTs T within 6 s -> the latest
-    provider value + "couldn't confirm". The clock starts AT the 200."""
+    provider value + "unconfirmed". The clock starts AT the 200."""
     fx = _fixture("reset-confirm-timeout")
     stale = _read("reset-confirm-timeout", "stale")
     late = _read("reset-confirm-timeout", "stale-late")
@@ -354,12 +355,12 @@ def test_aRefusedOrFailedWrite_saysCouldntReset_rawTextNeverOnTheGlass(case: str
      {"status": 200, "body": {"ok": True, "resetAtTs": ""}}],
     ids=["200-no-stamp", "undocumented-500", "200-empty-stamp"],
 )
-def test_anAnswerTheReadCannotSettle_isCouldntConfirm(answer: dict[str, Any]):
+def test_anAnswerTheReadCannotSettle_isUnconfirmed(answer: dict[str, Any]):
     steps = _run(_confirmed(answer), _read("parked-reset-available", "before"))
     assert _since(steps[2]) == (OLD_FIGURE, "", UNCONFIRMED)
 
 
-def test_noAnswerAtAll_isCouldntConfirm():
+def test_noAnswerAtAll_isUnconfirmed():
     steps = _run([{"type": "hold"}, {"type": "yes"}, {"type": "failure"}],
                  _read("parked-reset-available", "before"))
     assert _since(steps[2]) == (OLD_FIGURE, "", UNCONFIRMED)
@@ -391,8 +392,9 @@ def test_yesWithoutAnOpenConfirm_doesNothing():
 
 
 @pytest.mark.parametrize("text", [HINT, RESETTING, SLOW, SPEED_UNKNOWN, FAILED, UNCONFIRMED])
-def test_everyResetText_isAtMost16Chars(text: str):
-    assert len(text) <= 16
+def test_everyResetText_isAtMost15Chars(text: str):
+    """MOVED PIN (US-890-i): the fit rule is <= 15 characters (fuel spec s4.6)."""
+    assert len(text) <= 15
 
 
 def test_parkToReset_appearsNowhere():
@@ -459,7 +461,7 @@ def test_carouselJs_holdsNoLiteralForTheConfirmWindow():
 def test_aRealCanonicalStamp_confirmsEndToEnd():
     """The orchestrator stamps resetAtTs with toCanonicalIso and the emitter
     publishes the stored row's reset_at_ts: the SAME string must reach the 200
-    and the read, or every reset reads "couldn't confirm"."""
+    and the read, or every reset reads "unconfirmed"."""
     from common.time.helper import toCanonicalIso
     from tests.ui.test_fuel_page import _buildFuelEconomy
 
@@ -645,7 +647,7 @@ def test_dom_200_holdsResettingUntilTheMatchingRead_thenShowsThatRead():
     assert _glass(done) == ("--", "too short yet", HINT)
 
 
-def test_dom_200_noMatchingRead_pastTheWindow_couldntConfirm():
+def test_dom_200_noMatchingRead_pastTheWindow_unconfirmed():
     fx = _fixture("reset-confirm-timeout")
     steps = _HOLD_PARKED + _HOLD_2S + [
         {"click": "fuel-reset-yes"}, {"flush": 2},
@@ -668,6 +670,22 @@ def test_dom_refusals_paintTheLatestValue_plusTheOutcome(answer: dict[str, Any],
     dom = _boot(steps, _parkedCar(),
                 routes={"/fuel-reset": {"__status": answer["status"], "__body": answer["body"]}})
     assert _glass(dom) == (OLD_FIGURE, "", line)
+
+
+def test_dom_504_saysUnconfirmed_andTheRetiredWordIsGone():
+    """US-890-i exit test: the 504 path reads 'unconfirmed' on the glass, and
+    the retired 16-character word (it ran ~3 px past the MPG column) is in
+    neither carousel.js nor dashboard.css. The retired word is assembled here
+    so this file does not carry it either."""
+    answer = _fixture("reset-unknown-504")["response"]
+    steps = _HOLD_PARKED + _HOLD_2S + [{"click": "fuel-reset-yes"}, {"flush": 2}]
+    dom = _boot(steps, _parkedCar(),
+                routes={"/fuel-reset": {"__status": answer["status"], "__body": answer["body"]}})
+    assert _glass(dom) == (OLD_FIGURE, "", "unconfirmed")
+    retired = "couldn't" + " confirm"
+    for path in (_JS, os.path.join(rh.DASHBOARD_DIR, "dashboard.css")):
+        with open(path, encoding="utf-8") as fh:
+            assert retired not in fh.read(), path
 
 
 def test_dom_504_thenTheLandedRead_showsTheNewTotal():

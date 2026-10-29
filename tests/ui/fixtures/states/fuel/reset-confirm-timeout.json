@@ -1,5 +1,5 @@
 {
-  "description": "200 with resetAtTs T, but no read carries sinceReset.resetAtTs T within pi.display.stale.fuelResetConfirmSec (6 s, clock from the 200): every read still has the old row. Inside the window the slot keeps 'resetting…'; past it, the latest provider value (24.6) + 'couldn't confirm'. Reads built by the REAL buildFuelEconomyState.",
+  "description": "200 with resetAtTs T, but no read carries sinceReset.resetAtTs T within pi.display.stale.fuelResetConfirmSec (6 s, clock from the 200): every read still has the old row. Inside the window the slot keeps 'resetting…'; past it, the latest provider value (24.6) + 'unconfirmed'. Reads built by the REAL buildFuelEconomyState.",
   "response": {
     "status": 200,
     "body": {

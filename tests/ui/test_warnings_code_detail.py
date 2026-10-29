@@ -442,6 +442,36 @@ def test_parkedTap_statesDtcReadFails_titleChipSentencePlusDetailsUnavailable():
 
 
 @_needsNode
+@pytest.mark.parametrize(
+    ("logged", "syncAcked", "footer"),
+    [
+        (True, True, "✓ logged · ✓ synced"),
+        (True, False, "✓ logged · not synced"),
+        (False, False, "not logged · not synced"),
+        (False, True, "not logged · ✓ synced"),
+    ],
+    ids=["logged-synced", "logged-unsynced", "unlogged-unsynced", "unlogged-synced"],
+)
+def test_dtcDetailFooter_oneSeparator_forEveryLoggedAndSyncState(
+    logged: bool, syncAcked: bool, footer: str
+):
+    """
+    US-759 (Iris S120 batch; review F1): the log/sync footer is two plain facts
+    joined by exactly one ' · '. Each half renders its own field, so an
+    impossible record (not logged, synced) shows as it is, never masked. Was
+    '✓ logged · · sync pending' on the car (CIO 2026-09-14).
+    """
+    state = _state([_raw("P0443", logged=logged, syncAcked=syncAcked)], table=_shippedTable())
+    surface, _ = _boot(_routes(state), _OPEN_DETAIL)
+
+    assert _detailOpen(surface), "a parked tap did not open the detail -- vacuous"
+    text = _textOf(_onlyRendered(surface, "detail-footer")).strip()
+    assert text == footer
+    assert text.count("·") == 1
+    assert "· ·" not in text
+
+
+@_needsNode
 def test_engineRow_isNotAControl_andATapOpensNothing():
     alerts = json.load(open(os.path.join(_FIXTURES, "watch-battery-low.json"), encoding="utf-8"))
     assert alerts["entries"][0]["source"] == "engine", "fixture moved -- vacuous"

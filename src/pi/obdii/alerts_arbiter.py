@@ -49,6 +49,10 @@
 #                                until a verdict was read; system ranks with engine.
 # 2026-10-24    | Rex (US-869-c) | SYSTEM_TITLES gains 'sensor': 'SENSOR FAULT'.
 # 2026-10-27    | Rex (US-917-c) | SYSTEM_TITLES gains 'sync': 'SYNC NOT COMPLETE'.
+# 2026-10-28    | Rex (US-897-f) | sources.system carries the verdict's issueCount
+#                                as published (null unless an int >= 0); an
+#                                untitled member is a WATCH titled
+#                                SYSTEM_TITLE_FALLBACK, no longer skipped (Atlas F2).
 # ================================================================================
 ################################################################################
 
@@ -209,7 +213,9 @@ CODE_STATUS_PENDING = "pending"
 # SYSTEM entries (US-877-c): one WATCH per member of the system-status verdict,
 # never stop. Titles by member key, Iris 2026-10-19 (verbatim, <= 21 chars); the
 # sentence is the member's own reason, copied -- the page composes nothing. A key
-# not in this table is skipped with one WARNING (Atlas RULED 2026-10-22 A5).
+# not in this table gets SYSTEM_TITLE_FALLBACK and one WARNING (Atlas F2 RULED
+# 2026-10-28, superseding the 10-22 A5 skip): every counted member yields exactly
+# one entry, so the icon, the list and System's count agree by construction.
 SYSTEM_TITLES = {
     "bt": "BLUETOOTH NOT LINKED",
     "adapter": "ADAPTER NOT ANSWERING",
@@ -221,6 +227,9 @@ SYSTEM_TITLES = {
     # US-917-c (Iris 2026-10-27): <THING> <STATE>; true for S1, S2 and S3.
     "sync": "SYNC NOT COMPLETE",
 }
+# Its own constant, never a SYSTEM_TITLES key: that table stays set-equal to the
+# verdict's member keys (Iris owns the words).
+SYSTEM_TITLE_FALLBACK = "SYSTEM ISSUE"
 SYSTEM_REASON_NOT_READ = "not_read"
 DATA_REASON_NOT_BUILT = "not_built"
 
@@ -446,6 +455,9 @@ class AlertsArbiter:
         self._systemLock = threading.Lock()
         self._system: dict[str, AlertEpisode] = {}
         self._systemRead = False
+        # US-897-f: the verdict's issueCount AS PUBLISHED (System's 'n ISSUES'),
+        # None when it was not an int >= 0. Never counted here (Atlas F9).
+        self._systemIssueCount: int | None = None
         self._systemUnknownWarned: set[str] = set()
         for entry in seedEntries:
             self._seed(entry)
@@ -468,10 +480,11 @@ class AlertsArbiter:
             return dict(self._codeSource)
 
     def systemSource(self) -> dict[str, Any]:
-        """``sources.system`` -- assessed once a verdict was read this boot."""
+        """``sources.system`` -- assessed once a verdict was read this boot,
+        with that verdict's ``issueCount`` (int >= 0, else None; US-897-f)."""
         with self._systemLock:
             if self._systemRead:
-                return {"assessed": True}
+                return {"assessed": True, "issueCount": self._systemIssueCount}
         return {"assessed": False, "reason": SYSTEM_REASON_NOT_READ}
 
     # -------------------------------------------------------------- system
@@ -488,6 +501,11 @@ class AlertsArbiter:
         ``ts`` (Atlas A2). A None or verdict-less payload (a failed write) keeps
         what is held, still assessed (A3). No alert_log row (A6).
 
+        The verdict's ``issueCount`` is held AS PUBLISHED for ``sources.system``
+        (US-897-f): a bool, a non-int or a negative is held as None. A member
+        whose key has no title becomes a WATCH titled ``SYSTEM_TITLE_FALLBACK``
+        (Atlas F2); only a malformed member (non-str key or reason) is skipped.
+
         Args:
             payload: The system-status payload written, or None when none was.
         """
@@ -497,6 +515,9 @@ class AlertsArbiter:
         members = verdict.get("members") if isinstance(verdict, Mapping) else None
         if not isinstance(members, list):
             return
+        issueCount = verdict.get("issueCount") if isinstance(verdict, Mapping) else None
+        if type(issueCount) is not int or issueCount < 0:
+            issueCount = None
         ts = payload.get("ts")
         ts = ts if isinstance(ts, str) and ts else None
         with self._systemLock:
@@ -510,13 +531,14 @@ class AlertsArbiter:
                     continue
                 title = SYSTEM_TITLES.get(key)
                 if title is None:
+                    title = SYSTEM_TITLE_FALLBACK
                     if key not in self._systemUnknownWarned:
                         self._systemUnknownWarned.add(key)
                         logger.warning(
-                            "states/alerts: system verdict member %r has no title -- skipped",
+                            "states/alerts: system verdict member %r has no title -- listed as %r",
                             key,
+                            SYSTEM_TITLE_FALLBACK,
                         )
-                    continue
                 previous = self._system.get(key)
                 updated[key] = AlertEpisode(
                     source=SOURCE_SYSTEM,
@@ -531,6 +553,7 @@ class AlertsArbiter:
                     active=True,
                 )
             self._system = updated
+            self._systemIssueCount = issueCount
             self._systemRead = True
 
     # --------------------------------------------------------------- codes
@@ -1107,7 +1130,8 @@ def buildAlertsState(
         acknowledgedIds: The ids the ack store matches for this boot and this
             episode (US-897-c). Empty (the default) publishes nothing acked.
         systemSource: ``AlertsArbiter.systemSource()`` (US-877-c); None ->
-            ``{assessed: false, reason: 'not_read'}``.
+            ``{assessed: false, reason: 'not_read'}``; assessed publishes
+            ``{assessed: true, issueCount}`` (US-897-f).
 
     Returns:
         ``{ts, dataSource, bootId, sources, codesCheckedThisSession,
@@ -1135,7 +1159,11 @@ def buildAlertsState(
         }
     system: dict[str, Any] = {"assessed": False, "reason": SYSTEM_REASON_NOT_READ}
     if isinstance(systemSource, Mapping) and systemSource.get("assessed") is True:
-        system = {"assessed": True}
+        # US-897-f: System's own count, null unless an int >= 0 (fails closed).
+        issueCount = systemSource.get("issueCount")
+        if type(issueCount) is not int or issueCount < 0:
+            issueCount = None
+        system = {"assessed": True, "issueCount": issueCount}
     takeover = None
     firstActive = next((entry for entry in entries if entry["active"]), None)
     if firstActive is not None and firstActive["tier"] == TIER_STOP:

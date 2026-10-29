@@ -33,6 +33,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-27    | Ralph (Rex)  | Initial -- US-892-d health row + IMU detail.
+# 2026-10-28    | Rex (US-892-e) | Width docstring: the GYRO column is capped.
 # ================================================================================
 ################################################################################
 
@@ -487,7 +488,8 @@ def test_glance_fitCases_oneSubLinePerGCell_oneHealthRow(name: str):
 
 def test_glance_widths_eachWidestLineFitsItsColumn():
     """Mono at the Pi's advance, Michroma from michroma-advances.json. The
-    g columns split the body; the health row is 1fr | max-content."""
+    g columns split the body; the health row is 1fr | fit-content(the GYRO
+    cap, US-892-e; the cap's model is in tests/ui/test_motion_page.py s6)."""
     root = "#motion-card"
     width = _bodyWidthPx()
     label = _px("var(--fs-label)", root)

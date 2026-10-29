@@ -32,6 +32,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-f Pi detail + Pi line.
+# 2026-10-28    | Ralph (Rex)  | US-894-i MOVED PINS: the five-label list,
+#               |              | five neutral rows, + chipTemp in the DOM rows.
 # ================================================================================
 ################################################################################
 
@@ -175,7 +177,10 @@ def test_thePiFixturesCarryTheMembersTheirNamesSay():
 def test_piHot_theCpuRowIsTheExample_andOnlyItIsAmber():
     detail = _call("piDetailView", _status("pi-hot"))
     assert detail["head"] == "PI"
-    assert [r["label"] for r in detail["rows"]] == ["CPU", "THROTTLING", "DISK", "UPTIME"]
+    # MOVED PIN (US-894-i): IMU CHIP TEMP sits directly below CPU (s4.6.2).
+    assert [r["label"] for r in detail["rows"]] == [
+        "CPU", "IMU CHIP TEMP", "THROTTLING", "DISK", "UPTIME",
+    ]
     cpu = _rows(detail)["cpuTemp"]
     assert {k: cpu[k] for k in ("label", "value", "note", "level", "member")} == {
         "label": "CPU", "value": "80.2 °C", "note": "limit 80 °C",
@@ -238,7 +243,8 @@ def test_overLimitWithNoPiMember_isNeverAmber():
     status = copy.deepcopy(_status("pi-multi-limit"))
     status.pop("verdict")
     rows = _call("piDetailView", status)["rows"]
-    assert [r["level"] for r in rows] == ["neutral"] * 4
+    # MOVED PIN (US-894-i): five rows now; the IMU CHIP TEMP row is never amber.
+    assert [r["level"] for r in rows] == ["neutral"] * 5
     assert _call("piLineView", status) is None
 
 
@@ -386,7 +392,8 @@ def test_dom_piDetail_amberOnlyOnTheCrossedValues(monkeypatch):
     monkeypatch.setenv("TZ", _ZONE)
     surface = _render("pi-hot", parked=True, steps=_tap(".sys-verdict"))
     rows = {p[-1]["attrs"]["data-row"]: p for p in surface.pathsByClass("pi-row")}
-    assert set(rows) == {"cpuTemp", "throttled", "disk", "uptime"}
+    # MOVED PIN (US-894-i): + chipTemp (no /imu route here, so it reads --).
+    assert set(rows) == {"cpuTemp", "chipTemp", "throttled", "disk", "uptime"}
     for key, path in rows.items():
         value = [path + [c] for c in path[-1]["children"][0]["children"]
                  if "pi-value" in (c.get("attrs", {}).get("class") or "")]

@@ -10,8 +10,9 @@
 #     - both validationCriteria (wifi-weak-home, wifi-nmcli-absent);
 #     - the s4.4 table, row by row, keyed on (state, reason) -- including the
 #       W1 associated-no-level case and the A6 `down` reading;
-#     - wifiGlyphState: weak -> neutral, read_failed amber BEFORE the unread
-#       return, null -> dim with no slash, down -> slashed;
+#     - wifiGlyphState: up/weak -> ok only at home (CIO R-A; 2026-10-28),
+#       elsewhere neutral; read_failed amber BEFORE the unread return, null
+#       -> dim with no slash, down -> slashed;
 #     - the colour rule (s4.0): amber on the WIFI row and glyph IFF the `wifi`
 #       verdict member; the page applies no RSSI threshold;
 #     - the parked WIFI detail (no IP row);
@@ -31,6 +32,14 @@
 # ================================================================================
 # 2026-10-23    | Ralph (Rex)  | Initial -- US-894-d System page WIFI row.
 # 2026-10-23    | Ralph (Rex)  | MOVED PIN (US-894-e): the UPS row follows WIFI.
+# 2026-10-28    | Ralph (Rex)  | US-742: the glyph is green at home at any
+#               |              | strength, neutral elsewhere. MOVED PINS: _TABLE
+#               |              | 'up other' ok->neutral, 'up home unknown'
+#               |              | ok->neutral, 'weak home' neutral->ok;
+#               |              | test_validation_wifiWeakHome glyph ok (renamed
+#               |              | _glyphGreen); test_dom_weakHome ... green
+#               |              | (renamed ..._andTheGlyphIsGreenToo). New exit
+#               |              | test_wifiGlyph_greenAtHomeAnyStrength_neutralElsewhere.
 # ================================================================================
 ################################################################################
 
@@ -197,7 +206,7 @@ def test_theWifiFixturesCarryTheReadingTheirNameSays():
 
 
 @_needsNode
-def test_validation_wifiWeakHome_isHomeGreen_weakSignal_glyphNeutral():
+def test_validation_wifiWeakHome_isHomeGreen_weakSignal_glyphGreen():
     status = _status("wifi-weak-home")
     row = _call("wifiRowView", status)
     view = _call("systemStatusView", status, None)
@@ -205,7 +214,8 @@ def test_validation_wifiWeakHome_isHomeGreen_weakSignal_glyphNeutral():
     assert (row["word"], row["look"]) == ("home", "ok")
     assert row["sentence"] == "DeathstarWifi " + MIDDLE_DOT + " weak signal"
     assert row["level"] == "secondary"
-    assert view["glyphs"]["wifi"] == "neutral"
+    # MOVED PIN (US-742): weak at home is green (was neutral).
+    assert view["glyphs"]["wifi"] == "ok"
 
 
 @_needsNode
@@ -231,14 +241,17 @@ _TABLE = [
     # (label, builder kwargs, word, look, sentence, glyph)
     ("up home", dict(available=True, rssi=-52, home=True),
      "home", "ok", "DeathstarWifi · good signal", "ok"),
+    # MOVED PIN (US-742): weak at home is green (was neutral).
     ("weak home", dict(available=True, rssi=-77, home=True),
-     "home", "ok", "DeathstarWifi · weak signal", "neutral"),
+     "home", "ok", "DeathstarWifi · weak signal", "ok"),
+    # MOVED PIN (US-742): up away from home is neutral (was ok).
     ("up other", dict(available=True, ssid="Starbucks", rssi=-60, home=False),
-     "other network", "secondary", "Starbucks · good signal", "ok"),
+     "other network", "secondary", "Starbucks · good signal", "neutral"),
     ("weak other", dict(available=True, ssid="Starbucks", rssi=-79, home=False),
      "other network", "secondary", "Starbucks · weak signal", "neutral"),
+    # MOVED PIN (US-742): up with home undecided is neutral (was ok).
     ("up home unknown", dict(available=True, rssi=-52, home=None),
-     "connected", "secondary", "DeathstarWifi · good signal", "ok"),
+     "connected", "secondary", "DeathstarWifi · good signal", "neutral"),
     # W1: associated (ssid known), no signal level -> the home word, unslashed.
     ("associated no level", dict(available=True, rssi=None, home=True),
      "home", "ok", "DeathstarWifi · no signal level", "dim"),
@@ -494,7 +507,7 @@ def test_dom_theRowsAreObdDataWifi_inOrder(monkeypatch):
 
 
 @_needsNode
-def test_dom_weakHome_isGreenHome_andTheGlyphIsNeutralSecondary(monkeypatch):
+def test_dom_weakHome_isGreenHome_andTheGlyphIsGreenToo(monkeypatch):
     monkeypatch.setenv("TZ", _ZONE)
     surface = _render(_status("wifi-weak-home"))
     row = _wifiRowPath(surface)
@@ -504,8 +517,35 @@ def test_dom_weakHome_isGreenHome_andTheGlyphIsNeutralSecondary(monkeypatch):
     assert _text(word[-1]) == "home"
     assert surface.winningDeclaration(word, "color")[0] == GREEN
     glyph = surface.pathById("glyph-wifi")
+    # MOVED PIN (US-742): weak at home is green (was neutral / secondary).
+    assert glyph[-1]["attrs"]["data-state"] == "ok"
+    assert surface.winningDeclaration(glyph, "color")[0] == GREEN
+
+
+@_needsNode
+def test_wifiGlyph_greenAtHomeAnyStrength_neutralElsewhere(monkeypatch):
+    """US-742 (CIO R-A 2026-10-27; CIO ruling 2026-10-28): colour = home,
+    arcs = strength. Up or weak at home is ok; elsewhere neutral."""
+    # (a) pure, over the REAL builder.
+    readings = [(-52, True), (-77, True), (-60, False), (-79, False), (-52, None)]
+    statuses = [_wifiStatus(available=True, rssi=r, home=h) for r, h in readings]
+    assert [s["wifi"]["state"] for s in statuses] == ["up", "weak", "up", "weak", "up"]
+    assert _map("wifiGlyphState", [[s] for s in statuses]) == [
+        "ok", "ok", "neutral", "neutral", "neutral",
+    ]
+
+    monkeypatch.setenv("TZ", _ZONE)
+    # (b) DOM: away from home, a good signal -> neutral arcs, never green.
+    away = _render(_wifiStatus(available=True, ssid="Starbucks", rssi=-60, home=False))
+    glyph = away.pathById("glyph-wifi")
     assert glyph[-1]["attrs"]["data-state"] == "neutral"
-    assert surface.winningDeclaration(glyph, "color")[0] == SECONDARY
+    assert away.winningDeclaration(glyph, "color")[0] == SECONDARY
+
+    # (c) DOM: the wifi-weak-home fixture -> green arcs.
+    home = _render(_status("wifi-weak-home"))
+    glyph = home.pathById("glyph-wifi")
+    assert glyph[-1]["attrs"]["data-state"] == "ok"
+    assert home.winningDeclaration(glyph, "color")[0] == GREEN
 
 
 @_needsNode

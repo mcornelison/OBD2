@@ -13,6 +13,7 @@
 # ================================================================================
 # 2026-10-15    | Rex (US-907) | Initial
 # 2026-10-26    | Rex (US-817-a) | Moved pin: obd.OBD kwargs gain baudrate
+# 2026-10-28    | Rex (US-817-c) | Moved pin: DEFAULT_ADAPTER_BAUDRATE from its home
 # ================================================================================
 ################################################################################
 
@@ -36,7 +37,9 @@ from typing import Any
 import pytest
 
 import src.pi.obdii.obd_connection as connModule
-from src.pi.obdii.config.loader import DEFAULT_ADAPTER_BAUDRATE
+
+# MOVED PIN (US-817-c): the default's one home is common.config.validator.
+from common.config.validator import DEFAULT_ADAPTER_BAUDRATE
 from src.pi.obdii.obd_connection import ObdConnection
 
 ELM_RECORD = "write: ATZ"

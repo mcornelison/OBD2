@@ -142,6 +142,9 @@
 #     it would be the easiest route to US-647's effectiveness check.
 #   NOT APPLIED: --assets-dir -- not a chromium switch at all. It belongs to
 #     eclipse-states-http and is named above for the A-2 assets contract.
+#   NOT APPLIED: --hide-scrollbars -- US-894-k (CIO 2026-10-28): it removes every
+#     CSS scrollbar, so the declared overflow bars never painted on the car
+#     (test_dashboardUnits_dropHideScrollbars_splashUnitsKeepIt_us894k).
 # ==============================================================================
 
 [Unit]
@@ -153,11 +156,12 @@ Wants=eclipse-states-http.service
 Type=simple
 User=__PI_USER__
 Environment=DISPLAY=:0
+# US-894-k (CIO 2026-10-28): no --hide-scrollbars; html, body are overflow: hidden (dashboard.css:212-214), so only intended overflow boxes draw a bar.
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --touch-events=enabled \
   --disable-gpu-rasterization \
-  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --noerrdialogs --disable-infobars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
   --password-store=basic \

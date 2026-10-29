@@ -49,6 +49,13 @@
 #               |              | bar-column widths, the bar-height model and the
 #               |              | glance budget -> the AC-d re-lay; labels; the
 #               |              | planted transition is now for width.
+# 2026-10-28    | Rex (US-889-f) | Bar heads hold 18 px with a note (AC-5 model:
+#               |              | _headCharge, Atlas's measured 21 under baseline);
+#               |              | the footer is charged from the markup. MOVED PINS:
+#               |              | _gaugeHeight, _footContentHeight, _glanceHeight
+#               |              | (DOM surfaces), _rowWidth -> _timingHeadWidth, the
+#               |              | planted-footer control (4th row), worstCase (label
+#               |              | line), AC_d (flex-basis on .eng-timing-head).
 # ================================================================================
 ################################################################################
 
@@ -71,6 +78,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import render_harness as rh  # noqa: E402
 
+from pi.obdii.band_producer import NO_BAND_REASONS  # noqa: E402
 from tests.ui.css_type_scale import (  # noqa: E402
     DASHBOARD_CSS,
     readCss,
@@ -213,12 +221,17 @@ def _child(path: list[dict[str, Any]], cls: str) -> list[dict[str, Any]]:
     return found
 
 
-def _boot(name: str) -> rh.Surface:
+def _bootTree(name: str) -> dict[str, Any]:
+    """The post-JS DOM tree for fixture ``name`` (resolve it against any sheet)."""
     fx = _fixture(name)
     dom = rh.runDashboard(
         routes={"/obd-live": fx["obd-live"]}, nowMs=_ms(fx["now"]), steps=[{"flush": 4}]
     )
-    return rh.dashboardSurface(dom["tree"])
+    return dom["tree"]
+
+
+def _boot(name: str) -> rh.Surface:
+    return rh.dashboardSurface(_bootTree(name))
 
 
 def _engineRules() -> list[tuple[str, str]]:
@@ -487,10 +500,13 @@ def test_engineView_staleWithNoLastValue_isDashDashWithTheReason():
     assert (r["text"], r["note"], r["noteKind"]) == ("--", "stale", "reason")
 
 
-def _bootLive(obdLive: dict[str, Any] | None, nowMs: int = 0) -> rh.Surface:
+def _bootLiveTree(obdLive: dict[str, Any] | None, nowMs: int = 0) -> dict[str, Any]:
     routes = {"/obd-live": obdLive} if obdLive is not None else {}
-    dom = rh.runDashboard(routes=routes, nowMs=nowMs, steps=[{"flush": 4}])
-    return rh.dashboardSurface(dom["tree"])
+    return rh.runDashboard(routes=routes, nowMs=nowMs, steps=[{"flush": 4}])["tree"]
+
+
+def _bootLive(obdLive: dict[str, Any] | None, nowMs: int = 0) -> rh.Surface:
+    return rh.dashboardSurface(_bootLiveTree(obdLive, nowMs))
 
 
 def _copies(col: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -866,6 +882,11 @@ _CHARGED = {
 }
 
 
+# US-889-f AC-1: TIMING's label line, 'TIMING' left and its note right.
+_TIMING_HEAD_CLASS = "eng-timing-head"
+_TIMING_HEAD = "#engine-card .eng-timing-head"
+
+
 def test_everyChargedLine_declaresALineHeightToken_neverNormal():
     for selector, token in _CHARGED.items():
         line = _decl(_rule(selector), "line-height")
@@ -889,10 +910,80 @@ def _barWidth() -> float:
     return _bodyWidthPx()
 
 
-def _gaugeHeight(barH: float | None = None) -> float:
-    """Header line + the header gap + the bar."""
+def _gaugeHeight(head: float | None = None, barH: float | None = None) -> float:
+    """Header line (``head``, default the label alone) + the header gap + the bar."""
     gap = _px(_decl(_rule("#engine-card .eng-bar-col"), "gap") or "")
-    return _label() + gap + (barH if barH is not None else _barHeight())
+    return (head if head is not None else _label()) + gap + (barH if barH is not None else _barHeight())
+
+
+# US-889-f AC-5 MODEL. Atlas MEASURED each .eng-bar-head at 21 px with its note
+# shown under align-items: baseline (the Michroma label's rect top 42, the mono
+# --fs-meta note's 45, both 18 tall: 18 -> 21, 2 x 3 = the 6 px of 260/254).
+# Source: pm/inbox/2026-10-28-from-atlas-RULINGS-S120-scrollbars-inert-engine-
+# 6px-is-bar-heads-C3-yes-with-cap-U4-a.md s2; evidence
+# offices/architect/evidence/2026-10-28-scrollbar-gyro/.
+_HEAD_BASELINE_MEASURED_PX = 21.0
+
+# The 532b0830 header rule (V0.30.18), kept as text for the negative controls,
+# and a planted `height: 18px` that keeps the baseline (Atlas review F1c: the
+# 3 px offset survives and pushes the note out of the head box onto the bar).
+_HEAD_RULE_532B0830 = (
+    "#engine-card .eng-bar-head {\n"
+    "  display: flex; align-items: baseline; justify-content: space-between;\n"
+    "  gap: var(--eng-inline-gap); min-width: 0;\n"
+    "}"
+)
+_HEAD_RULE_BARE_HEIGHT = (
+    "#engine-card .eng-bar-head {\n"
+    "  display: flex; align-items: baseline; justify-content: space-between;\n"
+    "  gap: var(--eng-inline-gap); min-width: 0; height: 18px;\n"
+    "}"
+)
+_HEAD_RULE_SHIPPED = re.compile(r"#engine-card \.eng-bar-head \{[^}]*\}")
+
+
+def _cssWithHeadRule(rule: str) -> str:
+    """The shipped sheet with its ONE .eng-bar-head rule replaced by ``rule``."""
+    css = _read(DASHBOARD_CSS)
+    assert len(_HEAD_RULE_SHIPPED.findall(css)) == 1
+    return _HEAD_RULE_SHIPPED.sub(lambda _m: rule, css)
+
+
+def _kids(path: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    return [path + [c] for c in path[-1].get("children", []) if "tag" in c]
+
+
+def _winning(surface: rh.Surface, path: list[dict[str, Any]], prop: str) -> str:
+    found = surface.winningDeclaration(path, prop)
+    assert found is not None, (path[-1].get("attrs"), prop)
+    return found[0]
+
+
+def _headCharge(surface: rh.Surface, head: list[dict[str, Any]]) -> float:
+    """A header line (label left, note right). The label alone is its line box.
+    With the note shown it is charged that line box ONLY if its winning
+    declarations hold it -- align-items not baseline, and every head child at
+    line-height var(--eng-line) -- else Atlas's measured 21. A bare height keeps
+    the baseline and is charged 21 too (Atlas review F1c)."""
+    kids = _kids(head)
+    shown = [k for k in kids if surface.rendered(k)]
+    assert shown, "an empty header line"
+    box = max(_lineBox(_winning(surface, k, "font-size"), _winning(surface, k, "line-height")) for k in shown)
+    if len(shown) == 1:
+        return box
+    align = surface.winningDeclaration(head, "align-items")
+    held = (align[0] if align else "normal") != "baseline" and all(
+        (surface.winningDeclaration(k, "line-height") or ("",))[0] == "var(--eng-line)" for k in kids
+    )
+    return box if held else _HEAD_BASELINE_MEASURED_PX
+
+
+def _barHeads(surface: rh.Surface) -> dict[str, list[dict[str, Any]]]:
+    return {pid: _child(_byPid(surface, "eng-bar-col", pid), "eng-bar-head") for pid in BAR_PIDS}
+
+
+def _noteShown(surface: rh.Surface, head: list[dict[str, Any]]) -> bool:
+    return surface.rendered(_child(head, "eng-note"))
 
 
 def _buttonHeight() -> float:
@@ -932,13 +1023,10 @@ def _valueWidth(value: str, unit: str, sizeVar: str) -> float:
     return width
 
 
-def _rowWidth(value: str, unit: str, note: str, sizeVar: str) -> float:
-    """TIMING's value + unit + note on ONE line (label and caption wrap)."""
-    gap = _px(_decl(_rule("#engine-card .eng-reading"), "column-gap") or "")
-    width = _valueWidth(value, unit, sizeVar)
-    if note:
-        width += gap + _monoWidth(note, _meta())
-    return width
+def _timingHeadWidth(note: str) -> float:
+    """US-889-f: TIMING's label line -- 'TIMING' left, its note right."""
+    gap = _px(_decl(_rule(_TIMING_HEAD), "gap") or "")
+    return michromaWidthPx("TIMING", _px(_meta())) + gap + _monoWidth(note, _meta())
 
 
 def _wrappedLines(text: str, sizeVar: str, col: float) -> int:
@@ -955,20 +1043,28 @@ def _wrappedLines(text: str, sizeVar: str, col: float) -> int:
     return lines
 
 
-def _footContentHeight(view: dict[str, Any]) -> float:
-    """TIMING label / value (+ its note's own line when it wraps) / caption."""
-    timing = view["readings"]["TIMING_ADVANCE"]
-    col = _footColumnWidth()
+def _footContentHeight(surface: rh.Surface) -> float:
+    """MOVED PIN (US-889-f AC-3 MODEL): charged from the MARKUP -- one line box
+    per rendered child row of .eng-timing, --eng-gap between rows. The retired
+    'note wraps below the value' branch is gone: the note sits on the label
+    line, so a 4th row (the 532b0830 shape) is charged as one and fails."""
+    timing = _byPid(surface, "eng-reading", "TIMING_ADVANCE")
+    rows = [k for k in _kids(timing) if surface.rendered(k)]
     rowGap = _px(_decl(_rule("#engine-card .eng-reading"), "row-gap") or "")
-    value = _lineBox("var(--fs-primary)", _decl(_rule("#engine-card .eng-line"), "line-height") or "")
-    note = _lineBox(_meta(), _decl(_rule("#engine-card .eng-note"), "line-height") or "")
-    basisLine = _lineBox(_meta(), _decl(_rule("#engine-card .eng-basis"), "line-height") or "")
-    height = _label() + rowGap + value
-    if timing["note"] and _rowWidth(
-        timing["text"], timing["unit"], timing["note"], "var(--fs-primary)"
-    ) > col:
-        height += rowGap + note
-    height += rowGap + _wrappedLines(TIMING_BASIS, _meta(), col) * basisLine
+    height = rowGap * (len(rows) - 1)
+    for row in rows:
+        cls = _classes(row[-1])
+        if _TIMING_HEAD_CLASS in cls:
+            height += _headCharge(surface, row)
+        elif "eng-line" in cls:
+            height += _lineBox("var(--fs-primary)", _winning(surface, row, "line-height"))
+        elif "eng-basis" in cls:
+            lines = _wrappedLines(TIMING_BASIS, _meta(), _footColumnWidth())
+            height += lines * _lineBox(_winning(surface, row, "font-size"), _winning(surface, row, "line-height"))
+        elif "eng-label" in cls or "eng-note" in cls:
+            height += _lineBox(_winning(surface, row, "font-size"), _winning(surface, row, "line-height"))
+        else:
+            raise AssertionError(f"an unmodelled TIMING row: {cls}")
     return height
 
 
@@ -976,40 +1072,54 @@ def _footHeight() -> float:
     return _px(_decl(_rule("#engine-card .eng-foot"), "height") or "")
 
 
-def _glanceHeight(view: dict[str, Any], barH: float | None = None) -> float:
-    """Two gauges, their gap, the body gap, then the footer -- which is the
+def _glanceHeight(surface: rh.Surface, barH: float | None = None) -> float:
+    """MOVED PIN (US-889-f AC-5 MODEL): two gauges, each charged its header
+    line (_headCharge), their gap, the body gap, then the footer -- the
     declared 96 unless its content (or the button) is taller."""
     gaugeGap = _px(_decl(_rule("#engine-card .eng-gauges"), "gap") or "")
     footGap = _px(_decl(_rule("#engine-card .card-body"), "gap") or "")
-    foot = max(_footHeight(), _footContentHeight(view), _buttonHeight())
-    return 2 * _gaugeHeight(barH) + gaugeGap + footGap + foot
+    foot = max(_footHeight(), _footContentHeight(surface), _buttonHeight())
+    gauges = sum(_gaugeHeight(_headCharge(surface, head), barH) for head in _barHeads(surface).values())
+    return gauges + gaugeGap + footGap + foot
 
 
 # The fit cases (story AC): wot-pull-load-100, not-read-with-reason, the
 # inline negative-timing case (TIMING_ADVANCE -40), plus stale (every note).
 _NEGATIVE_TIMING = {"params": {"TIMING_ADVANCE": _param(-40.0)}}
 
+# US-889-f AC-5: Atlas's state A (real car-off, all three notes), which no
+# fixture holds -- LOAD, THROTTLE and TIMING all not_read, built in memory
+# (fixtures/states is never-edit, Atlas review F1).
+_ALL_UNREAD = {
+    "params": {
+        pid: _param(None, "deg" if pid == "TIMING_ADVANCE" else "%", noBandReason="not_read")
+        for pid in ENGINE_PIDS
+    }
+}
 
-def _fitViews() -> dict[str, dict[str, Any]]:
-    views = {name: _view(name) for name in ("wot-pull-load-100", "not-read-with-reason", "stale")}
-    views["timing-minus-40"] = _probe("engineView", _NEGATIVE_TIMING, 0)
-    return views
+
+def _fitSurfaces() -> dict[str, rh.Surface]:
+    surfaces = {name: _boot(name) for name in ("wot-pull-load-100", "not-read-with-reason", "stale")}
+    surfaces["timing-minus-40"] = _bootLive(_NEGATIVE_TIMING)
+    surfaces["all-unread"] = _bootLive(_ALL_UNREAD)
+    return surfaces
 
 
 @_NODE_ONLY
 def test_glance_fitsTheBody_inEveryFitCase():
-    """MOVED PIN (US-889-e): US-889-d's glance budget, re-modelled for the
-    horizontal re-lay. The footer content charges AC-d's 88.8 of 96 (TIMING
-    label at --fs-meta)."""
+    """MOVED PIN (US-889-e, US-889-f): US-889-d's glance budget, re-modelled for
+    the horizontal re-lay, now over the painted DOM. The footer content charges
+    AC-d's 88.8 of 96 (TIMING label line at --fs-meta) in EVERY case."""
     body = _bodyHeightPx()
     assert body == 254
-    views = _fitViews()
-    assert views["timing-minus-40"]["readings"]["TIMING_ADVANCE"]["text"] == "40"
-    for name, view in views.items():
-        assert _footContentHeight(view) <= _footHeight(), (name, _footContentHeight(view))
-        height = _glanceHeight(view)
+    surfaces = _fitSurfaces()
+    timing = _child(_byPid(surfaces["timing-minus-40"], "eng-reading", "TIMING_ADVANCE"), "eng-value")
+    assert _textOf(timing[-1]) == "40"
+    for name, surface in surfaces.items():
+        assert _footContentHeight(surface) == pytest.approx(88.8), name
+        assert _footContentHeight(surface) <= _footHeight(), name
+        height = _glanceHeight(surface)
         assert height <= body, (name, height, body)
-    assert _footContentHeight(views["wot-pull-load-100"]) == pytest.approx(88.8)
     assert _buttonHeight() <= _footHeight()
     # No scroll, so no cue: nothing on the card points below the fold.
     assert "↓" not in re.sub(r"<!--.*?-->", "", _engineMarkup(), flags=re.S)
@@ -1018,21 +1128,85 @@ def test_glance_fitsTheBody_inEveryFitCase():
 @_NODE_ONLY
 def test_heightModel_failsAPlantedTallBar():
     """The negative control: a bar that no longer fits fails the same model."""
-    view = _view("wot-pull-load-100")
-    assert _glanceHeight(view) <= _bodyHeightPx()
-    assert _glanceHeight(view, barH=54) > _bodyHeightPx()
+    surface = _boot("wot-pull-load-100")
+    assert _glanceHeight(surface) <= _bodyHeightPx()
+    assert _glanceHeight(surface, barH=54) > _bodyHeightPx()
+
+
+def _plantNoteRow(tree: dict[str, Any]) -> dict[str, Any]:
+    """The 532b0830 shape: TIMING's label line unwrapped and its .eng-note
+    planted back as its own row after the value (label / value / note / caption)."""
+    planted = json.loads(json.dumps(tree))
+    timing = _byPid(rh.dashboardSurface(planted), "eng-reading", "TIMING_ADVANCE")[-1]
+    kids = [c for c in timing["children"] if "tag" in c]
+    head = next(c for c in kids if _TIMING_HEAD_CLASS in _classes(c))
+    label, note = [c for c in head["children"] if "tag" in c]
+    line = next(c for c in kids if "eng-line" in _classes(c))
+    basis = next(c for c in kids if "eng-basis" in _classes(c))
+    timing["children"] = [label, line, note, basis]
+    return planted
 
 
 @_NODE_ONLY
 def test_heightModel_failsAPlantedOverflowingFooter():
-    """A TIMING note too wide to sit beside its number costs a line: the
-    footer content then passes its 96 and the same budget FAILS."""
-    view = _view("not-read-with-reason")
-    wide = json.loads(json.dumps(view))
-    wide["readings"]["TIMING_ADVANCE"]["note"] = "x" * 40
-    assert _footContentHeight(wide) > _footContentHeight(view)
-    assert _footContentHeight(wide) > _footHeight()
-    assert _glanceHeight(wide) > _bodyHeightPx()
+    """MOVED PIN (US-889-f AC-3): the 'wide note wraps below the number' premise
+    is retired. The negative control is the 532b0830 shape -- .eng-note planted
+    back as its own 4th row: 88.8 + 6 + 18 = 112.8 > 96, and the same budget
+    FAILS."""
+    tree = _bootTree("not-read-with-reason")
+    shipped = rh.dashboardSurface(tree)
+    planted = rh.dashboardSurface(_plantNoteRow(tree))
+    rows = _kids(_byPid(planted, "eng-reading", "TIMING_ADVANCE"))
+    assert [_classes(r[-1])[0] for r in rows] == ["eng-label", "eng-line", "eng-note", "eng-basis"]
+    assert planted.rendered(rows[2]), "the planted note row is not drawn"
+    assert _footContentHeight(shipped) == pytest.approx(88.8)
+    assert _footContentHeight(planted) == pytest.approx(112.8)
+    assert _footContentHeight(planted) > _footHeight()
+    assert _glanceHeight(planted) > _bodyHeightPx()
+
+
+# The planted all-unread view, the stale fixture and not-read-with-reason:
+# which bar heads show a note, and what the 532b0830 baseline rule costs.
+_NOTED_HEADS = {
+    "stale": ("ENGINE_LOAD", "THROTTLE_POS"),
+    "all-unread": ("ENGINE_LOAD", "THROTTLE_POS"),
+    "not-read-with-reason": ("THROTTLE_POS",),
+}
+_BASELINE_GLANCE = {"stale": 260.0, "all-unread": 260.0, "not-read-with-reason": 257.0}
+
+
+@_NODE_ONLY
+def test_engineGlance_barHeadsHold18px_withNotesShown_fitsInStaleAndNotRead():
+    """EXIT TEST (US-889-f AC-5): through the AC-5 model, each .eng-bar-head
+    with its note rendered is charged 18 px and each glance <= 254, for fixture
+    `stale`, the in-memory all-unread view and `not-read-with-reason`.
+    NEGATIVE CONTROLS (Atlas review F1 / F1c): the 532b0830 baseline rule gives
+    260 / 260 / 257, and a bare `height: 18px` that keeps the baseline is
+    charged 21 per head and fails the same way. FAILS on 532b0830."""
+    body = _bodyHeightPx()
+    trees = {
+        "stale": _bootTree("stale"),
+        "all-unread": _bootLiveTree(_ALL_UNREAD),
+        "not-read-with-reason": _bootTree("not-read-with-reason"),
+    }
+    for name, tree in trees.items():
+        surface = rh.dashboardSurface(tree)
+        heads = _barHeads(surface)
+        noted = tuple(pid for pid, head in heads.items() if _noteShown(surface, head))
+        assert noted == _NOTED_HEADS[name], name
+        for pid, head in heads.items():
+            assert _headCharge(surface, head) == pytest.approx(18), (name, pid)
+        assert _glanceHeight(surface) <= body, (name, _glanceHeight(surface))
+    for rule in (_HEAD_RULE_532B0830, _HEAD_RULE_BARE_HEIGHT):
+        css = _cssWithHeadRule(rule)
+        for name, tree in trees.items():
+            surface = rh.Surface(tree, css)
+            for pid, head in _barHeads(surface).items():
+                expected = _HEAD_BASELINE_MEASURED_PX if pid in _NOTED_HEADS[name] else 18
+                assert _headCharge(surface, head) == pytest.approx(expected), (rule, name, pid)
+            height = _glanceHeight(surface)
+            assert height == pytest.approx(_BASELINE_GLANCE[name]), (rule, name)
+            assert height > body, (rule, name)
 
 
 def test_glanceGeometry_isTheCiosReLay_AC_d():
@@ -1057,7 +1231,8 @@ def test_glanceGeometry_isTheCiosReLay_AC_d():
     assert _decl(_rule("#engine-card .eng-foot"), "align-items") == "flex-end"
     assert _decl(_rule("#engine-card .eng-foot"), "justify-content") == "space-between"
     assert _decl(_rule("#engine-card .eng-reading"), "align-self") == "flex-start"
-    for selector in ("#engine-card .eng-reading .eng-label", "#engine-card .eng-reading .eng-basis"):
+    # MOVED PIN (US-889-f): the label's flex-basis 100% moves to its label line.
+    for selector in ("#engine-card .eng-reading .eng-timing-head", "#engine-card .eng-reading .eng-basis"):
         assert _decl(_rule(selector), "flex-basis") == "100%"
     markup = _engineMarkup()
     foot = markup[markup.index('class="eng-foot"'):]
@@ -1066,6 +1241,7 @@ def test_glanceGeometry_isTheCiosReLay_AC_d():
     assert markup.index('data-pid="THROTTLE_POS"') < markup.index('class="eng-foot"')
 
 
+@_NODE_ONLY
 def test_everyRow_fitsItsColumn_worstCase():
     bar = _barWidth()
     col = _footColumnWidth()
@@ -1078,9 +1254,14 @@ def test_everyRow_fitsItsColumn_worstCase():
         for note in ("not read", "no source", "999 s"):
             assert michromaWidthPx(label, 15) + gap + _monoWidth(note, _meta()) <= bar, (label, note)
     # The footer's TIMING stack beside HISTORY › (Iris: ~207 + ~175 <= 448).
+    # MOVED PIN (US-889-f): the value + note line becomes the label line --
+    # 'TIMING' + --eng-inline-gap + the widest note <= the TIMING column; the
+    # value row carries the number alone.
     assert col > 0
     for value, unit in (("40", "° ATDC"), ("22", "° BTDC"), ("--", "")):
-        assert _rowWidth(value, unit, "999 s", "var(--fs-primary)") <= col, value
+        assert _valueWidth(value, unit, "var(--fs-primary)") <= col, value
+    for note in _timingNoteTexts():
+        assert _timingHeadWidth(note) <= col, note
     assert _wrappedLines(TIMING_BASIS, _meta(), col) == 1, "the caption is stacked on ONE line"
     assert michromaWidthPx("TIMING", 15) <= col
 
@@ -1088,9 +1269,96 @@ def test_everyRow_fitsItsColumn_worstCase():
 def test_widthModel_failsAPlantedWideRow():
     """Negative controls: the caption inline after the value (Iris: ~513 px)
     and a planted wide header both overrun their width."""
-    inline = _rowWidth("22", "° BTDC", "", "var(--fs-primary)") + _monoWidth(" " + TIMING_BASIS, _meta())
+    inline = _valueWidth("22", "° BTDC", "var(--fs-primary)") + _monoWidth(" " + TIMING_BASIS, _meta())
     assert inline + _buttonWidth() > _bodyWidthPx()
     assert michromaWidthPx("THROTTLE", 15) + _monoWidth("x" * 60, _meta()) > _barWidth()
+    # US-889-f: a TIMING note past the fit rule overruns the label line.
+    assert _timingHeadWidth("x" * 40) > _footColumnWidth()
+
+
+# US-889-f AC-4 fit rule: every TIMING note <= 18 characters (the longest
+# emitted reason, 'engine not running', at 9.03 px/char = 0.60205 em x 15 px,
+# tests/ui/css_type_scale.py). A longer text needs a shorter word, never a
+# wrap or a shrink.
+_TIMING_NOTE_MAX_CHARS = 18
+
+
+def _timingNote(obdLive: dict[str, Any] | None, nowMs: int = 0) -> str:
+    note = _probe("engineView", obdLive, nowMs)["readings"]["TIMING_ADVANCE"]["note"]
+    assert isinstance(note, str)
+    return note
+
+
+def _timingNoteTexts() -> dict[str, str]:
+    """Every TIMING note the page can emit, by where it comes from: absent,
+    no obd-live, a stale age (fixture `stale`, a 999 s age, an unparseable ts)
+    and drivingReasonText of EVERY code in band_producer.NO_BAND_REASONS."""
+    stale = _fixture("stale")
+    ts = stale["obd-live"]["params"]["TIMING_ADVANCE"]["ts"]
+    staleParam = stale["obd-live"]["params"]["TIMING_ADVANCE"]
+    notes = {
+        "absent": _timingNote({"params": {}}),
+        "no obd-live": _timingNote(None),
+        "stale fixture": _timingNote(stale["obd-live"], _ms(stale["now"])),
+        "stale 999 s": _timingNote({"params": {"TIMING_ADVANCE": staleParam}}, _ms(ts) + 999_000),
+        "stale bad ts": _timingNote({"params": {"TIMING_ADVANCE": dict(staleParam, ts="not a time")}}),
+    }
+    for code in NO_BAND_REASONS:
+        notes[code] = _timingNote({"params": {"TIMING_ADVANCE": _param(None, noBandReason=code)}})
+    return notes
+
+
+@_NODE_ONLY
+def test_everyTimingNote_isAtMost18Chars_derivedFromTheReasonTable():
+    """US-889-f AC-4: the emitted note texts, listed and asserted one by one."""
+    notes = _timingNoteTexts()
+    assert (notes["absent"], notes["no obd-live"]) == ("not read", "no source")
+    assert (notes["stale fixture"], notes["stale 999 s"], notes["stale bad ts"]) == ("12 s", "999 s", "stale")
+    assert set(NO_BAND_REASONS) <= set(notes) and len(NO_BAND_REASONS) == 5
+    for source, text in notes.items():
+        assert text, source
+        assert len(text) <= _TIMING_NOTE_MAX_CHARS, (source, text)
+    longest = max(notes.values(), key=len)
+    assert len(longest) == _TIMING_NOTE_MAX_CHARS
+    assert _monoWidth(longest, _meta()) == pytest.approx(162.6, abs=0.1)
+
+
+@_NODE_ONLY
+def test_timingNote_isOnItsLabelLine_rightAligned_footerHasThreeRows():
+    """US-889-f AC-1 / AC-2 / AC-3 DETAIL: .eng-timing holds exactly three rows
+    -- label line / value / caption. The label line is 'TIMING' then its note,
+    right-aligned at --fs-meta on one line: a reason --text-secondary, a stale
+    age --amber-warn. The caption is on the glass when stale and not read."""
+    for name, kind, colour in (
+        ("not-read-with-reason", "reason", "var(--text-secondary)"),
+        ("stale", "age", "var(--amber-warn)"),
+    ):
+        surface = _boot(name)
+        reading = _view(name)["readings"]["TIMING_ADVANCE"]
+        timing = _byPid(surface, "eng-reading", "TIMING_ADVANCE")
+        assert timing[-1]["attrs"]["data-note"] == kind, name
+        rows = _kids(timing)
+        assert [_classes(r[-1])[0] for r in rows] == [_TIMING_HEAD_CLASS, "eng-line", "eng-basis"], name
+        assert all(surface.rendered(r) for r in rows), name
+        label, note = _kids(rows[0])
+        assert (_classes(label[-1])[0], _classes(note[-1])[0]) == ("eng-label", "eng-note"), name
+        assert _textOf(label[-1]) == "TIMING"
+        assert _textOf(note[-1]) == reading["note"] and surface.rendered(note), name
+        assert _winning(surface, note, "color") == colour, name
+        assert _winning(surface, note, "font-size") == "var(--fs-meta)", name
+        assert _winning(surface, note, "white-space") == "nowrap", name
+        assert _headCharge(surface, rows[0]) == pytest.approx(18), name
+        assert _textOf(rows[2][-1]) == TIMING_BASIS, name
+    head = _rule(_TIMING_HEAD)
+    assert _decl(head, "display") == "flex"
+    assert _decl(head, "justify-content") == "space-between"
+    assert _decl(head, "gap") == "var(--eng-inline-gap)"
+    assert _decl(head, "min-width") == "0"
+    assert _decl(head, "align-items") not in (None, "baseline")
+    # Fresh: the label alone, no note drawn, still three rows.
+    fresh = _boot("idle-warm")
+    rows = _kids(_byPid(fresh, "eng-reading", "TIMING_ADVANCE"))
+    assert len(rows) == 3 and not fresh.rendered(_child(rows[0], "eng-note"))
 
 
 # ---------------------------------------------------------------------------

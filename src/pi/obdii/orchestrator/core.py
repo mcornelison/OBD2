@@ -87,6 +87,8 @@
 # 2026-10-26    | Rex (US-871-a)| Interval + drive-end pushes never wait on the
 #               |              | push lock: held -> 'sync skipped: held by X',
 #               |              | nothing pushed, the next tick retries.
+# 2026-10-28    | Rex (US-817-c)| DEFAULT_SYNC_STALE_THRESHOLD_SECONDS imported
+#               |              | from its one home, common.config.validator.
 # ================================================================================
 ################################################################################
 
@@ -119,6 +121,7 @@ from typing import Any
 # The src.* form on purpose: SyncClient raises src.pi.sync.push_lock's
 # PushLockHeld, and a pi.sync.push_lock import would be a different class
 # that the except below never matches.
+from common.config.validator import DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
 from src.pi.sync.push_lock import DRIVE_END_PUSHER, INTERVAL_PUSHER, PushLockHeld
 
 from ..database import ObdDatabase
@@ -138,7 +141,6 @@ from .types import (
     DEFAULT_MAX_RECONNECT_ATTEMPTS,
     DEFAULT_RECONNECT_DELAYS,
     DEFAULT_SHUTDOWN_TIMEOUT,
-    DEFAULT_SYNC_STALE_THRESHOLD_SECONDS,
     EXIT_CODE_CLEAN,
     EXIT_CODE_FORCED,
     HealthCheckStats,

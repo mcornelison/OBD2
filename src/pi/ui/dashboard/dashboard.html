@@ -262,7 +262,10 @@
            right) and the value INSIDE the bar, drawn twice: .eng-on-track over
            the empty track, .eng-on-fill over the fill (clipped to its width by
            carousel.js). The footer stacks TIMING / value / caption on the left
-           with HISTORY › bottom right. -->
+           with HISTORY › bottom right.
+           US-889-f (Iris option (a), Atlas S120 s2): TIMING's note sits on its
+           label line, right-aligned, like the bar headers; every header line
+           holds 18 px with its note shown, so the page fits stale and unread. -->
       <section class="card" id="engine-card" aria-label="Engine" data-page-name="ENGINE">
         <div class="card-body">
           <div class="eng-gauges">
@@ -291,9 +294,11 @@
           </div>
           <div class="eng-foot">
             <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
-              <span class="eng-label">TIMING</span>
+              <div class="eng-timing-head">
+                <span class="eng-label">TIMING</span>
+                <span class="eng-note" hidden></span>
+              </div>
               <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
-              <span class="eng-note" hidden></span>
               <span class="eng-basis">base timing · not knock</span>
             </div>
             <div class="eng-actions"><!-- JS appends HISTORY › --></div>
