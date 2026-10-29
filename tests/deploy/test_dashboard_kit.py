@@ -1820,6 +1820,42 @@ def test_dashboardUnits_gpuOverrideDoesNotDisplacePriorFlags_us522():
             assert "--ozone-platform=wayland" in flags, variant
 
 
+_HIDE_SCROLLBARS_FLAG = "--hide-scrollbars"
+_SPLASH_UNITS = (
+    "splash-boot.service.wayland",
+    "splash-boot.service.x11",
+    "splash-grace.service.wayland",
+    "splash-grace.service.x11",
+)
+
+
+def test_dashboardUnits_dropHideScrollbars_splashUnitsKeepIt_us894k():
+    """US-894-k (CIO 2026-10-28, via Atlas): the dashboard kiosk draws its scrollbars.
+
+    Chromium's --hide-scrollbars removes every CSS scrollbar (gutter 0 px with the
+    flag, 6-10 px without), which made every 'visible scrollbar' AC inert on the
+    glass. html/body are overflow: hidden, so dropping it only paints the bars of
+    the boxes meant to scroll. The splash units have no scroller and keep it.
+    Compared as a TOKEN: the header comments discuss the flag by name.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert "--kiosk" in flags, f"{variant}: ExecStart not parsed"
+        assert _HIDE_SCROLLBARS_FLAG not in flags, (
+            f"{variant}: ExecStart must NOT carry {_HIDE_SCROLLBARS_FLAG} (US-894-k) -- it "
+            "hides the #sys-detail, #setup-menu and Alerts list bars on the car."
+        )
+        for kept in ("--noerrdialogs", "--disable-infobars"):
+            assert kept in flags, f"{variant}: {kept} must stay (US-894-k drops one token)"
+
+    # Not vacuous: the glob finds exactly the four splash units, and each keeps it.
+    splashUnits = sorted(p.name for p in SPLASH_KIT.glob("splash-*.service.*"))
+    assert splashUnits == sorted(_SPLASH_UNITS)
+    for name in splashUnits:
+        flags = _execStartFlags(_read(SPLASH_KIT, name))
+        assert _HIDE_SCROLLBARS_FLAG in flags, f"{name}: the splash keeps {_HIDE_SCROLLBARS_FLAG}"
+
+
 def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
     """US-522 / A-16 deploy-contract blind spot: chromium's base flags live in an
     OS-shipped `/etc/chromium.d/` file the repo does NOT manage, so a chromium
