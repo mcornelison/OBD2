@@ -3160,25 +3160,39 @@
     return { text: WARNINGS_NONE_HEADER, meta: meta, tone: null };
   }
 
+  // System's one line, in BOTH quiet states: not assessed -> not read yet;
+  // assessed -> its issueCount (warningsSystemLine; malformed -> no line, never
+  // 'clear'). ARCH-062: it speaks only for System, never for the codes.
+  function warningsSystemSourceLine(sources) {
+    if (!warningSourceAssessed(sources, "system")) {
+      return { text: WARNINGS_SYSTEM_NOT_READ_TEXT, tone: "secondary" };
+    }
+    return warningsSystemLine(sources.system.issueCount);
+  }
+
   // The body of a card with nothing ACTIVE (cleared rows may still be listed
   // under it -- a row is never hidden). Code read assessed: 'NO WARNINGS', when
   // the codes were read (+ the engine clause only while engine is assessed),
-  // then a not-read / not-built line for each of system and data while it is
-  // not assessed (an assessed System speaks its count instead, US-897-f:
-  // warningsSystemLine). Not assessed:
-  // '? NOT CHECKED YET' and why nothing can be claimed -- no other line, so the
-  // card says nothing about any source. null while anything is active.
+  // then System's line (warningsSystemSourceLine) and a not-built line for
+  // data while it is not assessed. Not assessed: '? NOT CHECKED YET', why
+  // nothing can be claimed about the codes, then System's line -- System is
+  // its own source and its verdict does not wait on the codes (CIO, V0.30.19
+  // hotfix 2026-10-30). No engine clause there: engine needs the codes.
+  // null while anything is active.
   function warningsQuietView(alerts, rows) {
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].active) return null;
     }
     var sources = isObj(alerts.sources) ? alerts.sources : {};
+    var systemLine = warningsSystemSourceLine(sources);
     if (!warningSourceAssessed(sources, "code")) {
+      var notChecked = [{ text: WARNINGS_NOT_CHECKED_TEXT, tone: "primary" }];
+      if (systemLine) notChecked.push(systemLine);
       return {
         state: "not-checked",
         mark: WARNINGS_NOT_CHECKED_MARK,
         head: WARNINGS_NOT_CHECKED_HEAD,
-        lines: [{ text: WARNINGS_NOT_CHECKED_TEXT, tone: "primary" }],
+        lines: notChecked,
       };
     }
     var lines = [{
@@ -3186,12 +3200,7 @@
         (warningSourceAssessed(sources, "engine") ? WARNINGS_ENGINE_CLAUSE : ""),
       tone: "primary",
     }];
-    if (!warningSourceAssessed(sources, "system")) {
-      lines.push({ text: WARNINGS_SYSTEM_NOT_READ_TEXT, tone: "secondary" });
-    } else {
-      var systemLine = warningsSystemLine(sources.system.issueCount);
-      if (systemLine) lines.push(systemLine);
-    }
+    if (systemLine) lines.push(systemLine);
     if (!warningSourceAssessed(sources, "data")) {
       lines.push({ text: WARNINGS_DATA_NOT_BUILT_TEXT, tone: "secondary" });
     }
@@ -3241,9 +3250,7 @@
     if (isNaN(then) || typeof nowMs !== "number" || isNaN(nowMs)) {
       return "last reading age unknown";
     }
-    var shown = Math.max(0, Math.floor((nowMs - then) / 1000));
-    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
-    return "last reading " + text + " s ago";
+    return "last reading " + ageCountText((nowMs - then) / 1000) + " s ago";
   }
 
   // A reading through the S103 G1 helper by its OWN unit (coolant 'C' -> °F).
@@ -4224,7 +4231,7 @@
     var stale = ageSec === null || ageSec > c.luxStaleSec;
     var age = null;
     if (ageSec === null) age = { text: LIGHT_NO_TIMESTAMP_TEXT, tone: "none" };
-    else if (stale) age = { text: Math.max(0, Math.floor(ageSec)) + " s", tone: "warn" };
+    else if (stale) age = { text: ageCountText(ageSec) + " s", tone: "warn" };
     var lux = isNum(data.lux) && data.lux >= 0 ? data.lux : null;
     var band = LIGHT_BANDS.indexOf(data.lightBand) === -1 ? null : data.lightBand;
     return {
@@ -4526,7 +4533,7 @@
     if (age === null) return navDeadView("no read time");
     var heading = resolved.available ? resolved.deg : null;
     if (age > staleSec) {
-      return navLiveView("stale", heading, "NO UPDATE " + Math.floor(age) + " s", null);
+      return navLiveView("stale", heading, "NO UPDATE " + ageCountText(age) + " s", null);
     }
     if (unseeded) {
       return navLiveView("unseeded", null, resolved.detail.toUpperCase(), null);
@@ -4771,9 +4778,9 @@
   // The same wording as COMPASS's absent cell, so it reads the one source text
   // (US-911: 'not published' is written once in the NAV and Motion code).
   var MOTION_TILT_ABSENT_TEXT = CALIBRATION_ABSENT_TEXT;
-  // The UPDATED age stops counting here; the amber already says "long ago"
-  // (Iris M7).
-  var MOTION_AGE_CAP_SEC = 999;
+  // Every shown age stops counting here; the amber already says "long ago"
+  // (Iris M7; all pages since the V0.30.19 hotfix, Iris RULING 2026-10-30).
+  var AGE_CAP_SEC = 999;
 
   // A whole, non-negative count with a FIXED ',' separator. Never
   // toLocaleString: the kiosk's locale is not ours to assume (Iris L6, shared
@@ -4782,14 +4789,22 @@
     return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
 
-  // The S105 M7 freshness age as one helper (spec s4.5 I6): floor, clamped at
-  // 0 (a future ts is clock skew), `N s ago` with a space, capped at `999+`.
-  // Null when there is no age -- an undated reading shows no age. The Motion
-  // UPDATED cell and the DATA detail's feeds both read it.
-  function freshAgeText(ageSec) {
+  // The S105 M7 age COUNT, the one rule every shown age goes through (Iris
+  // RULING 2026-10-30): floor, clamped at 0 (a future ts is clock skew), capped
+  // at '999+'. Only the number -- each page keeps its own suffix ('s', 's ago',
+  // 'NO UPDATE n s'). Null when there is no age.
+  function ageCountText(ageSec) {
     if (typeof ageSec !== "number" || isNaN(ageSec)) return null;
     var shown = Math.max(0, Math.floor(ageSec));
-    return (shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown)) + " s ago";
+    return shown > AGE_CAP_SEC ? AGE_CAP_SEC + "+" : String(shown);
+  }
+
+  // The freshness age (spec s4.5 I6): `N s ago`, the M7 count. Null when there
+  // is no age -- an undated reading shows no age. The Motion UPDATED cell and
+  // the DATA detail's feeds both read it.
+  function freshAgeText(ageSec) {
+    var count = ageCountText(ageSec);
+    return count === null ? null : count + " s ago";
   }
 
   function healthCell(value, tone, sub) {
@@ -5146,12 +5161,13 @@
     return typeof code === "string" && code ? code.replace(/_/g, " ") : "not read";
   }
 
-  // "<n> s" since the reading's own ts -- clock arithmetic, not a threshold:
-  // the PROVIDER decided it is stale (pi.display.stale.obdLiveSec).
+  // "<n> s" since the reading's own ts, the M7 count (ageCountText) -- clock
+  // arithmetic, not a threshold: the PROVIDER decided it is stale
+  // (pi.display.stale.obdLiveSec).
   function drivingAgeText(ts, nowMs) {
     var t = typeof ts === "string" ? Date.parse(ts) : NaN;
     if (isNaN(t)) return "stale";
-    return Math.max(0, Math.round((nowMs - t) / 1000)) + " s";
+    return ageCountText((nowMs - t) / 1000) + " s";
   }
 
   function drivingNotRead(reason) {
@@ -5744,12 +5760,12 @@
     return { text: O2_NO_SOURCE, live: false };
   }
 
-  // "<n> s" since the reading's own ts: clock arithmetic, not a staleness
-  // decision (the provider made that).
+  // "<n> s" since the reading's own ts, the M7 count (ageCountText): clock
+  // arithmetic, not a staleness decision (the provider made that).
   function o2AgeText(ts, nowMs) {
     var t = typeof ts === "string" ? Date.parse(ts) : NaN;
     if (isNaN(t)) return "--";
-    return Math.max(0, Math.round((nowMs - t) / O2_MS_PER_SEC)) + " s";
+    return ageCountText((nowMs - t) / O2_MS_PER_SEC) + " s";
   }
 
   // The shared meta line (spec s3a, printed once): the provider's measured
@@ -6340,6 +6356,7 @@
     wifiGlyphState: wifiGlyphState,
     syncWhenText: syncWhenText,
     freshAgeText: freshAgeText,
+    ageCountText: ageCountText,
     CAPTURE_STATE_WORD: CAPTURE_STATE_WORD,
     CAPTURE_FEEDS: CAPTURE_FEEDS,
     CAPTURE_FEED_WORD: CAPTURE_FEED_WORD,

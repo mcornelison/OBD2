@@ -43,6 +43,10 @@
 #               |              | CODE-vs-ENGINE discriminator (the kiosk hides the
 #               |              | mouse); the element is -- a BUTTON with a click
 #               |              | listener vs a DIV with none (Iris RULED Q2).
+# 2026-10-30    | Atlas        | V0.30.19 hotfix -- MOVED PIN: NOT CHECKED now shows
+#               |              | System's line under the codes sentence (CIO
+#               |              | 2026-10-30; Iris OK): not read yet / clear / n
+#               |              | issues, malformed -> none. No engine or Data line.
 # ================================================================================
 ################################################################################
 
@@ -523,8 +527,57 @@ def test_notChecked_amberHeaderNoMeta_andTheQuestionMark():
         "lines": [{
             "text": "Trouble codes haven't been read since key-on, so \"nothing found\" can't be claimed.",
             "tone": "primary",
+        }, {
+            # MOVED PIN (V0.30.19 hotfix, CIO 2026-10-30): System speaks here too.
+            "text": SYSTEM_NOT_READ, "tone": "secondary",
         }],
     }
+
+
+# The CIO's key-off check on V0.30.19: System said ALL OK, Warnings said only
+# NOT CHECKED. System is its own source -- its line shows whatever the codes say,
+# through the same rule as the read state, and never claims anything for codes.
+_CODES_SENTENCE = "Trouble codes haven't been read since key-on, so \"nothing found\" can't be claimed."
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("system", "line"),
+    [
+        ({"assessed": False, "reason": "not_read"}, (SYSTEM_NOT_READ, "secondary")),
+        ({"assessed": True, "issueCount": 0}, (SYSTEM_CLEAR, "primary")),
+        ({"assessed": True, "issueCount": 1}, ("System has 1 issue.", "amber")),
+        ({"assessed": True, "issueCount": 2}, ("System has 2 issues.", "amber")),
+    ],
+)
+def test_hotfix_notChecked_showsSystemLine(system: dict[str, Any], line: tuple[str, str]):
+    payload = _fixture("not-checked")
+    payload["sources"]["system"] = system
+    view = _page(payload)
+    assert view["header"] == {"text": "NOT CHECKED", "meta": "", "tone": "amber"}
+    assert view["quiet"]["state"] == "not-checked"
+    assert [(x["text"], x["tone"]) for x in view["quiet"]["lines"]] == [(_CODES_SENTENCE, "primary"), line]
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("bad", ["2", None, -1, 1.5, True])
+def test_hotfix_notChecked_malformedCount_onlyTheCodesSentence(bad: Any):
+    """Fails closed: an assessed System with a count that is not an int >= 0 says nothing."""
+    payload = _fixture("not-checked")
+    payload["sources"]["system"] = {"assessed": True, "issueCount": bad}
+    texts = [x["text"] for x in _page(payload)["quiet"]["lines"]]
+    assert texts == [_CODES_SENTENCE], (bad, texts)
+
+
+@_NODE_ONLY
+def test_hotfix_notChecked_neverAnEngineClauseOrDataLine():
+    """Engine 'clear' needs the codes; Data is not part of the ask."""
+    payload = _fixture("not-checked")
+    payload["sources"]["system"] = {"assessed": True, "issueCount": 0}
+    payload["sources"]["engine"] = {"assessed": True}
+    texts = [x["text"] for x in _page(payload)["quiet"]["lines"]]
+    assert texts == [_CODES_SENTENCE, SYSTEM_CLEAR]
+    assert not any("Engine" in t or t == DATA_NOT_BUILT for t in texts)
 
 
 @_NODE_ONLY
