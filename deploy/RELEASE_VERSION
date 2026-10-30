@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.18",
-  "theme": "V0.30 pages",
-  "description": "Both tiers (server code unchanged, neutral redeploy). Sprint 119 (#145): no-scroll page details on a shared kit (US-894-g/889-d/890-h/892-d); O2 re-lay (US-891-e); Driving gear/speed (US-888-c); sync glyph four states (US-917-d); shutdown bar + done once (US-870-e); IMU chipTempC (US-894-h); Engine horizontal LOAD/THROTTLE bars (US-889-e)."
+  "version": "V0.30.19",
+  "theme": "V0.30 page fixes and guards",
+  "description": "Both tiers (server: common config validator only, 0 migrations). Sprint 120 (#150): MPG battery rounding (US-897-f); config guards in ConfigValidator (US-817-c); WiFi glyph neutral unless home (US-742); DTC footer one separator (US-759); fuel reset 'unconfirmed' (US-890-i); Engine TIMING note on label line (US-889-f); GYRO reason (US-892-e); System details (US-894-i/j/k, no --hide-scrollbars)."
 }
