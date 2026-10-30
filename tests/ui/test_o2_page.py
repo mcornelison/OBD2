@@ -32,6 +32,8 @@
 # 2026-10-26    | Rex (US-891-c) | Initial -- the O2 page.
 # 2026-10-27    | Rex (US-891-e) | s3a re-lay: one meta line, 324 x 52 traces,
 #                                  the modelled height + width fit.
+# 2026-10-30    | Atlas (hotfix) | MOVED PIN: the stale age is the M7 count
+#                                  (floor, capped 999+), not a round.
 # ================================================================================
 ################################################################################
 
@@ -264,7 +266,8 @@ def test_view_stale_rendersTheLastValueDimmedWithItsAge():
     assert _fixture("stale")["o2"]["front"]["value"] is None
     assert front["stale"] is True
     assert front["text"] == f"{_fixture('stale')['o2']['front']['last']['value']:.2f}"
-    age = round((_now("stale") - _ms(_fixture("stale")["o2"]["front"]["ts"])) / 1000)
+    # MOVED PIN (V0.30.19 hotfix): floor, the M7 count -- 12.5 s reads '12 s'.
+    age = (_now("stale") - _ms(_fixture("stale")["o2"]["front"]["ts"])) // 1000
     assert age > STALE_SEC
     assert front["meta"] == f"{age} s old"  # MOVED PIN (US-891-e): the age alone
 
